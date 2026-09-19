@@ -55,19 +55,40 @@ constexpr float kStepUp = 0.55f;
 constexpr float kStepDown = 2.5f;
 constexpr float kMoveSpeed = 6.0f;
 constexpr float kTurnSpeed = 2.4f;
+#if defined(RE4DC_SCENE_R100)
+// Dense walkable forest pocket derived from r100's visual and collision mesh.
+// Keep this presentation spawn separate from the r10d gameplay checkpoint.
+constexpr float kSpawnX = -883.09f;
+constexpr float kSpawnY = -1.425f;
+constexpr float kSpawnZ = -5.80f;
+#if defined(RE4DC_DEMO_YAW)
+constexpr float kSpawnYaw = RE4DC_DEMO_YAW;
+#else
+constexpr float kSpawnYaw = 2.36f;
+#endif
+constexpr float kGoalX = -866.2f;
+constexpr float kGoalY = -1.425f;
+constexpr float kGoalZ = -22.8f;
+constexpr float kEnemySpawnX = -874.64f;
+constexpr float kEnemySpawnY = -1.425f;
+constexpr float kEnemySpawnZ = -14.32f;
+constexpr float kFarClipDistance = 90.0f;
+#else
 constexpr float kSpawnX = 0.0f;
 constexpr float kSpawnY = -7.98f;
 constexpr float kSpawnZ = -245.0f;
+constexpr float kSpawnYaw = kPi;
 constexpr float kGoalX = 32.0f;
 constexpr float kGoalY = -7.98f;
 constexpr float kGoalZ = -284.0f;
 constexpr float kEnemySpawnX = 0.0f;
 constexpr float kEnemySpawnY = -7.98f;
 constexpr float kEnemySpawnZ = -265.0f;
+constexpr float kFarClipDistance = 35.0f;
+#endif
 constexpr float kEnemyMoveSpeed = 1.9f;
 constexpr float kEnemyAttackRange = 2.4f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
-constexpr float kFarClipDistance = 35.0f;
 constexpr int kMagazineSize = 6;
 constexpr int kPlayerMaxHealth = 100;
 constexpr int kEnemyMaxHealth = 3;
@@ -86,7 +107,7 @@ struct Player {
     float x = kSpawnX;
     float y = kSpawnY;
     float z = kSpawnZ;
-    float yaw = kPi;
+    float yaw = kSpawnYaw;
     std::uint32_t wall_hits = 0;
     std::uint32_t completed_loops = 0;
     std::uint32_t animation_clip = 0;
@@ -707,8 +728,8 @@ bool transform_triangle(const re4dc::room::Vertex* source,
         above &= y < 0.0f;
         below &= y > 240.0f;
         const float light = std::clamp(
-            0.48f + 0.18f * input.nx + 0.28f * input.ny + 0.12f * input.nz,
-            0.25f, 1.0f);
+            0.76f + 0.08f * input.nx + 0.12f * input.ny + 0.04f * input.nz,
+            0.58f, 1.0f);
         output[corner] = {
             .flags = corner == 2 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
             .x = x,
@@ -723,9 +744,15 @@ bool transform_triangle(const re4dc::room::Vertex* source,
     const float signed_area =
         (output[1].x - output[0].x) * (output[2].y - output[0].y) -
         (output[1].y - output[0].y) * (output[2].x - output[0].x);
+#if defined(RE4DC_SCENE_R100)
+    if(std::fabs(signed_area) < 0.0001f) {
+        return false;
+    }
+#else
     if(signed_area >= 0.0f) {
         return false;
     }
+#endif
     return !(beyond_far || left || right || above || below);
 }
 
@@ -850,44 +877,108 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
 }
 
 void submit_screen_quad(float left, float top, float right, float bottom,
-                        std::uint32_t color) {
+                         std::uint32_t color, float depth = 1.0f) {
     const pvr_vertex_t vertices[4] = {
-        {.flags = PVR_CMD_VERTEX, .x = left, .y = top, .z = 1.0f,
+        {.flags = PVR_CMD_VERTEX, .x = left, .y = top, .z = depth,
          .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
-        {.flags = PVR_CMD_VERTEX, .x = right, .y = top, .z = 1.0f,
+        {.flags = PVR_CMD_VERTEX, .x = right, .y = top, .z = depth,
          .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
-        {.flags = PVR_CMD_VERTEX, .x = left, .y = bottom, .z = 1.0f,
+        {.flags = PVR_CMD_VERTEX, .x = left, .y = bottom, .z = depth,
          .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
-        {.flags = PVR_CMD_VERTEX_EOL, .x = right, .y = bottom, .z = 1.0f,
+        {.flags = PVR_CMD_VERTEX_EOL, .x = right, .y = bottom, .z = depth,
          .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
     };
     pvr_prim(vertices, sizeof(vertices));
 }
 
-void draw_hud(const Player& player, const Enemy& enemy) {
-    submit_screen_quad(8.0f, 8.0f, 108.0f, 14.0f, 0xff381818U);
-    submit_screen_quad(8.0f, 8.0f, 8.0f + static_cast<float>(player.health),
-                       14.0f, 0xffe2463fU);
-    for(int bullet = 0; bullet < kMagazineSize; ++bullet) {
-        const std::uint32_t color = bullet < player.ammo ? 0xffffd65aU : 0xff463e32U;
-        const float left = 8.0f + static_cast<float>(bullet) * 8.0f;
-        submit_screen_quad(left, 20.0f, left + 5.0f, 27.0f, color);
+const char* glyph_pixels(char glyph) {
+    switch(glyph) {
+    case '0': return "011101000110001100011000101110";
+    case '1': return "001000110000100001000010001110";
+    case '2': return "011101000100001001100100011111";
+    case '3': return "111100000100001011100000111110";
+    case '4': return "000100011001010100101111100010";
+    case '5': return "111111000011110000010000111110";
+    case '6': return "011101000011110100011000101110";
+    case '7': return "111110000100010001000100001000";
+    case '8': return "011101000101110100011000101110";
+    case '9': return "011101000110001011110000101110";
+    case 'A': return "011101000110001111111000110001";
+    case 'B': return "111101000111110100011000111110";
+    case 'C': return "011111000010000100001000001111";
+    case 'D': return "111101000110001100011000111110";
+    case 'E': return "111111000011110100001000011111";
+    case 'L': return "100001000010000100001000011111";
+    case 'N': return "100011100110101100111000110001";
+    case 'O': return "011101000110001100011000101110";
+    case 'P': return "111101000110001111101000010000";
+    case 'R': return "111101000110001111101010010001";
+    case 'S': return "011111000001110000010000111110";
+    case 'T': return "111110010000100001000010000100";
+    case 'U': return "100011000110001100011000101110";
+    case 'Y': return "100011000101010001000010000100";
+    default: return "000000000000000000000000000000";
     }
-    if(enemy.state != EnemyState::Dead) {
-        submit_screen_quad(212.0f, 8.0f, 312.0f, 14.0f, 0xff321a18U);
-        submit_screen_quad(212.0f, 8.0f,
-                           212.0f + 100.0f * static_cast<float>(enemy.health) /
-                                      static_cast<float>(kEnemyMaxHealth),
-                           14.0f, 0xffd26937U);
+}
+
+void draw_text(const char* text, float x, float y, float scale,
+               std::uint32_t color) {
+    for(const char* character = text; *character != '\0'; ++character) {
+        const char* pixels = glyph_pixels(*character);
+        for(unsigned row = 0; row < 6; ++row) {
+            for(unsigned column = 0; column < 5; ++column) {
+                if(pixels[row * 5U + column] == '1') {
+                    const float left = x + static_cast<float>(column) * scale;
+                    const float top = y + static_cast<float>(row) * scale;
+                    submit_screen_quad(left, top, left + scale, top + scale,
+                                       color);
+                }
+            }
+        }
+        x += 6.0f * scale;
+    }
+}
+
+void draw_hud(const Player& player, const Enemy& enemy) {
+    submit_screen_quad(252.0f, 188.0f, 316.0f, 236.0f, 0xff171917U, 0.95f);
+    const float health_fraction = std::clamp(
+        static_cast<float>(player.health) / static_cast<float>(kPlayerMaxHealth),
+        0.0f, 1.0f);
+    constexpr unsigned health_segments = 18;
+    for(unsigned segment = 0; segment < health_segments; ++segment) {
+        const float angle = -kPi * 0.5f + 2.0f * kPi *
+                            static_cast<float>(segment) /
+                            static_cast<float>(health_segments);
+        const float x = 273.0f + std::cos(angle) * 18.0f;
+        const float y = 211.0f + std::sin(angle) * 18.0f;
+        const bool filled = static_cast<float>(segment) /
+                            static_cast<float>(health_segments) < health_fraction;
+        const std::uint32_t color = filled
+            ? (health_fraction > 0.35f ? 0xff6bc84bU : 0xffcf3930U)
+            : 0xff343832U;
+        submit_screen_quad(x - 2.0f, y - 2.0f, x + 2.0f, y + 2.0f, color);
+    }
+    char ammo_text[4];
+    ::snprintf(ammo_text, sizeof(ammo_text), "%d", player.ammo);
+    draw_text(ammo_text, player.ammo < 10 ? 299.0f : 287.0f, 199.0f, 2.0f,
+              0xffe7e0c8U);
+    draw_text("LEON", 285.0f, 226.0f, 1.0f, 0xffc9c6b4U);
+    if(player.reload_seconds > 0.0f) {
+        draw_text("RELOAD", 142.0f, 137.0f, 1.0f, 0xffe5d36aU);
     }
     if(player.aiming) {
-        submit_screen_quad(156.0f, 119.0f, 164.0f, 121.0f, 0xffff4040U);
-        submit_screen_quad(159.0f, 116.0f, 161.0f, 124.0f, 0xffff4040U);
+        submit_screen_quad(150.0f, 119.0f, 157.0f, 120.0f, 0xffff4040U);
+        submit_screen_quad(163.0f, 119.0f, 170.0f, 120.0f, 0xffff4040U);
+        submit_screen_quad(159.0f, 110.0f, 160.0f, 117.0f, 0xffff4040U);
+        submit_screen_quad(159.0f, 123.0f, 160.0f, 130.0f, 0xffff4040U);
     }
     if(player.dead) {
-        submit_screen_quad(70.0f, 104.0f, 250.0f, 136.0f, 0xff7a1111U);
+        submit_screen_quad(72.0f, 100.0f, 248.0f, 140.0f, 0xff310707U,
+                           0.95f);
+        draw_text("YOU ARE DEAD", 88.0f, 106.0f, 2.0f, 0xffb9211cU);
+        draw_text("PRESS B TO RETRY", 113.0f, 130.0f, 1.0f, 0xffd6cfbaU);
     } else if(enemy.state == EnemyState::Dead) {
-        submit_screen_quad(92.0f, 106.0f, 228.0f, 116.0f, 0xff36c85cU);
+        draw_text("AREA CLEAR", 130.0f, 107.0f, 1.0f, 0xff8ee875U);
     }
 }
 
@@ -1078,7 +1169,7 @@ int main() {
         std::printf("re4dc-room: PVR initialization failed\n");
         return 1;
     }
-    pvr_set_bg_color(0.055f, 0.07f, 0.09f);
+    pvr_set_bg_color(0.16f, 0.15f, 0.13f);
     const std::size_t vram_before_textures = pvr_mem_available();
     if(!textures.upload()) {
         std::printf("re4dc-room: texture upload failed: %s\n", textures.error());
@@ -1210,7 +1301,8 @@ int main() {
     Autoplay autoplay{};
     autoplay.enabled = file_exists("/rd/autoplay.flag");
     if(autoplay.enabled) {
-        enemy.z = player.z - kEnemyAttackRange * 0.85f;
+        enemy.x = player.x + std::sin(player.yaw) * kEnemyAttackRange * 0.85f;
+        enemy.z = player.z + std::cos(player.yaw) * kEnemyAttackRange * 0.85f;
         player.health = 25;
     }
     float initial_floor = player.y;
@@ -1327,17 +1419,35 @@ int main() {
         g_re4dc_demo_telemetry.player_yaw = player.yaw;
         g_re4dc_demo_telemetry.enemy_x = enemy.x;
         g_re4dc_demo_telemetry.enemy_z = enemy.z;
+#if defined(RE4DC_SCENE_R100)
+        player.aiming = true;
+#endif
         const float fx = std::sin(player.yaw);
         const float fz = std::cos(player.yaw);
         const float rx = std::cos(player.yaw);
         const float rz = -std::sin(player.yaw);
-        const point_t eye = {player.x - fx * 6.0f + rx * 0.75f,
-                             player.y + 2.8f,
-                             player.z - fz * 6.0f + rz * 0.75f, 1.0f};
-        const point_t target = {player.x + fx * 2.0f, player.y + 1.25f,
-                                player.z + fz * 2.0f, 1.0f};
+        const bool shoulder_view = player.aiming && !player.dead;
+#if defined(RE4DC_SCENE_R100)
+        const float camera_distance = shoulder_view ? 0.45f : 1.4f;
+        const float camera_lateral = shoulder_view ? 0.20f : 0.35f;
+        const float camera_height = shoulder_view ? 1.85f : 2.2f;
+#else
+        const float camera_distance = shoulder_view ? 4.25f : 4.75f;
+        const float camera_lateral = shoulder_view ? 1.35f : 0.85f;
+        const float camera_height = shoulder_view ? 2.35f : 2.55f;
+#endif
+        const float target_distance = shoulder_view ? 5.0f : 2.0f;
+        const point_t eye = {
+            player.x - fx * camera_distance + rx * camera_lateral,
+            player.y + camera_height,
+            player.z - fz * camera_distance + rz * camera_lateral, 1.0f};
+        const point_t target = {
+            player.x + fx * target_distance,
+            player.y + (shoulder_view ? 1.45f : 1.2f),
+            player.z + fz * target_distance, 1.0f};
+        const float half_fov = shoulder_view ? (kPi / 8.5f) : (kPi / 6.0f);
         mat_identity();
-        mat_perspective(160.0f, 120.0f, 1.0f / std::tan(kPi / 6.0f), 1.0f,
+        mat_perspective(160.0f, 120.0f, 1.0f / std::tan(half_fov), 1.0f,
                         500.0f);
         mat_lookat(&eye, &target, &up);
         const FrameStats stats = render_scene(

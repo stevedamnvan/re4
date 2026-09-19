@@ -8,11 +8,18 @@ CHARACTER_TEXTURE_PACKAGE ?= ../build/private/leon.re4tex
 ENEMY_TEXTURE_PACKAGE ?= ../build/private/ganado.re4tex
 TEXTURE_PACKAGE ?= ../build/private/r10d.re4tex
 AUTOPLAY_FLAG ?=
+DEMO_SCENE ?= r10d
 KOS_ROMDISK_DIR = ../build/room-romdisk
 
 romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
 
 KOS_CPPFLAGS += -std=c++20 -Wall -Wextra -Werror -I../include
+ifeq ($(DEMO_SCENE),r100)
+KOS_CPPFLAGS += -DRE4DC_SCENE_R100
+endif
+ifneq ($(DEMO_YAW),)
+KOS_CPPFLAGS += -DRE4DC_DEMO_YAW=$(DEMO_YAW)
+endif
 KOS_GCCVER_MIN = 12.0.0
 
 .PHONY: all clean rm-elf run prepare-romdisk

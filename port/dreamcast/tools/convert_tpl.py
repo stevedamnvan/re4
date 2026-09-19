@@ -22,6 +22,7 @@ from dataclasses import dataclass
 TPL_MAGIC = 0x0020AF30
 GX_TF_I4 = 0
 GX_TF_IA8 = 3
+GX_TF_RGBA8 = 6
 GX_TF_CMPR = 14
 
 MAGIC = b"RE4DCTX\0"
@@ -60,6 +61,8 @@ def _expected_image_size(width: int, height: int, image_format: int) -> int:
         return ((width + 7) // 8) * ((height + 7) // 8) * 32
     if image_format == GX_TF_IA8:
         return ((width + 3) // 4) * ((height + 3) // 4) * 32
+    if image_format == GX_TF_RGBA8:
+        return ((width + 3) // 4) * ((height + 3) // 4) * 64
     raise ValueError(f"unsupported TPL image format 0x{image_format:x}")
 
 
@@ -188,6 +191,28 @@ def decode_ia8(image: TplImage) -> list[tuple[int, int, int, int]]:
     return pixels
 
 
+def decode_rgba8(image: TplImage) -> list[tuple[int, int, int, int]]:
+    pixels = [(0, 0, 0, 0)] * (image.width * image.height)
+    offset = 0
+    for tile_y in range(0, image.height, 4):
+        for tile_x in range(0, image.width, 4):
+            ar_offset = offset
+            gb_offset = offset + 32
+            for row in range(4):
+                y = tile_y + row
+                for column in range(4):
+                    pixel = row * 4 + column
+                    alpha = image.data[ar_offset + pixel * 2]
+                    red = image.data[ar_offset + pixel * 2 + 1]
+                    green = image.data[gb_offset + pixel * 2]
+                    blue = image.data[gb_offset + pixel * 2 + 1]
+                    x = tile_x + column
+                    if x < image.width and y < image.height:
+                        pixels[y * image.width + x] = (red, green, blue, alpha)
+            offset += 64
+    return pixels
+
+
 def decode_image(image: TplImage) -> list[tuple[int, int, int, int]]:
     if image.format == GX_TF_CMPR:
         return decode_cmpr(image)
@@ -195,6 +220,8 @@ def decode_image(image: TplImage) -> list[tuple[int, int, int, int]]:
         return decode_i4(image)
     if image.format == GX_TF_IA8:
         return decode_ia8(image)
+    if image.format == GX_TF_RGBA8:
+        return decode_rgba8(image)
     raise ValueError(f"unsupported TPL image format 0x{image.format:x}")
 
 

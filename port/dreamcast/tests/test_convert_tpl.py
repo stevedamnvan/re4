@@ -46,6 +46,14 @@ class ConvertTplTests(unittest.TestCase):
         pixels = TPL.decode_ia8(image)
         self.assertEqual(pixels[0], (0x40, 0x40, 0x40, 0x80))
 
+    def test_rgba8_block_decodes_split_ar_and_gb_planes(self):
+        block = bytearray(64)
+        block[0:2] = bytes((0x80, 0x40))
+        block[32:34] = bytes((0x20, 0x10))
+        image = TPL.TplImage(4, 4, TPL.GX_TF_RGBA8, bytes(block))
+        pixels = TPL.decode_rgba8(image)
+        self.assertEqual(pixels[0], (0x40, 0x20, 0x10, 0x80))
+
     def test_cmpr_subblocks_and_selector_order(self):
         subblock = struct.pack(">HH4B", 0xF800, 0x07E0, 0x1B, 0, 0, 0)
         image = TPL.TplImage(8, 8, TPL.GX_TF_CMPR, subblock * 4)
