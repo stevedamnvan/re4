@@ -236,6 +236,72 @@ def skin_frame(pose, rest_world, source_positions, palette_indices, weights):
             for index, position in enumerate(source_positions)]
 
 
+def cluster_animated_geometry(positions, indices, batches, frames, cluster_mm):
+    """Create a coarse animated mesh by clustering vertices within each batch.
+
+    Batch scoping prevents separate source parts and materials from welding.
+    Every generated animation vertex is the average of its source members, so
+    all clips retain the original timing while degenerate and duplicate faces
+    are removed.
+    """
+    if cluster_mm <= 0.0:
+        return positions, indices, batches, frames
+
+    cluster_members = []
+    clustered_indices = []
+    clustered_batches = []
+    for first_index, index_count, material, part_index in batches:
+        source_triangles = []
+        members_by_key = {}
+        for offset in range(first_index, first_index + index_count, 3):
+            keys = []
+            for source_index in indices[offset:offset + 3]:
+                position = positions[source_index]
+                key = tuple(round(value / cluster_mm) for value in position)
+                members_by_key.setdefault(key, set()).add(source_index)
+                keys.append(key)
+            source_triangles.append(tuple(keys))
+
+        index_by_key = {}
+        for key, members in members_by_key.items():
+            index_by_key[key] = len(cluster_members)
+            cluster_members.append(tuple(sorted(members)))
+
+        first_clustered_index = len(clustered_indices)
+        seen = set()
+        for keys in source_triangles:
+            triangle = tuple(index_by_key[key] for key in keys)
+            if len(set(triangle)) < 3 or triangle in seen:
+                continue
+            seen.add(triangle)
+            clustered_indices.extend(triangle)
+        clustered_count = len(clustered_indices) - first_clustered_index
+        if clustered_count:
+            clustered_batches.append(
+                (first_clustered_index, clustered_count, material, part_index)
+            )
+
+    if not clustered_indices:
+        raise ValueError("character clustering removed every triangle")
+
+    def average_points(points, members):
+        count = float(len(members))
+        return tuple(
+            sum(points[index][axis] for index in members) / count
+            for axis in range(3)
+        )
+
+    clustered_positions = [
+        average_points(positions, members) for members in cluster_members
+    ]
+    clustered_frames = [
+        [average_points(frame, members) for members in cluster_members]
+        for frame in frames
+    ]
+    return (clustered_positions, clustered_indices, clustered_batches,
+            clustered_frames)
+
+
 def load_archive(source, name, cache_dir):
     source = Path(source).resolve()
     if not archive.is_disc(str(source)):
@@ -327,6 +393,11 @@ def convert(args):
             "sha256": hashlib.sha256(entry.data).hexdigest(),
         })
 
+    source_vertex_count = len(positions)
+    source_triangle_count = len(indices) // 3
+    positions, indices, batches, frames = cluster_animated_geometry(
+        positions, indices, batches, frames, args.cluster_mm
+    )
     frame_data, maximum_error, bounds_min, bounds_max = quantise_frames(
         frames, args.quantum_mm
     )
@@ -368,6 +439,9 @@ def convert(args):
         "vertices": len(positions),
         "triangles": len(indices) // 3,
         "batches": len(batches),
+        "cluster_mm": args.cluster_mm,
+        "cluster_source_vertices": source_vertex_count,
+        "cluster_source_triangles": source_triangle_count,
         "frames": len(frames),
         "clips": source_manifest,
         "quantum_mm": args.quantum_mm,
@@ -388,12 +462,14 @@ def main():
                         help="NAME:ARCHIVE:ENTRY (repeatable)")
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--quantum-mm", type=float, default=0.0625)
+    parser.add_argument("--cluster-mm", type=float, default=0.0,
+                        help="coarse per-batch animated-mesh cluster size")
     parser.add_argument("--cache-dir")
     parser.add_argument("--output", required=True)
     parser.add_argument("--manifest")
     args = parser.parse_args()
-    if args.fps <= 0.0 or args.quantum_mm <= 0.0:
-        parser.error("fps and quantum must be positive")
+    if args.fps <= 0.0 or args.quantum_mm <= 0.0 or args.cluster_mm < 0.0:
+        parser.error("fps and quantum must be positive; cluster must be non-negative")
     convert(args)
 
 

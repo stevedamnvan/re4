@@ -62,6 +62,27 @@ class CharacterConverterTests(unittest.TestCase):
         for actual, expected in zip(restored, point):
             self.assertAlmostEqual(actual, expected)
 
+    def test_clusters_every_animation_frame_and_removes_degenerate_faces(self):
+        positions = [
+            (0.0, 0.0, 0.0),
+            (0.1, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        ]
+        indices = [0, 2, 3, 0, 1, 3]
+        batches = [(0, 6, 2, 7)]
+        frames = [positions, [(x + 1.0, y, z) for x, y, z in positions]]
+        result = MODULE.cluster_animated_geometry(
+            positions, indices, batches, frames, 0.5
+        )
+        new_positions, new_indices, new_batches, new_frames = result
+        self.assertEqual(len(new_positions), 3)
+        self.assertEqual(len(new_indices), 3)
+        self.assertEqual(new_batches, [(0, 3, 2, 7)])
+        self.assertEqual(len(new_frames), 2)
+        self.assertAlmostEqual(new_positions[0][0], 0.05)
+        self.assertAlmostEqual(new_frames[1][0][0], 1.05)
+
 
 if __name__ == "__main__":
     unittest.main()

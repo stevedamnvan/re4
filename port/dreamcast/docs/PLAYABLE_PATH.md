@@ -44,9 +44,17 @@ GameCube visibility or image parity.
 - The existing converter already preserves exported OBJ groups when invoked
   with `--cell-size 0`. A private comparison package was generated: 226 groups,
   311 batches, 3,197,028 bytes, with the same 63,745 triangles and 75,009 vertices.
-  The old cell package has 389 groups and 1,147 batches. This comparison
-  package has not been rendered or timed. Exported groups still need mapping
-  to source SMD objects; they are not automatically the original culling spheres.
+  The old cell package has 389 groups and 1,147 batches. This comparison became
+  the measured 117,116 us baseline below; the 20 m cell variant regressed to
+  169,858 us. Exported groups still need mapping to source SMD objects; they are
+  not automatically the original culling spheres.
+- Representative combined rendering is now measured. The original package at
+  spawn submitted 11,592 room plus 3,979 actor triangles and took 117,116 us.
+  The selected demo profile uses deterministic 8 m room clustering, 75 mm
+  per-batch animated clustering, a 35 m route horizon, backface/frustum tests,
+  and batched triangle writes. It submits 2,038 room plus 748 actor triangles
+  at the same spawn and measured 29,354 us in Flycast. This is an explicit
+  demo LOD, not GameCube image parity or stock-Dreamcast timing evidence.
 
 ## Ordered implementation backlog
 
@@ -55,7 +63,7 @@ GameCube visibility or image parity.
 | P0 - walkable room | **Runtime integrated.** Maple analog/D-pad movement, a shoulder follow camera, SAT floor/wall collision, spawn, A reset, START exit, and a visible route marker now run in one native executable with an orange placeholder actor. The source-group comparison is complete and timing phases are instrumented. The remaining bounded work is near-plane clipping and a clean three-loop record. | A recorded controller route moves, turns, stops at walls, follows the intended floor, reaches the exit, and resets three times without drift or growing allocations. This is the walkable checkpoint, not accepted RE4 gameplay. |
 | P1 - visible Leon | **Runtime integrated.** The converter decodes the 1,484-vertex primary body and 2,519 source triangles, evaluates the source-mapped 91-frame idle and 29-frame walk clips, applies the original weighted skinning rules offline, and emits a 1.1 MB private package. The room runtime places and rotates the animated body on SAT collision and switches clips from controller movement. | An isolated Flycast route shows the disc-derived animated body positioned on the floor while idle and moving. This closes the visible-body bridge; face/hair/hands/weapon attachments, textures, combined performance, and physical hardware remain P2/P3 work rather than being implied by this checkpoint. |
 | P2 - small combat loop | **Runtime integrated and Flycast replay passed.** One disc-derived `em10` village Ganado uses source-selected idle, walk, bare-hand catch, head-hit, and knock-out clips. A bounded translation of its walk/turn/attack/damage/death states drives approach and attack. Leon can aim, fire, reload, take damage, die, restart, defeat it, and unlock the route exit. | The deterministic controller-path replay observed player death, restart, an empty magazine and reload, enemy defeat, collision traversal, and one exit/reset loop. The VMU contains `RE4DC_AUTOPLAY_PASS death=1 reload=1 loop=1`; retained live SH-4 telemetry independently reported phase 7, flags `0x7`, and loop count 1. This is emulator acceptance; presentation, performance, and stock hardware remain P3. |
-| P3 - playable validation | Add the basic textures/cutouts needed for scene readability, measure the combined runtime, trim only measured visual costs, and package it for a named stock Dreamcast loading route. | Repeatable walk/combat/reset runs at the 320x240, 30 fps target within all stock memory pools. Flycast and physical Dreamcast results are reported separately; physical acceptance remains open until run. |
+| P3 - playable validation | **Flycast gameplay/performance gate passed; presentation and hardware remain.** The default converters now produce explicit room and animated-character LODs, runtime culling uses the bounded route horizon, and a collision-valid exit replaces the old low-frame-rate tunneling route. | The automated death/restart/reload/defeat/exit/reset loop passes with a fresh VMU marker. Spawn measured 29,354 us and the final route view 37,821 us in Flycast. Basic textures, route percentiles, optical-disc packaging, memory-pool measurement, and stock-Dreamcast acceptance remain open. |
 
 P0 includes one bounded renderer correction/comparison pass below. Then move
 to P1/P2 rather than iterating a standalone scenery viewer indefinitely.
@@ -66,8 +74,9 @@ P3 requires the real animated actor and the declared room presentation.
 
 1. Establish coordinates and scale between the OBJ, SAT, character positions,
    and source camera data. Record a spawn and short traversal route with camera
-   position, target, FOV/aspect, and clipping distances. A smaller field of view
-   or arbitrary far cutoff is not an acceptable way to hide a performance miss.
+   position, target, FOV/aspect, and clipping distances. Any bounded far cutoff
+   must be declared as a demo limitation and must still cover the accepted route;
+   it cannot be presented as matched GameCube visibility.
 2. Compare the preserved exported groups with the existing cell package at the
    same camera positions, using conservative bounds. Preserve source object
    IDs/flags where available. Use the existing converter before writing another
@@ -108,12 +117,11 @@ milestone and are outside this backlog.
 
 ## Next concrete work item
 
-Begin P3 with the measured bottleneck: batch actor and room triangle submission
-and record combined route percentiles. Keep the accepted combat state contract
-unchanged while adding only the handgun/hand and basic texture or cutout data
-needed to read aiming, hits, and enemy state at 320x240. Then build a named
-stock-Dreamcast loading image and report emulator and hardware evidence
-separately.
+Continue P3 with the smallest presentation pass: add only the handgun/hand and
+basic texture or cutout data needed to read aiming, hits, and enemy state at
+320x240. Record route percentiles and memory-pool peaks with those assets, then
+build a named stock-Dreamcast loading image and report emulator and hardware
+evidence separately.
 
 Only tools, source changes, tests, and documentation are committed and pushed
 to `origin/dreamcast-port`. The disc, converted art, and captures stay private.

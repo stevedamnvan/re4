@@ -238,6 +238,73 @@ def spatial_partition(parsed: dict[str, object], cell_size: float) -> None:
     parsed["cell_size"] = cell_size
 
 
+def cluster_geometry(parsed: dict[str, object], cluster_size: float) -> None:
+    """Build an explicit coarse LOD while retaining groups and materials.
+
+    Clusters are scoped to one batch so unrelated objects and materials cannot
+    weld together. Position and normal buckets select the cluster; position,
+    normal, and UV values are averaged. Degenerate and duplicate triangles are
+    removed after remapping.
+    """
+    if cluster_size <= 0.0:
+        return
+    source_vertices = parsed["vertices"]
+    source_triangles = sum(len(batch.indices) for batch in parsed["batches"]) // 3
+    vertices: list[tuple[float, ...]] = []
+    for batch in parsed["batches"]:
+        clusters: dict[tuple[int, ...], list[float]] = {}
+        triangle_keys: list[tuple[tuple[int, ...], ...]] = []
+        for start in range(0, len(batch.indices), 3):
+            keys = []
+            for index in batch.indices[start : start + 3]:
+                vertex = source_vertices[index]
+                key = (
+                    round(vertex[0] / cluster_size),
+                    round(vertex[1] / cluster_size),
+                    round(vertex[2] / cluster_size),
+                    round(vertex[3] * 4.0),
+                    round(vertex[4] * 4.0),
+                    round(vertex[5] * 4.0),
+                )
+                if key not in clusters:
+                    clusters[key] = [0.0] * 8 + [0.0]
+                aggregate = clusters[key]
+                for component, value in enumerate(vertex):
+                    aggregate[component] += value
+                aggregate[8] += 1.0
+                keys.append(key)
+            triangle_keys.append(tuple(keys))
+
+        cluster_indices: dict[tuple[int, ...], int] = {}
+        for key, aggregate in clusters.items():
+            count = aggregate[8]
+            values = [value / count for value in aggregate[:8]]
+            length = math.sqrt(sum(value * value for value in values[3:6]))
+            if length > 0.000001:
+                values[3:6] = [value / length for value in values[3:6]]
+            cluster_indices[key] = len(vertices)
+            vertices.append(tuple(values))
+
+        indices: list[int] = []
+        seen: set[tuple[int, int, int]] = set()
+        for keys in triangle_keys:
+            triangle = tuple(cluster_indices[key] for key in keys)
+            if len(set(triangle)) < 3 or triangle in seen:
+                continue
+            seen.add(triangle)
+            indices.extend(triangle)
+        batch.indices = indices
+
+    triangles = sum(len(batch.indices) for batch in parsed["batches"]) // 3
+    if triangles == 0:
+        raise ValueError("vertex clustering removed every triangle")
+    parsed["vertices"] = vertices
+    parsed["triangles"] = triangles
+    parsed["cluster_size"] = cluster_size
+    parsed["cluster_source_vertices"] = len(source_vertices)
+    parsed["cluster_source_triangles"] = source_triangles
+
+
 def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
     vertices = parsed["vertices"]
     materials = parsed["materials"]
@@ -348,10 +415,17 @@ def main(argv: list[str] | None = None) -> int:
         default=0.0,
         help="partition static triangles into X/Z cells of this size",
     )
+    parser.add_argument(
+        "--cluster-size",
+        type=float,
+        default=0.0,
+        help="build a coarse per-batch vertex-cluster LOD at this size",
+    )
     args = parser.parse_args(argv)
 
     parsed = parse_obj(args.input)
     spatial_partition(parsed, args.cell_size)
+    cluster_geometry(parsed, args.cluster_size)
     package, metadata = build_package(parsed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)
@@ -365,6 +439,13 @@ def main(argv: list[str] | None = None) -> int:
             "source_faces": parsed["source_faces"],
             "source_groups": parsed.get("source_groups", len(parsed["group_order"])),
             "cell_size": parsed.get("cell_size", 0.0),
+            "cluster_size": parsed.get("cluster_size", 0.0),
+            "cluster_source_vertices": parsed.get(
+                "cluster_source_vertices", len(parsed["vertices"])
+            ),
+            "cluster_source_triangles": parsed.get(
+                "cluster_source_triangles", parsed["triangles"]
+            ),
             "package": args.output.name,
             "package_bytes": len(package),
             "package_sha256": sha256_bytes(package),

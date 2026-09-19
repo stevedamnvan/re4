@@ -30,12 +30,18 @@ struct DemoTelemetry {
     float player_yaw;
     float enemy_x;
     float enemy_z;
+    std::uint32_t visible_groups;
+    std::uint32_t transformed_vertices;
+    std::uint32_t room_triangles;
+    std::uint32_t actor_triangles;
+    std::uint32_t frame_us;
+    std::uint32_t submit_us;
 };
 
 extern "C" {
 volatile DemoTelemetry g_re4dc_demo_telemetry = {
     0x52453444U, 1U, 0U, 0U, 0U, 0, 0, 0, 0U, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f,
+    0.0f, 0U, 0U, 0U, 0U, 0U, 0U,
 };
 }
 
@@ -51,7 +57,7 @@ constexpr float kTurnSpeed = 2.4f;
 constexpr float kSpawnX = 0.0f;
 constexpr float kSpawnY = -7.98f;
 constexpr float kSpawnZ = -245.0f;
-constexpr float kGoalX = 9.0f;
+constexpr float kGoalX = 32.0f;
 constexpr float kGoalY = -7.98f;
 constexpr float kGoalZ = -284.0f;
 constexpr float kEnemySpawnX = 0.0f;
@@ -60,6 +66,7 @@ constexpr float kEnemySpawnZ = -265.0f;
 constexpr float kEnemyMoveSpeed = 1.9f;
 constexpr float kEnemyAttackRange = 2.4f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
+constexpr float kFarClipDistance = 35.0f;
 constexpr int kMagazineSize = 6;
 constexpr int kPlayerMaxHealth = 100;
 constexpr int kEnemyMaxHealth = 3;
@@ -453,18 +460,17 @@ Input autoplay_input(Autoplay& autoplay, const Player& player,
     case AutoplayPhase::Exit: {
         static constexpr float waypoints[][2] = {
             {0.0f, -238.0f},
-            {28.0f, -238.0f},
-            {28.0f, -276.0f},
-            {7.5f, -281.5f},
+            {32.0f, -238.0f},
+            {kGoalX, kGoalZ},
         };
         const std::uint32_t waypoint = std::min<std::uint32_t>(
-            autoplay.exit_waypoint, 3U);
+            autoplay.exit_waypoint, 2U);
         const float waypoint_x = waypoints[waypoint][0];
         const float waypoint_z = waypoints[waypoint][1];
         const float dx = waypoint_x - player.x;
         const float dz = waypoint_z - player.z;
-        if(dx * dx + dz * dz < 1.0f &&
-           autoplay.exit_waypoint < 3U) {
+        if(dx * dx + dz * dz < 4.0f &&
+           autoplay.exit_waypoint < 2U) {
             ++autoplay.exit_waypoint;
         }
         const float target_yaw = std::atan2(dx, dz);
@@ -660,7 +666,7 @@ bool group_visible(const re4dc::room::Group& group) {
             continue;
         }
         behind = false;
-        beyond_far &= z < (1.0f / 240.0f);
+        beyond_far &= z < (1.0f / kFarClipDistance);
         left &= x < 0.0f;
         right &= x > 320.0f;
         above &= y < 0.0f;
@@ -697,7 +703,7 @@ bool transform_triangle(const re4dc::room::Vertex* source,
         if(z <= 0.0f) {
             return false;
         }
-        beyond_far &= z < (1.0f / 240.0f);
+        beyond_far &= z < (1.0f / kFarClipDistance);
         left &= x < 0.0f;
         right &= x > 320.0f;
         above &= y < 0.0f;
@@ -743,11 +749,7 @@ void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
             .argb = color, .oargb = 0,
         };
     }
-    for(const auto& vertex : vertices) {
-        auto* target = static_cast<pvr_vertex_t*>(pvr_dr_target());
-        *target = vertex;
-        pvr_dr_commit(target);
-    }
+    pvr_prim(vertices, sizeof(vertices));
 }
 
 std::uint32_t character_color(std::uint32_t material) {
@@ -795,10 +797,26 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             if(a.z <= 0.0f || b.z <= 0.0f || c.z <= 0.0f) {
                 continue;
             }
+            const bool beyond_far =
+                a.z < (1.0f / kFarClipDistance) &&
+                b.z < (1.0f / kFarClipDistance) &&
+                c.z < (1.0f / kFarClipDistance);
+            const bool left = a.x < 0.0f && b.x < 0.0f && c.x < 0.0f;
+            const bool right = a.x > 320.0f && b.x > 320.0f && c.x > 320.0f;
+            const bool above = a.y < 0.0f && b.y < 0.0f && c.y < 0.0f;
+            const bool below = a.y > 240.0f && b.y > 240.0f && c.y > 240.0f;
+            const float signed_area =
+                (b.x - a.x) * (c.y - a.y) -
+                (b.y - a.y) * (c.x - a.x);
+            if(beyond_far || left || right || above || below ||
+               signed_area >= 0.0f) {
+                continue;
+            }
             const ProjectedVertex source_triangle[3] = {a, b, c};
+            pvr_vertex_t output[3]{};
             for(unsigned corner = 0; corner < 3; ++corner) {
                 const auto& vertex = source_triangle[corner];
-                pvr_vertex_t output = {
+                output[corner] = {
                     .flags = corner == 2 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
                     .x = vertex.x,
                     .y = vertex.y,
@@ -808,10 +826,8 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                     .argb = color,
                     .oargb = 0,
                 };
-                auto* target = static_cast<pvr_vertex_t*>(pvr_dr_target());
-                *target = output;
-                pvr_dr_commit(target);
             }
+            pvr_prim(output, sizeof(output));
             ++triangles;
         }
     }
@@ -830,9 +846,7 @@ void submit_screen_quad(float left, float top, float right, float bottom,
         {.flags = PVR_CMD_VERTEX_EOL, .x = right, .y = bottom, .z = 1.0f,
          .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
     };
-    for(const auto& vertex : vertices) {
-        pvr_prim(&vertex, sizeof(vertex));
-    }
+    pvr_prim(vertices, sizeof(vertices));
 }
 
 void draw_hud(const Player& player, const Enemy& enemy) {
@@ -914,11 +928,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 if(transform_triangle(vertices, indices + index, triangle,
                                       batch.material, projected, transformed_at,
                                       frame_token, stats)) {
-                    for(const auto& vertex : triangle) {
-                        auto* target = static_cast<pvr_vertex_t*>(pvr_dr_target());
-                        *target = vertex;
-                        pvr_dr_commit(target);
-                    }
+                    pvr_prim(triangle, sizeof(triangle));
                     ++stats.triangles;
                 }
             }
@@ -1107,6 +1117,15 @@ int main() {
             room, leon, ganado, player, enemy, polygon_header, projected.get(),
             transformed_at.get(), leon_projected.get(), ganado_projected.get(),
             frame + 1U);
+        g_re4dc_demo_telemetry.visible_groups = stats.groups;
+        g_re4dc_demo_telemetry.transformed_vertices =
+            stats.transformed_vertices;
+        g_re4dc_demo_telemetry.room_triangles = stats.triangles;
+        g_re4dc_demo_telemetry.actor_triangles = stats.character_triangles;
+        g_re4dc_demo_telemetry.frame_us = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(frame_us, 0xffffffffU));
+        g_re4dc_demo_telemetry.submit_us = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(stats.submit_us, 0xffffffffU));
         ++frame;
         if(frame % 120U == 0U) {
             std::printf(

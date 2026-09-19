@@ -74,6 +74,27 @@ class ConvertRoomObjTests(unittest.TestCase):
             self.assertEqual(parsed["source_groups"], 2)
             self.assertEqual(parsed["cell_size"], 1.0)
 
+    def test_vertex_cluster_lod_drops_degenerate_triangle(self):
+        source_text = """\
+v 0 0 0
+v 0.1 0 0
+v 0 0 2
+v 2 0 0
+vn 0 1 0
+g floor
+usemtl stone
+f 1//1 2//1 3//1
+f 1//1 3//1 4//1
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / "lod.obj"
+            source.write_text(source_text, encoding="utf-8")
+            parsed = ROOM.parse_obj(source)
+            ROOM.cluster_geometry(parsed, 0.5)
+            self.assertEqual(parsed["cluster_source_triangles"], 2)
+            self.assertEqual(parsed["triangles"], 1)
+            self.assertEqual(len(parsed["vertices"]), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

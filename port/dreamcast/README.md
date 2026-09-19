@@ -27,6 +27,10 @@ and asset reference, while this target is compiled for SH-4 with KallistiOS.
 - Small combat loop: one disc-derived village Ganado approaches, turns, attacks,
   reacts to aimed shots, and dies; Leon has a reticle, health, six-round ammo,
   timed reload, death/restart, and a defeat-gated room exit
+- Playable performance profile: deterministic offline LOD keeps the source room
+  and every source animation clip, while a 35 m demo horizon and runtime
+  triangle rejection bring the representative Flycast spawn from 117.1 ms to
+  29.4 ms per frame; the complete automated loop also passes
 
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
@@ -97,22 +101,25 @@ source-derived actor animation, and the combat loop. Controls are stick/D-pad
 move and turn, right trigger or Y aim, A fire, X reload, B restart, and START
 exit. Defeat the Ganado before the route marker unlocks.
 The generated packages stay ignored. The first broad orbit proof and the
-current close gameplay view both miss the frame budget; their timer includes
-PVR wait time. See
+unoptimized gameplay view miss the frame budget. The default conversion now
+uses an 8 m room cluster and 75 mm per-batch animated-character cluster; pass
+`R10D_CLUSTER_SIZE=0 CHARACTER_CLUSTER_MM=0` to retain full source meshes for
+comparison. The runtime uses a declared 35 m horizon for this bounded route,
+not as a claim about the GameCube draw distance. See
 [the room SH-4 baseline](docs/ROOM_SH4_BASELINE.md).
 The integrated movement/collision evidence and its remaining P0 limits are in
 [the walkable r10d checkpoint](docs/WALKABLE_R10D_BASELINE.md).
 The source mappings, deliberate behavior bounds, controls, and full-loop
 Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
+The measured LOD profile, complete-loop replay, and remaining hardware and
+presentation limits are in [the playable P3 checkpoint](docs/P3_PLAYABLE_BASELINE.md).
 
 ## Near-term sequence
 
-1. Trim the measured room submission bottleneck enough for readable combat;
-   add near-plane clipping only if the combat route demonstrates the need.
-2. Add the essential Leon, handgun, and Ganado attachments or textures needed
+1. Add the essential Leon, handgun, and Ganado attachments or textures needed
    for combat readability, without expanding into a general asset renderer.
    Audit existing cheaper model variants before making new simplified art.
-3. Measure the combined runtime, add essential textures/cutouts, and validate
+2. Measure texture residency and route percentiles, then validate
    it on stock Dreamcast. Continue useful Flycast iteration while hardware
    validation is pending, without claiming hardware acceptance.
 
