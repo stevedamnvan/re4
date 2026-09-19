@@ -4,14 +4,40 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <new>
+#include <fcntl.h>
 
 #include "character_package.hpp"
 #include "collision_package.hpp"
 #include "room_package.hpp"
 
 KOS_INIT_FLAGS(INIT_DEFAULT);
+
+struct DemoTelemetry {
+    std::uint32_t magic;
+    std::uint32_t version;
+    std::uint32_t frame;
+    std::uint32_t autoplay_phase;
+    std::uint32_t flags;
+    std::int32_t player_health;
+    std::int32_t ammo;
+    std::int32_t enemy_health;
+    std::uint32_t loops;
+    float player_x;
+    float player_z;
+    float player_yaw;
+    float enemy_x;
+    float enemy_z;
+};
+
+extern "C" {
+volatile DemoTelemetry g_re4dc_demo_telemetry = {
+    0x52453444U, 1U, 0U, 0U, 0U, 0, 0, 0, 0U, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f,
+};
+}
 
 namespace {
 
@@ -28,6 +54,22 @@ constexpr float kSpawnZ = -245.0f;
 constexpr float kGoalX = 9.0f;
 constexpr float kGoalY = -7.98f;
 constexpr float kGoalZ = -284.0f;
+constexpr float kEnemySpawnX = 0.0f;
+constexpr float kEnemySpawnY = -7.98f;
+constexpr float kEnemySpawnZ = -265.0f;
+constexpr float kEnemyMoveSpeed = 1.9f;
+constexpr float kEnemyAttackRange = 2.4f;
+constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
+constexpr int kMagazineSize = 6;
+constexpr int kPlayerMaxHealth = 100;
+constexpr int kEnemyMaxHealth = 3;
+
+enum class EnemyState : std::uint8_t {
+    Chase,
+    Attack,
+    Hit,
+    Dead,
+};
 
 struct Player {
     float x = kSpawnX;
@@ -38,13 +80,53 @@ struct Player {
     std::uint32_t completed_loops = 0;
     std::uint32_t animation_clip = 0;
     float animation_frame = 0.0f;
+    int health = kPlayerMaxHealth;
+    int ammo = kMagazineSize;
+    float reload_seconds = 0.0f;
+    bool aiming = false;
+    bool dead = false;
+};
+
+struct Enemy {
+    float x = kEnemySpawnX;
+    float y = kEnemySpawnY;
+    float z = kEnemySpawnZ;
+    float yaw = 0.0f;
+    EnemyState state = EnemyState::Chase;
+    int health = kEnemyMaxHealth;
+    std::uint32_t animation_clip = 1;
+    float animation_frame = 0.0f;
+    bool attack_landed = false;
 };
 
 struct Input {
     float move = 0.0f;
     float turn = 0.0f;
-    bool reset = false;
+    bool aim = false;
+    bool fire = false;
+    bool reload = false;
+    bool restart = false;
     bool exit = false;
+};
+
+enum class AutoplayPhase : std::uint8_t {
+    WaitForDeath,
+    Restart,
+    WasteMagazine,
+    StartReload,
+    WaitForReload,
+    Fight,
+    Exit,
+    Complete,
+};
+
+struct Autoplay {
+    bool enabled = false;
+    bool observed_death = false;
+    bool observed_reload = false;
+    AutoplayPhase phase = AutoplayPhase::WaitForDeath;
+    float fire_cooldown = 0.0f;
+    std::uint32_t exit_waypoint = 0;
 };
 
 struct FrameStats {
@@ -96,15 +178,46 @@ Input read_input() {
     } else if((state->buttons & CONT_DPAD_DOWN) != 0) {
         input.move = -1.0f;
     }
-    input.reset = (state->buttons & CONT_A) != 0;
+    input.aim = state->rtrig > 24 || (state->buttons & CONT_Y) != 0;
+    input.fire = (state->buttons & CONT_A) != 0;
+    input.reload = (state->buttons & CONT_X) != 0;
+    input.restart = (state->buttons & CONT_B) != 0;
     input.exit = (state->buttons & CONT_START) != 0;
     return input;
+}
+
+bool file_exists(const char* path) {
+    const file_t file = fs_open(path, O_RDONLY);
+    if(file == FILEHND_INVALID) {
+        return false;
+    }
+    fs_close(file);
+    return true;
+}
+
+void write_autoplay_result(const Autoplay& autoplay,
+                           const Player& player) {
+    const char* result = autoplay.observed_death && autoplay.observed_reload &&
+                                 player.completed_loops > 0
+                             ? "RE4DC_AUTOPLAY_PASS death=1 reload=1 loop=1\n"
+                             : "RE4DC_AUTOPLAY_FAIL\n";
+    const file_t file = fs_open("/vmu/a1/RE4DEMO", O_WRONLY | O_CREAT | O_TRUNC);
+    if(file != FILEHND_INVALID) {
+        fs_write(file, result, std::strlen(result));
+        fs_close(file);
+    }
+    std::printf("%s", result);
 }
 
 void reset_player(Player& player) {
     const std::uint32_t loops = player.completed_loops;
     player = {};
     player.completed_loops = loops;
+}
+
+void reset_encounter(Player& player, Enemy& enemy) {
+    reset_player(player);
+    enemy = {};
 }
 
 bool projected_floor_height(const re4dc::collision::Vec3& a,
@@ -239,11 +352,16 @@ std::uint32_t resolve_walls(const re4dc::collision::Package& collision,
 
 void update_player(Player& player, const re4dc::collision::Package& collision,
                    const Input& input, float delta_seconds) {
+    player.aiming = input.aim && !player.dead;
+    if(player.dead) {
+        return;
+    }
     player.yaw += input.turn * kTurnSpeed * delta_seconds;
+    const float movement = player.aiming ? 0.0f : input.move;
     const float old_x = player.x;
     const float old_z = player.z;
-    player.x += std::sin(player.yaw) * input.move * kMoveSpeed * delta_seconds;
-    player.z += std::cos(player.yaw) * input.move * kMoveSpeed * delta_seconds;
+    player.x += std::sin(player.yaw) * movement * kMoveSpeed * delta_seconds;
+    player.z += std::cos(player.yaw) * movement * kMoveSpeed * delta_seconds;
     player.wall_hits += resolve_walls(collision, player);
     float floor_y = player.y;
     if(find_floor(collision, player.x, player.z, player.y, floor_y)) {
@@ -252,20 +370,15 @@ void update_player(Player& player, const re4dc::collision::Package& collision,
         player.x = old_x;
         player.z = old_z;
     }
-    const float goal_dx = player.x - kGoalX;
-    const float goal_dz = player.z - kGoalZ;
-    if(goal_dx * goal_dx + goal_dz * goal_dz < 16.0f) {
-        ++player.completed_loops;
-        std::printf("re4dc-room: exit reached loops=%lu\n",
-                    static_cast<unsigned long>(player.completed_loops));
-        reset_player(player);
-    }
 }
 
 void update_animation(Player& player, const re4dc::character::Package& character,
                       const Input& input, float delta_seconds) {
     const std::uint32_t desired_clip =
-        std::fabs(input.move) > 0.05f && character.header().clip_count > 1U ? 1U : 0U;
+        !player.aiming && std::fabs(input.move) > 0.05f &&
+                character.header().clip_count > 1U
+            ? 1U
+            : 0U;
     if(player.animation_clip != desired_clip) {
         player.animation_clip = desired_clip;
         player.animation_frame = 0.0f;
@@ -274,6 +387,248 @@ void update_animation(Player& player, const re4dc::character::Package& character
     player.animation_frame += clip.frames_per_second * delta_seconds;
     while(player.animation_frame >= static_cast<float>(clip.frame_count)) {
         player.animation_frame -= static_cast<float>(clip.frame_count);
+    }
+}
+
+float wrap_angle(float angle) {
+    while(angle > kPi) {
+        angle -= 2.0f * kPi;
+    }
+    while(angle < -kPi) {
+        angle += 2.0f * kPi;
+    }
+    return angle;
+}
+
+Input autoplay_input(Autoplay& autoplay, const Player& player,
+                     const Enemy& enemy, float delta_seconds) {
+    Input input{};
+    autoplay.fire_cooldown = std::max(0.0f, autoplay.fire_cooldown - delta_seconds);
+    switch(autoplay.phase) {
+    case AutoplayPhase::WaitForDeath:
+        if(player.dead) {
+            autoplay.observed_death = true;
+            autoplay.phase = AutoplayPhase::Restart;
+        }
+        break;
+    case AutoplayPhase::Restart:
+        input.restart = true;
+        autoplay.phase = AutoplayPhase::WasteMagazine;
+        break;
+    case AutoplayPhase::WasteMagazine:
+        input.aim = true;
+        input.turn = 1.0f;
+        if(player.ammo == 0) {
+            autoplay.phase = AutoplayPhase::StartReload;
+        } else if(autoplay.fire_cooldown <= 0.0f) {
+            input.fire = true;
+            autoplay.fire_cooldown = 0.3f;
+        }
+        break;
+    case AutoplayPhase::StartReload:
+        input.reload = true;
+        autoplay.phase = AutoplayPhase::WaitForReload;
+        break;
+    case AutoplayPhase::WaitForReload:
+        if(player.reload_seconds <= 0.0f && player.ammo == kMagazineSize) {
+            autoplay.observed_reload = true;
+            autoplay.phase = AutoplayPhase::Fight;
+        }
+        break;
+    case AutoplayPhase::Fight: {
+        input.aim = true;
+        const float target_yaw = std::atan2(enemy.x - player.x,
+                                            enemy.z - player.z);
+        const float angle = wrap_angle(target_yaw - player.yaw);
+        input.turn = std::clamp(angle * 2.0f, -1.0f, 1.0f);
+        if(std::fabs(angle) < 0.07f && autoplay.fire_cooldown <= 0.0f) {
+            input.fire = true;
+            autoplay.fire_cooldown = 0.35f;
+        }
+        if(enemy.state == EnemyState::Dead) {
+            autoplay.phase = AutoplayPhase::Exit;
+        }
+        break;
+    }
+    case AutoplayPhase::Exit: {
+        static constexpr float waypoints[][2] = {
+            {0.0f, -238.0f},
+            {28.0f, -238.0f},
+            {28.0f, -276.0f},
+            {7.5f, -281.5f},
+        };
+        const std::uint32_t waypoint = std::min<std::uint32_t>(
+            autoplay.exit_waypoint, 3U);
+        const float waypoint_x = waypoints[waypoint][0];
+        const float waypoint_z = waypoints[waypoint][1];
+        const float dx = waypoint_x - player.x;
+        const float dz = waypoint_z - player.z;
+        if(dx * dx + dz * dz < 1.0f &&
+           autoplay.exit_waypoint < 3U) {
+            ++autoplay.exit_waypoint;
+        }
+        const float target_yaw = std::atan2(dx, dz);
+        const float angle = wrap_angle(target_yaw - player.yaw);
+        input.turn = std::clamp(angle * 2.0f, -1.0f, 1.0f);
+        if(std::fabs(angle) < 0.18f) {
+            input.move = 1.0f;
+        }
+        if(player.completed_loops > 0) {
+            autoplay.phase = AutoplayPhase::Complete;
+        }
+        break;
+    }
+    case AutoplayPhase::Complete:
+        input.exit = true;
+        break;
+    }
+    return input;
+}
+
+void set_enemy_clip(Enemy& enemy, std::uint32_t clip) {
+    if(enemy.animation_clip != clip) {
+        enemy.animation_clip = clip;
+        enemy.animation_frame = 0.0f;
+    }
+}
+
+void advance_enemy_animation(Enemy& enemy,
+                             const re4dc::character::Package& character,
+                             float delta_seconds, bool loop) {
+    const auto& clip = character.clips()[enemy.animation_clip];
+    enemy.animation_frame += clip.frames_per_second * delta_seconds;
+    if(loop) {
+        while(enemy.animation_frame >= static_cast<float>(clip.frame_count)) {
+            enemy.animation_frame -= static_cast<float>(clip.frame_count);
+        }
+    } else {
+        enemy.animation_frame = std::min(
+            enemy.animation_frame, static_cast<float>(clip.frame_count - 1U));
+    }
+}
+
+void update_enemy(Enemy& enemy, Player& player,
+                  const re4dc::character::Package& character,
+                  const re4dc::collision::Package& collision,
+                  float delta_seconds) {
+    if(enemy.health <= 0) {
+        enemy.state = EnemyState::Dead;
+    }
+    if(enemy.state == EnemyState::Dead) {
+        set_enemy_clip(enemy, 4);
+        advance_enemy_animation(enemy, character, delta_seconds, false);
+        return;
+    }
+    if(enemy.state == EnemyState::Hit) {
+        set_enemy_clip(enemy, 3);
+        advance_enemy_animation(enemy, character, delta_seconds, false);
+        const auto& clip = character.clips()[enemy.animation_clip];
+        if(enemy.animation_frame >= static_cast<float>(clip.frame_count - 1U)) {
+            enemy.state = EnemyState::Chase;
+            set_enemy_clip(enemy, 1);
+        }
+        return;
+    }
+
+    const float dx = player.x - enemy.x;
+    const float dz = player.z - enemy.z;
+    const float distance = std::sqrt(dx * dx + dz * dz);
+    const float target_yaw = std::atan2(dx, dz);
+    const float turn = std::clamp(wrap_angle(target_yaw - enemy.yaw),
+                                  -kEnemyTurnSpeed * delta_seconds,
+                                  kEnemyTurnSpeed * delta_seconds);
+    enemy.yaw = wrap_angle(enemy.yaw + turn);
+    if(player.dead || distance > kEnemyAttackRange) {
+        enemy.state = EnemyState::Chase;
+        set_enemy_clip(enemy, 1);
+        if(!player.dead && distance > 0.001f) {
+            const float step = std::min(kEnemyMoveSpeed * delta_seconds,
+                                        distance - kEnemyAttackRange * 0.85f);
+            enemy.x += dx / distance * std::max(step, 0.0f);
+            enemy.z += dz / distance * std::max(step, 0.0f);
+            float floor_y = enemy.y;
+            if(find_floor(collision, enemy.x, enemy.z, enemy.y, floor_y)) {
+                enemy.y = floor_y;
+            }
+        }
+        advance_enemy_animation(enemy, character, delta_seconds, true);
+        return;
+    }
+
+    if(enemy.state != EnemyState::Attack) {
+        enemy.state = EnemyState::Attack;
+        enemy.attack_landed = false;
+        set_enemy_clip(enemy, 2);
+    }
+    const auto& clip = character.clips()[enemy.animation_clip];
+    const float previous = enemy.animation_frame;
+    advance_enemy_animation(enemy, character, delta_seconds, false);
+    const float strike_frame = static_cast<float>(clip.frame_count) * 0.52f;
+    if(!enemy.attack_landed && previous < strike_frame &&
+       enemy.animation_frame >= strike_frame) {
+        enemy.attack_landed = true;
+        player.health = std::max(0, player.health - 25);
+        std::printf("re4dc-room: ganado attack player_hp=%d\n", player.health);
+        if(player.health == 0) {
+            player.dead = true;
+        }
+    }
+    if(enemy.animation_frame >= static_cast<float>(clip.frame_count - 1U)) {
+        enemy.animation_frame = 0.0f;
+        enemy.attack_landed = false;
+    }
+}
+
+bool shot_hits_enemy(const Player& player, const Enemy& enemy) {
+    if(enemy.state == EnemyState::Dead) {
+        return false;
+    }
+    const float dx = enemy.x - player.x;
+    const float dz = enemy.z - player.z;
+    const float distance_squared = dx * dx + dz * dz;
+    if(distance_squared > 35.0f * 35.0f) {
+        return false;
+    }
+    const float target_yaw = std::atan2(dx, dz);
+    return std::fabs(wrap_angle(target_yaw - player.yaw)) < 0.12f;
+}
+
+void update_combat(Player& player, Enemy& enemy, const Input& input,
+                   bool fire_pressed, bool reload_pressed,
+                   float delta_seconds) {
+    if(player.dead) {
+        return;
+    }
+    if(player.reload_seconds > 0.0f) {
+        player.reload_seconds -= delta_seconds;
+        if(player.reload_seconds <= 0.0f) {
+            player.reload_seconds = 0.0f;
+            player.ammo = kMagazineSize;
+            std::printf("re4dc-room: reload complete ammo=%d\n", player.ammo);
+        }
+        return;
+    }
+    if(reload_pressed && player.ammo < kMagazineSize) {
+        player.reload_seconds = 1.0f;
+        std::printf("re4dc-room: reload start\n");
+        return;
+    }
+    if(!fire_pressed || !input.aim || player.ammo <= 0) {
+        return;
+    }
+    --player.ammo;
+    const bool hit = shot_hits_enemy(player, enemy);
+    std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
+    if(hit) {
+        --enemy.health;
+        if(enemy.health <= 0) {
+            enemy.state = EnemyState::Dead;
+            set_enemy_clip(enemy, 4);
+            std::printf("re4dc-room: ganado defeated\n");
+        } else {
+            enemy.state = EnemyState::Hit;
+            set_enemy_clip(enemy, 3);
+        }
     }
 }
 
@@ -404,21 +759,24 @@ std::uint32_t character_color(std::uint32_t material) {
 }
 
 std::uint32_t draw_character(const re4dc::character::Package& character,
-                             const Player& player, ProjectedVertex* projected) {
-    const auto& clip = character.clips()[player.animation_clip];
+                             float actor_x, float actor_y, float actor_z,
+                             float actor_yaw, std::uint32_t animation_clip,
+                             float animation_frame, ProjectedVertex* projected,
+                             std::uint32_t color_bias) {
+    const auto& clip = character.clips()[animation_clip];
     const std::uint32_t local_frame =
-        static_cast<std::uint32_t>(player.animation_frame) % clip.frame_count;
+        static_cast<std::uint32_t>(animation_frame) % clip.frame_count;
     const auto* source = character.frame_positions(clip.first_frame + local_frame);
     const float scale = character.header().position_quantum_m;
-    const float sine = std::sin(player.yaw);
-    const float cosine = std::cos(player.yaw);
+    const float sine = std::sin(actor_yaw);
+    const float cosine = std::cos(actor_yaw);
     for(std::uint32_t index = 0; index < character.header().vertex_count; ++index) {
         const float local_x = static_cast<float>(source[index * 3U]) * scale;
         const float local_y = static_cast<float>(source[index * 3U + 1U]) * scale;
         const float local_z = static_cast<float>(source[index * 3U + 2U]) * scale;
-        float x = player.x + local_x * cosine + local_z * sine;
-        float y = player.y + local_y;
-        float z = player.z - local_x * sine + local_z * cosine;
+        float x = actor_x + local_x * cosine + local_z * sine;
+        float y = actor_y + local_y;
+        float z = actor_z - local_x * sine + local_z * cosine;
         mat_trans_single(x, y, z);
         projected[index] = {x, y, z};
     }
@@ -428,7 +786,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
     for(std::uint32_t batch_index = 0;
         batch_index < character.header().batch_count; ++batch_index) {
         const auto& batch = character.batches()[batch_index];
-        const std::uint32_t color = character_color(batch.material);
+        const std::uint32_t color = character_color(batch.material + color_bias);
         const std::uint32_t end = batch.first_index + batch.index_count;
         for(std::uint32_t index = batch.first_index; index < end; index += 3U) {
             const ProjectedVertex& a = projected[indices[index]];
@@ -460,7 +818,51 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
     return triangles;
 }
 
-void draw_goal() {
+void submit_screen_quad(float left, float top, float right, float bottom,
+                        std::uint32_t color) {
+    const pvr_vertex_t vertices[4] = {
+        {.flags = PVR_CMD_VERTEX, .x = left, .y = top, .z = 1.0f,
+         .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
+        {.flags = PVR_CMD_VERTEX, .x = right, .y = top, .z = 1.0f,
+         .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
+        {.flags = PVR_CMD_VERTEX, .x = left, .y = bottom, .z = 1.0f,
+         .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
+        {.flags = PVR_CMD_VERTEX_EOL, .x = right, .y = bottom, .z = 1.0f,
+         .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
+    };
+    for(const auto& vertex : vertices) {
+        pvr_prim(&vertex, sizeof(vertex));
+    }
+}
+
+void draw_hud(const Player& player, const Enemy& enemy) {
+    submit_screen_quad(8.0f, 8.0f, 108.0f, 14.0f, 0xff381818U);
+    submit_screen_quad(8.0f, 8.0f, 8.0f + static_cast<float>(player.health),
+                       14.0f, 0xffe2463fU);
+    for(int bullet = 0; bullet < kMagazineSize; ++bullet) {
+        const std::uint32_t color = bullet < player.ammo ? 0xffffd65aU : 0xff463e32U;
+        const float left = 8.0f + static_cast<float>(bullet) * 8.0f;
+        submit_screen_quad(left, 20.0f, left + 5.0f, 27.0f, color);
+    }
+    if(enemy.state != EnemyState::Dead) {
+        submit_screen_quad(212.0f, 8.0f, 312.0f, 14.0f, 0xff321a18U);
+        submit_screen_quad(212.0f, 8.0f,
+                           212.0f + 100.0f * static_cast<float>(enemy.health) /
+                                      static_cast<float>(kEnemyMaxHealth),
+                           14.0f, 0xffd26937U);
+    }
+    if(player.aiming) {
+        submit_screen_quad(156.0f, 119.0f, 164.0f, 121.0f, 0xffff4040U);
+        submit_screen_quad(159.0f, 116.0f, 161.0f, 124.0f, 0xffff4040U);
+    }
+    if(player.dead) {
+        submit_screen_quad(70.0f, 104.0f, 250.0f, 136.0f, 0xff7a1111U);
+    } else if(enemy.state == EnemyState::Dead) {
+        submit_screen_quad(92.0f, 106.0f, 228.0f, 116.0f, 0xff36c85cU);
+    }
+}
+
+void draw_goal(bool unlocked) {
     constexpr float radius = 0.55f;
     const point_t base[4] = {
         {kGoalX - radius, kGoalY + 0.05f, kGoalZ - radius, 1.0f},
@@ -471,16 +873,18 @@ void draw_goal() {
     const point_t top = {kGoalX, kGoalY + 2.4f, kGoalZ, 1.0f};
     for(unsigned index = 0; index < 4; ++index) {
         submit_world_triangle(base[index], base[(index + 1U) % 4U], top,
-                              0xff45ff78U);
+                              unlocked ? 0xff45ff78U : 0xff8b2525U);
     }
 }
 
 FrameStats render_scene(const re4dc::room::Package& room,
-                        const re4dc::character::Package& character,
-                        const Player& player,
+                        const re4dc::character::Package& leon,
+                        const re4dc::character::Package& ganado,
+                        const Player& player, const Enemy& enemy,
                         const pvr_poly_hdr_t& polygon_header,
                         ProjectedVertex* projected, std::uint32_t* transformed_at,
-                        ProjectedVertex* character_projected,
+                        ProjectedVertex* leon_projected,
+                        ProjectedVertex* ganado_projected,
                         std::uint32_t frame_token) {
     FrameStats stats{};
     const auto* groups = room.groups();
@@ -520,9 +924,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
             }
         }
     }
-    stats.character_triangles =
-        draw_character(character, player, character_projected);
-    draw_goal();
+    stats.character_triangles = draw_character(
+        leon, player.x, player.y, player.z, player.yaw, player.animation_clip,
+        player.animation_frame, leon_projected, 0U);
+    stats.character_triangles += draw_character(
+        ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
+        enemy.animation_frame, ganado_projected, 3U);
+    draw_goal(enemy.state == EnemyState::Dead);
+    draw_hud(player, enemy);
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
     pvr_list_finish();
@@ -544,22 +953,35 @@ int main() {
         std::printf("re4dc-room: collision load failed: %s\n", collision.error());
         return 1;
     }
-    re4dc::character::Package character;
-    if(!character.open("/rd/leon.re4chr")) {
-        std::printf("re4dc-room: character load failed: %s\n", character.error());
+    re4dc::character::Package leon;
+    if(!leon.open("/rd/leon.re4chr")) {
+        std::printf("re4dc-room: Leon load failed: %s\n", leon.error());
+        return 1;
+    }
+    re4dc::character::Package ganado;
+    if(!ganado.open("/rd/ganado.re4chr")) {
+        std::printf("re4dc-room: Ganado load failed: %s\n", ganado.error());
         return 1;
     }
     std::printf(
-        "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu leon=%lu/%lu/%lu\n",
+        "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
+        "leon=%lu/%lu/%lu ganado=%lu/%lu/%lu\n",
         static_cast<unsigned long>(room.header().vertex_count),
         static_cast<unsigned long>(room.header().index_count / 3U),
         static_cast<unsigned long>(room.header().group_count),
         static_cast<unsigned long>(collision.header().floor_count),
         static_cast<unsigned long>(collision.header().slope_count),
         static_cast<unsigned long>(collision.header().wall_count),
-        static_cast<unsigned long>(character.header().vertex_count),
-        static_cast<unsigned long>(character.header().index_count / 3U),
-        static_cast<unsigned long>(character.header().frame_count));
+        static_cast<unsigned long>(leon.header().vertex_count),
+        static_cast<unsigned long>(leon.header().index_count / 3U),
+        static_cast<unsigned long>(leon.header().frame_count),
+        static_cast<unsigned long>(ganado.header().vertex_count),
+        static_cast<unsigned long>(ganado.header().index_count / 3U),
+        static_cast<unsigned long>(ganado.header().frame_count));
+    if(ganado.header().clip_count < 5U) {
+        std::printf("re4dc-room: Ganado package needs idle/walk/attack/hit/death\n");
+        return 1;
+    }
 
     vid_set_mode(DM_320x240, PM_RGB565);
     pvr_init_defaults();
@@ -573,6 +995,13 @@ int main() {
     // mat_perspective maps positive view Y toward the bottom of the PVR screen.
     const vector_t up = {0.0f, -1.0f, 0.0f, 0.0f};
     Player player{};
+    Enemy enemy{};
+    Autoplay autoplay{};
+    autoplay.enabled = file_exists("/rd/autoplay.flag");
+    if(autoplay.enabled) {
+        enemy.z = player.z - kEnemyAttackRange * 0.85f;
+        player.health = 25;
+    }
     float initial_floor = player.y;
     if(!find_floor(collision, player.x, player.z, player.y, initial_floor)) {
         std::printf("re4dc-room: spawn is not on collision floor\n");
@@ -581,35 +1010,85 @@ int main() {
     player.y = initial_floor;
     std::uint32_t frame = 0;
     std::uint64_t previous_time = timer_us_gettime64();
-    bool reset_was_down = false;
+    bool fire_was_down = false;
+    bool reload_was_down = false;
+    bool restart_was_down = false;
     std::unique_ptr<ProjectedVertex[]> projected(
         new(std::nothrow) ProjectedVertex[room.header().vertex_count]);
     std::unique_ptr<std::uint32_t[]> transformed_at(
         new(std::nothrow) std::uint32_t[room.header().vertex_count]());
-    std::unique_ptr<ProjectedVertex[]> character_projected(
-        new(std::nothrow) ProjectedVertex[character.header().vertex_count]);
+    std::unique_ptr<ProjectedVertex[]> leon_projected(
+        new(std::nothrow) ProjectedVertex[leon.header().vertex_count]);
+    std::unique_ptr<ProjectedVertex[]> ganado_projected(
+        new(std::nothrow) ProjectedVertex[ganado.header().vertex_count]);
     if(projected == nullptr || transformed_at == nullptr ||
-       character_projected == nullptr) {
+       leon_projected == nullptr || ganado_projected == nullptr) {
         std::printf("re4dc-room: transform cache allocation failed\n");
         return 1;
     }
-    std::printf("re4dc-room: stick=turn/move A=reset START=exit; reach green marker\n");
+    std::printf(
+        "re4dc-room: stick=turn/move RT/Y=aim A=fire X=reload B=restart "
+        "START=exit; defeat Ganado then reach green marker\n");
+    if(autoplay.enabled) {
+        std::printf("re4dc-room: deterministic autoplay enabled\n");
+    }
     while(true) {
-        const Input input = read_input();
-        if(input.exit) {
-            break;
-        }
-        if(input.reset && !reset_was_down) {
-            reset_player(player);
-        }
-        reset_was_down = input.reset;
         const std::uint64_t now = timer_us_gettime64();
         const std::uint64_t frame_us = now - previous_time;
         const float delta_seconds = std::clamp(
             static_cast<float>(frame_us) / 1000000.0f, 0.0f, 0.1f);
         previous_time = now;
+        const Input input = autoplay.enabled
+                                ? autoplay_input(autoplay, player, enemy,
+                                                 delta_seconds)
+                                : read_input();
+        g_re4dc_demo_telemetry.frame = frame;
+        g_re4dc_demo_telemetry.autoplay_phase =
+            static_cast<std::uint32_t>(autoplay.phase);
+        g_re4dc_demo_telemetry.flags =
+            (autoplay.enabled ? 1U : 0U) |
+            (autoplay.observed_death ? 2U : 0U) |
+            (autoplay.observed_reload ? 4U : 0U) |
+            (enemy.state == EnemyState::Dead ? 8U : 0U) |
+            (player.dead ? 16U : 0U);
+        g_re4dc_demo_telemetry.player_health = player.health;
+        g_re4dc_demo_telemetry.ammo = player.ammo;
+        g_re4dc_demo_telemetry.enemy_health = enemy.health;
+        g_re4dc_demo_telemetry.loops = player.completed_loops;
+        g_re4dc_demo_telemetry.player_x = player.x;
+        g_re4dc_demo_telemetry.player_z = player.z;
+        g_re4dc_demo_telemetry.player_yaw = player.yaw;
+        g_re4dc_demo_telemetry.enemy_x = enemy.x;
+        g_re4dc_demo_telemetry.enemy_z = enemy.z;
+        if(input.exit) {
+            if(autoplay.enabled) {
+                write_autoplay_result(autoplay, player);
+            }
+            break;
+        }
+        const bool fire_pressed = input.fire && !fire_was_down;
+        const bool reload_pressed = input.reload && !reload_was_down;
+        if(input.restart && !restart_was_down) {
+            reset_encounter(player, enemy);
+            std::printf("re4dc-room: encounter restarted\n");
+        }
+        fire_was_down = input.fire;
+        reload_was_down = input.reload;
+        restart_was_down = input.restart;
         update_player(player, collision, input, delta_seconds);
-        update_animation(player, character, input, delta_seconds);
+        update_animation(player, leon, input, delta_seconds);
+        update_combat(player, enemy, input, fire_pressed, reload_pressed,
+                      delta_seconds);
+        update_enemy(enemy, player, ganado, collision, delta_seconds);
+        const float goal_dx = player.x - kGoalX;
+        const float goal_dz = player.z - kGoalZ;
+        if(enemy.state == EnemyState::Dead && !player.dead &&
+           goal_dx * goal_dx + goal_dz * goal_dz < 16.0f) {
+            ++player.completed_loops;
+            std::printf("re4dc-room: demo loop complete loops=%lu\n",
+                        static_cast<unsigned long>(player.completed_loops));
+            reset_encounter(player, enemy);
+        }
 
         const float fx = std::sin(player.yaw);
         const float fz = std::cos(player.yaw);
@@ -624,15 +1103,16 @@ int main() {
         mat_perspective(160.0f, 120.0f, 1.0f / std::tan(kPi / 6.0f), 1.0f,
                         500.0f);
         mat_lookat(&eye, &target, &up);
-        const FrameStats stats = render_scene(room, character, player, polygon_header,
-                                              projected.get(), transformed_at.get(),
-                                              character_projected.get(),
-                                              frame + 1U);
+        const FrameStats stats = render_scene(
+            room, leon, ganado, player, enemy, polygon_header, projected.get(),
+            transformed_at.get(), leon_projected.get(), ganado_projected.get(),
+            frame + 1U);
         ++frame;
         if(frame % 120U == 0U) {
             std::printf(
                 "re4dc-room: frame=%lu pos=%.2f,%.2f,%.2f groups=%lu vertices=%lu "
-                "triangles=%lu leon_triangles=%lu wall_hits=%lu loops=%lu frame_us=%llu wait_us=%llu "
+                "triangles=%lu actors_triangles=%lu wall_hits=%lu loops=%lu "
+                "hp=%d ammo=%d enemy_hp=%d state=%u frame_us=%llu wait_us=%llu "
                 "submit_us=%llu finish_us=%llu\n",
                 static_cast<unsigned long>(frame), player.x, player.y, player.z,
                 static_cast<unsigned long>(stats.groups),
@@ -641,6 +1121,8 @@ int main() {
                 static_cast<unsigned long>(stats.character_triangles),
                 static_cast<unsigned long>(player.wall_hits),
                 static_cast<unsigned long>(player.completed_loops),
+                player.health, player.ammo, enemy.health,
+                static_cast<unsigned>(enemy.state),
                 static_cast<unsigned long long>(frame_us),
                 static_cast<unsigned long long>(stats.wait_us),
                 static_cast<unsigned long long>(stats.submit_us),

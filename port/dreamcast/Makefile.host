@@ -10,8 +10,9 @@ R10D_SAT ?= build/private/r10d.re4sat
 R10D_CELL_SIZE ?= 0
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
 LEON_CHARACTER ?= build/private/leon.re4chr
+GANADO_CHARACTER ?= build/private/ganado.re4chr
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d character-leon demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d character-leon character-ganado demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -44,7 +45,14 @@ character-leon:
 		--cache-dir build/private/disc-cache --model-archive pl00.drs --model-entry 0 \
 		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 --output $(LEON_CHARACTER)
 
-demo-r10d: room-r10d character-leon
+character-ganado:
+	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
+		--cache-dir build/private/disc-cache --model-archive em10.drs --model-entry 440 \
+		--clip idle:em10.drs:1 --clip walk:em10.drs:4 \
+		--clip attack:em10.drs:130 --clip hit:em10.drs:42 \
+		--clip death:em10.drs:101 --output $(GANADO_CHARACTER)
+
+demo-r10d: room-r10d character-leon character-ganado
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

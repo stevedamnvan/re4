@@ -39,7 +39,8 @@ GameCube visibility or image parity.
   withdraw the inference that original room art must therefore be replaced.
 - The original Leon body is now decoded, skinned offline with the verified
   source evaluator, and rendered in the collision-controlled room with the
-  source-mapped starting-handgun idle and walk clips. Combat remains unbuilt.
+  source-mapped starting-handgun idle and walk clips. A bounded one-Ganado
+  combat translation now supplies the complete demo loop described below.
 - The existing converter already preserves exported OBJ groups when invoked
   with `--cell-size 0`. A private comparison package was generated: 226 groups,
   311 batches, 3,197,028 bytes, with the same 63,745 triangles and 75,009 vertices.
@@ -53,7 +54,7 @@ GameCube visibility or image parity.
 |---|---|---|
 | P0 - walkable room | **Runtime integrated.** Maple analog/D-pad movement, a shoulder follow camera, SAT floor/wall collision, spawn, A reset, START exit, and a visible route marker now run in one native executable with an orange placeholder actor. The source-group comparison is complete and timing phases are instrumented. The remaining bounded work is near-plane clipping and a clean three-loop record. | A recorded controller route moves, turns, stops at walls, follows the intended floor, reaches the exit, and resets three times without drift or growing allocations. This is the walkable checkpoint, not accepted RE4 gameplay. |
 | P1 - visible Leon | **Runtime integrated.** The converter decodes the 1,484-vertex primary body and 2,519 source triangles, evaluates the source-mapped 91-frame idle and 29-frame walk clips, applies the original weighted skinning rules offline, and emits a 1.1 MB private package. The room runtime places and rotates the animated body on SAT collision and switches clips from controller movement. | An isolated Flycast route shows the disc-derived animated body positioned on the floor while idle and moving. This closes the visible-body bridge; face/hair/hands/weapon attachments, textures, combined performance, and physical hardware remain P2/P3 work rather than being implied by this checkpoint. |
-| P2 - small combat loop | Link only the source player/handgun/Ganado behavior required for aim, fire, reload/ammo, hit reaction, enemy approach/attack, player damage/death, enemy death, and restart. Hard-code one encounter and exit; add only the scheduler dependencies exercised by these paths. | A controller can aim, defeat one attacking Ganado, take damage, die/restart, and complete the route. Source behavior deviations are recorded; a generic substitute AI is not accepted as translated RE4 behavior. |
+| P2 - small combat loop | **Runtime integrated and Flycast replay passed.** One disc-derived `em10` village Ganado uses source-selected idle, walk, bare-hand catch, head-hit, and knock-out clips. A bounded translation of its walk/turn/attack/damage/death states drives approach and attack. Leon can aim, fire, reload, take damage, die, restart, defeat it, and unlock the route exit. | The deterministic controller-path replay observed player death, restart, an empty magazine and reload, enemy defeat, collision traversal, and one exit/reset loop. The VMU contains `RE4DC_AUTOPLAY_PASS death=1 reload=1 loop=1`; retained live SH-4 telemetry independently reported phase 7, flags `0x7`, and loop count 1. This is emulator acceptance; presentation, performance, and stock hardware remain P3. |
 | P3 - playable validation | Add the basic textures/cutouts needed for scene readability, measure the combined runtime, trim only measured visual costs, and package it for a named stock Dreamcast loading route. | Repeatable walk/combat/reset runs at the 320x240, 30 fps target within all stock memory pools. Flycast and physical Dreamcast results are reported separately; physical acceptance remains open until run. |
 
 P0 includes one bounded renderer correction/comparison pass below. Then move
@@ -107,16 +108,12 @@ milestone and are outside this backlog.
 
 ## Next concrete work item
 
-Begin P2 with the smallest complete interaction contract: aim state and reticle,
-six-round ammo, fire/hit test, timed reload, one approaching damage source,
-player/enemy health and death, then restart and exit. Map each state to the
-existing source routines and constants before replacing temporary presentation
-with the matching Leon, handgun, and Ganado clips.
-
-Before converting the P2 Ganado, inspect existing model variants and source
-selection logic for a compatible cheaper mesh. Preserve necessary
-material/vertex-colour data, and keep the P0 near-plane/clean-loop work bounded
-to failures that appear on the combat route.
+Begin P3 with the measured bottleneck: batch actor and room triangle submission
+and record combined route percentiles. Keep the accepted combat state contract
+unchanged while adding only the handgun/hand and basic texture or cutout data
+needed to read aiming, hits, and enemy state at 320x240. Then build a named
+stock-Dreamcast loading image and report emulator and hardware evidence
+separately.
 
 Only tools, source changes, tests, and documentation are committed and pushed
 to `origin/dreamcast-port`. The disc, converted art, and captures stay private.

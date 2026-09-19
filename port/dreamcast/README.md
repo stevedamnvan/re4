@@ -24,6 +24,9 @@ and asset reference, while this target is compiled for SH-4 with KallistiOS.
 - Disc-derived Leon prototype: the original 1,484-vertex body is skinned
   offline with the source motion evaluator and plays the starting-handgun idle
   and walk cycles in the native room executable
+- Small combat loop: one disc-derived village Ganado approaches, turns, attacks,
+  reacts to aimed shots, and dies; Leon has a reticle, health, six-round ammo,
+  timed reload, death/restart, and a defeat-gated room exit
 
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
@@ -78,7 +81,8 @@ original game motion code on the host. The second build produces
 are tracked by Git. See
 [the real-motion SH-4 baseline](docs/REAL_MOTION_SH4_BASELINE.md).
 
-Prepare the private `r10d` and Leon packages, then build the native room demo:
+Prepare the private `r10d`, Leon, and Ganado packages, then build the native
+room demo:
 
 ```sh
 make -C port/dreamcast -f Makefile.host demo-r10d
@@ -89,24 +93,26 @@ make -C port/dreamcast/room
 The executable validates the room, collision, and character packages, culls
 room groups, submits flat-shaded PVR geometry, and supports analog-stick or
 D-pad tank movement, SAT floor/wall collision, a shoulder follow camera,
-A-button reset, START exit, route telemetry, and idle/walk animation selection.
+source-derived actor animation, and the combat loop. Controls are stick/D-pad
+move and turn, right trigger or Y aim, A fire, X reload, B restart, and START
+exit. Defeat the Ganado before the route marker unlocks.
 The generated packages stay ignored. The first broad orbit proof and the
 current close gameplay view both miss the frame budget; their timer includes
 PVR wait time. See
 [the room SH-4 baseline](docs/ROOM_SH4_BASELINE.md).
 The integrated movement/collision evidence and its remaining P0 limits are in
 [the walkable r10d checkpoint](docs/WALKABLE_R10D_BASELINE.md).
+The source mappings, deliberate behavior bounds, controls, and full-loop
+Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
 
 ## Near-term sequence
 
-1. Add the minimum aim, fire, reload, damage, and one-Ganado paths for a small
-   combat loop, using the same private offline character conversion boundary.
-2. Trim the measured room submission bottleneck enough for readable combat;
+1. Trim the measured room submission bottleneck enough for readable combat;
    add near-plane clipping only if the combat route demonstrates the need.
-3. Add the essential Leon, handgun, and Ganado attachments or textures needed
+2. Add the essential Leon, handgun, and Ganado attachments or textures needed
    for combat readability, without expanding into a general asset renderer.
    Audit existing cheaper model variants before making new simplified art.
-4. Measure the combined runtime, add essential textures/cutouts, and validate
+3. Measure the combined runtime, add essential textures/cutouts, and validate
    it on stock Dreamcast. Continue useful Flycast iteration while hardware
    validation is pending, without claiming hardware acceptance.
 
