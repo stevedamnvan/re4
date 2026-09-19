@@ -28,4 +28,7 @@ tools/research/mwccdbg/retrowin32
 /port/dreamcast/build/
 /port/dreamcast/kos/*.o
 /port/dreamcast/kos/*.elf
+/port/dreamcast/**/*.o
+/port/dreamcast/**/*.elf
+/port/dreamcast/**/romdisk.img
 /port/dreamcast/**/__pycache__/
