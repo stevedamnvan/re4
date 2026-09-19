@@ -3,8 +3,10 @@ BUILD := build/host
 CXX ?= g++
 CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Werror -pedantic
 PYTHON ?= python3
+R10D_OBJ ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_004.scenario.obj
+R10D_ROOM ?= build/private/r10d.re4room
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -27,6 +29,9 @@ motion-cross-host:
 
 motion-real-host:
 	$(MAKE) -C motion -f Makefile.host real-run
+
+room-r10d:
+	$(PYTHON) tools/convert_room_obj.py $(R10D_OBJ) $(R10D_ROOM)
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

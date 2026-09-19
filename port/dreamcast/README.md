@@ -74,14 +74,17 @@ are tracked by Git. See
 
 ## Near-term sequence
 
-1. Extend the verified real Leon motion path into a skinned character render,
-   with model and texture conversion kept in a private generated package.
-2. Apply the same parse/serialise/compare pattern to one room archive, its
-   geometry, textures, collision, and placement data.
-3. Extend the KOS executable with logging, timing,
+1. Build the hard-coded `r10d` vertical slice: converted room geometry, fixed
+   camera, controller movement, SAT collision, animated Leon, one Ganado,
+   aim/shoot, and an exit trigger. See
+   [the r10d vertical-slice boundary](docs/R10D_VERTICAL_SLICE.md).
+2. Extend the KOS executable with logging, timing,
    allocation telemetry, and the controlled cooperative scheduler boundary.
-4. Validate the first animated actor and room on physical Dreamcast hardware
+3. Validate the first animated actor and room on physical Dreamcast hardware
    before expanding the gameplay dependency set.
+
+General room streaming, menus, complete audio, story events, and campaign
+progression stay behind that playable gate.
 
 See [Soulcalibur reuse](docs/SOULCALIBUR_REUSE.md) for the local Flycast lessons
 that govern evidence, resource identity, and visual validation.
