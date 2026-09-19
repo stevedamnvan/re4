@@ -65,31 +65,43 @@ python3 port/dreamcast/tools/convert_room_obj.py --cell-size 10 \
   port/dreamcast/build/private/r10d-cells.re4room
 ```
 
-Both packages retain the same geometry. At the unchanged spawn camera, the
+These historical comparison packages retain the same geometry. At the unchanged spawn camera, the
 source-group package transformed 47,966 vertices versus 58,217 for cells and
 submitted the same 11,592 triangles; combined render time fell only from about
 114 ms to 110 ms. Source-group bounds are conservative but are not yet mapped
 to original SMD visibility flags or source culling spheres.
 
-Textures are intentionally outside version 1. The first runtime checkpoint is
-flat-shaded room geometry plus collision. Texture conversion follows once the
-camera, visibility, and frame-time measurements are real.
+The current experimental default additionally uses an 8 m room cluster. That
+changes geometry and UVs and has not passed presentation review. Today's plan
+requires intact foreground shapes and correct textures in the selected area.
+
+Textures are outside the historical version 1 package. They are now the first
+implementation priority for today's convincing-demo plan: the existing TPL and
+MTL material/alpha mappings must feed a versioned textured package. The flat
+prototype is not presentation acceptance; see [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
 
 `RE4DCSAT` version 1 is a separate little-endian collision package containing
 scaled positions, source normals, polygon vertex/normal indices, attributes,
 and the original floor/slope/wall ranges. The runtime currently scans the 50
 floor/slope and 219 wall triangles directly. It does not need the source block
-tree at this scale. The initial route starts at `(0, -7.98, -245)`, uses a
-temporary orange player marker, and resets near the green marker at
-`(9, -7.98, -284)`.
+tree at this scale. The current prototype starts at `(0, -7.98, -245)`, draws
+animated actor bodies, and resets near the marker at `(32, -7.98, -284)`.
+Today's encounter will be selected for visual coherence and reachable combat;
+the older x=9 route is superseded.
 
-## Playable acceptance boundary
+## Prototype and presentation acceptance
 
-The vertical slice is playable when a controller can move animated Leon in the
-converted `r10d` room, SAT-derived collision blocks him, a shoulder follow camera
-frames the room, and one Ganado can approach, attack, and take aimed handgun
-damage. Firing/reloading, player damage/death, enemy death, and an exit/reset
-complete the small loop. This follows the earlier walkable checkpoint with
-temporary placeholders, which is not gameplay acceptance. Menus, saves, general
-room streaming,
-story events, complete audio, and campaign progression are outside this gate.
+The historical functional prototype requires controller movement for animated
+Leon in converted `r10d`, SAT-derived player collision, a shoulder follow camera,
+and one Ganado that can approach, attack, and take aimed handgun damage.
+Firing/reloading, player damage/death, enemy death, and an exit/reset
+complete the small loop. The recorded evidence covers automated state transitions;
+it does not establish convincing appearance or a manually reviewed presentation.
+
+Today's acceptance additionally requires complete textured actors and scenery,
+a visible handgun and matching action animation, wall-aware enemy/hit behavior,
+stable camera/clipping, core sound, legible HUD, completion/retry presentation,
+whole-route timing/memory evidence, and a private launchable Flycast package.
+Saves, general room streaming, story events, complete audio coverage, and
+campaign progression remain deferred. The ordered work and deadline tradeoffs
+are in [PLAYABLE_PATH.md](PLAYABLE_PATH.md).

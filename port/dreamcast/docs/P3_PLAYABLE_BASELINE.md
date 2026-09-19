@@ -1,10 +1,16 @@
-# P3 playable Flycast baseline
+# P3 functional Flycast prototype baseline
 
-Recorded 2026-09-19 for the native KallistiOS r10d demo. This closes the
-emulator gameplay and representative-spawn performance gate. It does not close
-visual parity, optical-disc boot, memory-pool, or physical Dreamcast acceptance.
+Recorded 2026-09-19 for the native KallistiOS r10d prototype. This records an
+automated gameplay-state loop and improved performance point samples. The
+earlier description that the performance gate was closed was too broad: no
+whole-route timing distribution or manual audiovisual review was accepted,
+and the final-view sample exceeds the 33.33 ms target.
 
-## Selected profile
+The user's presentation requirement now follows [PLAYABLE_PATH.md](PLAYABLE_PATH.md):
+a convincing textured encounter today in Flycast, with physical Dreamcast next.
+This historical checkpoint does not satisfy that requirement.
+
+## Experimental profile
 
 - 320x240 RGB565, flat-shaded opaque PVR list
 - r10d source-group package clustered per material batch at 8 m
@@ -14,8 +20,9 @@ visual parity, optical-disc boot, memory-pool, or physical Dreamcast acceptance.
 - room and actor frustum/backface rejection
 - one PVR submission per triangle instead of three vertex submissions
 
-The converters are deterministic and keep all generated packages private. The
-default `demo-r10d` target selects this profile. Set `R10D_CLUSTER_SIZE=0` and
+The converters are deterministic and keep all generated packages private. At
+this checkpoint the default `demo-r10d` target selects this experimental profile;
+it has not been promoted for the convincing demo. Set `R10D_CLUSTER_SIZE=0` and
 `CHARACTER_CLUSTER_MM=0` to generate the unmodified comparison meshes.
 
 ## Measured result
@@ -25,13 +32,14 @@ At the representative spawn, live SH-4 telemetry read from Flycast reported:
 | Profile | Groups | Transformed room vertices | Room triangles | Actor triangles | Frame |
 |---|---:|---:|---:|---:|---:|
 | Source groups, source actors | 137 | 47,966 | 11,592 | 3,979 | 117,116 us |
-| Selected playable profile | 61 | 5,633 | 2,038 | 748 | 29,354 us |
+| Experimental LOD profile | 61 | 5,633 | 2,038 | 748 | 29,354 us |
 
-The selected spawn sample is approximately 34.1 frames per second in Flycast.
+The selected spawn sample has a reciprocal rate of approximately 34.1 fps;
+this is not a measured sustained or displayed frame rate.
 The completed route's final view reported 37,821 us (about 26.4 fps), 65 visible
 groups, 5,947 transformed room vertices, 2,022 room triangles, and 752 actor
-triangles. These are point samples rather than route percentiles and are not
-physical console timing.
+triangles. A separate normal-boot sample reported 26,817 us. These are point
+samples rather than route percentiles and are not physical console timing.
 
 The private package identities used by the passing run are:
 
@@ -51,16 +59,20 @@ created VMU image contains:
 
 `RE4DC_AUTOPLAY_PASS death=1 reload=1 loop=1`
 
-This proves that the optimized build observed player death, restart, an empty
-magazine and reload, enemy defeat, collision traversal, exit, and encounter
-reset. The exit is at x=32, z=-284 on the reachable side of the SAT wall. The
-older x=9 exit could only be reached by low-frame-rate tunneling through the
-wall and was removed from the accepted route.
+This establishes that the optimized build's state trace observed player death,
+restart, an empty magazine and reload, enemy defeat, collision traversal, exit, and encounter
+reset. It does not establish manual controller usability or that the visible
+combat matches the trace. The exit is at x=32, z=-284 on the reachable side of
+the SAT wall. The older x=9 route stalled against collision in faster runs;
+low-frame-rate tunneling was the working explanation, not an independently
+verified collision diagnosis. The new route passed the automated loop.
 
 ## Remaining limits
 
-- The room and actors are coarse, untextured LODs. The run demonstrates a
-  readable moving combat prototype, not source-image fidelity.
+- The room and actors are coarse, untextured LODs. Readability and moving visual
+  quality have not been accepted. Telemetry cannot establish either property.
+- Enemy pursuit currently omits wall resolution and the shot check omits wall
+  occlusion. The convincing-demo plan makes those visible behavior fixes required.
 - The 35 m horizon is a scoped demo choice. It does not describe the GameCube
   renderer's general room visibility.
 - Near-plane clipping, route timing percentiles, RAM/VRAM pool peaks, basic

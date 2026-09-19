@@ -4,6 +4,13 @@ This directory contains the new Dreamcast target. It is deliberately separate
 from the byte-matching GameCube build: the upstream build remains the behavior
 and asset reference, while this target is compiled for SH-4 with KallistiOS.
 
+**Current objective (2026-09-19): a convincing, manually playable demo today in
+Flycast; physical Dreamcast next.** The existing build is an untextured gameplay
+prototype. It has not passed visual review or sustained 30 fps acceptance.
+The [demo plan](docs/PLAYABLE_PATH.md) now requires a short textured encounter,
+complete actors and handgun, visible combat feedback, sound, a usable HUD,
+manual testing, and a private launchable package before presentation acceptance.
+
 ## Current checkpoint
 
 - RE4 source baseline: `9dcd989370be7f083a9b66cfd19907fda627c893`
@@ -27,10 +34,11 @@ and asset reference, while this target is compiled for SH-4 with KallistiOS.
 - Small combat loop: one disc-derived village Ganado approaches, turns, attacks,
   reacts to aimed shots, and dies; Leon has a reticle, health, six-round ammo,
   timed reload, death/restart, and a defeat-gated room exit
-- Playable performance profile: deterministic offline LOD keeps the source room
-  and every source animation clip, while a 35 m demo horizon and runtime
-  triangle rejection bring the representative Flycast spawn from 117.1 ms to
-  29.4 ms per frame; the complete automated loop also passes
+- Experimental performance profile: coarse offline LOD, a 35 m horizon, and
+  triangle rejection reduced one Flycast spawn sample from 117.1 to 29.4 ms.
+  A later normal-boot sample was 26.8 ms; the recorded end-of-route sample was
+  37.8 ms. The automated loop passes, but these point samples do not establish
+  sustained 30 fps or acceptable visual quality.
 
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
@@ -111,17 +119,20 @@ The integrated movement/collision evidence and its remaining P0 limits are in
 [the walkable r10d checkpoint](docs/WALKABLE_R10D_BASELINE.md).
 The source mappings, deliberate behavior bounds, controls, and full-loop
 Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
-The measured LOD profile, complete-loop replay, and remaining hardware and
-presentation limits are in [the playable P3 checkpoint](docs/P3_PLAYABLE_BASELINE.md).
+The measured LOD experiment, complete-loop replay, and remaining hardware and
+presentation limits are in [the P3 prototype checkpoint](docs/P3_PLAYABLE_BASELINE.md).
 
 ## Near-term sequence
 
-1. Add the essential Leon, handgun, and Ganado attachments or textures needed
-   for combat readability, without expanding into a general asset renderer.
-   Audit existing cheaper model variants before making new simplified art.
-2. Measure texture residency and route percentiles, then validate
-   it on stock Dreamcast. Continue useful Flycast iteration while hardware
-   validation is pending, without claiming hardware acceptance.
+1. Capture the current appearance and choose one small r10d encounter area.
+2. Produce a native textured scene, then complete textured Leon, his handgun,
+   and one Ganado with the visible action animations. Review moving output.
+3. Correct enemy wall collision, shot occlusion, camera/clipping, and visible
+   contact feedback; add core sound effects, a legible HUD, and completion/retry.
+4. Measure the entire encounter, test manual play and repeated resets, then
+   package a private Flycast launch folder and short recording for today.
+5. Validate the loading route, performance, memory, audio, and controller on
+   physical Dreamcast afterward.
 
 The authoritative next-task order and acceptance criteria are in
 [the playable backlog](docs/PLAYABLE_PATH.md). The
@@ -129,8 +140,9 @@ The authoritative next-task order and acceptance criteria are in
 GameCube differences, real-time scenes, SFD movies, and render-to-texture work.
 See also [the r10d asset boundary](docs/R10D_VERTICAL_SLICE.md).
 
-General room streaming, menus, complete audio, story events, and campaign
-progression stay behind that playable gate.
+General room streaming, full menu systems, complete audio coverage, story
+events, and campaign progression stay behind that demo gate. Minimal start,
+completion/retry presentation and core gameplay sound are required today.
 
 See [Soulcalibur reuse](docs/SOULCALIBUR_REUSE.md) for the local Flycast lessons
 that govern evidence, resource identity, and visual validation.

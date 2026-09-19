@@ -1,127 +1,165 @@
-# Fastest path to a playable Dreamcast translation
+# A convincing RE4 Dreamcast demo
 
-Reassessed 2026-09-19 against the source renderer and current native targets.
-This is the execution backlog for the next slice. It supersedes the earlier
-decision to replace r10d scenery with a collision proxy after the orbit-view
-benchmark. The broader engineering plan remains the campaign roadmap.
-See [the hardware/source findings](HARDWARE_TRANSLATION.md) for the researched
-hardware constraints and distinction between real-time scenes and SFD movies.
+Replanned 2026-09-19 following the user's requirement for a much more convincing
+demo **today, in Flycast first; physical Dreamcast next**. This is the authoritative
+execution queue. The previous P0-P3 records are engineering checkpoints, not
+acceptance of a presentation-ready game.
 
-## Decision
+## What we are delivering
 
-Keep the native KallistiOS target, offline asset conversion, r10d, and the
-already exercised RE4 motion code. Build one integrated, controllable room
-next. SAT supplies collision; a visible SAT proxy is an optional temporary
-development view, not the selected final scenery. Preserve the room artwork
-until representative gameplay measurements identify what actually needs LOD.
+A roughly 60-second, manually playable encounter in a small, recognizable part
+of r10d: textured scenery, complete textured Leon with his handgun, one complete
+textured Ganado, a stable shoulder camera, visible weapon and damage animations,
+gunfire/reload/impact sounds, a readable HUD, and a clear ending and retry.
 
-Do not wait for a complete renderer, exact camera port, all original modules,
-or general platform compatibility before connecting movement and collision.
-Use a source-informed shoulder follow camera initially and record deviations.
-An approximate camera can establish traversal, but cannot establish matched
-GameCube visibility or image parity.
+The program remains native SH-4/KallistiOS code running in Flycast under normal
+Dreamcast settings. The working presentation target is 320x240 at a paced 30 fps.
+Use native-resolution capture for acceptance; display scaling is allowed but
+does not stand in for correct assets. Physical hardware testing follows today's
+Flycast presentation and is separately reported.
 
-## What changed in the assessment
+Today's scope is one encounter, one handgun, one enemy, one coherent location.
+It must allow the presenter to move, turn, aim, miss, reload, fight, win, and
+retry with a controller. A replay or video is useful backup evidence but cannot
+replace that live interaction.
 
-- `src/game/scroll.cpp::setObj` creates separate scenery objects.
-  `trans.cpp::ModelTrans` passes object spheres to the ordering table;
-  `trans_ot.cpp::AddOtWorldPosRadius` and `AddOtModelPosRadius` reject spheres
-  outside the camera frustum. `commonModelTrans` submits accepted models via
-  GX display lists. Some flags and ordering modes bypass ordinary rejection.
-  This establishes culling support, not the number drawn in a specific r10d
-  frame, and does not establish general occlusion culling behind walls.
-- The current viewer uses an arbitrary orbit camera and material batches in
-  centroid-assigned X/Z cells. It transformed 73,340 of 75,009 vertices (97.8%)
-  in the recorded frame. That workload does not establish the gameplay view.
-- Its `render_us=171688` covers `render_room`, including `pvr_wait_ready`.
-  It is an emulator render-call measurement, not isolated SH-4 transform time,
-  GPU time, or a complete gameplay frame. Keep the failure for that viewer;
-  withdraw the inference that original room art must therefore be replaced.
-- The original Leon body is now decoded, skinned offline with the verified
-  source evaluator, and rendered in the collision-controlled room with the
-  source-mapped starting-handgun idle and walk clips. A bounded one-Ganado
-  combat translation now supplies the complete demo loop described below.
-- The existing converter already preserves exported OBJ groups when invoked
-  with `--cell-size 0`. A private comparison package was generated: 226 groups,
-  311 batches, 3,197,028 bytes, with the same 63,745 triangles and 75,009 vertices.
-  The old cell package has 389 groups and 1,147 batches. This comparison became
-  the measured 117,116 us baseline below; the 20 m cell variant regressed to
-  169,858 us. Exported groups still need mapping to source SMD objects; they are
-  not automatically the original culling spheres.
-- Representative combined rendering is now measured. The original package at
-  spawn submitted 11,592 room plus 3,979 actor triangles and took 117,116 us.
-  The selected demo profile uses deterministic 8 m room clustering, 75 mm
-  per-batch animated clustering, a 35 m route horizon, backface/frustum tests,
-  and batched triangle writes. It submits 2,038 room plus 748 actor triangles
-  at the same spawn and measured 29,354 us in Flycast. This is an explicit
-  demo LOD, not GameCube image parity or stock-Dreamcast timing evidence.
+## Why the previous finish line was insufficient
 
-## Ordered implementation backlog
+At source checkpoint `a3f0b39c48817a12fc17b35344dcd7dd5929cc57`:
 
-| Order | Deliverable | Done when |
+- The actors and scenery use flat colors. Room material records contain names
+  but no texture bindings. Character packages do not contain UVs or complete
+  attachments; Leon has only idle and walk clips in this path.
+- Room simplification averages UVs across position/normal clusters. The 8 m
+  setting is an experiment, not accepted art for a textured scene. Character
+  clustering also has no visual acceptance evidence.
+- The 35 m cutoff and missing near-plane clipping are unreviewed visual costs.
+  An improved spawn sample does not establish an acceptable horizon or camera.
+- The enemy uses direct pursuit and floor sampling without wall resolution;
+  shots use a horizontal angle/range check without wall occlusion. Damage can
+  therefore be inconsistent with what the audience sees.
+- Existing proof is an automated state trace and VMU pass marker. Manual input,
+  uninterrupted audiovisual output, and appearance have not been accepted.
+- Reported frame samples span 26.8-37.8 ms, including a sample over the 33.33 ms
+  budget. They are not route percentiles or proof of sustained 30 fps.
+
+The prior goal completion records a functional prototype only. The convincing
+demo remains open until the visible, interactive, and delivery gates below pass.
+
+## Today's order and stop rules
+
+These are bounded work passes, not a promise that every unknown will fit today.
+Keep a bootable candidate after each pass. Review the actual rendered output
+before expanding scope. Reserve the final 45 minutes before presentation for
+testing and packaging; no new renderer features enter that window.
+
+| Order | Work | Reviewable result / exit condition |
 |---|---|---|
-| P0 - walkable room | **Runtime integrated.** Maple analog/D-pad movement, a shoulder follow camera, SAT floor/wall collision, spawn, A reset, START exit, and a visible route marker now run in one native executable with an orange placeholder actor. The source-group comparison is complete and timing phases are instrumented. The remaining bounded work is near-plane clipping and a clean three-loop record. | A recorded controller route moves, turns, stops at walls, follows the intended floor, reaches the exit, and resets three times without drift or growing allocations. This is the walkable checkpoint, not accepted RE4 gameplay. |
-| P1 - visible Leon | **Runtime integrated.** The converter decodes the 1,484-vertex primary body and 2,519 source triangles, evaluates the source-mapped 91-frame idle and 29-frame walk clips, applies the original weighted skinning rules offline, and emits a 1.1 MB private package. The room runtime places and rotates the animated body on SAT collision and switches clips from controller movement. | An isolated Flycast route shows the disc-derived animated body positioned on the floor while idle and moving. This closes the visible-body bridge; face/hair/hands/weapon attachments, textures, combined performance, and physical hardware remain P2/P3 work rather than being implied by this checkpoint. |
-| P2 - small combat loop | **Runtime integrated and Flycast replay passed.** One disc-derived `em10` village Ganado uses source-selected idle, walk, bare-hand catch, head-hit, and knock-out clips. A bounded translation of its walk/turn/attack/damage/death states drives approach and attack. Leon can aim, fire, reload, take damage, die, restart, defeat it, and unlock the route exit. | The deterministic controller-path replay observed player death, restart, an empty magazine and reload, enemy defeat, collision traversal, and one exit/reset loop. The VMU contains `RE4DC_AUTOPLAY_PASS death=1 reload=1 loop=1`; retained live SH-4 telemetry independently reported phase 7, flags `0x7`, and loop count 1. This is emulator acceptance; presentation, performance, and stock hardware remain P3. |
-| P3 - playable validation | **Flycast gameplay/performance gate passed; presentation and hardware remain.** The default converters now produce explicit room and animated-character LODs, runtime culling uses the bounded route horizon, and a collision-valid exit replaces the old low-frame-rate tunneling route. | The automated death/restart/reload/defeat/exit/reset loop passes with a fresh VMU marker. Spawn measured 29,354 us and the final route view 37,821 us in Flycast. Basic textures, route percentiles, optical-disc packaging, memory-pool measurement, and stock-Dreamcast acceptance remain open. |
+| D0 - first 30 minutes | Establish the current native image and three representative views: entry, shoulder aiming, and close enemy. Choose a small reachable r10d encounter area with a visually coherent backdrop. Check a local GameCube reference if accessible; do not let reference setup consume the pass. | Saved current images and an explicit route/camera/asset list. Known visual omissions are recorded; no claim of source-image parity without a matching reference. |
+| D1 - first visual pass, review within 60-90 minutes | Decode the local room TPL, bind materials using the exported MTL, preserve UVs, and render original textures on the nearby environment. Keep intact foreground meshes within the bounded scene. Handle alpha masks for any visible cutouts. | A native Flycast image of the chosen textured area, followed by a short moving-camera capture. No random material colors, melted foreground silhouettes, incorrect UVs, or disappearing surfaces in the presentation path. If still blocked, reduce the visible material/scene subset rather than starting a general asset system. |
+| D2 - second visual pass, review within 60-90 minutes | Complete Leon's head/hair/hands/handgun and the Ganado's visible parts; add original texture coordinates and bindings. Use verified source attachments and motions for aiming, firing/recoil, reload, hit reaction, and death. | Moving native footage shows recognizable complete actors, a held weapon aligned with the hands, correct cutouts, and animation matching input. Discovery of a suitable cheaper source model is useful but timeboxed; a general model-variant audit is not a dependency. |
+| D3 - encounter and sound | Put both actors in the same reachable combat space. Resolve enemy wall motion, block shots at walls, align the reticle with the actual hit test, and recheck attack range/contact at the strike. Add muzzle flash, impact response, footsteps, gunshot, reload, enemy vocal/hit sound, and a restrained ambience loop. | The player can move away, aim, miss, hit, reload, take visibly explained damage, win, and retry. No through-wall hits or pursuit, invisible gunfire, frozen reload, or unexplained long-range contact damage. Audio comes from the running demo. |
+| D4 - presentation and measured tuning | Add legible health/ammo, a brief control prompt, a completion/retry screen, basic actor lighting/grounding shadows, and fog only where needed to make the chosen backdrop coherent. Measure the full textured encounter. | A continuous 60-second live-input run looks and sounds coherent. Tune the measured bottleneck while protecting Leon, enemy faces, weapon, nearby architecture, collision, and aim readability. |
+| D5 - final verification and handoff | Freeze the candidate, run the manual route and three win/retry cycles plus death/retry, capture synchronized video/audio, and prepare a private launch folder with instructions. Commit/push only code, tools, tests, and documentation. | Launchable native demo, verified controller mapping, clean replay/restart, exact executable/assets/config identities, footage, and a concise honest list of remaining limits. Verify remote SHA and keep all disc art and audio private. |
 
-P0 includes one bounded renderer correction/comparison pass below. Then move
-to P1/P2 rather than iterating a standalone scenery viewer indefinitely.
-Flat shading and temporary placeholders are allowed at intermediate checkpoints;
-P3 requires the real animated actor and the declared room presentation.
+D1-D2 are the highest-risk work: the texture binding path and complete actor
+assembly are not implemented yet. Report an early visible result or the precise
+blocker at each review; do not spend today's window accumulating tests without
+a native picture. Implementation may interleave actor and room work to get a
+recognizable frame sooner, but neither visual gate is optional.
 
-## Renderer work allowed on this critical path
+## Shortest asset and renderer path
 
-1. Establish coordinates and scale between the OBJ, SAT, character positions,
-   and source camera data. Record a spawn and short traversal route with camera
-   position, target, FOV/aspect, and clipping distances. Any bounded far cutoff
-   must be declared as a demo limitation and must still cover the accepted route;
-   it cannot be presented as matched GameCube visibility.
-2. Compare the preserved exported groups with the existing cell package at the
-   same camera positions, using conservative bounds. Preserve source object
-   IDs/flags where available. Use the existing converter before writing another
-   archive/scene system; retaining all geometry need not mean drawing it all.
-3. Correct frustum rejection and near-plane clipping for a close camera. The
-   current viewer drops a whole triangle if any projected vertex is behind the
-   camera. Crossing triangles must be clipped; bounds crossing the near plane
-   must not cause visible objects to disappear.
-4. Separate PVR wait, bounds tests, transforms/skinning, submission, and complete
-   frame intervals. Record route percentiles plus visible groups, transformed
-   vertices, submitted vertices/triangles, and RAM/VRAM peaks. Include room,
-   Leon, and then the enemy in combined measurements; package size is not total
-   resident memory and `render_us` is not CPU-only time.
-5. If the representative view is too expensive, optimize the measured cost:
-   fewer material changes/strips for submission, reduced visible mesh detail
-   for geometry/skin cost, or smaller textures for residency. Keep the source
-   geometry and an explicit per-asset LOD mapping. A full stripifier, portal/PVS
-   system, or exact copy of the GX renderer is not a prerequisite for P0.
+The private room already contains `r10d_004.TPL` (903,008 bytes), an exported
+OBJ with UVs, and `r10d_004.scenario.mtl` with 59 material entries. The MTL names
+color PNGs and some separate alpha images, but those PNGs are not present in
+the inspected room tree. Decode the existing TPL and verify material-to-image
+and alpha mappings rather than treating MTL filenames as available textures.
 
-The source only proves the culling algorithm exists. A bounded Dolphin run of
-the verified GameCube build can supply camera and draw-list reference evidence;
-a physical GameCube is not a prerequisite for that comparison. Stock Dreamcast
-is required for final performance, controller, storage, and memory acceptance.
-Continue useful Flycast development while hardware validation is pending.
+Start with simple offline 16-bit color/alpha conversion and native PVR textured
+batches. Use RGB565 for opaque materials and appropriate alpha formats for
+cutout/blended materials; preserve UV wrapping and source sidedness. The pinned
+[KallistiOS PVR API][pvr] supports these formats. VQ compression, atlasing, full
+mip coverage, and a generalized texture cache are added only when measured
+memory or visible sampling requires them. They are not prerequisites for the
+first convincing frame.
 
-## Work deferred until the slice requires it
+The character format needs a versioned extension: per-corner UV/material
+mapping, vertex splits at seams, texture identity, and attachment transforms
+consistent with the baked pose. Keep an offline source-to-output mapping and
+retain source clip timing. The runtime currently has only the primary bodies;
+adding a texture file alone cannot complete the actors.
 
-Campaign-wide conversion; Disc 2 completion; a native YZ2 decoder; a GX emulator;
-general room streaming; full OS/REL compatibility; inventory UI; VMU saves;
-movies; complete audio; elaborate lighting/shadows; and additional rooms.
-Bring back only a dependency that demonstrably blocks an accepted slice path.
-No enemy-count or AI-cadence reduction is hidden inside a renderer optimization.
+Use the unsimplified source meshes as the visual reference. For today's small
+area, retain foreground geometry and omit only objects outside every permitted
+view, with coherent scene boundaries. Where simplification is necessary,
+preserve UV islands, silhouettes, hard edges, materials, and animated joints.
+Do not promote the 8 m cluster or the current actor cluster merely because it
+was faster. Source LOD variants may save work, but their presence/compatibility
+in this debug disc must be verified. Capcom's [developer postmortem][postmortem]
+describes prioritizing nearby model quality and using multiple geometry and
+texture tiers; this informs the approach, not a claim about our selected files.
 
-Reuse Soulcalibur's Flycast runner, short reproducible captures, resource
-identities, and separation of fixture/emulator/hardware claims. RTX Remix,
-neural rendering, and material generation do not accelerate the native gameplay
-milestone and are outside this backlog.
+Fix near-plane clipping and camera obstruction in the encounter view. Record
+camera/FOV and visibility settings. Fog may hide an intentionally bounded
+backdrop when the transition looks natural; an abrupt cutoff or a zoomed-in
+camera chosen only to conceal missing work does not pass visual review.
 
-## Next concrete work item
+Profile transforms, shading, submission, and PVR wait separately. Cached static
+lighting, shared transforms, and object rejection are candidates when measured.
+Stripification, a general portal/PVS builder, renderer replacement, and global
+fast-math changes are not today's default work. No speedup is assumed before
+the same scene is measured again.
 
-Continue P3 with the smallest presentation pass: add only the handgun/hand and
-basic texture or cutout data needed to read aiming, hits, and enemy state at
-320x240. Record route percentiles and memory-pool peaks with those assets, then
-build a named stock-Dreamcast loading image and report emulator and hardware
-evidence separately.
+## Presentation acceptance
 
-Only tools, source changes, tests, and documentation are committed and pushed
-to `origin/dreamcast-port`. The disc, converted art, and captures stay private.
+All of these are required before calling the demo convincing:
+
+1. **Recognizable appearance:** complete textured Leon and Ganado, a visible
+   handgun, original scene materials, readable faces/silhouettes, and correct
+   visible cutouts. Judge the actual native image and moving footage.
+2. **Coherent interaction:** matching aiming/fire/reload/contact feedback,
+   player/enemy wall behavior and shot occlusion, stable camera, reachable end
+   condition, clear HUD, sound, and manual retry. A state counter alone cannot
+   establish any of these visible properties.
+3. **Whole-route performance:** capture complete frame intervals and phase
+   timings over the manual route and three loops. Target a paced 30 fps; report
+   median, p95, p99, worst frame and count of missed 33.33 ms budgets, with the
+   VBlank cadence made explicit. A strict 30 fps claim requires no recurring
+   gameplay misses; a result that falls short is disclosed, not relabeled a pass.
+4. **Bounded memory:** record main RAM, PVR/VRAM, and AICA allocation peaks with
+   textures and audio loaded, including framebuffers, tile/parameter buffers,
+   baked animation, conversion/staging copies, and safety headroom. The stock
+   16/8/2 MiB pools remain constraints even when showing it in Flycast.
+5. **Usable delivery:** a normal manually controlled build with autoplay off,
+   isolated Flycast configuration, known controller mapping, private asset pack,
+   launch instructions, and a 60-second recording from that exact candidate.
+   Backup footage is labeled as footage. Physical Dreamcast is a later gate.
+
+Use the Soulcalibur evidence discipline already documented in
+[SOULCALIBUR_REUSE.md](SOULCALIBUR_REUSE.md): retain a known-good visual baseline,
+protect HUD composition, compare exact asset/build identities, and inspect
+motion. Keep its dirty checkout read-only. RTX Remix and AI-generated appearance
+are not part of the native Dreamcast presentation path.
+
+## If time runs short today
+
+Reduce the walkable area and encounter duration first: 30-45 seconds in one
+finished combat space is preferable for this brief to a longer unfinished tour.
+Remove extra props/effects before degrading the main actors, textures, sound,
+weapon interaction, or camera. One enemy remains sufficient.
+
+If textured scenery and complete actors cannot be integrated and visibly
+verified, explicitly report the result as an intermediate prototype. Do not
+substitute emulator-enhanced graphics, an offline render, or autoplay telemetry
+for the requested native playable demonstration. Do not describe the deadline
+as met before a reviewable candidate exists.
+
+After today's showing: physical Dreamcast loading route and controller test,
+hardware timing/memory/audio checks, better source-aligned LODs, broader views,
+and then more gameplay. Campaign systems, movies, full inventory/save systems,
+additional rooms, extra enemies, and a complete graphics compatibility layer
+stay outside today's scope.
+
+[pvr]: https://github.com/KallistiOS/KallistiOS/blob/804b3195ebd1a06a27cc2b3a5eacf7a2429040a3/kernel/arch/dreamcast/include/dc/pvr.h
+[postmortem]: https://www.gamedeveloper.com/design/postmortem-i-resident-evil-4-i-
