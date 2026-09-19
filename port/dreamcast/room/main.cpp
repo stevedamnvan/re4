@@ -71,6 +71,9 @@ constexpr float kFarClipDistance = 35.0f;
 constexpr int kMagazineSize = 6;
 constexpr int kPlayerMaxHealth = 100;
 constexpr int kEnemyMaxHealth = 3;
+constexpr std::uint64_t kSimulationStepUs = 33333U;
+constexpr unsigned kMaxSimulationCatchupTicks = 3U;
+constexpr float kSimulationDeltaSeconds = 1.0f / 30.0f;
 
 enum class EnemyState : std::uint8_t {
     Chase,
@@ -1104,6 +1107,9 @@ int main() {
     }
     player.y = initial_floor;
     std::uint32_t frame = 0;
+    std::uint64_t simulation_tick = 0;
+    std::uint64_t simulation_accumulator_us = kSimulationStepUs;
+    std::uint32_t simulation_overruns = 0;
     std::uint64_t previous_time = timer_us_gettime64();
     bool fire_was_down = false;
     bool reload_was_down = false;
@@ -1130,13 +1136,66 @@ int main() {
     while(true) {
         const std::uint64_t now = timer_us_gettime64();
         const std::uint64_t frame_us = now - previous_time;
-        const float delta_seconds = std::clamp(
-            static_cast<float>(frame_us) / 1000000.0f, 0.0f, 0.1f);
         previous_time = now;
-        const Input input = autoplay.enabled
-                                ? autoplay_input(autoplay, player, enemy,
-                                                 delta_seconds)
-                                : read_input();
+        simulation_accumulator_us += std::min<std::uint64_t>(
+            frame_us, kSimulationStepUs * (kMaxSimulationCatchupTicks + 1U));
+        const Input manual_input = autoplay.enabled ? Input{} : read_input();
+        bool exit_requested = false;
+        unsigned catchup_ticks = 0;
+        while(simulation_accumulator_us >= kSimulationStepUs &&
+              catchup_ticks < kMaxSimulationCatchupTicks) {
+            const Input input = autoplay.enabled
+                                    ? autoplay_input(
+                                          autoplay, player, enemy,
+                                          kSimulationDeltaSeconds)
+                                    : manual_input;
+            if(input.exit) {
+                exit_requested = true;
+                break;
+            }
+            const bool fire_pressed = input.fire && !fire_was_down;
+            const bool reload_pressed = input.reload && !reload_was_down;
+            if(input.restart && !restart_was_down) {
+                reset_encounter(player, enemy);
+                std::printf("re4dc-room: encounter restarted tick=%llu\n",
+                            static_cast<unsigned long long>(simulation_tick));
+            }
+            fire_was_down = input.fire;
+            reload_was_down = input.reload;
+            restart_was_down = input.restart;
+            update_player(player, collision, input, kSimulationDeltaSeconds);
+            update_animation(player, leon, input, kSimulationDeltaSeconds);
+            update_combat(player, enemy, input, fire_pressed, reload_pressed,
+                          kSimulationDeltaSeconds);
+            update_enemy(enemy, player, ganado, collision,
+                         kSimulationDeltaSeconds);
+            const float goal_dx = player.x - kGoalX;
+            const float goal_dz = player.z - kGoalZ;
+            if(enemy.state == EnemyState::Dead && !player.dead &&
+               goal_dx * goal_dx + goal_dz * goal_dz < 16.0f) {
+                ++player.completed_loops;
+                std::printf("re4dc-room: demo loop complete loops=%lu tick=%llu\n",
+                            static_cast<unsigned long>(player.completed_loops),
+                            static_cast<unsigned long long>(simulation_tick));
+                reset_encounter(player, enemy);
+            }
+            simulation_accumulator_us -= kSimulationStepUs;
+            ++simulation_tick;
+            ++catchup_ticks;
+        }
+        if(exit_requested) {
+            if(autoplay.enabled) {
+                write_autoplay_result(autoplay, player);
+            }
+            break;
+        }
+        if(simulation_accumulator_us >= kSimulationStepUs) {
+            simulation_accumulator_us %= kSimulationStepUs;
+            ++simulation_overruns;
+            std::printf("re4dc-room: simulation catch-up dropped tick=%llu overruns=%lu\n",
+                        static_cast<unsigned long long>(simulation_tick),
+                        static_cast<unsigned long>(simulation_overruns));
+        }
         g_re4dc_demo_telemetry.frame = frame;
         g_re4dc_demo_telemetry.autoplay_phase =
             static_cast<std::uint32_t>(autoplay.phase);
@@ -1155,36 +1214,6 @@ int main() {
         g_re4dc_demo_telemetry.player_yaw = player.yaw;
         g_re4dc_demo_telemetry.enemy_x = enemy.x;
         g_re4dc_demo_telemetry.enemy_z = enemy.z;
-        if(input.exit) {
-            if(autoplay.enabled) {
-                write_autoplay_result(autoplay, player);
-            }
-            break;
-        }
-        const bool fire_pressed = input.fire && !fire_was_down;
-        const bool reload_pressed = input.reload && !reload_was_down;
-        if(input.restart && !restart_was_down) {
-            reset_encounter(player, enemy);
-            std::printf("re4dc-room: encounter restarted\n");
-        }
-        fire_was_down = input.fire;
-        reload_was_down = input.reload;
-        restart_was_down = input.restart;
-        update_player(player, collision, input, delta_seconds);
-        update_animation(player, leon, input, delta_seconds);
-        update_combat(player, enemy, input, fire_pressed, reload_pressed,
-                      delta_seconds);
-        update_enemy(enemy, player, ganado, collision, delta_seconds);
-        const float goal_dx = player.x - kGoalX;
-        const float goal_dz = player.z - kGoalZ;
-        if(enemy.state == EnemyState::Dead && !player.dead &&
-           goal_dx * goal_dx + goal_dz * goal_dz < 16.0f) {
-            ++player.completed_loops;
-            std::printf("re4dc-room: demo loop complete loops=%lu\n",
-                        static_cast<unsigned long>(player.completed_loops));
-            reset_encounter(player, enemy);
-        }
-
         const float fx = std::sin(player.yaw);
         const float fz = std::cos(player.yaw);
         const float rx = std::cos(player.yaw);
@@ -1218,7 +1247,7 @@ int main() {
                 "re4dc-room: frame=%lu pos=%.2f,%.2f,%.2f groups=%lu vertices=%lu "
                 "triangles=%lu actors_triangles=%lu wall_hits=%lu loops=%lu "
                 "hp=%d ammo=%d enemy_hp=%d state=%u frame_us=%llu wait_us=%llu "
-                "submit_us=%llu finish_us=%llu\n",
+                "submit_us=%llu finish_us=%llu sim_tick=%llu overruns=%lu\n",
                 static_cast<unsigned long>(frame), player.x, player.y, player.z,
                 static_cast<unsigned long>(stats.groups),
                 static_cast<unsigned long>(stats.transformed_vertices),
@@ -1231,7 +1260,9 @@ int main() {
                 static_cast<unsigned long long>(frame_us),
                 static_cast<unsigned long long>(stats.wait_us),
                 static_cast<unsigned long long>(stats.submit_us),
-                static_cast<unsigned long long>(stats.finish_us));
+                static_cast<unsigned long long>(stats.finish_us),
+                static_cast<unsigned long long>(simulation_tick),
+                static_cast<unsigned long>(simulation_overruns));
         }
     }
     delete[] material_headers;

@@ -33,6 +33,7 @@ prepare-romdisk:
 	cp $(CHARACTER_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4chr
 	cp $(ENEMY_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4chr
 	cp $(TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4tex
+	rm -f $(KOS_ROMDISK_DIR)/autoplay.flag
 	@if [ -n "$(AUTOPLAY_FLAG)" ]; then \
 		test -f "$(AUTOPLAY_FLAG)" || { echo 'missing autoplay flag: $(AUTOPLAY_FLAG)' >&2; exit 1; }; \
 		cp "$(AUTOPLAY_FLAG)" $(KOS_ROMDISK_DIR)/autoplay.flag; \
