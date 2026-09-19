@@ -4,6 +4,7 @@ include Makefile.common
 
 BUILD := ../build/motion-host
 TARGET := $(BUILD)/re4dc-motion-reference
+REAL_TARGET := $(BUILD)/re4dc-real-motion-reference
 CXX ?= g++
 CXXFLAGS := -O2 -g -std=gnu++14 -fno-strict-aliasing -fno-fast-math \
             -ffunction-sections -fdata-sections -Wno-register \
@@ -13,8 +14,10 @@ LDFLAGS := -Wl,--gc-sections -Wl,-Bsymbolic
 GAME_OBJS := $(addprefix $(BUILD)/,$(addsuffix .o,$(GAME_NAMES)))
 FDLIBM_OBJS := $(addprefix $(BUILD)/fdlibm_,$(addsuffix .o,$(FDLIBM_NAMES)))
 LOCAL_OBJS := $(BUILD)/host_main.o $(BUILD)/motion_checks.o
+REAL_LOCAL_OBJS := $(BUILD)/real_host_main.o $(BUILD)/motion_checks.o \
+                   $(BUILD)/real_motion_checks.o
 
-.PHONY: all run clean
+.PHONY: all run real real-run clean
 
 all: $(TARGET)
 
@@ -27,6 +30,12 @@ $(BUILD)/host_main.o: host_main.cpp motion_checks.hpp | $(BUILD)
 $(BUILD)/motion_checks.o: motion_checks.cpp motion_checks.hpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -I$(STUB_DIR) -c $< -o $@
 
+$(BUILD)/real_host_main.o: real_host_main.cpp real_motion_checks.hpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(STUB_DIR) -c $< -o $@
+
+$(BUILD)/real_motion_checks.o: real_motion_checks.cpp real_motion_checks.hpp $(REAL_FIXTURE) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(STUB_DIR) -I$(REAL_FIXTURE_DIR) -c $< -o $@
+
 $(BUILD)/%.o: $(HOST_BUILD)/%.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -I$(STUB_DIR) -c $< -o $@
 
@@ -38,6 +47,14 @@ $(TARGET): $(LOCAL_OBJS) $(GAME_OBJS) $(FDLIBM_OBJS)
 
 run: $(TARGET)
 	$(TARGET)
+
+$(REAL_TARGET): $(REAL_LOCAL_OBJS) $(GAME_OBJS) $(FDLIBM_OBJS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
+real: $(REAL_TARGET)
+
+real-run: $(REAL_TARGET)
+	$(REAL_TARGET)
 
 clean:
 	rm -rf $(BUILD)

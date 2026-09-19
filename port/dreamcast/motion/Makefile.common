@@ -2,6 +2,12 @@ ROOT := ../../..
 HOST_MOTION := $(ROOT)/tools/motion/host
 HOST_BUILD := $(HOST_MOTION)/build
 STUB_DIR := $(HOST_MOTION)/stub
+PYTHON ?= python3
+REAL_SOURCE ?= $(ROOT)/orig/G4BE08/re4_debug_disc1.iso
+REAL_FIXTURE_TOOL := ../tools/build_real_motion_fixture.py
+REAL_FIXTURE_DIR := ../build/private
+REAL_FIXTURE := $(REAL_FIXTURE_DIR)/re4dc_real_motion_fixture.hpp
+REAL_FIXTURE_MANIFEST := $(REAL_FIXTURE_DIR)/re4dc_real_motion_fixture.json
 
 FDLIBM_NAMES := sf_sin sf_cos kf_sin kf_cos ef_rem_pio2 kf_rem_pio2 \
                  sf_scalbn sf_floor sf_fabs ef_acos ef_sqrt
@@ -21,3 +27,8 @@ $(HOST_BUILD)/game_extract.cpp:
 
 $(HOST_BUILD)/sdk_extract.cpp:
 	$(MAKE) -C $(HOST_MOTION) build/sdk_extract.cpp
+
+$(REAL_FIXTURE): $(REAL_FIXTURE_TOOL) $(REAL_SOURCE)
+	mkdir -p $(REAL_FIXTURE_DIR)
+	$(PYTHON) $(REAL_FIXTURE_TOOL) --source "$(REAL_SOURCE)" --archive pl00.drs \
+		--model 0 --motion 117 --output $@ --manifest $(REAL_FIXTURE_MANIFEST)

@@ -11,12 +11,13 @@ and asset reference, while this target is compiled for SH-4 with KallistiOS.
 - Authoritative checkout: `/root/work/re4-dreamcast` in Ubuntu 24.04 WSL2
 - KallistiOS baseline: `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`
 - kos-ports baseline: `f4faacc42faaf552625777b7709e871a827e1055`
-- Original G4BE08 disc images: not found during the initial local search
+- G4BE08 debug Disc 1: locally supplied, header-verified, hashed, and kept
+  outside Git (SHA-256 `b7fcbf121cf7c527aae23838e9c3f0818e31115bb597eb77a2c49c9e8fa46492`)
 - `sh-elf` toolchain: GCC 15.2.0 installed at `/opt/toolchains/dc/sh-elf`
 - KallistiOS: built successfully from the pinned revision (reports v2.3.0)
 - Native smoke ELF: built and booted past frame 300 in an isolated Flycast run
-- RE4 motion/IK slice: upstream game functions compile for SH-4 and pass the
-  paired host/Flycast synthetic fixture
+- RE4 motion/IK slice: upstream game functions compile for SH-4 and pass both
+  the synthetic fixture and a private real-data fixture from Leon's `pl00.drs`
 
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
@@ -56,18 +57,31 @@ Dreamcast target reports `PASS` beyond frame 300. See
 [the motion SH-4 baseline](docs/MOTION_SH4_BASELINE.md) for exact results and
 limits.
 
+With a verified Disc 1 image at `orig/G4BE08/re4_debug_disc1.iso`, run:
+
+```sh
+make -C port/dreamcast -f Makefile.host motion-real-host
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/motion real
+```
+
+The first command privately generates an ignored fixture from `pl00.drs`
+model entry 0 and motion entry 117, then evaluates four frames through the
+original game motion code on the host. The second build produces
+`port/dreamcast/build/motion-sh4/re4dc-real-motion.elf`. No disc-derived bytes
+are tracked by Git. See
+[the real-motion SH-4 baseline](docs/REAL_MOTION_SH4_BASELINE.md).
+
 ## Near-term sequence
 
-1. Obtain and hash the user's G4BE08 debug-disc images, reproduce the upstream
-   reference hashes, and keep all extracted assets out of Git.
-2. Obtain and hash a character archive, then feed it through upstream's
-   `tools/motion_export.py` byte-round-trip path and the new SH-4 evaluator.
-   Extend the same parse/serialise/compare pattern to room data, models, and
-   textures.
+1. Extend the verified real Leon motion path into a skinned character render,
+   with model and texture conversion kept in a private generated package.
+2. Apply the same parse/serialise/compare pattern to one room archive, its
+   geometry, textures, collision, and placement data.
 3. Extend the KOS executable with logging, timing,
    allocation telemetry, and the controlled cooperative scheduler boundary.
-4. Convert and render one real room and one animated actor before expanding the
-   gameplay dependency set.
+4. Validate the first animated actor and room on physical Dreamcast hardware
+   before expanding the gameplay dependency set.
 
 See [Soulcalibur reuse](docs/SOULCALIBUR_REUSE.md) for the local Flycast lessons
 that govern evidence, resource identity, and visual validation.

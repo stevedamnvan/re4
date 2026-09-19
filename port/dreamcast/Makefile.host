@@ -4,7 +4,7 @@ CXX ?= g++
 CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Werror -pedantic
 PYTHON ?= python3
 
-.PHONY: all test audit motion-host motion-cross-host script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -24,6 +24,9 @@ motion-host:
 
 motion-cross-host:
 	$(MAKE) -C motion -f Makefile.host run
+
+motion-real-host:
+	$(MAKE) -C motion -f Makefile.host real-run
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh
