@@ -54,21 +54,22 @@ The timer includes PVR wait time. See
 `re4dc-room` version 1 is little-endian and starts with the eight-byte magic
 `RE4DCRM\0`. It contains fixed-size material names, group records with bounds,
 material batches, interleaved position/normal/UV vertices, and 32-bit triangle
-indices. The `r10d` build partitions static triangles into 10-unit X/Z cells;
-cell bounds let the first renderer reject distant or off-screen geometry before
-transforming its vertices. This grouping is not the original object's visibility
-contract. Keep the cell package as a baseline and generate a comparison that
-preserves the OBJ export groups without new tooling:
+indices. The first `r10d` build partitioned static triangles into 10-unit X/Z
+cells. The current default preserves OBJ export groups because the bounded
+gameplay-camera comparison transformed fewer vertices with the same submitted
+triangle count. Recreate the older cell package for comparison with:
 
 ```sh
-python3 port/dreamcast/tools/convert_room_obj.py --cell-size 0 \
+python3 port/dreamcast/tools/convert_room_obj.py --cell-size 10 \
   orig/G4BE08/rooms/r10d/r10d/r10d_004.scenario.obj \
-  port/dreamcast/build/private/r10d-source-groups.re4room
+  port/dreamcast/build/private/r10d-cells.re4room
 ```
 
-Both packages retain the same geometry. Mapping exported groups to SMD objects,
-flags, and bounds remains work to do; fewer groups or batches alone is not a
-measured performance improvement.
+Both packages retain the same geometry. At the unchanged spawn camera, the
+source-group package transformed 47,966 vertices versus 58,217 for cells and
+submitted the same 11,592 triangles; combined render time fell only from about
+114 ms to 110 ms. Source-group bounds are conservative but are not yet mapped
+to original SMD visibility flags or source culling spheres.
 
 Textures are intentionally outside version 1. The first runtime checkpoint is
 flat-shaded room geometry plus collision. Texture conversion follows once the

@@ -48,6 +48,9 @@ struct FrameStats {
     std::uint32_t groups = 0;
     std::uint32_t triangles = 0;
     std::uint32_t transformed_vertices = 0;
+    std::uint64_t wait_us = 0;
+    std::uint64_t submit_us = 0;
+    std::uint64_t finish_us = 0;
 };
 
 struct ProjectedVertex {
@@ -418,7 +421,10 @@ FrameStats render_scene(const re4dc::room::Package& room, const Player& player,
     const auto* batches = room.batches();
     const auto* vertices = room.vertices();
     const auto* indices = room.indices();
+    const std::uint64_t wait_start = timer_us_gettime64();
     pvr_wait_ready();
+    const std::uint64_t submit_start = timer_us_gettime64();
+    stats.wait_us = submit_start - wait_start;
     pvr_scene_begin();
     pvr_list_begin(PVR_LIST_OP_POLY);
     pvr_prim(&polygon_header, sizeof(polygon_header));
@@ -450,8 +456,11 @@ FrameStats render_scene(const re4dc::room::Package& room, const Player& player,
     }
     draw_player(player);
     draw_goal();
+    const std::uint64_t finish_start = timer_us_gettime64();
+    stats.submit_us = finish_start - submit_start;
     pvr_list_finish();
     pvr_scene_finish();
+    stats.finish_us = timer_us_gettime64() - finish_start;
     return stats;
 }
 
@@ -517,8 +526,9 @@ int main() {
         }
         reset_was_down = input.reset;
         const std::uint64_t now = timer_us_gettime64();
+        const std::uint64_t frame_us = now - previous_time;
         const float delta_seconds = std::clamp(
-            static_cast<float>(now - previous_time) / 1000000.0f, 0.0f, 0.1f);
+            static_cast<float>(frame_us) / 1000000.0f, 0.0f, 0.1f);
         previous_time = now;
         update_player(player, collision, input, delta_seconds);
 
@@ -535,23 +545,25 @@ int main() {
         mat_perspective(160.0f, 120.0f, 1.0f / std::tan(kPi / 6.0f), 1.0f,
                         500.0f);
         mat_lookat(&eye, &target, &up);
-        const std::uint64_t start = timer_us_gettime64();
         const FrameStats stats = render_scene(room, player, polygon_header,
                                               projected.get(), transformed_at.get(),
                                               frame + 1U);
-        const std::uint64_t elapsed = timer_us_gettime64() - start;
         ++frame;
         if(frame % 120U == 0U) {
             std::printf(
                 "re4dc-room: frame=%lu pos=%.2f,%.2f,%.2f groups=%lu vertices=%lu "
-                "triangles=%lu wall_hits=%lu loops=%lu render_us=%llu\n",
+                "triangles=%lu wall_hits=%lu loops=%lu frame_us=%llu wait_us=%llu "
+                "submit_us=%llu finish_us=%llu\n",
                 static_cast<unsigned long>(frame), player.x, player.y, player.z,
                 static_cast<unsigned long>(stats.groups),
                 static_cast<unsigned long>(stats.transformed_vertices),
                 static_cast<unsigned long>(stats.triangles),
                 static_cast<unsigned long>(player.wall_hits),
                 static_cast<unsigned long>(player.completed_loops),
-                static_cast<unsigned long long>(elapsed));
+                static_cast<unsigned long long>(frame_us),
+                static_cast<unsigned long long>(stats.wait_us),
+                static_cast<unsigned long long>(stats.submit_us),
+                static_cast<unsigned long long>(stats.finish_us));
         }
     }
     std::printf("re4dc-room: clean exit\n");

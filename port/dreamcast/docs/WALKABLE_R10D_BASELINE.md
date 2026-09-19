@@ -37,13 +37,22 @@ A third fixed-duration replay continued sending movement after an early reset,
 so it drifted away from the route; the required clean three-loop record remains
 open rather than being inferred from that run.
 
-At the initial close camera, frame 120 still transformed 58,217 vertices and
-the combined render call took about 114 ms. Views deeper in the room ranged
+At the initial close camera, the ten-unit cell package transformed 58,217
+vertices and the combined render call took about 114 ms. The source-group
+comparison transformed 47,966 vertices, submitted the same 11,592 triangles,
+and took about 110 ms, so source groups are now the default. Views deeper in the room ranged
 from roughly 10,000 to 34,000 transformed vertices and 16-68 ms. These are
 Flycast samples, include `pvr_wait_ready()`, and remain over or too close to the
 33.3 ms target. They confirm that a gameplay camera helps but does not close
-performance. The planned timing split, near-plane clipping, and source-group
-comparison remain the final bounded P0 renderer pass.
+performance. Timing phases are now instrumented; near-plane clipping and the
+clean three-loop record remain before closing P0.
+
+The first split-timing sample at the unchanged spawn reported a 109,427 us
+frame interval: 1 us in `pvr_wait_ready`, 109,294 us in bounds tests,
+transforms, and direct PVR submission, and 21 us finishing the scene. This
+locates the current bottleneck in CPU geometry work and per-triangle submission,
+not waiting for the PVR. It is one Flycast sample rather than a percentile or
+physical-hardware result.
 
 ## Boundary
 

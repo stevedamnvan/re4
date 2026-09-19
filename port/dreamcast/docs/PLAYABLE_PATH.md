@@ -50,7 +50,7 @@ GameCube visibility or image parity.
 
 | Order | Deliverable | Done when |
 |---|---|---|
-| P0 - walkable room | **Runtime integrated.** Maple analog/D-pad movement, a shoulder follow camera, SAT floor/wall collision, spawn, A reset, START exit, and a visible route marker now run in one native executable with an orange placeholder actor. The remaining bounded work is near-plane clipping, timing separation, the source-group comparison, and a three-loop record. | A recorded controller route moves, turns, stops at walls, follows the intended floor, reaches the exit, and resets three times without drift or growing allocations. This is the walkable checkpoint, not accepted RE4 gameplay. |
+| P0 - walkable room | **Runtime integrated.** Maple analog/D-pad movement, a shoulder follow camera, SAT floor/wall collision, spawn, A reset, START exit, and a visible route marker now run in one native executable with an orange placeholder actor. The source-group comparison is complete and timing phases are instrumented. The remaining bounded work is near-plane clipping and a clean three-loop record. | A recorded controller route moves, turns, stops at walls, follows the intended floor, reaches the exit, and resets three times without drift or growing allocations. This is the walkable checkpoint, not accepted RE4 gameplay. |
 | P1 - visible Leon | Convert one Leon mesh and its weights, connect the proven pose evaluator to skinning/PVR drawing, select and verify idle/walk motions, and tie motion to movement and the source update cadence. | The same route shows animated Leon correctly positioned against the floor, with stable skinning and no camera/near-plane holes. A numerical skeleton fixture alone cannot close this item. |
 | P2 - small combat loop | Link only the source player/handgun/Ganado behavior required for aim, fire, reload/ammo, hit reaction, enemy approach/attack, player damage/death, enemy death, and restart. Hard-code one encounter and exit; add only the scheduler dependencies exercised by these paths. | A controller can aim, defeat one attacking Ganado, take damage, die/restart, and complete the route. Source behavior deviations are recorded; a generic substitute AI is not accepted as translated RE4 behavior. |
 | P3 - playable validation | Add the basic textures/cutouts needed for scene readability, measure the combined runtime, trim only measured visual costs, and package it for a named stock Dreamcast loading route. | Repeatable walk/combat/reset runs at the 320x240, 30 fps target within all stock memory pools. Flycast and physical Dreamcast results are reported separately; physical acceptance remains open until run. |
@@ -106,9 +106,8 @@ milestone and are outside this backlog.
 
 ## Next concrete work item
 
-Close P0 with the same recorded route: add correct near-plane clipping, split
-wait/transform/submission/frame timing, compare the source-group package with
-the ten-unit cells, and record three exit resets. Then begin visible Leon rather
+Close P0 with the same recorded route: add correct near-plane clipping and
+record three clean exit resets using event-bounded input. Then begin visible Leon rather
 than expanding this temporary collision/player implementation.
 
 Before preparing the P2 Ganado, inspect existing model variants and source
