@@ -1,0 +1,43 @@
+.DEFAULT_GOAL := all
+
+include Makefile.common
+
+BUILD := ../build/motion-host
+TARGET := $(BUILD)/re4dc-motion-reference
+CXX ?= g++
+CXXFLAGS := -O2 -g -std=gnu++14 -fno-strict-aliasing -fno-fast-math \
+            -ffunction-sections -fdata-sections -Wno-register \
+            -Wno-unused-variable -Wno-unused-but-set-variable \
+            -Wno-int-to-pointer-cast -Wno-unused-function
+LDFLAGS := -Wl,--gc-sections -Wl,-Bsymbolic
+GAME_OBJS := $(addprefix $(BUILD)/,$(addsuffix .o,$(GAME_NAMES)))
+FDLIBM_OBJS := $(addprefix $(BUILD)/fdlibm_,$(addsuffix .o,$(FDLIBM_NAMES)))
+LOCAL_OBJS := $(BUILD)/host_main.o $(BUILD)/motion_checks.o
+
+.PHONY: all run clean
+
+all: $(TARGET)
+
+$(BUILD):
+	@mkdir -p $(BUILD)
+
+$(BUILD)/host_main.o: host_main.cpp motion_checks.hpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(STUB_DIR) -c $< -o $@
+
+$(BUILD)/motion_checks.o: motion_checks.cpp motion_checks.hpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(STUB_DIR) -c $< -o $@
+
+$(BUILD)/%.o: $(HOST_BUILD)/%.cpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(STUB_DIR) -c $< -o $@
+
+$(BUILD)/fdlibm_%.o: $(ROOT)/src/lib/%.cpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/include $(FDLIBM_DEFS) -c $< -o $@
+
+$(TARGET): $(LOCAL_OBJS) $(GAME_OBJS) $(FDLIBM_OBJS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
+run: $(TARGET)
+	$(TARGET)
+
+clean:
+	rm -rf $(BUILD)

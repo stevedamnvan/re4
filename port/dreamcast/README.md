@@ -15,6 +15,8 @@ and asset reference, while this target is compiled for SH-4 with KallistiOS.
 - `sh-elf` toolchain: GCC 15.2.0 installed at `/opt/toolchains/dc/sh-elf`
 - KallistiOS: built successfully from the pinned revision (reports v2.3.0)
 - Native smoke ELF: built and booted past frame 300 in an isolated Flycast run
+- RE4 motion/IK slice: upstream game functions compile for SH-4 and pass the
+  paired host/Flycast synthetic fixture
 
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
@@ -44,17 +46,27 @@ Every reference/candidate comparison must include the relevant room, simulation
 tick, RNG/input identity, executable, and asset-package identity rather than
 relying on matching filenames.
 
+The next native artifact is
+`build/motion-sh4/re4dc-motion-smoke.elf`. It compiles prepared functions from
+upstream `motion.cpp` and `ik.cpp`, the selected original model/math functions,
+the SDK's portable matrix/vector routines, and the game's fdlibm. A shared
+fixture runs `HermiteInterpolation` and `ikCalc` on both x86-64 and SH-4. The
+host and Flycast results agree to the displayed six decimal places, and the
+Dreamcast target reports `PASS` beyond frame 300. See
+[the motion SH-4 baseline](docs/MOTION_SH4_BASELINE.md) for exact results and
+limits.
+
 ## Near-term sequence
 
-1. Build the pinned KallistiOS SH-4 toolchain and KallistiOS in WSL.
-2. Obtain and hash the user's G4BE08 debug-disc images, reproduce the upstream
+1. Obtain and hash the user's G4BE08 debug-disc images, reproduce the upstream
    reference hashes, and keep all extracted assets out of Git.
-3. Use upstream's `tools/motion_export.py` and byte-round-trip checks as the
-   first verified asset path. Extend the same parse/serialise/compare pattern to
-   room data, models, and textures.
-4. Compile a KOS executable containing fixed-width types, logging, timing,
+2. Obtain and hash a character archive, then feed it through upstream's
+   `tools/motion_export.py` byte-round-trip path and the new SH-4 evaluator.
+   Extend the same parse/serialise/compare pattern to room data, models, and
+   textures.
+3. Extend the KOS executable with logging, timing,
    allocation telemetry, and the controlled cooperative scheduler boundary.
-5. Convert and render one real room and one animated actor before expanding the
+4. Convert and render one real room and one animated actor before expanding the
    gameplay dependency set.
 
 See [Soulcalibur reuse](docs/SOULCALIBUR_REUSE.md) for the local Flycast lessons
@@ -80,5 +92,6 @@ port/dreamcast/tools/bootstrap_kos.sh --build
 ```
 
 It verifies the three revisions in `toolchain.lock`, builds only the required
-SH-4 toolchain, builds KOS, and then builds the smoke executable. The optional
-ARM toolchain is intentionally excluded until custom AICA firmware is needed.
+SH-4 toolchain, builds KOS, and then builds the platform and motion smoke
+executables. The optional ARM toolchain is intentionally excluded until custom
+AICA firmware is needed.

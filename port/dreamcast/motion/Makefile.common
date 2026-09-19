@@ -1,0 +1,23 @@
+ROOT := ../../..
+HOST_MOTION := $(ROOT)/tools/motion/host
+HOST_BUILD := $(HOST_MOTION)/build
+STUB_DIR := $(HOST_MOTION)/stub
+
+FDLIBM_NAMES := sf_sin sf_cos kf_sin kf_cos ef_rem_pio2 kf_rem_pio2 \
+                 sf_scalbn sf_floor sf_fabs ef_acos ef_sqrt
+FDLIBM_DEFS := -Dsinf=re4_sinf -Dcosf=re4_cosf -Dacosf=re4_acosf \
+               -Dfabsf=re4_fabsf -Dfloorf=re4_floorf -Dscalbnf=re4_scalbnf
+GAME_NAMES := motion_prep ik_prep game_extract sdk_extract
+GAME_SRCS := $(addprefix $(HOST_BUILD)/,$(addsuffix .cpp,$(GAME_NAMES)))
+
+$(HOST_BUILD)/motion_prep.cpp:
+	$(MAKE) -C $(HOST_MOTION) build/motion_prep.cpp
+
+$(HOST_BUILD)/ik_prep.cpp:
+	$(MAKE) -C $(HOST_MOTION) build/ik_prep.cpp
+
+$(HOST_BUILD)/game_extract.cpp:
+	$(MAKE) -C $(HOST_MOTION) build/game_extract.cpp
+
+$(HOST_BUILD)/sdk_extract.cpp:
+	$(MAKE) -C $(HOST_MOTION) build/sdk_extract.cpp
