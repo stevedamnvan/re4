@@ -60,7 +60,7 @@ constexpr float kTurnSpeed = 2.4f;
 // Keep this presentation spawn separate from the r10d gameplay checkpoint.
 constexpr float kSpawnX = -883.09f;
 constexpr float kSpawnY = -1.425f;
-constexpr float kSpawnZ = -5.80f;
+constexpr float kSpawnZ = -14.0f;
 #if defined(RE4DC_DEMO_YAW)
 constexpr float kSpawnYaw = RE4DC_DEMO_YAW;
 #else
@@ -68,10 +68,10 @@ constexpr float kSpawnYaw = 2.36f;
 #endif
 constexpr float kGoalX = -866.2f;
 constexpr float kGoalY = -1.425f;
-constexpr float kGoalZ = -22.8f;
-constexpr float kEnemySpawnX = -874.64f;
+constexpr float kGoalZ = -30.0f;
+constexpr float kEnemySpawnX = -875.0f;
 constexpr float kEnemySpawnY = -1.425f;
-constexpr float kEnemySpawnZ = -14.32f;
+constexpr float kEnemySpawnZ = -22.0f;
 constexpr float kFarClipDistance = 90.0f;
 #else
 constexpr float kSpawnX = 0.0f;
@@ -83,7 +83,7 @@ constexpr float kGoalY = -7.98f;
 constexpr float kGoalZ = -284.0f;
 constexpr float kEnemySpawnX = 0.0f;
 constexpr float kEnemySpawnY = -7.98f;
-constexpr float kEnemySpawnZ = -265.0f;
+constexpr float kEnemySpawnZ = -256.0f;
 constexpr float kFarClipDistance = 35.0f;
 #endif
 constexpr float kEnemyMoveSpeed = 1.9f;
@@ -175,6 +175,18 @@ struct ProjectedVertex {
     float x;
     float y;
     float z;
+    float world_x;
+    float world_y;
+    float world_z;
+    float depth;
+};
+
+struct RenderVertex {
+    ProjectedVertex position;
+    float u;
+    float v;
+    float light;
+    std::uint32_t offset_color;
 };
 
 float analog_axis(std::int8_t value) {
@@ -670,6 +682,13 @@ std::uint32_t shade_color(float light) {
 }
 
 bool group_visible(const re4dc::room::Group& group) {
+#if defined(RE4DC_SCENE_R100)
+    // The presentation camera often sits inside a 20 m forest cell. Projecting
+    // only the eight AABB corners can reject that cell even when its road cuts
+    // through the view, so rely on per-triangle clipping for this bounded scene.
+    (void)group;
+    return true;
+#else
     bool behind = true;
     bool beyond_far = true;
     bool left = true;
@@ -692,18 +711,127 @@ bool group_visible(const re4dc::room::Group& group) {
         below &= y > 240.0f;
     }
     return !(behind || beyond_far || left || right || above || below);
+#endif
 }
 
-bool transform_triangle(const re4dc::room::Vertex* source,
-                        const std::uint32_t* indices, pvr_vertex_t* output,
-                        ProjectedVertex* projected,
-                        std::uint32_t* transformed_at, std::uint32_t frame_token,
-                        FrameStats& stats) {
-    bool left = true;
-    bool right = true;
-    bool above = true;
-    bool below = true;
-    bool beyond_far = true;
+constexpr float kNearClipDistance = 1.0f;
+
+float camera_depth(float reciprocal_depth) {
+    if(!std::isfinite(reciprocal_depth) ||
+       std::fabs(reciprocal_depth) < 0.000001f) {
+        return 0.0f;
+    }
+    return 1.0f / reciprocal_depth;
+}
+
+RenderVertex interpolate_vertex(const RenderVertex& a, const RenderVertex& b,
+                                float t) {
+    RenderVertex result{};
+    result.position.world_x = a.position.world_x +
+                              (b.position.world_x - a.position.world_x) * t;
+    result.position.world_y = a.position.world_y +
+                              (b.position.world_y - a.position.world_y) * t;
+    result.position.world_z = a.position.world_z +
+                              (b.position.world_z - a.position.world_z) * t;
+    result.position.depth = a.position.depth +
+                            (b.position.depth - a.position.depth) * t;
+    result.u = a.u + (b.u - a.u) * t;
+    result.v = a.v + (b.v - a.v) * t;
+    result.light = a.light + (b.light - a.light) * t;
+    result.offset_color = a.offset_color;
+    float x = result.position.world_x;
+    float y = result.position.world_y;
+    float z = result.position.world_z;
+    mat_trans_single(x, y, z);
+    result.position.x = x;
+    result.position.y = y;
+    result.position.z = z;
+    return result;
+}
+
+std::uint32_t clip_projected_triangle(const RenderVertex* source,
+                                      pvr_vertex_t* output,
+                                      bool cull_backface) {
+    RenderVertex clipped[4]{};
+    unsigned clipped_count = 0;
+    RenderVertex previous = source[2];
+    bool previous_inside = previous.position.depth >= kNearClipDistance;
+    for(unsigned corner = 0; corner < 3; ++corner) {
+        const RenderVertex current = source[corner];
+        const bool current_inside =
+            current.position.depth >= kNearClipDistance;
+        if(current_inside != previous_inside) {
+            const float t = (kNearClipDistance - previous.position.depth) /
+                            (current.position.depth - previous.position.depth);
+            clipped[clipped_count++] =
+                interpolate_vertex(previous, current, t);
+        }
+        if(current_inside) {
+            clipped[clipped_count++] = current;
+        }
+        previous = current;
+        previous_inside = current_inside;
+    }
+    if(clipped_count < 3) {
+        return 0;
+    }
+
+    std::uint32_t triangle_count = 0;
+    for(unsigned fan = 1; fan + 1 < clipped_count; ++fan) {
+        const RenderVertex triangle[3] = {clipped[0], clipped[fan],
+                                          clipped[fan + 1]};
+        const float signed_area =
+            (triangle[1].position.x - triangle[0].position.x) *
+                (triangle[2].position.y - triangle[0].position.y) -
+            (triangle[1].position.y - triangle[0].position.y) *
+                (triangle[2].position.x - triangle[0].position.x);
+        const bool beyond_far =
+            triangle[0].position.depth > kFarClipDistance &&
+            triangle[1].position.depth > kFarClipDistance &&
+            triangle[2].position.depth > kFarClipDistance;
+        const bool left = triangle[0].position.x < 0.0f &&
+                          triangle[1].position.x < 0.0f &&
+                          triangle[2].position.x < 0.0f;
+        const bool right = triangle[0].position.x > 320.0f &&
+                           triangle[1].position.x > 320.0f &&
+                           triangle[2].position.x > 320.0f;
+        const bool above = triangle[0].position.y < 0.0f &&
+                           triangle[1].position.y < 0.0f &&
+                           triangle[2].position.y < 0.0f;
+        const bool below = triangle[0].position.y > 240.0f &&
+                           triangle[1].position.y > 240.0f &&
+                           triangle[2].position.y > 240.0f;
+        if(beyond_far || left || right || above || below ||
+           (cull_backface ? signed_area >= 0.0f
+                          : std::fabs(signed_area) < 0.0001f)) {
+            continue;
+        }
+        pvr_vertex_t* destination = output + triangle_count * 3U;
+        for(unsigned corner = 0; corner < 3; ++corner) {
+            destination[corner] = {
+                .flags = corner == 2 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+                .x = triangle[corner].position.x,
+                .y = triangle[corner].position.y,
+                .z = triangle[corner].position.z,
+                .u = triangle[corner].u,
+                .v = triangle[corner].v,
+                .argb = shade_color(triangle[corner].light),
+                .oargb = triangle[corner].offset_color,
+            };
+        }
+        ++triangle_count;
+    }
+    return triangle_count;
+}
+
+std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
+                                 const std::uint32_t* indices,
+                                 pvr_vertex_t* output,
+                                 ProjectedVertex* projected,
+                                 std::uint32_t* transformed_at,
+                                 std::uint32_t frame_token,
+                                 FrameStats& stats) {
+    RenderVertex triangle[3]{};
     for(unsigned corner = 0; corner < 3; ++corner) {
         const std::uint32_t vertex_index = indices[corner];
         const re4dc::room::Vertex& input = source[vertex_index];
@@ -712,48 +840,28 @@ bool transform_triangle(const re4dc::room::Vertex* source,
             float y = input.y;
             float z = input.z;
             mat_trans_single(x, y, z);
-            projected[vertex_index] = {x, y, z};
+            projected[vertex_index] = {
+                x, y, z, input.x, input.y, input.z, camera_depth(z)};
             transformed_at[vertex_index] = frame_token;
             ++stats.transformed_vertices;
         }
-        const float x = projected[vertex_index].x;
-        const float y = projected[vertex_index].y;
-        const float z = projected[vertex_index].z;
-        if(z <= 0.0f) {
-            return false;
-        }
-        beyond_far &= z < (1.0f / kFarClipDistance);
-        left &= x < 0.0f;
-        right &= x > 320.0f;
-        above &= y < 0.0f;
-        below &= y > 240.0f;
-        const float light = std::clamp(
-            0.76f + 0.08f * input.nx + 0.12f * input.ny + 0.04f * input.nz,
-            0.58f, 1.0f);
-        output[corner] = {
-            .flags = corner == 2 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-            .x = x,
-            .y = y,
-            .z = z,
+        triangle[corner] = {
+            .position = projected[vertex_index],
             .u = input.u,
             .v = input.v,
-            .argb = shade_color(light),
-            .oargb = 0,
+            .light = std::clamp(
+                0.76f + 0.08f * input.nx + 0.12f * input.ny +
+                    0.04f * input.nz,
+                0.58f, 1.0f),
+            .offset_color = 0,
         };
     }
-    const float signed_area =
-        (output[1].x - output[0].x) * (output[2].y - output[0].y) -
-        (output[1].y - output[0].y) * (output[2].x - output[0].x);
 #if defined(RE4DC_SCENE_R100)
-    if(std::fabs(signed_area) < 0.0001f) {
-        return false;
-    }
+    constexpr bool cull_backface = false;
 #else
-    if(signed_area >= 0.0f) {
-        return false;
-    }
+    constexpr bool cull_backface = true;
 #endif
-    return !(beyond_far || left || right || above || below);
+    return clip_projected_triangle(triangle, output, cull_backface);
 }
 
 void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
@@ -809,8 +917,12 @@ void project_character(const re4dc::character::Package& character,
         float x = actor_x + local_x * cosine + local_z * sine;
         float y = actor_y + local_y;
         float z = actor_z - local_x * sine + local_z * cosine;
+        const float world_x = x;
+        const float world_y = y;
+        const float world_z = z;
         mat_trans_single(x, y, z);
-        projected[index] = {x, y, z};
+        projected[index] = {
+            x, y, z, world_x, world_y, world_z, camera_depth(z)};
     }
 }
 
@@ -830,47 +942,27 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
         pvr_prim(&material_headers[batch_index], sizeof(pvr_poly_hdr_t));
         const std::uint32_t end = batch.first_index + batch.index_count;
         for(std::uint32_t index = batch.first_index; index < end; index += 3U) {
-            const ProjectedVertex& a = projected[indices[index]];
-            const ProjectedVertex& b = projected[indices[index + 1U]];
-            const ProjectedVertex& c = projected[indices[index + 2U]];
-            if(a.z <= 0.0f || b.z <= 0.0f || c.z <= 0.0f) {
-                continue;
-            }
-            const bool beyond_far =
-                a.z < (1.0f / kFarClipDistance) &&
-                b.z < (1.0f / kFarClipDistance) &&
-                c.z < (1.0f / kFarClipDistance);
-            const bool left = a.x < 0.0f && b.x < 0.0f && c.x < 0.0f;
-            const bool right = a.x > 320.0f && b.x > 320.0f && c.x > 320.0f;
-            const bool above = a.y < 0.0f && b.y < 0.0f && c.y < 0.0f;
-            const bool below = a.y > 240.0f && b.y > 240.0f && c.y > 240.0f;
-            const float signed_area =
-                (b.x - a.x) * (c.y - a.y) -
-                (b.y - a.y) * (c.x - a.x);
-            if(beyond_far || left || right || above || below ||
-               signed_area >= 0.0f) {
-                continue;
-            }
-            const ProjectedVertex source_triangle[3] = {a, b, c};
             const std::uint16_t source_indices[3] = {
                 indices[index], indices[index + 1U], indices[index + 2U]
             };
-            pvr_vertex_t output[3]{};
+            RenderVertex source_triangle[3]{};
             for(unsigned corner = 0; corner < 3; ++corner) {
-                const auto& vertex = source_triangle[corner];
-                output[corner] = {
-                    .flags = corner == 2 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-                    .x = vertex.x,
-                    .y = vertex.y,
-                    .z = vertex.z,
+                source_triangle[corner] = {
+                    .position = projected[source_indices[corner]],
                     .u = uvs[source_indices[corner]].u,
                     .v = uvs[source_indices[corner]].v,
-                    .argb = 0xffffffffU,
-                    .oargb = 0,
+                    .light = 1.0f,
+                    .offset_color = 0xff20180cU,
                 };
             }
-            pvr_prim(output, sizeof(output));
-            ++triangles;
+            pvr_vertex_t output[6]{};
+            const std::uint32_t emitted =
+                clip_projected_triangle(source_triangle, output, true);
+            for(std::uint32_t triangle = 0; triangle < emitted; ++triangle) {
+                pvr_prim(output + triangle * 3U,
+                         sizeof(pvr_vertex_t) * 3U);
+            }
+            triangles += emitted;
         }
     }
     return triangles;
@@ -1045,13 +1137,15 @@ FrameStats render_scene(const re4dc::room::Package& room,
             pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
             const std::uint32_t end = batch.first_index + batch.index_count;
             for(std::uint32_t index = batch.first_index; index < end; index += 3) {
-                pvr_vertex_t triangle[3];
-                if(transform_triangle(vertices, indices + index, triangle,
-                                      projected, transformed_at,
-                                      frame_token, stats)) {
-                    pvr_prim(triangle, sizeof(triangle));
-                    ++stats.triangles;
+                pvr_vertex_t triangle[6]{};
+                const std::uint32_t emitted = transform_triangle(
+                    vertices, indices + index, triangle, projected,
+                    transformed_at, frame_token, stats);
+                for(std::uint32_t clipped = 0; clipped < emitted; ++clipped) {
+                    pvr_prim(triangle + clipped * 3U,
+                             sizeof(pvr_vertex_t) * 3U);
                 }
+                stats.triangles += emitted;
             }
         }
     }
@@ -1080,13 +1174,15 @@ FrameStats render_scene(const re4dc::room::Package& room,
             pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
             const std::uint32_t end = batch.first_index + batch.index_count;
             for(std::uint32_t index = batch.first_index; index < end; index += 3) {
-                pvr_vertex_t triangle[3];
-                if(transform_triangle(vertices, indices + index, triangle,
-                                      projected, transformed_at,
-                                      frame_token, stats)) {
-                    pvr_prim(triangle, sizeof(triangle));
-                    ++stats.triangles;
+                pvr_vertex_t triangle[6]{};
+                const std::uint32_t emitted = transform_triangle(
+                    vertices, indices + index, triangle, projected,
+                    transformed_at, frame_token, stats);
+                for(std::uint32_t clipped = 0; clipped < emitted; ++clipped) {
+                    pvr_prim(triangle + clipped * 3U,
+                             sizeof(pvr_vertex_t) * 3U);
                 }
+                stats.triangles += emitted;
             }
         }
     }
@@ -1170,6 +1266,12 @@ int main() {
         return 1;
     }
     pvr_set_bg_color(0.16f, 0.15f, 0.13f);
+    pvr_fog_table_color(1.0f, 0.16f, 0.15f, 0.13f);
+#if defined(RE4DC_SCENE_R100)
+    pvr_fog_table_linear(12.0f, 70.0f);
+#else
+    pvr_fog_table_linear(14.0f, 48.0f);
+#endif
     const std::size_t vram_before_textures = pvr_mem_available();
     if(!textures.upload()) {
         std::printf("re4dc-room: texture upload failed: %s\n", textures.error());
@@ -1220,6 +1322,7 @@ int main() {
                          texture->height, textures.pvr_texture(texture_index),
                          PVR_FILTER_BILINEAR);
         context.gen.culling = PVR_CULLING_NONE;
+        context.gen.fog_type = PVR_FOG_TABLE;
         if(material_alpha[material]) {
             context.txr.alpha = PVR_TXRALPHA_ENABLE;
         }
@@ -1269,6 +1372,8 @@ int main() {
                              character_textures.pvr_texture(texture_index),
                              PVR_FILTER_BILINEAR);
             context.gen.culling = PVR_CULLING_NONE;
+            context.gen.fog_type = PVR_FOG_TABLE;
+            context.gen.specular = PVR_SPECULAR_ENABLE;
             if(alpha[batch_index]) {
                 context.txr.alpha = PVR_TXRALPHA_ENABLE;
             }
@@ -1428,13 +1533,13 @@ int main() {
         const float rz = -std::sin(player.yaw);
         const bool shoulder_view = player.aiming && !player.dead;
 #if defined(RE4DC_SCENE_R100)
-        const float camera_distance = shoulder_view ? 0.45f : 1.4f;
-        const float camera_lateral = shoulder_view ? 0.20f : 0.35f;
-        const float camera_height = shoulder_view ? 1.85f : 2.2f;
+        const float camera_distance = shoulder_view ? 2.2f : 3.0f;
+        const float camera_lateral = shoulder_view ? 0.8f : 0.55f;
+        const float camera_height = shoulder_view ? 2.05f : 2.35f;
 #else
-        const float camera_distance = shoulder_view ? 4.25f : 4.75f;
-        const float camera_lateral = shoulder_view ? 1.35f : 0.85f;
-        const float camera_height = shoulder_view ? 2.35f : 2.55f;
+        const float camera_distance = shoulder_view ? 2.65f : 4.75f;
+        const float camera_lateral = shoulder_view ? 1.0f : 0.85f;
+        const float camera_height = shoulder_view ? 2.2f : 2.55f;
 #endif
         const float target_distance = shoulder_view ? 5.0f : 2.0f;
         const point_t eye = {
