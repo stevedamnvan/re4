@@ -24,3 +24,8 @@ tools/sn-gcc/cc1plus
 # external checkouts used by tools/research/mwccdbg (see its README)
 tools/research/mwccdbg/mwcc-debugger
 tools/research/mwccdbg/retrowin32
+# Dreamcast port host-generated diagnostics and binaries.
+/port/dreamcast/build/
+/port/dreamcast/kos/*.o
+/port/dreamcast/kos/*.elf
+/port/dreamcast/**/__pycache__/

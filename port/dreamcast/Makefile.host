@@ -1,0 +1,33 @@
+REPO_ROOT := ../..
+BUILD := build/host
+CXX ?= g++
+CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Werror -pedantic
+PYTHON ?= python3
+
+.PHONY: all test audit motion-host script-check unit clean
+
+all: $(BUILD)/abi_probe
+
+$(BUILD)/abi_probe: src/abi_probe.cpp include/re4dc/abi.hpp
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -Iinclude src/abi_probe.cpp -o $@
+
+audit:
+	@mkdir -p $(BUILD)
+	$(PYTHON) tools/portability_audit.py $(REPO_ROOT) --json $(BUILD)/portability-audit.json
+
+unit:
+	$(PYTHON) -m unittest discover -s tests -v
+
+motion-host:
+	$(MAKE) -C $(REPO_ROOT)/tools/motion/host
+
+script-check:
+	bash -n kos-env.sh tools/bootstrap_kos.sh
+
+test: all audit motion-host script-check unit
+	$(BUILD)/abi_probe > $(BUILD)/abi-probe.json
+	@printf 'Host baseline written to %s\n' '$(BUILD)'
+
+clean:
+	rm -rf $(BUILD)
