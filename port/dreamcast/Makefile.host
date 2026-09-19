@@ -8,8 +8,10 @@ R10D_SAT_SOURCE ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_001.SAT
 R10D_ROOM ?= build/private/r10d.re4room
 R10D_SAT ?= build/private/r10d.re4sat
 R10D_CELL_SIZE ?= 0
+RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
+LEON_CHARACTER ?= build/private/leon.re4chr
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d character-leon demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -36,6 +38,13 @@ motion-real-host:
 room-r10d:
 	$(PYTHON) tools/convert_room_obj.py --cell-size $(R10D_CELL_SIZE) $(R10D_OBJ) $(R10D_ROOM)
 	$(PYTHON) tools/convert_sat.py $(R10D_SAT_SOURCE) $(R10D_SAT)
+
+character-leon:
+	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
+		--cache-dir build/private/disc-cache --model-archive pl00.drs --model-entry 0 \
+		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 --output $(LEON_CHARACTER)
+
+demo-r10d: room-r10d character-leon
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

@@ -7,6 +7,7 @@
 #include <memory>
 #include <new>
 
+#include "character_package.hpp"
 #include "collision_package.hpp"
 #include "room_package.hpp"
 
@@ -35,6 +36,8 @@ struct Player {
     float yaw = kPi;
     std::uint32_t wall_hits = 0;
     std::uint32_t completed_loops = 0;
+    std::uint32_t animation_clip = 0;
+    float animation_frame = 0.0f;
 };
 
 struct Input {
@@ -48,6 +51,7 @@ struct FrameStats {
     std::uint32_t groups = 0;
     std::uint32_t triangles = 0;
     std::uint32_t transformed_vertices = 0;
+    std::uint32_t character_triangles = 0;
     std::uint64_t wait_us = 0;
     std::uint64_t submit_us = 0;
     std::uint64_t finish_us = 0;
@@ -258,6 +262,21 @@ void update_player(Player& player, const re4dc::collision::Package& collision,
     }
 }
 
+void update_animation(Player& player, const re4dc::character::Package& character,
+                      const Input& input, float delta_seconds) {
+    const std::uint32_t desired_clip =
+        std::fabs(input.move) > 0.05f && character.header().clip_count > 1U ? 1U : 0U;
+    if(player.animation_clip != desired_clip) {
+        player.animation_clip = desired_clip;
+        player.animation_frame = 0.0f;
+    }
+    const auto& clip = character.clips()[player.animation_clip];
+    player.animation_frame += clip.frames_per_second * delta_seconds;
+    while(player.animation_frame >= static_cast<float>(clip.frame_count)) {
+        player.animation_frame -= static_cast<float>(clip.frame_count);
+    }
+}
+
 std::uint32_t material_color(std::uint32_t material, float light) {
     const std::uint32_t value = material * 0x9e3779b9U + 0x7f4a7c15U;
     const float red = static_cast<float>(80U + (value & 0x7fU)) * light;
@@ -376,25 +395,69 @@ void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
     }
 }
 
-void draw_player(const Player& player) {
-    const float fx = std::sin(player.yaw);
-    const float fz = std::cos(player.yaw);
-    const float rx = std::cos(player.yaw);
-    const float rz = -std::sin(player.yaw);
-    const point_t nose = {player.x + fx * 0.75f, player.y + 0.08f,
-                          player.z + fz * 0.75f, 1.0f};
-    const point_t left = {player.x - fx * 0.35f - rx * 0.42f,
-                          player.y + 0.08f,
-                          player.z - fz * 0.35f - rz * 0.42f, 1.0f};
-    const point_t right = {player.x - fx * 0.35f + rx * 0.42f,
-                           player.y + 0.08f,
-                           player.z - fz * 0.35f + rz * 0.42f, 1.0f};
-    const point_t top = {player.x, player.y + kPlayerHeight, player.z, 1.0f};
-    constexpr std::uint32_t color = 0xffff9b32U;
-    submit_world_triangle(nose, left, top, color);
-    submit_world_triangle(right, nose, top, color);
-    submit_world_triangle(left, right, top, color);
-    submit_world_triangle(nose, right, left, color);
+std::uint32_t character_color(std::uint32_t material) {
+    static constexpr std::uint32_t colors[8] = {
+        0xffc08a68U, 0xff9d7559U, 0xff25292cU, 0xff35404aU,
+        0xff121518U, 0xff6e5139U, 0xff8d6748U, 0xff59402dU,
+    };
+    return colors[material & 7U];
+}
+
+std::uint32_t draw_character(const re4dc::character::Package& character,
+                             const Player& player, ProjectedVertex* projected) {
+    const auto& clip = character.clips()[player.animation_clip];
+    const std::uint32_t local_frame =
+        static_cast<std::uint32_t>(player.animation_frame) % clip.frame_count;
+    const auto* source = character.frame_positions(clip.first_frame + local_frame);
+    const float scale = character.header().position_quantum_m;
+    const float sine = std::sin(player.yaw);
+    const float cosine = std::cos(player.yaw);
+    for(std::uint32_t index = 0; index < character.header().vertex_count; ++index) {
+        const float local_x = static_cast<float>(source[index * 3U]) * scale;
+        const float local_y = static_cast<float>(source[index * 3U + 1U]) * scale;
+        const float local_z = static_cast<float>(source[index * 3U + 2U]) * scale;
+        float x = player.x + local_x * cosine + local_z * sine;
+        float y = player.y + local_y;
+        float z = player.z - local_x * sine + local_z * cosine;
+        mat_trans_single(x, y, z);
+        projected[index] = {x, y, z};
+    }
+
+    const auto* indices = character.indices();
+    std::uint32_t triangles = 0;
+    for(std::uint32_t batch_index = 0;
+        batch_index < character.header().batch_count; ++batch_index) {
+        const auto& batch = character.batches()[batch_index];
+        const std::uint32_t color = character_color(batch.material);
+        const std::uint32_t end = batch.first_index + batch.index_count;
+        for(std::uint32_t index = batch.first_index; index < end; index += 3U) {
+            const ProjectedVertex& a = projected[indices[index]];
+            const ProjectedVertex& b = projected[indices[index + 1U]];
+            const ProjectedVertex& c = projected[indices[index + 2U]];
+            if(a.z <= 0.0f || b.z <= 0.0f || c.z <= 0.0f) {
+                continue;
+            }
+            const ProjectedVertex source_triangle[3] = {a, b, c};
+            for(unsigned corner = 0; corner < 3; ++corner) {
+                const auto& vertex = source_triangle[corner];
+                pvr_vertex_t output = {
+                    .flags = corner == 2 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+                    .x = vertex.x,
+                    .y = vertex.y,
+                    .z = vertex.z,
+                    .u = 0.0f,
+                    .v = 0.0f,
+                    .argb = color,
+                    .oargb = 0,
+                };
+                auto* target = static_cast<pvr_vertex_t*>(pvr_dr_target());
+                *target = output;
+                pvr_dr_commit(target);
+            }
+            ++triangles;
+        }
+    }
+    return triangles;
 }
 
 void draw_goal() {
@@ -412,9 +475,12 @@ void draw_goal() {
     }
 }
 
-FrameStats render_scene(const re4dc::room::Package& room, const Player& player,
+FrameStats render_scene(const re4dc::room::Package& room,
+                        const re4dc::character::Package& character,
+                        const Player& player,
                         const pvr_poly_hdr_t& polygon_header,
                         ProjectedVertex* projected, std::uint32_t* transformed_at,
+                        ProjectedVertex* character_projected,
                         std::uint32_t frame_token) {
     FrameStats stats{};
     const auto* groups = room.groups();
@@ -454,7 +520,8 @@ FrameStats render_scene(const re4dc::room::Package& room, const Player& player,
             }
         }
     }
-    draw_player(player);
+    stats.character_triangles =
+        draw_character(character, player, character_projected);
     draw_goal();
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
@@ -477,14 +544,22 @@ int main() {
         std::printf("re4dc-room: collision load failed: %s\n", collision.error());
         return 1;
     }
+    re4dc::character::Package character;
+    if(!character.open("/rd/leon.re4chr")) {
+        std::printf("re4dc-room: character load failed: %s\n", character.error());
+        return 1;
+    }
     std::printf(
-        "re4dc-room: loaded vertices=%lu triangles=%lu groups=%lu collision=%lu/%lu/%lu\n",
+        "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu leon=%lu/%lu/%lu\n",
         static_cast<unsigned long>(room.header().vertex_count),
         static_cast<unsigned long>(room.header().index_count / 3U),
         static_cast<unsigned long>(room.header().group_count),
         static_cast<unsigned long>(collision.header().floor_count),
         static_cast<unsigned long>(collision.header().slope_count),
-        static_cast<unsigned long>(collision.header().wall_count));
+        static_cast<unsigned long>(collision.header().wall_count),
+        static_cast<unsigned long>(character.header().vertex_count),
+        static_cast<unsigned long>(character.header().index_count / 3U),
+        static_cast<unsigned long>(character.header().frame_count));
 
     vid_set_mode(DM_320x240, PM_RGB565);
     pvr_init_defaults();
@@ -511,7 +586,10 @@ int main() {
         new(std::nothrow) ProjectedVertex[room.header().vertex_count]);
     std::unique_ptr<std::uint32_t[]> transformed_at(
         new(std::nothrow) std::uint32_t[room.header().vertex_count]());
-    if(projected == nullptr || transformed_at == nullptr) {
+    std::unique_ptr<ProjectedVertex[]> character_projected(
+        new(std::nothrow) ProjectedVertex[character.header().vertex_count]);
+    if(projected == nullptr || transformed_at == nullptr ||
+       character_projected == nullptr) {
         std::printf("re4dc-room: transform cache allocation failed\n");
         return 1;
     }
@@ -531,6 +609,7 @@ int main() {
             static_cast<float>(frame_us) / 1000000.0f, 0.0f, 0.1f);
         previous_time = now;
         update_player(player, collision, input, delta_seconds);
+        update_animation(player, character, input, delta_seconds);
 
         const float fx = std::sin(player.yaw);
         const float fz = std::cos(player.yaw);
@@ -545,19 +624,21 @@ int main() {
         mat_perspective(160.0f, 120.0f, 1.0f / std::tan(kPi / 6.0f), 1.0f,
                         500.0f);
         mat_lookat(&eye, &target, &up);
-        const FrameStats stats = render_scene(room, player, polygon_header,
+        const FrameStats stats = render_scene(room, character, player, polygon_header,
                                               projected.get(), transformed_at.get(),
+                                              character_projected.get(),
                                               frame + 1U);
         ++frame;
         if(frame % 120U == 0U) {
             std::printf(
                 "re4dc-room: frame=%lu pos=%.2f,%.2f,%.2f groups=%lu vertices=%lu "
-                "triangles=%lu wall_hits=%lu loops=%lu frame_us=%llu wait_us=%llu "
+                "triangles=%lu leon_triangles=%lu wall_hits=%lu loops=%lu frame_us=%llu wait_us=%llu "
                 "submit_us=%llu finish_us=%llu\n",
                 static_cast<unsigned long>(frame), player.x, player.y, player.z,
                 static_cast<unsigned long>(stats.groups),
                 static_cast<unsigned long>(stats.transformed_vertices),
                 static_cast<unsigned long>(stats.triangles),
+                static_cast<unsigned long>(stats.character_triangles),
                 static_cast<unsigned long>(player.wall_hits),
                 static_cast<unsigned long>(player.completed_loops),
                 static_cast<unsigned long long>(frame_us),

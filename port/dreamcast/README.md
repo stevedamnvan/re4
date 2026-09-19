@@ -21,6 +21,9 @@ and asset reference, while this target is compiled for SH-4 with KallistiOS.
 - Walkable r10d prototype: disc SAT floor/wall collision, tank movement, a
   shoulder follow camera, reset/exit controls, and a visible route marker run
   together in the native room executable
+- Disc-derived Leon prototype: the original 1,484-vertex body is skinned
+  offline with the source motion evaluator and plays the starting-handgun idle
+  and walk cycles in the native room executable
 
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
@@ -75,32 +78,33 @@ original game motion code on the host. The second build produces
 are tracked by Git. See
 [the real-motion SH-4 baseline](docs/REAL_MOTION_SH4_BASELINE.md).
 
-After preparing the private `r10d` package, build its native room viewer with:
+Prepare the private `r10d` and Leon packages, then build the native room demo:
 
 ```sh
-make -C port/dreamcast -f Makefile.host room-r10d
+make -C port/dreamcast -f Makefile.host demo-r10d
 source port/dreamcast/kos-env.sh
 make -C port/dreamcast/room
 ```
 
-The executable validates both packages and their CRCs, culls room groups,
-submits flat-shaded PVR geometry, and supports analog-stick or D-pad tank
-movement, SAT floor/wall collision, a shoulder follow camera, A-button reset,
-START exit, and route telemetry. The generated room and SAT packages stay
-ignored. The first broad orbit proof and the current close gameplay view both
-miss the frame budget; their timer includes PVR wait time. See
+The executable validates the room, collision, and character packages, culls
+room groups, submits flat-shaded PVR geometry, and supports analog-stick or
+D-pad tank movement, SAT floor/wall collision, a shoulder follow camera,
+A-button reset, START exit, route telemetry, and idle/walk animation selection.
+The generated packages stay ignored. The first broad orbit proof and the
+current close gameplay view both miss the frame budget; their timer includes
+PVR wait time. See
 [the room SH-4 baseline](docs/ROOM_SH4_BASELINE.md).
 The integrated movement/collision evidence and its remaining P0 limits are in
 [the walkable r10d checkpoint](docs/WALKABLE_R10D_BASELINE.md).
 
 ## Near-term sequence
 
-1. Finish the bounded P0 renderer pass: correct near-plane clipping, separate
-   timing phases, and compare preserved source export groups with the existing
-   spatial cells at the recorded gameplay route.
-2. Render and animate Leon using the verified pose evaluator; visible skinning
-   and continuous locomotion remain to be integrated.
-3. Add the minimum source player/handgun/Ganado paths for a small combat loop.
+1. Add the minimum aim, fire, reload, damage, and one-Ganado paths for a small
+   combat loop, using the same private offline character conversion boundary.
+2. Trim the measured room submission bottleneck enough for readable combat;
+   add near-plane clipping only if the combat route demonstrates the need.
+3. Add the essential Leon, handgun, and Ganado attachments or textures needed
+   for combat readability, without expanding into a general asset renderer.
    Audit existing cheaper model variants before making new simplified art.
 4. Measure the combined runtime, add essential textures/cutouts, and validate
    it on stock Dreamcast. Continue useful Flycast iteration while hardware
