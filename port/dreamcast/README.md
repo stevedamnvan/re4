@@ -72,6 +72,21 @@ original game motion code on the host. The second build produces
 are tracked by Git. See
 [the real-motion SH-4 baseline](docs/REAL_MOTION_SH4_BASELINE.md).
 
+After preparing the private `r10d` package, build its native room viewer with:
+
+```sh
+make -C port/dreamcast -f Makefile.host room-r10d
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/room
+```
+
+The viewer performs package and CRC validation, group visibility culling,
+flat-shaded PVR submission, controller orbit/zoom, and timing telemetry. The
+room package is generated and ignored. The first real run renders recognisable
+geometry but misses the frame budget, so the playable gate now uses a
+SAT-derived proxy and selected simplified scenery. See
+[the room SH-4 baseline](docs/ROOM_SH4_BASELINE.md).
+
 ## Near-term sequence
 
 1. Build the hard-coded `r10d` vertical slice: converted room geometry, fixed

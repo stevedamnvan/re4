@@ -64,6 +64,16 @@ class ConvertRoomObjTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "out of range"):
                 ROOM.parse_obj(source)
 
+    def test_spatial_partition_preserves_triangles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / "room.obj"
+            source.write_text(OBJ, encoding="utf-8")
+            parsed = ROOM.parse_obj(source)
+            ROOM.spatial_partition(parsed, 1.0)
+            self.assertEqual(sum(len(batch.indices) for batch in parsed["batches"]), 9)
+            self.assertEqual(parsed["source_groups"], 2)
+            self.assertEqual(parsed["cell_size"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

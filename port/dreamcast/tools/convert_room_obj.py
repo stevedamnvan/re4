@@ -192,6 +192,52 @@ def parse_obj(path: pathlib.Path) -> dict[str, object]:
     }
 
 
+def spatial_partition(parsed: dict[str, object], cell_size: float) -> None:
+    if cell_size <= 0.0:
+        return
+    vertices = parsed["vertices"]
+    source_batches = parsed["batches"]
+    cells: dict[tuple[int, int], dict[str, BatchData]] = {}
+    groups: dict[str, GroupData] = {}
+
+    for source_batch in source_batches:
+        for start in range(0, len(source_batch.indices), 3):
+            triangle = source_batch.indices[start : start + 3]
+            positions = [vertices[index][:3] for index in triangle]
+            center_x = sum(position[0] for position in positions) / 3.0
+            center_z = sum(position[2] for position in positions) / 3.0
+            key = (math.floor(center_x / cell_size), math.floor(center_z / cell_size))
+            name = f"cell_{key[0]}_{key[1]}"
+            if key not in cells:
+                cells[key] = {}
+                groups[name] = GroupData(name)
+            if source_batch.material not in cells[key]:
+                cells[key][source_batch.material] = BatchData(
+                    name, source_batch.material
+                )
+            batch = cells[key][source_batch.material]
+            batch.indices.extend(triangle)
+            for position in positions:
+                groups[name].include(position)
+
+    batches: list[BatchData] = []
+    group_order: list[str] = []
+    for key in sorted(cells):
+        name = f"cell_{key[0]}_{key[1]}"
+        group = groups[name]
+        group_order.append(name)
+        for material in parsed["materials"]:
+            if material in cells[key]:
+                group.batch_indices.append(len(batches))
+                batches.append(cells[key][material])
+
+    parsed["source_groups"] = len(parsed["group_order"])
+    parsed["groups"] = groups
+    parsed["group_order"] = group_order
+    parsed["batches"] = batches
+    parsed["cell_size"] = cell_size
+
+
 def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
     vertices = parsed["vertices"]
     materials = parsed["materials"]
@@ -296,9 +342,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", type=pathlib.Path, help="private exported room OBJ")
     parser.add_argument("output", type=pathlib.Path, help="private Dreamcast room package")
     parser.add_argument("--manifest", type=pathlib.Path, help="JSON manifest path")
+    parser.add_argument(
+        "--cell-size",
+        type=float,
+        default=0.0,
+        help="partition static triangles into X/Z cells of this size",
+    )
     args = parser.parse_args(argv)
 
     parsed = parse_obj(args.input)
+    spatial_partition(parsed, args.cell_size)
     package, metadata = build_package(parsed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)
@@ -310,6 +363,8 @@ def main(argv: list[str] | None = None) -> int:
             "source_normals": parsed["normals"],
             "source_texcoords": parsed["texcoords"],
             "source_faces": parsed["source_faces"],
+            "source_groups": parsed.get("source_groups", len(parsed["group_order"])),
+            "cell_size": parsed.get("cell_size", 0.0),
             "package": args.output.name,
             "package_bytes": len(package),
             "package_sha256": sha256_bytes(package),

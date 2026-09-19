@@ -31,7 +31,7 @@ motion-real-host:
 	$(MAKE) -C motion -f Makefile.host real-run
 
 room-r10d:
-	$(PYTHON) tools/convert_room_obj.py $(R10D_OBJ) $(R10D_ROOM)
+	$(PYTHON) tools/convert_room_obj.py --cell-size 10 $(R10D_OBJ) $(R10D_ROOM)
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

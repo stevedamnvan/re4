@@ -31,13 +31,26 @@ make -C port/dreamcast -f Makefile.host room-r10d
 The generated package and manifest remain under `port/dreamcast/build/private`.
 No disc-derived bytes belong in Git.
 
+Build the private flat-shaded room viewer with:
+
+```sh
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/room
+```
+
+The viewer validates the package header and CRC, maps the room directly from
+its generated ROM disk, culls groups by their bounds, and reports submitted
+triangles and render time. It establishes the real geometry budget before
+character integration or texture work.
+
 ## Package boundary
 
 `re4dc-room` version 1 is little-endian and starts with the eight-byte magic
 `RE4DCRM\0`. It contains fixed-size material names, group records with bounds,
 material batches, interleaved position/normal/UV vertices, and 32-bit triangle
-indices. Group bounds allow the first renderer to reject whole objects before
-transforming their vertices.
+indices. The `r10d` build partitions static triangles into 10-unit X/Z cells;
+cell bounds let the first renderer reject distant or off-screen geometry before
+transforming its vertices.
 
 Textures are intentionally outside version 1. The first runtime checkpoint is
 flat-shaded room geometry plus collision. Texture conversion follows once the
