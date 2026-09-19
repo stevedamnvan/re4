@@ -15,7 +15,7 @@ R10D_CLUSTER_SIZE ?= 0
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
 LEON_CHARACTER ?= build/private/leon.re4chr
 GANADO_CHARACTER ?= build/private/ganado.re4chr
-CHARACTER_CLUSTER_MM ?= 75
+CHARACTER_CLUSTER_MM ?= 0
 
 .PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado demo-r10d script-check unit clean
 

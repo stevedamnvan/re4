@@ -39,6 +39,13 @@ class ConvertTplTests(unittest.TestCase):
         self.assertEqual(pixels[0], (255, 255, 255, 255))
         self.assertEqual(pixels[1], (0, 0, 0, 255))
 
+    def test_ia8_block_decodes_alpha_then_intensity(self):
+        image = TPL.TplImage(
+            4, 4, TPL.GX_TF_IA8, bytes((0x80, 0x40)) + bytes(30)
+        )
+        pixels = TPL.decode_ia8(image)
+        self.assertEqual(pixels[0], (0x40, 0x40, 0x40, 0x80))
+
     def test_cmpr_subblocks_and_selector_order(self):
         subblock = struct.pack(">HH4B", 0xF800, 0x07E0, 0x1B, 0, 0, 0)
         image = TPL.TplImage(8, 8, TPL.GX_TF_CMPR, subblock * 4)

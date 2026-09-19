@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 TPL_MAGIC = 0x0020AF30
 GX_TF_I4 = 0
+GX_TF_IA8 = 3
 GX_TF_CMPR = 14
 
 MAGIC = b"RE4DCTX\0"
@@ -57,6 +58,8 @@ def _u32be(data: bytes, offset: int) -> int:
 def _expected_image_size(width: int, height: int, image_format: int) -> int:
     if image_format in (GX_TF_I4, GX_TF_CMPR):
         return ((width + 7) // 8) * ((height + 7) // 8) * 32
+    if image_format == GX_TF_IA8:
+        return ((width + 3) // 4) * ((height + 3) // 4) * 32
     raise ValueError(f"unsupported TPL image format 0x{image_format:x}")
 
 
@@ -166,11 +169,32 @@ def decode_i4(image: TplImage) -> list[tuple[int, int, int, int]]:
     return pixels
 
 
+def decode_ia8(image: TplImage) -> list[tuple[int, int, int, int]]:
+    pixels = [(0, 0, 0, 0)] * (image.width * image.height)
+    offset = 0
+    for tile_y in range(0, image.height, 4):
+        for tile_x in range(0, image.width, 4):
+            for row in range(4):
+                y = tile_y + row
+                for column in range(4):
+                    alpha = image.data[offset]
+                    intensity = image.data[offset + 1]
+                    offset += 2
+                    x = tile_x + column
+                    if x < image.width and y < image.height:
+                        pixels[y * image.width + x] = (
+                            intensity, intensity, intensity, alpha
+                        )
+    return pixels
+
+
 def decode_image(image: TplImage) -> list[tuple[int, int, int, int]]:
     if image.format == GX_TF_CMPR:
         return decode_cmpr(image)
     if image.format == GX_TF_I4:
         return decode_i4(image)
+    if image.format == GX_TF_IA8:
+        return decode_ia8(image)
     raise ValueError(f"unsupported TPL image format 0x{image.format:x}")
 
 

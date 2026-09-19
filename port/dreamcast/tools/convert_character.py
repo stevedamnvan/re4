@@ -18,15 +18,18 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from motion import archive, evalhost, fcv, modelbin  # noqa: E402
+import convert_tpl  # noqa: E402
 
 
 MAGIC = b"R4CH"
-VERSION = 1
-HEADER = struct.Struct("<4s11If")
+VERSION = 2
+HEADER = struct.Struct("<4s12If")
 BATCH = struct.Struct("<4I")
 CLIP = struct.Struct("<16sIIff")
+UV = struct.Struct("<2f")
 
 
 def align(value, alignment=4):
@@ -69,10 +72,11 @@ def triangulate(opcode, vertices):
 
 
 def parse_geometry(data):
-    """Return source positions, palette indices, triangle indices and material batches."""
+    """Return skinned sources plus UV-split draw vertices and material batches."""
     flags = be_u32(data, 0x20)
     shift = data[0x28]
     vertex_offset = be_u32(data, 0x30)
+    texcoord_offset = be_u32(data, 0x10)
     vertex_count = be_u16(data, 0x38)
     part_offset = be_u32(data, 0x1C)
     part_count = be_u16(data, 0x1A)
@@ -106,13 +110,19 @@ def parse_geometry(data):
         raise ValueError("vertex references a skinning palette entry outside the table")
 
     record_size = 8 if flags & 0x80000000 else 6
+    draw_sources = []
+    texcoords = []
+    draw_vertex_map = {}
     indices = []
     batches = []
+    texture_bindings = []
     cursor = part_offset
     for part_index in range(part_count):
         if cursor + 0x20 > len(data):
             raise ValueError("model part header exceeds entry")
         material = data[cursor + 0x0C]
+        part_flags = data[cursor + 0x0B]
+        alpha_texture = data[cursor + 0x0E] if part_flags & 4 else None
         stream_size = be_u32(data, cursor + 0x18)
         stream = cursor + 0x20
         stream_end = stream + stream_size
@@ -133,8 +143,31 @@ def parse_geometry(data):
             byte_count = count * record_size
             if stream + byte_count > stream_end:
                 raise ValueError("GX primitive records exceed their model part")
-            primitive = [be_u16(data, stream + i * record_size) for i in range(count)]
-            if primitive and max(primitive) >= vertex_count:
+            primitive = []
+            for vertex in range(count):
+                record = stream + vertex * record_size
+                position_index = be_u16(data, record)
+                texcoord_index = be_u16(data, record + record_size - 2)
+                if position_index >= vertex_count:
+                    raise ValueError(
+                        "GX primitive references a vertex outside the source array"
+                    )
+                texcoord = texcoord_offset + texcoord_index * 4
+                if texcoord_offset == 0 or texcoord + 4 > len(data):
+                    raise ValueError("GX primitive references a texture coordinate outside the source array")
+                key = (position_index, texcoord_index)
+                if key not in draw_vertex_map:
+                    if flags & 0x80000000:
+                        raw_u, raw_v = struct.unpack_from(">2h", data, texcoord)
+                        uv = (raw_u / 256.0, raw_v / 256.0)
+                    else:
+                        raw_u, raw_v = struct.unpack_from(">2H", data, texcoord)
+                        uv = (raw_u / 32768.0, raw_v / 32768.0)
+                    draw_vertex_map[key] = len(draw_sources)
+                    draw_sources.append(position_index)
+                    texcoords.append(uv)
+                primitive.append(draw_vertex_map[key])
+            if primitive and max(primitive) >= len(draw_sources):
                 raise ValueError("GX primitive references a vertex outside the source array")
             for triangle in triangulate(opcode, primitive):
                 indices.extend(triangle)
@@ -142,8 +175,16 @@ def parse_geometry(data):
         count = len(indices) - first_index
         if count:
             batches.append((first_index, count, material, part_index))
+            texture_bindings.append(
+                convert_tpl.MaterialBinding(
+                    f"PART_{part_index:03d}", material, alpha_texture
+                )
+            )
         cursor = stream_end
-    return positions, palette_indices, weights, indices, batches
+    return (
+        positions, palette_indices, weights, draw_sources, texcoords,
+        indices, batches, texture_bindings,
+    )
 
 
 def affine_multiply(a, b):
@@ -236,7 +277,8 @@ def skin_frame(pose, rest_world, source_positions, palette_indices, weights):
             for index, position in enumerate(source_positions)]
 
 
-def cluster_animated_geometry(positions, indices, batches, frames, cluster_mm):
+def cluster_animated_geometry(positions, texcoords, indices, batches, frames,
+                              cluster_mm):
     """Create a coarse animated mesh by clustering vertices within each batch.
 
     Batch scoping prevents separate source parts and materials from welding.
@@ -245,7 +287,7 @@ def cluster_animated_geometry(positions, indices, batches, frames, cluster_mm):
     are removed.
     """
     if cluster_mm <= 0.0:
-        return positions, indices, batches, frames
+        return positions, texcoords, indices, batches, frames
 
     cluster_members = []
     clustered_indices = []
@@ -257,7 +299,11 @@ def cluster_animated_geometry(positions, indices, batches, frames, cluster_mm):
             keys = []
             for source_index in indices[offset:offset + 3]:
                 position = positions[source_index]
-                key = tuple(round(value / cluster_mm) for value in position)
+                uv = texcoords[source_index]
+                key = (
+                    *(round(value / cluster_mm) for value in position),
+                    round(uv[0] * 4096.0), round(uv[1] * 4096.0),
+                )
                 members_by_key.setdefault(key, set()).add(source_index)
                 keys.append(key)
             source_triangles.append(tuple(keys))
@@ -294,12 +340,19 @@ def cluster_animated_geometry(positions, indices, batches, frames, cluster_mm):
     clustered_positions = [
         average_points(positions, members) for members in cluster_members
     ]
+    clustered_texcoords = [
+        tuple(
+            sum(texcoords[index][axis] for index in members) / float(len(members))
+            for axis in range(2)
+        )
+        for members in cluster_members
+    ]
     clustered_frames = [
         [average_points(frame, members) for members in cluster_members]
         for frame in frames
     ]
-    return (clustered_positions, clustered_indices, clustered_batches,
-            clustered_frames)
+    return (clustered_positions, clustered_texcoords, clustered_indices,
+            clustered_batches, clustered_frames)
 
 
 def load_archive(source, name, cache_dir):
@@ -365,7 +418,19 @@ def convert(args):
         raise ValueError("selected model entry is not BIN")
     model = modelbin.parse(model_entry.data)
     model.check_tree()
-    positions, palette_indices, weights, indices, batches = parse_geometry(model_entry.data)
+    (
+        source_positions, palette_indices, weights, draw_sources, texcoords,
+        indices, batches, texture_bindings,
+    ) = parse_geometry(model_entry.data)
+    texture_entry_index = (
+        args.texture_entry if args.texture_entry is not None else args.model_entry + 1
+    )
+    texture_entry = model_archive.entry(texture_entry_index)
+    if texture_entry.tag != "TPL":
+        raise ValueError(
+            f"selected texture entry {texture_entry_index} is not TPL"
+        )
+    texture_images = convert_tpl.parse_tpl(texture_entry.data)
     rest_world = rest_world_positions(model)
 
     frames = []
@@ -382,8 +447,11 @@ def convert(args):
         player = evalhost.Player(model, motion, loop=True)
         first_frame = len(frames)
         for frame in range(motion.n_frames):
-            frames.append(skin_frame(player.frame(frame), rest_world, positions,
-                                     palette_indices, weights))
+            source_frame = skin_frame(
+                player.frame(frame), rest_world, source_positions,
+                palette_indices, weights,
+            )
+            frames.append([source_frame[index] for index in draw_sources])
         clips.append((name, first_frame, motion.n_frames, args.fps))
         source_manifest.append({
             "name": name,
@@ -393,10 +461,12 @@ def convert(args):
             "sha256": hashlib.sha256(entry.data).hexdigest(),
         })
 
-    source_vertex_count = len(positions)
+    source_vertex_count = len(source_positions)
+    uv_split_vertex_count = len(draw_sources)
     source_triangle_count = len(indices) // 3
-    positions, indices, batches, frames = cluster_animated_geometry(
-        positions, indices, batches, frames, args.cluster_mm
+    positions = [source_positions[index] for index in draw_sources]
+    positions, texcoords, indices, batches, frames = cluster_animated_geometry(
+        positions, texcoords, indices, batches, frames, args.cluster_mm
     )
     frame_data, maximum_error, bounds_min, bounds_max = quantise_frames(
         frames, args.quantum_mm
@@ -405,12 +475,13 @@ def convert(args):
     index_offset = align(header_size)
     batch_offset = align(index_offset + len(indices) * 2)
     clip_offset = align(batch_offset + len(batches) * BATCH.size)
-    frame_offset = align(clip_offset + len(clips) * CLIP.size)
+    uv_offset = align(clip_offset + len(clips) * CLIP.size)
+    frame_offset = align(uv_offset + len(texcoords) * UV.size)
     blob = bytearray(frame_offset + len(frame_data))
     HEADER.pack_into(
         blob, 0, MAGIC, VERSION, header_size, len(positions), len(indices),
         len(batches), len(clips), len(frames), index_offset, batch_offset,
-        clip_offset, frame_offset, args.quantum_mm * 0.001,
+        clip_offset, uv_offset, frame_offset, args.quantum_mm * 0.001,
     )
     struct.pack_into(f"<{len(indices)}H", blob, index_offset, *indices)
     for index, batch in enumerate(batches):
@@ -419,14 +490,41 @@ def convert(args):
         encoded = name.encode("ascii") + b"\0"
         CLIP.pack_into(blob, clip_offset + index * CLIP.size,
                        encoded.ljust(16, b"\0"), first_frame, frame_count, fps, 0.0)
+    for index, uv in enumerate(texcoords):
+        UV.pack_into(blob, uv_offset + index * UV.size, *uv)
     blob[frame_offset:] = frame_data
 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     temporary.write_bytes(blob)
     temporary.replace(output)
+    texture_output = (
+        Path(args.texture_output)
+        if args.texture_output
+        else output.with_suffix(".re4tex")
+    )
+    texture_package, texture_metadata = convert_tpl.build_package(
+        texture_images, texture_bindings
+    )
+    texture_output.parent.mkdir(parents=True, exist_ok=True)
+    texture_temporary = texture_output.with_suffix(texture_output.suffix + ".tmp")
+    texture_temporary.write_bytes(texture_package)
+    texture_temporary.replace(texture_output)
+    texture_metadata.update({
+        "tpl_archive": args.model_archive,
+        "tpl_entry": texture_entry_index,
+        "tpl_sha256": hashlib.sha256(texture_entry.data).hexdigest(),
+        "package": texture_output.name,
+        "package_bytes": len(texture_package),
+        "package_sha256": hashlib.sha256(texture_package).hexdigest(),
+    })
+    texture_manifest = texture_output.with_suffix(texture_output.suffix + ".json")
+    texture_manifest.write_text(
+        json.dumps(texture_metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     manifest = {
-        "format": "re4dc-character-v1",
+        "format": "re4dc-character-v2",
         "output": str(output.resolve()),
         "bytes": len(blob),
         "sha256": hashlib.sha256(blob).hexdigest(),
@@ -436,7 +534,16 @@ def convert(args):
             "sha256": hashlib.sha256(model_entry.data).hexdigest(),
             "parts": model.n_parts,
         },
+        "texture": {
+            "archive": args.model_archive,
+            "entry": texture_entry_index,
+            "sha256": hashlib.sha256(texture_entry.data).hexdigest(),
+            "package": texture_output.name,
+            "package_sha256": hashlib.sha256(texture_package).hexdigest(),
+            "bytes": len(texture_package),
+        },
         "vertices": len(positions),
+        "uv_split_vertices": uv_split_vertex_count,
         "triangles": len(indices) // 3,
         "batches": len(batches),
         "cluster_mm": args.cluster_mm,
@@ -458,6 +565,7 @@ def main():
     parser.add_argument("--source", required=True, help="debug Disc 1 image or extracted archive")
     parser.add_argument("--model-archive", default="pl00.drs")
     parser.add_argument("--model-entry", type=lambda value: int(value, 0), default=0)
+    parser.add_argument("--texture-entry", type=lambda value: int(value, 0))
     parser.add_argument("--clip", action="append", type=parse_clip, required=True,
                         help="NAME:ARCHIVE:ENTRY (repeatable)")
     parser.add_argument("--fps", type=float, default=30.0)
@@ -466,6 +574,7 @@ def main():
                         help="coarse per-batch animated-mesh cluster size")
     parser.add_argument("--cache-dir")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--texture-output")
     parser.add_argument("--manifest")
     args = parser.parse_args()
     if args.fps <= 0.0 or args.quantum_mm <= 0.0 or args.cluster_mm < 0.0:

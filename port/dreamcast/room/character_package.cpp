@@ -58,6 +58,8 @@ bool Package::open(const char* path) {
                     static_cast<std::uint64_t>(header_->batch_count) * sizeof(Batch)) ||
        !range_valid(header_->clip_offset,
                     static_cast<std::uint64_t>(header_->clip_count) * sizeof(Clip)) ||
+       !range_valid(header_->uv_offset,
+                    static_cast<std::uint64_t>(header_->vertex_count) * sizeof(Uv)) ||
        !range_valid(header_->frame_offset, frame_bytes)) {
         error_ = "record range exceeds package";
         close();
@@ -117,6 +119,10 @@ const Batch* Package::batches() const {
 
 const Clip* Package::clips() const {
     return reinterpret_cast<const Clip*>(data_ + header_->clip_offset);
+}
+
+const Uv* Package::uvs() const {
+    return reinterpret_cast<const Uv*>(data_ + header_->uv_offset);
 }
 
 const std::int16_t* Package::frame_positions(std::uint32_t frame) const {

@@ -8,7 +8,7 @@
 namespace re4dc::character {
 
 inline constexpr char kMagic[4] = {'R', '4', 'C', 'H'};
-inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kVersion = 2;
 
 struct Header {
     char magic[4];
@@ -22,6 +22,7 @@ struct Header {
     std::uint32_t index_offset;
     std::uint32_t batch_offset;
     std::uint32_t clip_offset;
+    std::uint32_t uv_offset;
     std::uint32_t frame_offset;
     float position_quantum_m;
 };
@@ -41,9 +42,15 @@ struct Clip {
     float reserved;
 };
 
-static_assert(sizeof(Header) == 52);
+struct Uv {
+    float u;
+    float v;
+};
+
+static_assert(sizeof(Header) == 56);
 static_assert(sizeof(Batch) == 16);
 static_assert(sizeof(Clip) == 32);
+static_assert(sizeof(Uv) == 8);
 
 class Package {
 public:
@@ -59,6 +66,7 @@ public:
     const std::uint16_t* indices() const;
     const Batch* batches() const;
     const Clip* clips() const;
+    const Uv* uvs() const;
     const std::int16_t* frame_positions(std::uint32_t frame) const;
     const char* error() const { return error_; }
 

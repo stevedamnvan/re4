@@ -23,6 +23,7 @@ class CharacterConverterTests(unittest.TestCase):
 
     def test_parses_skinned_model_geometry(self):
         data = bytearray(0x140)
+        struct.pack_into(">I", data, 0x10, 0x100)
         struct.pack_into(">I", data, 0x14, 0x80)
         data[0x18] = 1
         struct.pack_into(">H", data, 0x1A, 1)
@@ -42,14 +43,21 @@ class CharacterConverterTests(unittest.TestCase):
         data[0xC0] = 0x80
         struct.pack_into(">H", data, 0xC1, 4)
         for index in range(4):
-            struct.pack_into(">4H", data, 0xC3 + index * 8, index, index, 0, 0)
+            struct.pack_into(">4H", data, 0xC3 + index * 8, index, index, 0, index)
+            struct.pack_into(">2h", data, 0x100 + index * 4,
+                             index * 64, index * 32)
 
-        positions, palette, weights, indices, batches = MODULE.parse_geometry(data)
+        (positions, palette, weights, draw_sources, texcoords, indices, batches,
+         bindings) = MODULE.parse_geometry(data)
         self.assertEqual(positions[0], (1.0, 2.0, 3.0))
         self.assertEqual(palette, [0, 0, 0, 0])
         self.assertEqual(weights, [((0,), (100,))])
+        self.assertEqual(draw_sources, [0, 1, 2, 3])
+        self.assertEqual(texcoords[3], (0.75, 0.375))
         self.assertEqual(indices, [0, 1, 2, 0, 2, 3])
         self.assertEqual(batches, [(0, 6, 3, 0)])
+        self.assertEqual(bindings[0].name, "PART_000")
+        self.assertEqual(bindings[0].color_image, 3)
 
     def test_affine_inverse_round_trip(self):
         matrix = [0.0, -1.0, 0.0, 4.0,
@@ -71,12 +79,14 @@ class CharacterConverterTests(unittest.TestCase):
         ]
         indices = [0, 2, 3, 0, 1, 3]
         batches = [(0, 6, 2, 7)]
+        texcoords = [(0.0, 0.0)] * 4
         frames = [positions, [(x + 1.0, y, z) for x, y, z in positions]]
         result = MODULE.cluster_animated_geometry(
-            positions, indices, batches, frames, 0.5
+            positions, texcoords, indices, batches, frames, 0.5
         )
-        new_positions, new_indices, new_batches, new_frames = result
+        new_positions, new_texcoords, new_indices, new_batches, new_frames = result
         self.assertEqual(len(new_positions), 3)
+        self.assertEqual(len(new_texcoords), 3)
         self.assertEqual(len(new_indices), 3)
         self.assertEqual(new_batches, [(0, 3, 2, 7)])
         self.assertEqual(len(new_frames), 2)
