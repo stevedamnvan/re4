@@ -2,8 +2,9 @@
 
 This checkpoint proves that a real Disc 1 room can be extracted offline,
 packaged, validated, and rendered by a native KallistiOS SH-4 executable. It
-also rejects the full-resolution mesh as the geometry path for the first
-playable slice.
+also records a missed frame budget for this viewer and camera. The source audit
+below supersedes the earlier conclusion that the room mesh itself must be
+replaced for the playable slice.
 
 ## Inputs and artifacts
 
@@ -34,15 +35,31 @@ the selected fixed view reported:
 - 171,688 microseconds in the measured render call
 
 This is emulator evidence. It is not a physical-hardware timing result. The
-result is far above the 33.3 ms frame deadline even before textures, Leon,
-collision, enemy logic, or audio are added.
+render-call duration is far above the 33.3 ms target, but includes
+`pvr_wait_ready()` and therefore cannot isolate SH-4 work from prior PVR work
+or pacing. There are no textures, Leon, collision, enemy logic, or audio in this
+viewer, and this is not a representative combined gameplay-frame measurement.
 
 ## Decision
 
-Do not continue adding features to this full-resolution triangle path. The
-playable gate should render a SAT-derived collision proxy plus a deliberately
-small set of simplified scenery, while retaining the full room package as the
-visual reference. Add higher-detail cells only against a measured visible
-triangle and transform budget. Triangle strips and more aggressive SH-4/store-
-queue processing remain useful later, but they must not block controller
-movement, collision, camera, and combat integration.
+The arbitrary orbit camera and cell grouping touched 97.8% of the package's
+vertices. The original engine instead registers separate models and checks
+their bounds against the camera before drawing accepted display lists. Source
+frustum culling is confirmed; the exact visible r10d set has not been captured.
+This is not proof of general occlusion culling or of a particular speedup.
+
+Preserve the art and first compare a gameplay camera with conservative group
+culling and correct near-plane clipping. Separate wait, transform, submission,
+and complete-frame timing. Use SAT for collision and an optional temporary
+debug mesh, not as a mandatory replacement for scenery. Apply LOD only to
+measured costs; keep movement/Leon/combat integration advancing.
+
+The existing converter's `--cell-size 0` path generated a separate private
+comparison package with 226 exported groups, 311 batches, 3,197,028 bytes, and
+SHA-256 `3bc4c94b6b32c2e3a322483c35591d396fd8ae22a6cbc765e508404a70f8bb32`.
+It retains the same vertex/triangle counts and has not yet been rendered or
+timed. Export groups are not yet verified as original SMD visibility objects.
+
+The historical capture and its `render-proof-performance-rejected` manifest
+remain unchanged. That label applies to the recorded viewer run. The current
+decision and next implementation item are in [PLAYABLE_PATH.md](PLAYABLE_PATH.md).

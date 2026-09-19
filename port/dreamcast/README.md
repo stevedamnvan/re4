@@ -47,7 +47,7 @@ Every reference/candidate comparison must include the relevant room, simulation
 tick, RNG/input identity, executable, and asset-package identity rather than
 relying on matching filenames.
 
-The next native artifact is
+The synthetic motion artifact is
 `build/motion-sh4/re4dc-motion-smoke.elf`. It compiles prepared functions from
 upstream `motion.cpp` and `ik.cpp`, the selected original model/math functions,
 the SDK's portable matrix/vector routines, and the game's fdlibm. A shared
@@ -83,20 +83,29 @@ make -C port/dreamcast/room
 The viewer performs package and CRC validation, group visibility culling,
 flat-shaded PVR submission, controller orbit/zoom, and timing telemetry. The
 room package is generated and ignored. The first real run renders recognisable
-geometry but misses the frame budget, so the playable gate now uses a
-SAT-derived proxy and selected simplified scenery. See
+geometry but misses the frame budget in a broad orbit view. Its timer includes
+PVR wait time; it does not establish the cost of a gameplay view or justify
+replacing the room art. SAT supplies collision and an optional debug view. See
 [the room SH-4 baseline](docs/ROOM_SH4_BASELINE.md).
 
 ## Near-term sequence
 
-1. Build the hard-coded `r10d` vertical slice: converted room geometry, fixed
-   camera, controller movement, SAT collision, animated Leon, one Ganado,
-   aim/shoot, and an exit trigger. See
-   [the r10d vertical-slice boundary](docs/R10D_VERTICAL_SLICE.md).
-2. Extend the KOS executable with logging, timing,
-   allocation telemetry, and the controlled cooperative scheduler boundary.
-3. Validate the first animated actor and room on physical Dreamcast hardware
-   before expanding the gameplay dependency set.
+1. Make `r10d` walkable: SAT collision, controller movement, shoulder follow
+   camera, and exit/reset. In one bounded pass, correct camera/clipping and
+   compare preserved source export groups with the existing spatial cells.
+2. Render and animate Leon using the verified pose evaluator; visible skinning
+   and continuous locomotion remain to be integrated.
+3. Add the minimum source player/handgun/Ganado paths for a small combat loop.
+   Audit existing cheaper model variants before making new simplified art.
+4. Measure the combined runtime, add essential textures/cutouts, and validate
+   it on stock Dreamcast. Continue useful Flycast iteration while hardware
+   validation is pending, without claiming hardware acceptance.
+
+The authoritative next-task order and acceptance criteria are in
+[the playable backlog](docs/PLAYABLE_PATH.md). The
+[hardware/source assessment](docs/HARDWARE_TRANSLATION.md) documents the
+GameCube differences, real-time scenes, SFD movies, and render-to-texture work.
+See also [the r10d asset boundary](docs/R10D_VERTICAL_SLICE.md).
 
 General room streaming, menus, complete audio, story events, and campaign
 progression stay behind that playable gate.

@@ -2,7 +2,11 @@
 
 `r10d` is the first playable-room target. Its original room module allocates
 empty work and performs no per-frame scripting; the room is driven by its data
-files. That avoids pulling the event system into the first gameplay milestone.
+files. The first slice hard-codes one encounter and exit instead of enabling
+all data-driven events. An empty room module alone does not prove there are no
+event or actor dependencies. The current task order is in
+[PLAYABLE_PATH.md](PLAYABLE_PATH.md), with supporting
+[hardware/source research](HARDWARE_TRANSLATION.md).
 
 ## Private asset preparation
 
@@ -40,8 +44,10 @@ make -C port/dreamcast/room
 
 The viewer validates the package header and CRC, maps the room directly from
 its generated ROM disk, culls groups by their bounds, and reports submitted
-triangles and render time. It establishes the real geometry budget before
-character integration or texture work.
+triangles and render-call time. Its broad orbit view is a packaging/render proof;
+it does not establish the cost of a gameplay camera or a combined actor/room
+frame. The timer includes PVR wait time. See
+[the corrected interpretation](ROOM_SH4_BASELINE.md).
 
 ## Package boundary
 
@@ -50,7 +56,19 @@ character integration or texture work.
 material batches, interleaved position/normal/UV vertices, and 32-bit triangle
 indices. The `r10d` build partitions static triangles into 10-unit X/Z cells;
 cell bounds let the first renderer reject distant or off-screen geometry before
-transforming its vertices.
+transforming its vertices. This grouping is not the original object's visibility
+contract. Keep the cell package as a baseline and generate a comparison that
+preserves the OBJ export groups without new tooling:
+
+```sh
+python3 port/dreamcast/tools/convert_room_obj.py --cell-size 0 \
+  orig/G4BE08/rooms/r10d/r10d/r10d_004.scenario.obj \
+  port/dreamcast/build/private/r10d-source-groups.re4room
+```
+
+Both packages retain the same geometry. Mapping exported groups to SMD objects,
+flags, and bounds remains work to do; fewer groups or batches alone is not a
+measured performance improvement.
 
 Textures are intentionally outside version 1. The first runtime checkpoint is
 flat-shaded room geometry plus collision. Texture conversion follows once the
@@ -59,7 +77,10 @@ camera, visibility, and frame-time measurements are real.
 ## Playable acceptance boundary
 
 The vertical slice is playable when a controller can move animated Leon in the
-converted `r10d` room, SAT-derived collision blocks him, a fixed follow camera
-frames the room, one Ganado can approach and take aimed handgun damage, and an
-exit trigger ends or resets the slice. Menus, saves, general room streaming,
+converted `r10d` room, SAT-derived collision blocks him, a shoulder follow camera
+frames the room, and one Ganado can approach, attack, and take aimed handgun
+damage. Firing/reloading, player damage/death, enemy death, and an exit/reset
+complete the small loop. This follows the earlier walkable checkpoint with
+temporary placeholders, which is not gameplay acceptance. Menus, saves, general
+room streaming,
 story events, complete audio, and campaign progression are outside this gate.
