@@ -4,17 +4,20 @@ CXX ?= g++
 CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Werror -pedantic
 PYTHON ?= python3
 R10D_OBJ ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_004.scenario.obj
+R10D_MTL ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_004.scenario.mtl
+R10D_TPL ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_004.TPL
 R10D_SAT_SOURCE ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_001.SAT
 R10D_ROOM ?= build/private/r10d.re4room
 R10D_SAT ?= build/private/r10d.re4sat
-R10D_CELL_SIZE ?= 0
-R10D_CLUSTER_SIZE ?= 8
+R10D_TEXTURE ?= build/private/r10d.re4tex
+R10D_CELL_SIZE ?= 20
+R10D_CLUSTER_SIZE ?= 0
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
 LEON_CHARACTER ?= build/private/leon.re4chr
 GANADO_CHARACTER ?= build/private/ganado.re4chr
 CHARACTER_CLUSTER_MM ?= 75
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d character-leon character-ganado demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -43,6 +46,9 @@ room-r10d:
 		--cluster-size $(R10D_CLUSTER_SIZE) $(R10D_OBJ) $(R10D_ROOM)
 	$(PYTHON) tools/convert_sat.py $(R10D_SAT_SOURCE) $(R10D_SAT)
 
+texture-r10d:
+	$(PYTHON) tools/convert_tpl.py $(R10D_TPL) $(R10D_MTL) $(R10D_TEXTURE)
+
 character-leon:
 	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
 		--cache-dir build/private/disc-cache --model-archive pl00.drs --model-entry 0 \
@@ -57,7 +63,7 @@ character-ganado:
 		--clip death:em10.drs:101 --cluster-mm $(CHARACTER_CLUSTER_MM) \
 		--output $(GANADO_CHARACTER)
 
-demo-r10d: room-r10d character-leon character-ganado
+demo-r10d: room-r10d texture-r10d character-leon character-ganado
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

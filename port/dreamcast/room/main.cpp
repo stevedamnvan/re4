@@ -12,6 +12,7 @@
 #include "character_package.hpp"
 #include "collision_package.hpp"
 #include "room_package.hpp"
+#include "texture_package.hpp"
 
 KOS_INIT_FLAGS(INIT_DEFAULT);
 
@@ -638,16 +639,10 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
     }
 }
 
-std::uint32_t material_color(std::uint32_t material, float light) {
-    const std::uint32_t value = material * 0x9e3779b9U + 0x7f4a7c15U;
-    const float red = static_cast<float>(80U + (value & 0x7fU)) * light;
-    const float green = static_cast<float>(80U + ((value >> 8U) & 0x7fU)) * light;
-    const float blue = static_cast<float>(80U + ((value >> 16U) & 0x7fU)) * light;
-    const auto clamp = [](float channel) {
-        return static_cast<std::uint32_t>(std::clamp(channel, 0.0f, 255.0f));
-    };
-    return 0xff000000U | (clamp(red) << 16U) | (clamp(green) << 8U) |
-           clamp(blue);
+std::uint32_t shade_color(float light) {
+    const std::uint32_t channel = static_cast<std::uint32_t>(
+        std::clamp(light * 255.0f, 0.0f, 255.0f));
+    return 0xff000000U | (channel << 16U) | (channel << 8U) | channel;
 }
 
 bool group_visible(const re4dc::room::Group& group) {
@@ -677,7 +672,7 @@ bool group_visible(const re4dc::room::Group& group) {
 
 bool transform_triangle(const re4dc::room::Vertex* source,
                         const std::uint32_t* indices, pvr_vertex_t* output,
-                        std::uint32_t material, ProjectedVertex* projected,
+                        ProjectedVertex* projected,
                         std::uint32_t* transformed_at, std::uint32_t frame_token,
                         FrameStats& stats) {
     bool left = true;
@@ -718,7 +713,7 @@ bool transform_triangle(const re4dc::room::Vertex* source,
             .z = z,
             .u = input.u,
             .v = input.v,
-            .argb = material_color(material, light),
+            .argb = shade_color(light),
             .oargb = 0,
         };
     }
@@ -895,7 +890,9 @@ FrameStats render_scene(const re4dc::room::Package& room,
                         const re4dc::character::Package& leon,
                         const re4dc::character::Package& ganado,
                         const Player& player, const Enemy& enemy,
-                        const pvr_poly_hdr_t& polygon_header,
+                        const pvr_poly_hdr_t& untextured_header,
+                        const pvr_poly_hdr_t* material_headers,
+                        const bool* material_alpha,
                         ProjectedVertex* projected, std::uint32_t* transformed_at,
                         ProjectedVertex* leon_projected,
                         ProjectedVertex* ganado_projected,
@@ -911,7 +908,6 @@ FrameStats render_scene(const re4dc::room::Package& room,
     stats.wait_us = submit_start - wait_start;
     pvr_scene_begin();
     pvr_list_begin(PVR_LIST_OP_POLY);
-    pvr_prim(&polygon_header, sizeof(polygon_header));
     for(std::uint32_t group_index = 0; group_index < room.header().group_count;
         ++group_index) {
         const auto& group = groups[group_index];
@@ -922,11 +918,15 @@ FrameStats render_scene(const re4dc::room::Package& room,
         for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
             ++local_batch) {
             const auto& batch = batches[group.first_batch + local_batch];
+            if(material_alpha[batch.material]) {
+                continue;
+            }
+            pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
             const std::uint32_t end = batch.first_index + batch.index_count;
             for(std::uint32_t index = batch.first_index; index < end; index += 3) {
                 pvr_vertex_t triangle[3];
                 if(transform_triangle(vertices, indices + index, triangle,
-                                      batch.material, projected, transformed_at,
+                                      projected, transformed_at,
                                       frame_token, stats)) {
                     pvr_prim(triangle, sizeof(triangle));
                     ++stats.triangles;
@@ -934,6 +934,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
             }
         }
     }
+    pvr_prim(&untextured_header, sizeof(untextured_header));
     stats.character_triangles = draw_character(
         leon, player.x, player.y, player.z, player.yaw, player.animation_clip,
         player.animation_frame, leon_projected, 0U);
@@ -942,9 +943,37 @@ FrameStats render_scene(const re4dc::room::Package& room,
         enemy.animation_frame, ganado_projected, 3U);
     draw_goal(enemy.state == EnemyState::Dead);
     draw_hud(player, enemy);
+    pvr_list_finish();
+
+    pvr_list_begin(PVR_LIST_PT_POLY);
+    for(std::uint32_t group_index = 0; group_index < room.header().group_count;
+        ++group_index) {
+        const auto& group = groups[group_index];
+        if(!group_visible(group)) {
+            continue;
+        }
+        for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
+            ++local_batch) {
+            const auto& batch = batches[group.first_batch + local_batch];
+            if(!material_alpha[batch.material]) {
+                continue;
+            }
+            pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
+            const std::uint32_t end = batch.first_index + batch.index_count;
+            for(std::uint32_t index = batch.first_index; index < end; index += 3) {
+                pvr_vertex_t triangle[3];
+                if(transform_triangle(vertices, indices + index, triangle,
+                                      projected, transformed_at,
+                                      frame_token, stats)) {
+                    pvr_prim(triangle, sizeof(triangle));
+                    ++stats.triangles;
+                }
+            }
+        }
+    }
+    pvr_list_finish();
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
-    pvr_list_finish();
     pvr_scene_finish();
     stats.finish_us = timer_us_gettime64() - finish_start;
     return stats;
@@ -973,6 +1002,11 @@ int main() {
         std::printf("re4dc-room: Ganado load failed: %s\n", ganado.error());
         return 1;
     }
+    re4dc::texture::Package textures;
+    if(!textures.open("/rd/r10d.re4tex")) {
+        std::printf("re4dc-room: texture load failed: %s\n", textures.error());
+        return 1;
+    }
     std::printf(
         "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
         "leon=%lu/%lu/%lu ganado=%lu/%lu/%lu\n",
@@ -994,13 +1028,64 @@ int main() {
     }
 
     vid_set_mode(DM_320x240, PM_RGB565);
-    pvr_init_defaults();
+    pvr_init_params_t pvr_params = pvr_default_params;
+    pvr_params.opb_sizes[PVR_LIST_PT_POLY] = PVR_BINSIZE_16;
+    if(pvr_init(&pvr_params) < 0) {
+        std::printf("re4dc-room: PVR initialization failed\n");
+        return 1;
+    }
     pvr_set_bg_color(0.055f, 0.07f, 0.09f);
+    const std::size_t vram_before_textures = pvr_mem_available();
+    if(!textures.upload()) {
+        std::printf("re4dc-room: texture upload failed: %s\n", textures.error());
+        return 1;
+    }
     pvr_poly_cxt_t context{};
-    pvr_poly_hdr_t polygon_header{};
+    pvr_poly_hdr_t untextured_header{};
     pvr_poly_cxt_col(&context, PVR_LIST_OP_POLY);
     context.gen.culling = PVR_CULLING_NONE;
-    pvr_poly_compile(&polygon_header, &context);
+    pvr_poly_compile(&untextured_header, &context);
+    pvr_poly_hdr_t* material_headers =
+        new(std::nothrow) pvr_poly_hdr_t[room.header().material_count];
+    std::unique_ptr<bool[]> material_alpha(
+        new(std::nothrow) bool[room.header().material_count]);
+    if(material_headers == nullptr || material_alpha == nullptr) {
+        std::printf("re4dc-room: material header allocation failed\n");
+        return 1;
+    }
+    for(std::uint32_t material = 0; material < room.header().material_count;
+        ++material) {
+        const auto* texture = textures.find(room.materials()[material].name);
+        if(texture == nullptr) {
+            std::printf("re4dc-room: no texture for material %s\n",
+                        room.materials()[material].name);
+            return 1;
+        }
+        const std::uint32_t texture_index =
+            static_cast<std::uint32_t>(texture - textures.textures());
+        material_alpha[material] =
+            (texture->flags & re4dc::texture::kAlpha) != 0;
+        const pvr_list_t list = material_alpha[material]
+                                    ? PVR_LIST_PT_POLY
+                                    : PVR_LIST_OP_POLY;
+        const int format = texture->format == re4dc::texture::kRgb565
+                               ? PVR_TXRFMT_RGB565
+                               : PVR_TXRFMT_ARGB1555;
+        pvr_poly_cxt_txr(&context, list, format, texture->width,
+                         texture->height, textures.pvr_texture(texture_index),
+                         PVR_FILTER_BILINEAR);
+        context.gen.culling = PVR_CULLING_NONE;
+        if(material_alpha[material]) {
+            context.txr.alpha = PVR_TXRALPHA_ENABLE;
+        }
+        pvr_poly_compile(&material_headers[material], &context);
+    }
+    std::printf(
+        "re4dc-room: textures=%lu bytes=%lu pvr_free_before=%lu pvr_free_after=%lu\n",
+        static_cast<unsigned long>(textures.header().texture_count),
+        static_cast<unsigned long>(textures.vram_bytes()),
+        static_cast<unsigned long>(vram_before_textures),
+        static_cast<unsigned long>(pvr_mem_available()));
 
     // mat_perspective maps positive view Y toward the bottom of the PVR screen.
     const vector_t up = {0.0f, -1.0f, 0.0f, 0.0f};
@@ -1114,7 +1199,8 @@ int main() {
                         500.0f);
         mat_lookat(&eye, &target, &up);
         const FrameStats stats = render_scene(
-            room, leon, ganado, player, enemy, polygon_header, projected.get(),
+            room, leon, ganado, player, enemy, untextured_header,
+            material_headers, material_alpha.get(), projected.get(),
             transformed_at.get(), leon_projected.get(), ganado_projected.get(),
             frame + 1U);
         g_re4dc_demo_telemetry.visible_groups = stats.groups;
@@ -1148,6 +1234,7 @@ int main() {
                 static_cast<unsigned long long>(stats.finish_us));
         }
     }
+    delete[] material_headers;
     std::printf("re4dc-room: clean exit\n");
     return 0;
 }

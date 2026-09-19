@@ -1,0 +1,93 @@
+import importlib.util
+import pathlib
+import struct
+import sys
+import tempfile
+import unittest
+
+
+SCRIPT = pathlib.Path(__file__).parents[1] / "tools" / "convert_tpl.py"
+SPEC = importlib.util.spec_from_file_location("convert_tpl", SCRIPT)
+TPL = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+sys.modules[SPEC.name] = TPL
+SPEC.loader.exec_module(TPL)
+
+
+def make_tpl(images):
+    count = len(images)
+    table_offset = 12
+    header_offset = table_offset + count * 8
+    data_offset = header_offset + count * 36
+    output = bytearray(struct.pack(">III", TPL.TPL_MAGIC, count, table_offset))
+    for index in range(count):
+        output.extend(struct.pack(">II", header_offset + index * 36, 0))
+    payload = bytearray()
+    for index, (width, height, image_format, data) in enumerate(images):
+        output.extend(struct.pack(">HHIIIIIIfBBBB", height, width, image_format,
+                                  data_offset + len(payload), 0, 0, 0, 0, 0.0,
+                                  0, 0, 0, 0))
+        payload.extend(data)
+    output.extend(payload)
+    return bytes(output)
+
+
+class ConvertTplTests(unittest.TestCase):
+    def test_i4_block_decodes_high_nibble_first(self):
+        image = TPL.TplImage(8, 8, TPL.GX_TF_I4, bytes([0xF0]) + bytes(31))
+        pixels = TPL.decode_i4(image)
+        self.assertEqual(pixels[0], (255, 255, 255, 255))
+        self.assertEqual(pixels[1], (0, 0, 0, 255))
+
+    def test_cmpr_subblocks_and_selector_order(self):
+        subblock = struct.pack(">HH4B", 0xF800, 0x07E0, 0x1B, 0, 0, 0)
+        image = TPL.TplImage(8, 8, TPL.GX_TF_CMPR, subblock * 4)
+        pixels = TPL.decode_cmpr(image)
+        self.assertEqual(pixels[0][:3], (255, 0, 0))
+        self.assertEqual(pixels[1][:3], (0, 255, 0))
+        self.assertEqual(pixels[8 * 4][:3], (255, 0, 0))
+        self.assertEqual(pixels[4][:3], (255, 0, 0))
+
+    def test_builds_deterministic_material_pack_with_alpha(self):
+        color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4
+        alpha_block = bytes([0xF0]) * 32
+        source = make_tpl([
+            (8, 8, TPL.GX_TF_CMPR, color_block),
+            (8, 8, TPL.GX_TF_I4, alpha_block),
+        ])
+        images = TPL.parse_tpl(source)
+        bindings = TPL.parse_mtl(
+            "newmtl ROOM_MATERIAL_000\n"
+            "map_Kd folder/room-0.png\n"
+            "map_d folder/room-1.png\n"
+        )
+        first, metadata = TPL.build_package(images, bindings)
+        second, _ = TPL.build_package(images, bindings)
+        self.assertEqual(first, second)
+        values = TPL.HEADER.unpack_from(first)
+        self.assertEqual(values[0], TPL.MAGIC)
+        self.assertEqual(values[4], 1)
+        descriptor = TPL.TEXTURE.unpack_from(first, values[5])
+        self.assertEqual(descriptor[1:4], (8, 8, TPL.FORMAT_ARGB1555))
+        self.assertEqual(descriptor[6], TPL.FLAG_ALPHA)
+        self.assertEqual(metadata["texture_bytes"], 128)
+
+    def test_cli_writes_private_package_and_manifest(self):
+        color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            tpl_path = root / "room.tpl"
+            mtl_path = root / "room.mtl"
+            output = root / "room.re4tex"
+            tpl_path.write_bytes(make_tpl([(8, 8, TPL.GX_TF_CMPR, color_block)]))
+            mtl_path.write_text(
+                "newmtl ROOM_MATERIAL_000\nmap_Kd room/room-0.png\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(TPL.main([str(tpl_path), str(mtl_path), str(output)]), 0)
+            self.assertTrue(output.is_file())
+            self.assertTrue(output.with_suffix(".re4tex.json").is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()
