@@ -17,6 +17,7 @@ The validated preparation path is:
 2. Extract the YZ2-compressed DAS with `RE4_DASYZ2_TOOL` 2025-07-17.
 3. Export `r10d_004.SMD` with `RE4_GCWII_SCENARIO_SMD_TOOL` V1.3.1.
 4. Convert the resulting OBJ with `tools/convert_room_obj.py`.
+5. Convert extracted `r10d_001.SAT` with `tools/convert_sat.py`.
 
 The two external releases are source-available third-party tools. Pin their
 archives by SHA-256 before using them:
@@ -42,11 +43,10 @@ source port/dreamcast/kos-env.sh
 make -C port/dreamcast/room
 ```
 
-The viewer validates the package header and CRC, maps the room directly from
-its generated ROM disk, culls groups by their bounds, and reports submitted
-triangles and render-call time. Its broad orbit view is a packaging/render proof;
-it does not establish the cost of a gameplay camera or a combined actor/room
-frame. The timer includes PVR wait time. See
+The executable validates both package headers and CRCs, maps the room and SAT
+data from its generated ROM disk, culls groups by their bounds, and reports the
+player position, collision hits, submitted triangles, and render-call time.
+The timer includes PVR wait time. See
 [the corrected interpretation](ROOM_SH4_BASELINE.md).
 
 ## Package boundary
@@ -73,6 +73,14 @@ measured performance improvement.
 Textures are intentionally outside version 1. The first runtime checkpoint is
 flat-shaded room geometry plus collision. Texture conversion follows once the
 camera, visibility, and frame-time measurements are real.
+
+`RE4DCSAT` version 1 is a separate little-endian collision package containing
+scaled positions, source normals, polygon vertex/normal indices, attributes,
+and the original floor/slope/wall ranges. The runtime currently scans the 50
+floor/slope and 219 wall triangles directly. It does not need the source block
+tree at this scale. The initial route starts at `(0, -7.98, -245)`, uses a
+temporary orange player marker, and resets near the green marker at
+`(9, -7.98, -284)`.
 
 ## Playable acceptance boundary
 

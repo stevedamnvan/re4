@@ -18,6 +18,9 @@ and asset reference, while this target is compiled for SH-4 with KallistiOS.
 - Native smoke ELF: built and booted past frame 300 in an isolated Flycast run
 - RE4 motion/IK slice: upstream game functions compile for SH-4 and pass both
   the synthetic fixture and a private real-data fixture from Leon's `pl00.drs`
+- Walkable r10d prototype: disc SAT floor/wall collision, tank movement, a
+  shoulder follow camera, reset/exit controls, and a visible route marker run
+  together in the native room executable
 
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
@@ -80,19 +83,21 @@ source port/dreamcast/kos-env.sh
 make -C port/dreamcast/room
 ```
 
-The viewer performs package and CRC validation, group visibility culling,
-flat-shaded PVR submission, controller orbit/zoom, and timing telemetry. The
-room package is generated and ignored. The first real run renders recognisable
-geometry but misses the frame budget in a broad orbit view. Its timer includes
-PVR wait time; it does not establish the cost of a gameplay view or justify
-replacing the room art. SAT supplies collision and an optional debug view. See
+The executable validates both packages and their CRCs, culls room groups,
+submits flat-shaded PVR geometry, and supports analog-stick or D-pad tank
+movement, SAT floor/wall collision, a shoulder follow camera, A-button reset,
+START exit, and route telemetry. The generated room and SAT packages stay
+ignored. The first broad orbit proof and the current close gameplay view both
+miss the frame budget; their timer includes PVR wait time. See
 [the room SH-4 baseline](docs/ROOM_SH4_BASELINE.md).
+The integrated movement/collision evidence and its remaining P0 limits are in
+[the walkable r10d checkpoint](docs/WALKABLE_R10D_BASELINE.md).
 
 ## Near-term sequence
 
-1. Make `r10d` walkable: SAT collision, controller movement, shoulder follow
-   camera, and exit/reset. In one bounded pass, correct camera/clipping and
-   compare preserved source export groups with the existing spatial cells.
+1. Finish the bounded P0 renderer pass: correct near-plane clipping, separate
+   timing phases, and compare preserved source export groups with the existing
+   spatial cells at the recorded gameplay route.
 2. Render and animate Leon using the verified pose evaluator; visible skinning
    and continuous locomotion remain to be integrated.
 3. Add the minimum source player/handgun/Ganado paths for a small combat loop.

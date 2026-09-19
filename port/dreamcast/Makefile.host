@@ -4,7 +4,9 @@ CXX ?= g++
 CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Werror -pedantic
 PYTHON ?= python3
 R10D_OBJ ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_004.scenario.obj
+R10D_SAT_SOURCE ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_001.SAT
 R10D_ROOM ?= build/private/r10d.re4room
+R10D_SAT ?= build/private/r10d.re4sat
 
 .PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d script-check unit clean
 
@@ -32,6 +34,7 @@ motion-real-host:
 
 room-r10d:
 	$(PYTHON) tools/convert_room_obj.py --cell-size 10 $(R10D_OBJ) $(R10D_ROOM)
+	$(PYTHON) tools/convert_sat.py $(R10D_SAT_SOURCE) $(R10D_SAT)
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh
