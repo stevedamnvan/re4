@@ -257,6 +257,7 @@ def _pack_1555(pixel: tuple[int, int, int, int]) -> int:
 
 def build_package(images: list[TplImage], bindings: list[MaterialBinding]) -> tuple[bytes, dict[str, object]]:
     decoded: dict[int, list[tuple[int, int, int, int]]] = {}
+    packed: dict[tuple[int, int | None], tuple[int, int, int, int, int, int]] = {}
 
     def get_image(index: int) -> tuple[TplImage, list[tuple[int, int, int, int]]]:
         if index < 0 or index >= len(images):
@@ -272,38 +273,45 @@ def build_package(images: list[TplImage], bindings: list[MaterialBinding]) -> tu
     manifest_materials: list[dict[str, object]] = []
 
     for binding in bindings:
-        source, pixels = get_image(binding.color_image)
-        pixels = list(pixels)
-        has_alpha = any(pixel[3] < 128 for pixel in pixels)
-        if binding.alpha_image is not None:
-            alpha_source, alpha_pixels = get_image(binding.alpha_image)
-            if (alpha_source.width, alpha_source.height) != (source.width, source.height):
-                raise ValueError(f"material {binding.name!r} alpha dimensions differ")
-            pixels = [
-                (color[0], color[1], color[2], alpha[0])
-                for color, alpha in zip(pixels, alpha_pixels)
-            ]
-            has_alpha = True
-        image_format = FORMAT_ARGB1555 if has_alpha else FORMAT_RGB565
-        pack_pixel = _pack_1555 if has_alpha else _pack_565
-        raw = b"".join(struct.pack("<H", pack_pixel(pixel)) for pixel in pixels)
-        relative_offset = len(data_blob)
-        data_blob.extend(raw)
-        flags = FLAG_ALPHA if has_alpha else 0
+        key = (binding.color_image, binding.alpha_image)
+        if key not in packed:
+            source, pixels = get_image(binding.color_image)
+            pixels = list(pixels)
+            has_alpha = any(pixel[3] < 128 for pixel in pixels)
+            if binding.alpha_image is not None:
+                alpha_source, alpha_pixels = get_image(binding.alpha_image)
+                if (alpha_source.width, alpha_source.height) != (source.width, source.height):
+                    raise ValueError(f"material {binding.name!r} alpha dimensions differ")
+                pixels = [
+                    (color[0], color[1], color[2], alpha[0])
+                    for color, alpha in zip(pixels, alpha_pixels)
+                ]
+                has_alpha = True
+            image_format = FORMAT_ARGB1555 if has_alpha else FORMAT_RGB565
+            pack_pixel = _pack_1555 if has_alpha else _pack_565
+            raw = b"".join(struct.pack("<H", pack_pixel(pixel)) for pixel in pixels)
+            relative_offset = len(data_blob)
+            data_blob.extend(raw)
+            flags = FLAG_ALPHA if has_alpha else 0
+            packed[key] = (
+                relative_offset, len(raw), image_format, flags,
+                source.width, source.height,
+            )
+        relative_offset, raw_size, image_format, flags, width, height = packed[key]
         texture_blob.extend(
             TEXTURE.pack(
-                _name_bytes(binding.name), source.width, source.height,
-                image_format, data_offset + relative_offset, len(raw), flags
+                _name_bytes(binding.name), width, height,
+                image_format, data_offset + relative_offset, raw_size, flags
             )
         )
         manifest_materials.append({
             "name": binding.name,
             "color_image": binding.color_image,
             "alpha_image": binding.alpha_image,
-            "width": source.width,
-            "height": source.height,
-            "format": "argb1555" if has_alpha else "rgb565",
-            "bytes": len(raw),
+            "width": width,
+            "height": height,
+            "format": "argb1555" if flags & FLAG_ALPHA else "rgb565",
+            "bytes": raw_size,
         })
 
     payload = bytes(texture_blob + data_blob)

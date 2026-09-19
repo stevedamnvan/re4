@@ -387,6 +387,39 @@ def parse_clip(specification):
     return name, archive_name, int(entry, 0)
 
 
+def parse_attachment(specification):
+    fields = specification.split(":")
+    if len(fields) != 4:
+        raise argparse.ArgumentTypeError(
+            "attachment must be NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY"
+        )
+    name, archive_name, model_entry, texture_entry = fields
+    if not name or not archive_name:
+        raise argparse.ArgumentTypeError("attachment name and archive must not be empty")
+    return name, archive_name, int(model_entry, 0), int(texture_entry, 0)
+
+
+def parse_rigid_attachment(specification):
+    fields = specification.split(":")
+    if len(fields) != 5:
+        raise argparse.ArgumentTypeError(
+            "rigid attachment must be NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY:PARENT_BONE"
+        )
+    name, archive_name, model_entry, texture_entry, parent_bone = fields
+    if not name or not archive_name:
+        raise argparse.ArgumentTypeError("attachment name and archive must not be empty")
+    return (
+        name, archive_name, int(model_entry, 0), int(texture_entry, 0),
+        int(parent_bone, 0),
+    )
+
+
+def sampled_frame_indices(frame_count, step):
+    if frame_count <= 0 or step <= 0:
+        raise ValueError("frame count and sample step must be positive")
+    return list(range(0, frame_count, step))
+
+
 def quantise_frames(frames, quantum_mm):
     output = bytearray()
     maximum_error = 0.0
@@ -418,25 +451,113 @@ def convert(args):
         raise ValueError("selected model entry is not BIN")
     model = modelbin.parse(model_entry.data)
     model.check_tree()
-    (
-        source_positions, palette_indices, weights, draw_sources, texcoords,
-        indices, batches, texture_bindings,
-    ) = parse_geometry(model_entry.data)
     texture_entry_index = (
         args.texture_entry if args.texture_entry is not None else args.model_entry + 1
     )
-    texture_entry = model_archive.entry(texture_entry_index)
-    if texture_entry.tag != "TPL":
-        raise ValueError(
-            f"selected texture entry {texture_entry_index} is not TPL"
-        )
-    texture_images = convert_tpl.parse_tpl(texture_entry.data)
     rest_world = rest_world_positions(model)
+
+    archives = {args.model_archive: model_archive}
+    component_specs = [
+        ("body", args.model_archive, args.model_entry, texture_entry_index, None)
+    ]
+    component_specs.extend((*attachment, None) for attachment in args.attachment)
+    component_specs.extend(args.rigid_attachment)
+    components = []
+    component_manifest = []
+    positions = []
+    texcoords = []
+    indices = []
+    batches = []
+    texture_bindings = []
+    texture_images = []
+    texture_sources = {}
+    source_vertex_count = 0
+    source_triangle_count = 0
+
+    for (component_name, archive_name, model_index, texture_index,
+         parent_bone) in component_specs:
+        if archive_name not in archives:
+            archives[archive_name] = load_archive(args.source, archive_name, cache_dir)
+        component_archive = archives[archive_name]
+        component_entry = component_archive.entry(model_index)
+        if component_entry.tag != "BIN":
+            raise ValueError(
+                f"component {component_name!r} model entry is not BIN"
+            )
+        geometry = parse_geometry(component_entry.data)
+        (
+            source_positions, palette_indices, weights, draw_sources,
+            component_uvs, component_indices, component_batches,
+            component_bindings,
+        ) = geometry
+        referenced_bones = [bone for ids, _ in weights for bone in ids]
+        if (parent_bone is None and referenced_bones and
+                max(referenced_bones) >= model.n_parts):
+            raise ValueError(
+                f"component {component_name!r} references bone "
+                f"{max(referenced_bones)}, but the base skeleton has {model.n_parts} parts"
+            )
+        if parent_bone is not None and not 0 <= parent_bone < model.n_parts:
+            raise ValueError(
+                f"component {component_name!r} parent bone {parent_bone} "
+                f"is outside the base skeleton"
+            )
+
+        texture_source_key = (archive_name, texture_index)
+        if texture_source_key not in texture_sources:
+            texture_entry = component_archive.entry(texture_index)
+            if texture_entry.tag != "TPL":
+                raise ValueError(
+                    f"component {component_name!r} texture entry is not TPL"
+                )
+            image_base = len(texture_images)
+            images = convert_tpl.parse_tpl(texture_entry.data)
+            texture_images.extend(images)
+            texture_sources[texture_source_key] = (
+                image_base, texture_entry, len(images)
+            )
+        image_base, texture_entry, image_count = texture_sources[texture_source_key]
+
+        vertex_base = len(positions)
+        index_base = len(indices)
+        positions.extend(source_positions[index] for index in draw_sources)
+        texcoords.extend(component_uvs)
+        indices.extend(vertex_base + index for index in component_indices)
+        for batch, binding in zip(component_batches, component_bindings):
+            first_index, index_count, material, _ = batch
+            global_part = len(texture_bindings)
+            batches.append((
+                index_base + first_index, index_count, material, global_part
+            ))
+            texture_bindings.append(convert_tpl.MaterialBinding(
+                f"PART_{global_part:03d}",
+                image_base + binding.color_image,
+                None if binding.alpha_image is None
+                else image_base + binding.alpha_image,
+            ))
+        components.append((
+            component_name, source_positions, palette_indices, weights,
+            draw_sources, parent_bone,
+        ))
+        source_vertex_count += len(source_positions)
+        source_triangle_count += len(component_indices) // 3
+        component_manifest.append({
+            "name": component_name,
+            "archive": archive_name,
+            "model_entry": model_index,
+            "model_sha256": hashlib.sha256(component_entry.data).hexdigest(),
+            "texture_entry": texture_index,
+            "texture_sha256": hashlib.sha256(texture_entry.data).hexdigest(),
+            "texture_images": image_count,
+            "vertices": len(source_positions),
+            "draw_vertices": len(draw_sources),
+            "triangles": len(component_indices) // 3,
+            "parent_bone": parent_bone,
+        })
 
     frames = []
     clips = []
     source_manifest = []
-    archives = {args.model_archive: model_archive}
     for name, archive_name, entry_index in args.clip:
         if archive_name not in archives:
             archives[archive_name] = load_archive(args.source, archive_name, cache_dir)
@@ -446,25 +567,39 @@ def convert(args):
         motion = fcv.parse(entry.data)
         player = evalhost.Player(model, motion, loop=True)
         first_frame = len(frames)
-        for frame in range(motion.n_frames):
-            source_frame = skin_frame(
-                player.frame(frame), rest_world, source_positions,
-                palette_indices, weights,
-            )
-            frames.append([source_frame[index] for index in draw_sources])
-        clips.append((name, first_frame, motion.n_frames, args.fps))
+        frame_indices = sampled_frame_indices(motion.n_frames, args.sample_step)
+        for frame in frame_indices:
+            pose = player.frame(frame)
+            combined_frame = []
+            for (_, source_positions, palette_indices, weights,
+                 draw_sources, parent_bone) in components:
+                if parent_bone is None:
+                    source_frame = skin_frame(
+                        pose, rest_world, source_positions, palette_indices,
+                        weights,
+                    )
+                else:
+                    source_frame = [
+                        transform_point(pose.mat[parent_bone], position)
+                        for position in source_positions
+                    ]
+                combined_frame.extend(
+                    source_frame[index] for index in draw_sources
+                )
+            frames.append(combined_frame)
+        clips.append((
+            name, first_frame, len(frame_indices), args.fps / args.sample_step
+        ))
         source_manifest.append({
             "name": name,
             "archive": archive_name,
             "entry": entry_index,
-            "frames": motion.n_frames,
+            "source_frames": motion.n_frames,
+            "frames": len(frame_indices),
             "sha256": hashlib.sha256(entry.data).hexdigest(),
         })
 
-    source_vertex_count = len(source_positions)
-    uv_split_vertex_count = len(draw_sources)
-    source_triangle_count = len(indices) // 3
-    positions = [source_positions[index] for index in draw_sources]
+    uv_split_vertex_count = len(positions)
     positions, texcoords, indices, batches, frames = cluster_animated_geometry(
         positions, texcoords, indices, batches, frames, args.cluster_mm
     )
@@ -511,9 +646,16 @@ def convert(args):
     texture_temporary.write_bytes(texture_package)
     texture_temporary.replace(texture_output)
     texture_metadata.update({
-        "tpl_archive": args.model_archive,
-        "tpl_entry": texture_entry_index,
-        "tpl_sha256": hashlib.sha256(texture_entry.data).hexdigest(),
+        "tpl_sources": [
+            {
+                "archive": archive_name,
+                "entry": entry_index,
+                "sha256": hashlib.sha256(entry.data).hexdigest(),
+                "images": image_count,
+            }
+            for (archive_name, entry_index), (_, entry, image_count)
+            in texture_sources.items()
+        ],
         "package": texture_output.name,
         "package_bytes": len(texture_package),
         "package_sha256": hashlib.sha256(texture_package).hexdigest(),
@@ -534,10 +676,9 @@ def convert(args):
             "sha256": hashlib.sha256(model_entry.data).hexdigest(),
             "parts": model.n_parts,
         },
+        "components": component_manifest,
         "texture": {
-            "archive": args.model_archive,
-            "entry": texture_entry_index,
-            "sha256": hashlib.sha256(texture_entry.data).hexdigest(),
+            "sources": texture_metadata["tpl_sources"],
             "package": texture_output.name,
             "package_sha256": hashlib.sha256(texture_package).hexdigest(),
             "bytes": len(texture_package),
@@ -550,6 +691,7 @@ def convert(args):
         "cluster_source_vertices": source_vertex_count,
         "cluster_source_triangles": source_triangle_count,
         "frames": len(frames),
+        "sample_step": args.sample_step,
         "clips": source_manifest,
         "quantum_mm": args.quantum_mm,
         "maximum_quantisation_error_mm": maximum_error,
@@ -566,9 +708,20 @@ def main():
     parser.add_argument("--model-archive", default="pl00.drs")
     parser.add_argument("--model-entry", type=lambda value: int(value, 0), default=0)
     parser.add_argument("--texture-entry", type=lambda value: int(value, 0))
+    parser.add_argument(
+        "--attachment", action="append", type=parse_attachment, default=[],
+        help="NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY (repeatable)",
+    )
+    parser.add_argument(
+        "--rigid-attachment", action="append", type=parse_rigid_attachment,
+        default=[],
+        help="NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY:PARENT_BONE (repeatable)",
+    )
     parser.add_argument("--clip", action="append", type=parse_clip, required=True,
                         help="NAME:ARCHIVE:ENTRY (repeatable)")
     parser.add_argument("--fps", type=float, default=30.0)
+    parser.add_argument("--sample-step", type=int, default=1,
+                        help="bake every Nth source frame; runtime interpolates")
     parser.add_argument("--quantum-mm", type=float, default=0.0625)
     parser.add_argument("--cluster-mm", type=float, default=0.0,
                         help="coarse per-batch animated-mesh cluster size")
@@ -577,8 +730,11 @@ def main():
     parser.add_argument("--texture-output")
     parser.add_argument("--manifest")
     args = parser.parse_args()
-    if args.fps <= 0.0 or args.quantum_mm <= 0.0 or args.cluster_mm < 0.0:
-        parser.error("fps and quantum must be positive; cluster must be non-negative")
+    if (args.fps <= 0.0 or args.quantum_mm <= 0.0 or
+            args.cluster_mm < 0.0 or args.sample_step <= 0):
+        parser.error(
+            "fps, quantum, and sample step must be positive; cluster must be non-negative"
+        )
     convert(args)
 
 

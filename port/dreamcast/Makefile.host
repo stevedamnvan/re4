@@ -52,15 +52,25 @@ texture-r10d:
 character-leon:
 	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
 		--cache-dir build/private/disc-cache --model-archive pl00.drs --model-entry 0 \
+		--attachment costume:pl00.drs:6:1 \
+		--attachment face:pl00.drs:9:1 \
+		--attachment head:pl00.drs:4:3 \
+		--attachment hair:pl00.drs:2:3 \
+		--attachment eyes:pl00.drs:5:3 \
+		--attachment right-hand:pl00.drs:14:13 \
+		--attachment left-hand:pl00.drs:17:13 \
+		--rigid-attachment handgun:wep02.drs:2:1:10 \
 		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 \
-		--cluster-mm $(CHARACTER_CLUSTER_MM) --output $(LEON_CHARACTER)
+		--sample-step 2 --cluster-mm $(CHARACTER_CLUSTER_MM) \
+		--output $(LEON_CHARACTER)
 
 character-ganado:
 	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
 		--cache-dir build/private/disc-cache --model-archive em10.drs --model-entry 440 \
 		--clip idle:em10.drs:1 --clip walk:em10.drs:4 \
 		--clip attack:em10.drs:130 --clip hit:em10.drs:42 \
-		--clip death:em10.drs:101 --cluster-mm $(CHARACTER_CLUSTER_MM) \
+		--clip death:em10.drs:101 --sample-step 2 \
+		--cluster-mm $(CHARACTER_CLUSTER_MM) \
 		--output $(GANADO_CHARACTER)
 
 demo-r10d: room-r10d texture-r10d character-leon character-ganado

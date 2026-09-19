@@ -79,6 +79,19 @@ class ConvertTplTests(unittest.TestCase):
         self.assertEqual(descriptor[6], TPL.FLAG_ALPHA)
         self.assertEqual(metadata["texture_bytes"], 128)
 
+    def test_reuses_identical_texture_payloads_across_materials(self):
+        color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4
+        images = TPL.parse_tpl(make_tpl([(8, 8, TPL.GX_TF_CMPR, color_block)]))
+        package, metadata = TPL.build_package(images, [
+            TPL.MaterialBinding("PART_000", 0, None),
+            TPL.MaterialBinding("PART_001", 0, None),
+        ])
+        values = TPL.HEADER.unpack_from(package)
+        first = TPL.TEXTURE.unpack_from(package, values[5])
+        second = TPL.TEXTURE.unpack_from(package, values[5] + TPL.TEXTURE.size)
+        self.assertEqual(first[4:6], second[4:6])
+        self.assertEqual(metadata["texture_bytes"], 128)
+
     def test_cli_writes_private_package_and_manifest(self):
         color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4
         with tempfile.TemporaryDirectory() as directory:

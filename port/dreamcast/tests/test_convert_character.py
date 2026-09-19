@@ -70,6 +70,17 @@ class CharacterConverterTests(unittest.TestCase):
         for actual, expected in zip(restored, point):
             self.assertAlmostEqual(actual, expected)
 
+    def test_attachment_spec_and_frame_sampling(self):
+        self.assertEqual(
+            MODULE.parse_attachment("hair:pl00.drs:2:3"),
+            ("hair", "pl00.drs", 2, 3),
+        )
+        self.assertEqual(
+            MODULE.parse_rigid_attachment("handgun:wep02.drs:2:1:10"),
+            ("handgun", "wep02.drs", 2, 1, 10),
+        )
+        self.assertEqual(MODULE.sampled_frame_indices(7, 2), [0, 2, 4, 6])
+
     def test_clusters_every_animation_frame_and_removes_degenerate_faces(self):
         positions = [
             (0.0, 0.0, 0.0),

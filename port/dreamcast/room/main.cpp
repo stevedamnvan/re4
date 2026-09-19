@@ -750,35 +750,56 @@ void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
     pvr_prim(vertices, sizeof(vertices));
 }
 
-std::uint32_t draw_character(const re4dc::character::Package& character,
-                             float actor_x, float actor_y, float actor_z,
-                             float actor_yaw, std::uint32_t animation_clip,
-                             float animation_frame, ProjectedVertex* projected,
-                             const pvr_poly_hdr_t* material_headers) {
+void project_character(const re4dc::character::Package& character,
+                       float actor_x, float actor_y, float actor_z,
+                       float actor_yaw, std::uint32_t animation_clip,
+                       float animation_frame, ProjectedVertex* projected) {
     const auto& clip = character.clips()[animation_clip];
-    const std::uint32_t local_frame =
-        static_cast<std::uint32_t>(animation_frame) % clip.frame_count;
+    const float wrapped_frame = std::fmod(
+        std::max(animation_frame, 0.0f), static_cast<float>(clip.frame_count));
+    const std::uint32_t local_frame = static_cast<std::uint32_t>(wrapped_frame);
+    const std::uint32_t next_frame = (local_frame + 1U) % clip.frame_count;
+    const float frame_blend = wrapped_frame - static_cast<float>(local_frame);
     const auto* source = character.frame_positions(clip.first_frame + local_frame);
+    const auto* next_source = character.frame_positions(
+        clip.first_frame + next_frame);
     const float scale = character.header().position_quantum_m;
     const float sine = std::sin(actor_yaw);
     const float cosine = std::cos(actor_yaw);
     for(std::uint32_t index = 0; index < character.header().vertex_count; ++index) {
-        const float local_x = static_cast<float>(source[index * 3U]) * scale;
-        const float local_y = static_cast<float>(source[index * 3U + 1U]) * scale;
-        const float local_z = static_cast<float>(source[index * 3U + 2U]) * scale;
+        const float local_x =
+            (static_cast<float>(source[index * 3U]) +
+             (static_cast<float>(next_source[index * 3U]) -
+              static_cast<float>(source[index * 3U])) * frame_blend) * scale;
+        const float local_y =
+            (static_cast<float>(source[index * 3U + 1U]) +
+             (static_cast<float>(next_source[index * 3U + 1U]) -
+              static_cast<float>(source[index * 3U + 1U])) * frame_blend) * scale;
+        const float local_z =
+            (static_cast<float>(source[index * 3U + 2U]) +
+             (static_cast<float>(next_source[index * 3U + 2U]) -
+              static_cast<float>(source[index * 3U + 2U])) * frame_blend) * scale;
         float x = actor_x + local_x * cosine + local_z * sine;
         float y = actor_y + local_y;
         float z = actor_z - local_x * sine + local_z * cosine;
         mat_trans_single(x, y, z);
         projected[index] = {x, y, z};
     }
+}
 
+std::uint32_t draw_character(const re4dc::character::Package& character,
+                             const ProjectedVertex* projected,
+                             const pvr_poly_hdr_t* material_headers,
+                             const bool* material_alpha, bool alpha_pass) {
     const auto* indices = character.indices();
     const auto* uvs = character.uvs();
     std::uint32_t triangles = 0;
     for(std::uint32_t batch_index = 0;
         batch_index < character.header().batch_count; ++batch_index) {
         const auto& batch = character.batches()[batch_index];
+        if(material_alpha[batch_index] != alpha_pass) {
+            continue;
+        }
         pvr_prim(&material_headers[batch_index], sizeof(pvr_poly_hdr_t));
         const std::uint32_t end = batch.first_index + batch.index_count;
         for(std::uint32_t index = batch.first_index; index < end; index += 3U) {
@@ -891,9 +912,11 @@ FrameStats render_scene(const re4dc::room::Package& room,
                         const Player& player, const Enemy& enemy,
                         const pvr_poly_hdr_t& untextured_header,
                         const pvr_poly_hdr_t* material_headers,
-                        const bool* material_alpha,
-                        const pvr_poly_hdr_t* leon_headers,
-                        const pvr_poly_hdr_t* ganado_headers,
+                         const bool* material_alpha,
+                         const pvr_poly_hdr_t* leon_headers,
+                         const bool* leon_alpha,
+                         const pvr_poly_hdr_t* ganado_headers,
+                         const bool* ganado_alpha,
                         ProjectedVertex* projected, std::uint32_t* transformed_at,
                         ProjectedVertex* leon_projected,
                         ProjectedVertex* ganado_projected,
@@ -903,6 +926,12 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const auto* batches = room.batches();
     const auto* vertices = room.vertices();
     const auto* indices = room.indices();
+    project_character(
+        leon, player.x, player.y, player.z, player.yaw, player.animation_clip,
+        player.animation_frame, leon_projected);
+    project_character(
+        ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
+        enemy.animation_frame, ganado_projected);
     const std::uint64_t wait_start = timer_us_gettime64();
     pvr_wait_ready();
     const std::uint64_t submit_start = timer_us_gettime64();
@@ -937,11 +966,9 @@ FrameStats render_scene(const re4dc::room::Package& room,
     }
     pvr_prim(&untextured_header, sizeof(untextured_header));
     stats.character_triangles = draw_character(
-        leon, player.x, player.y, player.z, player.yaw, player.animation_clip,
-        player.animation_frame, leon_projected, leon_headers);
+        leon, leon_projected, leon_headers, leon_alpha, false);
     stats.character_triangles += draw_character(
-        ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
-        enemy.animation_frame, ganado_projected, ganado_headers);
+        ganado, ganado_projected, ganado_headers, ganado_alpha, false);
     draw_goal(enemy.state == EnemyState::Dead);
     draw_hud(player, enemy);
     pvr_list_finish();
@@ -972,6 +999,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
             }
         }
     }
+    stats.character_triangles += draw_character(
+        leon, leon_projected, leon_headers, leon_alpha, true);
+    stats.character_triangles += draw_character(
+        ganado, ganado_projected, ganado_headers, ganado_alpha, true);
     pvr_list_finish();
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
@@ -1107,14 +1138,19 @@ int main() {
         new(std::nothrow) pvr_poly_hdr_t[leon.header().batch_count];
     pvr_poly_hdr_t* ganado_headers =
         new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
-    if(leon_headers == nullptr || ganado_headers == nullptr) {
+    std::unique_ptr<bool[]> leon_alpha(
+        new(std::nothrow) bool[leon.header().batch_count]);
+    std::unique_ptr<bool[]> ganado_alpha(
+        new(std::nothrow) bool[ganado.header().batch_count]);
+    if(leon_headers == nullptr || ganado_headers == nullptr ||
+       leon_alpha == nullptr || ganado_alpha == nullptr) {
         std::printf("re4dc-room: character material header allocation failed\n");
         return 1;
     }
     const auto compile_character_headers = [&context](
         const re4dc::character::Package& character,
         const re4dc::texture::Package& character_textures,
-        pvr_poly_hdr_t* headers, const char* label) {
+        pvr_poly_hdr_t* headers, bool* alpha, const char* label) {
         for(std::uint32_t batch_index = 0;
             batch_index < character.header().batch_count; ++batch_index) {
             char material_name[32];
@@ -1122,9 +1158,8 @@ int main() {
                 material_name, sizeof(material_name), "PART_%03lu",
                 static_cast<unsigned long>(character.batches()[batch_index].source_part));
             const auto* texture = character_textures.find(material_name);
-            if(texture == nullptr ||
-               (texture->flags & re4dc::texture::kAlpha) != 0) {
-                std::printf("re4dc-room: unsupported %s material %s\n", label,
+            if(texture == nullptr) {
+                std::printf("re4dc-room: missing %s material %s\n", label,
                             material_name);
                 return false;
             }
@@ -1133,18 +1168,27 @@ int main() {
             const int format = texture->format == re4dc::texture::kRgb565
                                    ? PVR_TXRFMT_RGB565
                                    : PVR_TXRFMT_ARGB1555;
-            pvr_poly_cxt_txr(&context, PVR_LIST_OP_POLY, format,
+            alpha[batch_index] =
+                (texture->flags & re4dc::texture::kAlpha) != 0;
+            const pvr_list_t list = alpha[batch_index]
+                                        ? PVR_LIST_PT_POLY
+                                        : PVR_LIST_OP_POLY;
+            pvr_poly_cxt_txr(&context, list, format,
                              texture->width, texture->height,
                              character_textures.pvr_texture(texture_index),
                              PVR_FILTER_BILINEAR);
             context.gen.culling = PVR_CULLING_NONE;
+            if(alpha[batch_index]) {
+                context.txr.alpha = PVR_TXRALPHA_ENABLE;
+            }
             pvr_poly_compile(&headers[batch_index], &context);
         }
         return true;
     };
-    if(!compile_character_headers(leon, leon_textures, leon_headers, "Leon") ||
+    if(!compile_character_headers(leon, leon_textures, leon_headers,
+                                  leon_alpha.get(), "Leon") ||
        !compile_character_headers(ganado, ganado_textures, ganado_headers,
-                                  "Ganado")) {
+                                   ganado_alpha.get(), "Ganado")) {
         return 1;
     }
     std::printf(
@@ -1299,7 +1343,7 @@ int main() {
         const FrameStats stats = render_scene(
             room, leon, ganado, player, enemy, untextured_header,
             material_headers, material_alpha.get(), leon_headers,
-            ganado_headers, projected.get(),
+            leon_alpha.get(), ganado_headers, ganado_alpha.get(), projected.get(),
             transformed_at.get(), leon_projected.get(), ganado_projected.get(),
             frame + 1U);
         g_re4dc_demo_telemetry.visible_groups = stats.groups;
