@@ -2297,6 +2297,10 @@ struct PreparedSourceLight {
 constexpr std::size_t kSourceLightCount =
     sizeof(kSourceLights) / sizeof(kSourceLights[0]);
 PreparedSourceLight g_prepared_source_lights[kSourceLightCount]{};
+std::uint32_t g_source_dynamic_light_mask = 0U;
+constexpr std::uint32_t kRoomStaticLightingVertexCapacity = 45000U;
+float g_room_static_lighting[kRoomStaticLightingVertexCapacity * 3U]{};
+std::uint8_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
 
 void normalize_vector(float& x, float& y, float& z) {
     const float length = std::sqrt(x * x + y * y + z * z);
@@ -2312,8 +2316,12 @@ void normalize_vector(float& x, float& y, float& z) {
 }
 
 void prepare_source_lights() {
+    g_source_dynamic_light_mask = 0U;
     for(std::size_t index = 0; index < kSourceLightCount; ++index) {
         const SourceLight& light = kSourceLights[index];
+        if(light.type == 5U && light.view_space) {
+            g_source_dynamic_light_mask |= 1U << index;
+        }
         PreparedSourceLight& prepared = g_prepared_source_lights[index];
         prepared.direction_x = light.nx;
         prepared.direction_y = light.ny;
@@ -2383,15 +2391,11 @@ void set_source_lighting_camera(const point_t& eye, const point_t& target,
     }
 }
 
-void evaluate_source_lighting(float px, float py, float pz,
-                              float nx, float ny, float nz,
-                              bool actor, float& red, float& green,
-                              float& blue,
-                              std::uint32_t light_selection = 0x1ffU) {
+void accumulate_source_lighting(float px, float py, float pz,
+                                float nx, float ny, float nz,
+                                float& red, float& green, float& blue,
+                                std::uint32_t light_selection) {
     normalize_vector(nx, ny, nz);
-    red = actor ? kSourceActorAmbientRed : kSourceRoomAmbientRed;
-    green = actor ? kSourceActorAmbientGreen : kSourceRoomAmbientGreen;
-    blue = actor ? kSourceActorAmbientBlue : kSourceRoomAmbientBlue;
     for(std::size_t index = 0; index < kSourceLightCount; ++index) {
         if((light_selection & (1U << index)) == 0U) {
             continue;
@@ -2447,6 +2451,18 @@ void evaluate_source_lighting(float px, float py, float pz,
         green += light.green * attenuation * diffuse;
         blue += light.blue * attenuation * diffuse;
     }
+}
+
+void evaluate_source_lighting(float px, float py, float pz,
+                              float nx, float ny, float nz,
+                              bool actor, float& red, float& green,
+                              float& blue,
+                              std::uint32_t light_selection = 0x1ffU) {
+    red = actor ? kSourceActorAmbientRed : kSourceRoomAmbientRed;
+    green = actor ? kSourceActorAmbientGreen : kSourceRoomAmbientGreen;
+    blue = actor ? kSourceActorAmbientBlue : kSourceRoomAmbientBlue;
+    accumulate_source_lighting(px, py, pz, nx, ny, nz,
+                               red, green, blue, light_selection);
     red = std::clamp(red, 0.0f, 1.0f);
     green = std::clamp(green, 0.0f, 1.0f);
     blue = std::clamp(blue, 0.0f, 1.0f);
@@ -2646,6 +2662,75 @@ std::uint32_t source_actor_light_selection(float x, float y, float z,
     return selection;
 }
 
+bool prepare_room_static_lighting(const re4dc::room::Package& room) {
+    if(room.header().vertex_count > kRoomStaticLightingVertexCapacity ||
+       room.header().group_count > 255U) {
+        return false;
+    }
+    std::memset(g_room_static_lighting_owner, 0xff,
+                room.header().vertex_count);
+    const auto* groups = room.groups();
+    const auto* batches = room.batches();
+    const auto* indices = room.indices();
+    const auto* vertices = room.vertices();
+    const auto* source_groups = room.source_groups();
+    const std::uint32_t static_mask = ~g_source_dynamic_light_mask;
+    for(std::uint32_t group_index = 0U;
+        group_index < room.header().group_count; ++group_index) {
+        const auto& group = groups[group_index];
+        if(group.first_batch > room.header().batch_count ||
+           group.batch_count > room.header().batch_count - group.first_batch) {
+            return false;
+        }
+        const std::uint32_t selection = source_group_light_selection(
+            source_groups != nullptr ? source_groups + group_index : nullptr);
+        for(std::uint32_t local_batch = 0U;
+            local_batch < group.batch_count; ++local_batch) {
+            const auto& batch = batches[group.first_batch + local_batch];
+            if(batch.first_index > room.header().index_count ||
+               batch.index_count >
+                   room.header().index_count - batch.first_index) {
+                return false;
+            }
+            const std::uint32_t end = batch.first_index + batch.index_count;
+            for(std::uint32_t index = batch.first_index; index < end; ++index) {
+                const std::uint32_t vertex_index = indices[index];
+                if(vertex_index >= room.header().vertex_count) {
+                    return false;
+                }
+                std::uint8_t& owner =
+                    g_room_static_lighting_owner[vertex_index];
+                if(owner != 0xffU) {
+                    const std::uint32_t owner_selection =
+                        source_group_light_selection(
+                            source_groups != nullptr
+                                ? source_groups + owner
+                                : nullptr);
+                    if(owner_selection != selection) {
+                        return false;
+                    }
+                    continue;
+                }
+                owner = static_cast<std::uint8_t>(group_index);
+                const auto& vertex = vertices[vertex_index];
+                float red = kSourceRoomAmbientRed;
+                float green = kSourceRoomAmbientGreen;
+                float blue = kSourceRoomAmbientBlue;
+                accumulate_source_lighting(
+                    vertex.x, vertex.y, vertex.z,
+                    vertex.nx, vertex.ny, vertex.nz,
+                    red, green, blue, selection & static_mask);
+                float* destination =
+                    g_room_static_lighting + vertex_index * 3U;
+                destination[0] = red;
+                destination[1] = green;
+                destination[2] = blue;
+            }
+        }
+    }
+    return true;
+}
+
 unsigned selected_light_count(std::uint32_t selection) {
     unsigned count = 0U;
     while(selection != 0U) {
@@ -2830,10 +2915,26 @@ const RenderVertex& cached_room_vertex(
     float light_green = 0.0f;
     float light_blue = 0.0f;
 #if defined(RE4DC_SCENE_R100)
-    evaluate_source_lighting(input.x, input.y, input.z,
-                             input.nx, input.ny, input.nz, false,
-                             light_red, light_green, light_blue,
-                             light_selection);
+    if(vertex_index < kRoomStaticLightingVertexCapacity &&
+       g_room_static_lighting_owner[vertex_index] != 0xffU) {
+        const float* source = g_room_static_lighting + vertex_index * 3U;
+        light_red = source[0];
+        light_green = source[1];
+        light_blue = source[2];
+        accumulate_source_lighting(
+            input.x, input.y, input.z,
+            input.nx, input.ny, input.nz,
+            light_red, light_green, light_blue,
+            light_selection & g_source_dynamic_light_mask);
+        light_red = std::clamp(light_red, 0.0f, 1.0f);
+        light_green = std::clamp(light_green, 0.0f, 1.0f);
+        light_blue = std::clamp(light_blue, 0.0f, 1.0f);
+    } else {
+        evaluate_source_lighting(input.x, input.y, input.z,
+                                 input.nx, input.ny, input.nz, false,
+                                 light_red, light_green, light_blue,
+                                 light_selection);
+    }
     ++stats.room_light_evaluations;
 #else
     light_red = light_green = light_blue = std::clamp(
@@ -4183,6 +4284,10 @@ int main() {
     }
 #if defined(RE4DC_SCENE_R100)
     prepare_source_lights();
+    if(!prepare_room_static_lighting(room)) {
+        std::printf("re4dc-room: room static-light preparation failed\n");
+        return 1;
+    }
     std::uint32_t room_light_links = 0U;
     if(room.source_groups() != nullptr) {
         for(std::uint32_t group = 0; group < room.header().group_count;

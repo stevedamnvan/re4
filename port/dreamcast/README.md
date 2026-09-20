@@ -163,7 +163,9 @@ The current measured optimization results are in
 [the r100 R1a performance checkpoint](docs/R1A_PERFORMANCE_CHECKPOINT.md) and
 [the R1b source-selection checkpoint](docs/R1B_SOURCE_SELECTION_CHECKPOINT.md).
 The source collision broad-phase recovery is measured in
-[the R2a SAT hierarchy checkpoint](docs/R2A_SAT_HIERARCHY_CHECKPOINT.md).
+[the R2a SAT hierarchy checkpoint](docs/R2A_SAT_HIERARCHY_CHECKPOINT.md). The
+source-selected fixed room-light contribution is prepared once and measured in
+[the R1c static room-lighting checkpoint](docs/R1C_STATIC_ROOM_LIGHTING_CHECKPOINT.md).
 
 The source audio targets privately extract `wep02.drs`, `em12.drs`, and
 `pl00.drs` from
@@ -193,9 +195,10 @@ make -C port/dreamcast/room \
 1. Keep the 30-second r100 cabin encounter on source camera, placement, room,
    actor, motion, collision, and sound data.
 2. Validate the recovered source object/cull/mask/volume path and ordered
-   per-model light selection against a matched debug-game trace before baking
-   lighting or reducing visible assets. R0, R1a, and the target-side R1b
-   implementation are complete; source-trace acceptance remains open.
+   per-model light selection against a matched debug-game trace. The R1c cache
+   reuses the current source-derived fixed contribution without reducing visible
+   assets; R0, R1a, and the target-side R1b/R1c implementations are complete,
+   while source-trace acceptance remains open.
 3. Complete source SAT primitive/query parity on top of the recovered hierarchy,
    then preserve source position/normal/weight-palette identities instead of
    designing replacement collision or animation systems.
