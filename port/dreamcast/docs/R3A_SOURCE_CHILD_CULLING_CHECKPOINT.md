@@ -1,14 +1,14 @@
 # r100 R3a source-child culling checkpoint
 
 Recorded 2026-09-20 on top of the source actor-strip checkpoint. This change
-subdivides each recovered source room object into conservative 32 m X/Z child
+subdivides each recovered source room object into conservative 24 m X/Z child
 bounds while retaining the parent SMX selection mask, cull mode, flags, and
 model light volume on every child.
 
 This is visibility structure, not geometric reduction. The accepted package
 retains all 40,419 vertices and all 30,895 triangles. It expands 58 source
-objects into 167 render groups and grows the embedded room package from
-1,679,364 to 1,700,872 bytes.
+objects into 222 render groups and grows the embedded room package from
+1,679,364 to 1,711,412 bytes.
 
 ## Alpha-order constraint
 
@@ -33,32 +33,32 @@ package serialization are unchanged when subdivision is disabled.
 The comparison uses autoplay simulation ticks 213 through 480 at 640x480. All
 values are medians.
 
-| Measure | Source objects | 32 m source children | Change |
+| Measure | Source objects | 24 m source children | Change |
 |---|---:|---:|---:|
-| Total render work | 200.488 ms | 187.136 ms | -6.7% |
-| Submission interval | 160.514 ms | 149.660 ms | -6.8% |
-| Opaque room draw | 104.175 ms | 90.727 ms | -12.9% |
-| Translucent room draw | 38.085 ms | 38.190 ms | unchanged |
-| Room index references | 56,262 | 49,242 | -12.5% |
-| Room cache misses / light evaluations | 28,959 | 26,633 | -8.0% |
+| Total render work | 200.488 ms | 180.209 ms | -10.1% |
+| Submission interval | 160.514 ms | 142.703 ms | -11.1% |
+| Opaque room draw | 104.175 ms | 83.773 ms | -19.6% |
+| Translucent room draw | 38.083 ms | 38.185 ms | unchanged |
+| Room index references | 56,262 | 46,068 | -18.1% |
+| Room cache misses / light evaluations | 28,959 | 25,417 | -12.2% |
 | Emitted room triangles | 3,195 | 3,195 | unchanged |
 
 Actor costs and submitted actor strips are unchanged. The embedded package
-uses 20,480 more bytes of measured main-RAM headroom; VRAM and AICA headroom
+uses 32,768 more bytes of measured main-RAM headroom; VRAM and AICA headroom
 are unchanged.
 
 Private evidence:
 
 - Baseline: `C:\Flycast-Evidence\re4-dreamcast\d139-r1d-source-actor-strips-autoplay`
-- Accepted candidate: `C:\Flycast-Evidence\re4-dreamcast\d144-r3a-source-cell32-source-alpha-order-autoplay`
-- Final manual build: `C:\Flycast-Evidence\re4-dreamcast\d145-r3a-final-manual`
+- Accepted candidate: `C:\Flycast-Evidence\re4-dreamcast\d146-r3a-source-cell24-source-alpha-order-autoplay`
+- Final manual build: `C:\Flycast-Evidence\re4-dreamcast\d147-r3a-final-manual`
 - All-material diagnostic, rejected for alpha-order risk:
   `C:\Flycast-Evidence\re4-dreamcast\d140-r3-source-cell32-autoplay`
 
 The accepted autoplay ELF SHA-256 is
-`a81c80d02b714490d941d2db3fc71eeff409ecbc88c0c0848bcc2e936a094a92`.
+`efbf6640ce5e3b7d8ee437c76bb90173f6745185525c592f255987a3c9eacbab`.
 The final manual ELF SHA-256 is
-`f083fd23205a30ea5103d87142e8bb054cf30b1d8a39234ea1df02157a528d74`.
+`945b18834f8efc31f0dff85a94d49a2223254504667608756c003dc03fc73992`.
 The inspected encounter view contains the same authored room surfaces, actors,
 lighting, and HUD. This is not yet a matched-tick pixel certificate or a full
 free-camera occlusion test.
@@ -66,7 +66,7 @@ free-camera occlusion test.
 ## Acceptance boundary
 
 This closes a target-side source-object subdivision experiment. It does not
-claim that 32 m is optimal for every room, replace original model eligibility
+claim that 24 m is optimal for every room, replace original model eligibility
 or ordering-table traces, validate doors and windows across the whole room, or
 establish physical Dreamcast timing. The full encounter remains well above the
 30 fps budget; room drawing and per-frame actor preparation are still the

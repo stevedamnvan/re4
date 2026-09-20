@@ -23,7 +23,7 @@ PLAYER_DAMAGE_VOICE_10 ?=
 PLAYER_DAMAGE_VOICE_11 ?=
 PLAYER_DEATH_VOICE_13 ?=
 DEMO_SCENE ?= r10d
-R100_ROOM_PACKAGE ?= ../build/private/r100-source-cell-32.re4room
+R100_ROOM_PACKAGE ?= ../build/private/r100-source-cell-24.re4room
 # Preserve the r100 presentation slice at native Dreamcast VGA resolution.
 # The older r10d engineering fixture stays at 240p unless explicitly overridden.
 DEMO_RESOLUTION ?= $(if $(filter r100,$(DEMO_SCENE)),480p,240p)
