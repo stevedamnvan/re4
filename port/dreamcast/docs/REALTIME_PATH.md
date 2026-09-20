@@ -234,11 +234,23 @@ before/after timing and memory, and end in a keep-or-revert decision.
    duplicate normalizations it removes. Per-position reuse of the point and spot
    terms is the same trade with a worse constant, reuse 1.133 over a payload
    several times larger and scattered rather than streamed, so it is recorded
-   there rather than built. What remains untouched is the loop-invariant data
-   itself: the `PreparedActorLight` fields are re-read for every light on every
-   entry and the branch on `type` is invariant per light, so splitting the
-   prepared lights into type-specific lists once per actor attacks the memory
-   traffic with no reuse factor to depend on. `project_character()` is 5.820 ms
+   there rather than built.
+   [R4I](R4I_LIGHT_RECORD_TRAFFIC_CHECKPOINT.md) then gave each light type its
+   own record, keeping selection order through an ordered code stream, and
+   measured it 0.487 ms slower with bit-identical output over 16.1 million
+   entries. It disproves the premise it was built on: the loop's memory
+   instruction count is 166 before and 169 after, because a 60-field record
+   never forced a load of a field the code does not mention. Record size
+   affected addressing, not load count, while the dispatch cost a byte load and
+   a branch per light per entry. What is left is narrower. Both actors run
+   exactly four lights from one unchanging selection mask each, Leon
+   directional, directional, directional, spot and Ganado directional, point,
+   directional, point, so a bounded specialization of those observed sequences
+   as straight-line code, with the general evaluator retained as a fallback for
+   any other selection, is the next branch. It preserves accumulation order by
+   construction. R4i also establishes two facts that survive its revert:
+   premultiplying a directional light's colour by its intensity is bit-exact,
+   and an ordered code stream preserves the accumulation sequence exactly. `project_character()` is 5.820 ms
    at roughly 200 memory instructions per position and the actor packet loop
    in `draw_character()` 11.789 ms; both should be read the same way. Count
    with `tools/sh4_loop_cost.py`, change the data layout, keep the arithmetic
@@ -485,6 +497,11 @@ not the task scheduler:
   entries. It closes per-entry input caching on this loop by measuring the reuse
   factor, 1.095 for the normal and 1.133 for the position, and adds a reusable
   512-byte SUBMIT_PROFILE telemetry layout to the capture reader.
+- R4i: type-specific prepared-light records with an ordered code stream, built
+  and reverted at 0.487 ms slower and bit-identical over 16,127,220 entries. It
+  closes the general compact representation by showing the loop never loaded
+  irrelevant fields in the first place, and leaves a bounded specialization of
+  the two observed four-light sequences as the next branch.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison
