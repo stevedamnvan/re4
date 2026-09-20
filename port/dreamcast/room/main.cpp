@@ -2930,7 +2930,7 @@ constexpr std::uint32_t kLeonVertexCapacity = 8192U;
 constexpr std::uint32_t kGanadoVertexCapacity = 4096U;
 constexpr std::uint32_t kLeonPoseMatrixCapacity = 512U;
 constexpr std::uint32_t kGanadoPoseMatrixCapacity = 128U;
-constexpr std::uint32_t kRoomVertexCacheCapacity = 1024U;
+constexpr std::uint32_t kRoomVertexCacheCapacity = 2048U;
 static_assert((kRoomVertexCacheCapacity & (kRoomVertexCacheCapacity - 1U)) == 0U);
 
 struct RoomVertexCacheEntry {

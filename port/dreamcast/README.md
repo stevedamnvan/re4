@@ -202,6 +202,9 @@ Character package v6 now removes the redundant baked mesh poses and reuses one
 prepared source palette for both positions and normals. Its 5.34 MiB live-RAM
 gain and matched performance result are in
 [the R3i source position-palette checkpoint](docs/R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md).
+The recovered memory also permits a measured 2,048-entry room vertex cache;
+larger candidates were rejected after reaching the same reuse ceiling in
+[the R3j cache-bound checkpoint](docs/R3J_ROOM_VERTEX_CACHE_BOUND_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 

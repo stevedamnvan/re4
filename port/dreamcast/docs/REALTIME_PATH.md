@@ -52,6 +52,9 @@ per-frame triangle-normal reconstruction in
 Source BIN positions now share the same prepared pose palettes; complete baked
 mesh poses have been removed while gameplay marker tracks remain exact in
 [R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md](R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md).
+The room vertex-cache bound is increased only to the measured 2,048-entry
+reuse ceiling in
+[R3J_ROOM_VERTEX_CACHE_BOUND_CHECKPOINT.md](R3J_ROOM_VERTEX_CACHE_BOUND_CHECKPOINT.md).
 
 ## Objective and boundaries
 
