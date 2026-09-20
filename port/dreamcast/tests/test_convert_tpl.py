@@ -92,9 +92,12 @@ class ConvertTplTests(unittest.TestCase):
         self.assertEqual(values[0], TPL.MAGIC)
         self.assertEqual(values[4], 1)
         descriptor = TPL.TEXTURE.unpack_from(first, values[5])
-        self.assertEqual(descriptor[1:4], (8, 8, TPL.FORMAT_ARGB1555))
+        self.assertEqual(descriptor[1:4], (8, 8, TPL.FORMAT_ARGB4444))
         self.assertEqual(descriptor[6], TPL.FLAG_ALPHA)
         self.assertEqual(metadata["texture_bytes"], 128)
+
+    def test_argb4444_preserves_alpha_gradient(self):
+        self.assertEqual(TPL._pack_4444((0x12, 0x34, 0x56, 0x78)), 0x7135)
 
     def test_reuses_identical_texture_payloads_across_materials(self):
         color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4

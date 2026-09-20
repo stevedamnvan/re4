@@ -29,6 +29,7 @@ MAGIC = b"RE4DCTX\0"
 VERSION = 1
 FORMAT_RGB565 = 0
 FORMAT_ARGB1555 = 1
+FORMAT_ARGB4444 = 2
 FLAG_ALPHA = 1
 HEADER = struct.Struct("<8s10I")
 TEXTURE = struct.Struct("<64s6I")
@@ -282,6 +283,11 @@ def _pack_1555(pixel: tuple[int, int, int, int]) -> int:
     return ((1 if alpha >= 128 else 0) << 15) | ((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)
 
 
+def _pack_4444(pixel: tuple[int, int, int, int]) -> int:
+    red, green, blue, alpha = pixel
+    return ((alpha >> 4) << 12) | ((red >> 4) << 8) | ((green >> 4) << 4) | (blue >> 4)
+
+
 def downsample_box(
     pixels: list[tuple[int, int, int, int]], width: int, height: int
 ) -> tuple[list[tuple[int, int, int, int]], int, int]:
@@ -342,8 +348,12 @@ def build_package(
             height = source.height
             while max_dimension is not None and max(width, height) > max_dimension:
                 pixels, width, height = downsample_box(pixels, width, height)
-            image_format = FORMAT_ARGB1555 if has_alpha else FORMAT_RGB565
-            pack_pixel = _pack_1555 if has_alpha else _pack_565
+            # The source's default room/model blend mode is SRCALPHA /
+            # INVSRCALPHA. Preserve mask gradients in the Dreamcast's bounded
+            # 16-bit format instead of turning them into opaque punch-through
+            # silhouettes.
+            image_format = FORMAT_ARGB4444 if has_alpha else FORMAT_RGB565
+            pack_pixel = _pack_4444 if has_alpha else _pack_565
             raw = b"".join(struct.pack("<H", pack_pixel(pixel)) for pixel in pixels)
             relative_offset = len(data_blob)
             data_blob.extend(raw)
@@ -365,7 +375,7 @@ def build_package(
             "alpha_image": binding.alpha_image,
             "width": width,
             "height": height,
-            "format": "argb1555" if flags & FLAG_ALPHA else "rgb565",
+            "format": "argb4444" if flags & FLAG_ALPHA else "rgb565",
             "bytes": raw_size,
         })
 

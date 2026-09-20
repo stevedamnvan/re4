@@ -81,7 +81,7 @@ bool Package::open(const char* path) {
         const Texture& texture = textures()[index];
         if(texture.width == 0 || texture.height == 0 ||
            texture.data_size != texture.width * texture.height * 2U ||
-           texture.format > kArgb1555 ||
+           texture.format > kArgb4444 ||
            !range_valid(texture.data_offset, texture.data_size)) {
             error_ = "invalid texture descriptor";
             close();

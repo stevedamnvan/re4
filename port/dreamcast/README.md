@@ -109,7 +109,10 @@ source-derived actor animation, source-cut RGB lighting for r100, and the combat
 loop. The r100 path evaluates the non-empty cabin lights from
 `r100_002.LIT` cut 0, including its separate scenery/enemy ambient colours and
 view-relative parallel lights; animated actor normals are rebuilt from each
-sampled pose before lighting. The character converter also retains the FCV
+sampled pose before lighting. Source textures with alpha are preserved as
+ARGB4444 and drawn through the PVR translucent list using the source default
+alpha blend, so the cabin's soft shadow and cutout masks do not become opaque
+black geometry. The character converter also retains the FCV
 kind-1 root-motion rate used by the original `MotionMove`, so the selected Leon
 and Ganado walk clips drive world movement at their authored speeds. Controls are
 stick/D-pad move and turn, right trigger or Y aim, stick/D-pad vertical while

@@ -12,6 +12,7 @@ inline constexpr char kMagic[8] = {'R', 'E', '4', 'D', 'C', 'T', 'X', '\0'};
 inline constexpr std::uint32_t kVersion = 1;
 inline constexpr std::uint32_t kRgb565 = 0;
 inline constexpr std::uint32_t kArgb1555 = 1;
+inline constexpr std::uint32_t kArgb4444 = 2;
 inline constexpr std::uint32_t kAlpha = 1;
 
 struct Header {

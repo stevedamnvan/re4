@@ -2564,7 +2564,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
     draw_hud(player);
     pvr_list_finish();
 
-    pvr_list_begin(PVR_LIST_PT_POLY);
+    pvr_list_begin(PVR_LIST_TR_POLY);
     for(std::uint32_t group_index = 0; group_index < room.header().group_count;
         ++group_index) {
         const auto& group = groups[group_index];
@@ -2771,11 +2771,13 @@ int main() {
         material_alpha[material] =
             (texture->flags & re4dc::texture::kAlpha) != 0;
         const pvr_list_t list = material_alpha[material]
-                                    ? PVR_LIST_PT_POLY
+                                    ? PVR_LIST_TR_POLY
                                     : PVR_LIST_OP_POLY;
         const int format = texture->format == re4dc::texture::kRgb565
                                ? PVR_TXRFMT_RGB565
-                               : PVR_TXRFMT_ARGB1555;
+                               : texture->format == re4dc::texture::kArgb1555
+                                     ? PVR_TXRFMT_ARGB1555
+                                     : PVR_TXRFMT_ARGB4444;
         pvr_poly_cxt_txr(&context, list, format, texture->width,
                          texture->height, textures.pvr_texture(texture_index),
                          PVR_FILTER_BILINEAR);
@@ -2819,11 +2821,13 @@ int main() {
                 texture - character_textures.textures());
             const int format = texture->format == re4dc::texture::kRgb565
                                    ? PVR_TXRFMT_RGB565
-                                   : PVR_TXRFMT_ARGB1555;
+                                   : texture->format == re4dc::texture::kArgb1555
+                                         ? PVR_TXRFMT_ARGB1555
+                                         : PVR_TXRFMT_ARGB4444;
             alpha[batch_index] =
                 (texture->flags & re4dc::texture::kAlpha) != 0;
             const pvr_list_t list = alpha[batch_index]
-                                        ? PVR_LIST_PT_POLY
+                                        ? PVR_LIST_TR_POLY
                                         : PVR_LIST_OP_POLY;
             pvr_poly_cxt_txr(&context, list, format,
                              texture->width, texture->height,
