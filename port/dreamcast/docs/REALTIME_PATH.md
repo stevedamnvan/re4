@@ -461,6 +461,39 @@ re-plan that stage. Do not multiply isolated speedups into a promised 24x result
 If the intact scene still misses the budget after these passes, present measured
 remaining costs and options; a fidelity concession needs a separate decision.
 
+## Scale Gate: when the boot-forward track opens
+
+An intermediate gate between the single-room optimization phase and broader
+game integration. It does not relax the final target: the approximately 30 fps
+/ 33.3 ms stock-Dreamcast goal above remains the final performance gate unless
+later physical-hardware evidence prompts an explicit separate decision.
+
+The gate is met when all of the following hold:
+
+- The accepted r100 encounter sustains roughly 20 fps under representative
+  gameplay, measured as about 50 ms or better p95 frame time. A 20 fps average
+  does not qualify.
+- No dropped simulation time, no simulation overruns, no input-queue loss.
+- Human-controlled movement, camera turns, aim, firing, reload, enemy contact,
+  death and retry are responsive and correct.
+- R4 has demonstrated one real room-to-room transition through the intended
+  residency model: next-room resources loaded through the R4 path, transition
+  peak RAM, VRAM and AICA measured, resources unique to the previous room
+  reclaimable, shared resources still valid, and no reliance on keeping both
+  complete rooms permanently resident.
+
+Once met, open a boot-forward integration track from the game's normal startup
+toward the beginning of Disc 1, running in parallel with continued renderer and
+performance work. It must reuse the existing Dreamcast renderer, collision,
+animation, audio, texture and R4 residency systems: no second gameplay or
+rendering implementation and no scene-specific framework. The cabin stays a
+permanent regression and performance fixture as further representative scenes
+are added.
+
+The trigger is stable representative play at about 20 fps plus one correct
+streamed room transition. VQ completion, the full PS2 comparison database and
+campaign-wide streaming are explicitly not prerequisites.
+
 ## Scale after the same-encounter work: the R4 workstream
 
 The residency and streaming work is now a named workstream with its own plan,
