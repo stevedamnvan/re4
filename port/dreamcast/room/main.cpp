@@ -110,14 +110,18 @@ struct DemoTelemetry {
     std::uint32_t room_vertex_records;
     std::uint32_t room_direct_strips;
     std::uint32_t room_strip_fallbacks;
+    std::uint32_t room_visibility_us;
+    std::uint32_t room_light_selection_evaluations;
+    std::uint32_t pvr_submit_calls;
+    std::uint32_t pvr_submit_bytes;
 };
 
-static_assert(sizeof(DemoTelemetry) == 328U);
+static_assert(sizeof(DemoTelemetry) == 344U);
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
-    telemetry.version = 8U;
+    telemetry.version = 9U;
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
 }
@@ -477,6 +481,7 @@ struct FrameStats {
     std::uint64_t opaque_actor_us = 0;
     std::uint64_t translucent_room_us = 0;
     std::uint64_t translucent_actor_hud_us = 0;
+    std::uint64_t room_visibility_us = 0;
     std::uint32_t room_index_references = 0;
     std::uint32_t room_cache_hits = 0;
     std::uint32_t room_cache_misses = 0;
@@ -490,7 +495,16 @@ struct FrameStats {
     std::uint32_t room_vertex_records = 0;
     std::uint32_t room_direct_strips = 0;
     std::uint32_t room_strip_fallbacks = 0;
+    std::uint32_t room_light_selection_evaluations = 0;
+    std::uint32_t pvr_submit_calls = 0;
+    std::uint32_t pvr_submit_bytes = 0;
 };
+
+void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
+    pvr_prim(data, byte_count);
+    ++stats.pvr_submit_calls;
+    stats.pvr_submit_bytes += static_cast<std::uint32_t>(byte_count);
+}
 
 std::uint32_t saturate_u32(std::uint64_t value) {
     return static_cast<std::uint32_t>(
@@ -3406,7 +3420,8 @@ void submit_room_strips(const re4dc::room::Package& room,
         if(submit_count == 0U) {
             return;
         }
-        pvr_prim(submit_vertices, sizeof(pvr_vertex_t) * submit_count);
+        submit_pvr(stats, submit_vertices,
+                   sizeof(pvr_vertex_t) * submit_count);
         submit_count = 0U;
     };
     const auto append_triangle = [&](const RenderVertex* triangle) {
@@ -4080,13 +4095,15 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
         if(material_alpha[batch_index] != alpha_pass) {
             continue;
         }
-        pvr_prim(&material_headers[batch_index], sizeof(pvr_poly_hdr_t));
+        submit_pvr(stats, &material_headers[batch_index],
+                   sizeof(pvr_poly_hdr_t));
         std::uint32_t submit_count = 0;
         const auto flush = [&]() {
             if(submit_count == 0U) {
                 return;
             }
-            pvr_prim(submit_vertices, sizeof(pvr_vertex_t) * submit_count);
+            submit_pvr(stats, submit_vertices,
+                       sizeof(pvr_vertex_t) * submit_count);
             submit_count = 0;
         };
         const auto submit_triangle_range = [&](std::uint32_t first,
@@ -4592,7 +4609,7 @@ void source_hud_vertices(const re4dc::hud::Unit& unit,
 
 void draw_source_hud(const re4dc::hud::Package& hud,
                      const pvr_poly_hdr_t* headers,
-                     const Player& player) {
+                     const Player& player, FrameStats& stats) {
     constexpr float source_width = 640.0f;
     constexpr float source_height = 480.0f;
     const float scale_x = kScreenWidth / source_width;
@@ -4638,8 +4655,8 @@ void draw_source_hud(const re4dc::hud::Package& hud,
                 .oargb = 0,
             };
         }
-        pvr_prim(&headers[texture], sizeof(pvr_poly_hdr_t));
-        pvr_prim(vertices, sizeof(vertices));
+        submit_pvr(stats, &headers[texture], sizeof(pvr_poly_hdr_t));
+        submit_pvr(stats, vertices, sizeof(vertices));
       }
     }
 }
@@ -4666,8 +4683,16 @@ bool uses_source_punchthrough(
     std::uint32_t material_index) {
     return source_groups != nullptr && material_punchthrough[material_index] &&
            (source_groups[group_index].flags &
-            re4dc::room::kSourceGroupAlphaOmit128) != 0U;
+           re4dc::room::kSourceGroupAlphaOmit128) != 0U;
 }
+
+struct VisibleRoomGroup {
+    std::uint32_t group_index;
+    std::uint32_t light_selection;
+    std::uint32_t cull_mode;
+};
+
+static_assert(sizeof(VisibleRoomGroup) == 12U);
 
 FrameStats render_scene(const re4dc::room::Package& room,
                         const re4dc::character::Package& leon,
@@ -4679,6 +4704,8 @@ FrameStats render_scene(const re4dc::room::Package& room,
                         const pvr_poly_hdr_t* room_punchthrough_headers,
                         const bool* material_alpha,
                         const bool* material_punchthrough,
+                        VisibleRoomGroup* visible_room_groups,
+                        std::uint32_t visible_room_group_capacity,
                         const pvr_poly_hdr_t* leon_headers,
                          const bool* leon_alpha,
                          const pvr_poly_hdr_t* ganado_headers,
@@ -4765,6 +4792,34 @@ FrameStats render_scene(const re4dc::room::Package& room,
         ganado_light_selection);
     stats.actor_lighting_us = timer_us_gettime64() - actor_lighting_start;
 #endif
+    const std::uint64_t room_visibility_start = timer_us_gettime64();
+    std::uint32_t visible_room_group_count = 0U;
+    for(std::uint32_t group_index = 0U;
+        group_index < room.header().group_count; ++group_index) {
+        const auto& group = groups[group_index];
+        if(!group_visible(group)) {
+            continue;
+        }
+        if(visible_room_group_count >= visible_room_group_capacity) {
+            break;
+        }
+        VisibleRoomGroup& visible =
+            visible_room_groups[visible_room_group_count++];
+        visible.group_index = group_index;
+        visible.cull_mode = source_groups != nullptr
+            ? source_groups[group_index].cull_mode
+#if defined(RE4DC_SCENE_R100)
+            : kCullNone;
+#else
+            : kCullBack;
+#endif
+        visible.light_selection = source_group_light_selection(
+            source_groups != nullptr ? source_groups + group_index : nullptr);
+        ++stats.room_light_selection_evaluations;
+    }
+    stats.groups = visible_room_group_count;
+    stats.room_visibility_us =
+        timer_us_gettime64() - room_visibility_start;
     const std::uint64_t wait_start = timer_us_gettime64();
     pvr_wait_ready();
     const std::uint64_t submit_start = timer_us_gettime64();
@@ -4772,22 +4827,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
     pvr_scene_begin();
     pvr_list_begin(PVR_LIST_OP_POLY);
     const std::uint64_t opaque_room_start = timer_us_gettime64();
-    for(std::uint32_t group_index = 0; group_index < room.header().group_count;
-        ++group_index) {
+    for(std::uint32_t visible_index = 0U;
+        visible_index < visible_room_group_count; ++visible_index) {
+        const VisibleRoomGroup& visible = visible_room_groups[visible_index];
+        const std::uint32_t group_index = visible.group_index;
         const auto& group = groups[group_index];
-        if(!group_visible(group)) {
-            continue;
-        }
-        ++stats.groups;
-        const std::uint8_t cull_mode = source_groups != nullptr
-            ? source_groups[group_index].cull_mode
-#if defined(RE4DC_SCENE_R100)
-            : kCullNone;
-#else
-            : kCullBack;
-#endif
-        const std::uint32_t light_selection = source_group_light_selection(
-            source_groups != nullptr ? source_groups + group_index : nullptr);
+        const std::uint8_t cull_mode =
+            static_cast<std::uint8_t>(visible.cull_mode);
+        const std::uint32_t light_selection = visible.light_selection;
         for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
             ++local_batch) {
             const auto& batch = batches[group.first_batch + local_batch];
@@ -4798,23 +4845,25 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 continue;
             }
             if(batch.primitive_count != 0U) {
-                pvr_prim(&room_strip_headers[batch.material * 3U + cull_mode],
-                         sizeof(pvr_poly_hdr_t));
+                submit_pvr(
+                    stats,
+                    &room_strip_headers[batch.material * 3U + cull_mode],
+                    sizeof(pvr_poly_hdr_t));
                 submit_room_strips(
                     room, batch, character_submit_vertices,
                     kCharacterSubmitVertexCapacity, stats, cull_mode,
                     light_selection);
                 continue;
             }
-            pvr_prim(&material_headers[batch.material],
-                     sizeof(pvr_poly_hdr_t));
+            submit_pvr(stats, &material_headers[batch.material],
+                       sizeof(pvr_poly_hdr_t));
             std::uint32_t submit_count = 0;
             const auto flush = [&]() {
                 if(submit_count == 0U) {
                     return;
                 }
-                pvr_prim(character_submit_vertices,
-                         sizeof(pvr_vertex_t) * submit_count);
+                submit_pvr(stats, character_submit_vertices,
+                           sizeof(pvr_vertex_t) * submit_count);
                 submit_count = 0;
             };
             const std::uint32_t end = batch.first_index + batch.index_count;
@@ -4834,7 +4883,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
     }
     stats.opaque_room_us = timer_us_gettime64() - opaque_room_start;
     const std::uint64_t opaque_actor_start = timer_us_gettime64();
-    pvr_prim(&untextured_header, sizeof(untextured_header));
+    submit_pvr(stats, &untextured_header, sizeof(untextured_header));
     stats.character_triangles = draw_character(
         leon, leon_projected,
 #if defined(RE4DC_SCENE_R100)
@@ -4860,21 +4909,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
 
     const std::uint64_t translucent_room_start = timer_us_gettime64();
     pvr_list_begin(PVR_LIST_PT_POLY);
-    for(std::uint32_t group_index = 0; group_index < room.header().group_count;
-        ++group_index) {
+    for(std::uint32_t visible_index = 0U;
+        visible_index < visible_room_group_count; ++visible_index) {
+        const VisibleRoomGroup& visible = visible_room_groups[visible_index];
+        const std::uint32_t group_index = visible.group_index;
         const auto& group = groups[group_index];
-        if(!group_visible(group)) {
-            continue;
-        }
-        const std::uint8_t cull_mode = source_groups != nullptr
-            ? source_groups[group_index].cull_mode
-#if defined(RE4DC_SCENE_R100)
-            : kCullNone;
-#else
-            : kCullBack;
-#endif
-        const std::uint32_t light_selection = source_group_light_selection(
-            source_groups != nullptr ? source_groups + group_index : nullptr);
+        const std::uint8_t cull_mode =
+            static_cast<std::uint8_t>(visible.cull_mode);
+        const std::uint32_t light_selection = visible.light_selection;
         for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
             ++local_batch) {
             const auto& batch = batches[group.first_batch + local_batch];
@@ -4885,7 +4927,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
             }
             const pvr_poly_hdr_t& header =
                 room_punchthrough_headers[batch.material * 3U + cull_mode];
-            pvr_prim(&header, sizeof(header));
+            submit_pvr(stats, &header, sizeof(header));
             if(batch.primitive_count != 0U) {
                 submit_room_strips(
                     room, batch, character_submit_vertices,
@@ -4898,8 +4940,8 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 if(submit_count == 0U) {
                     return;
                 }
-                pvr_prim(character_submit_vertices,
-                         sizeof(pvr_vertex_t) * submit_count);
+                submit_pvr(stats, character_submit_vertices,
+                           sizeof(pvr_vertex_t) * submit_count);
                 submit_count = 0;
             };
             const std::uint32_t end = batch.first_index + batch.index_count;
@@ -4920,21 +4962,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
     pvr_list_finish();
 
     pvr_list_begin(PVR_LIST_TR_POLY);
-    for(std::uint32_t group_index = 0; group_index < room.header().group_count;
-        ++group_index) {
+    for(std::uint32_t visible_index = 0U;
+        visible_index < visible_room_group_count; ++visible_index) {
+        const VisibleRoomGroup& visible = visible_room_groups[visible_index];
+        const std::uint32_t group_index = visible.group_index;
         const auto& group = groups[group_index];
-        if(!group_visible(group)) {
-            continue;
-        }
-        const std::uint8_t cull_mode = source_groups != nullptr
-            ? source_groups[group_index].cull_mode
-#if defined(RE4DC_SCENE_R100)
-            : kCullNone;
-#else
-            : kCullBack;
-#endif
-        const std::uint32_t light_selection = source_group_light_selection(
-            source_groups != nullptr ? source_groups + group_index : nullptr);
+        const std::uint8_t cull_mode =
+            static_cast<std::uint8_t>(visible.cull_mode);
+        const std::uint32_t light_selection = visible.light_selection;
         for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
             ++local_batch) {
             const auto& batch = batches[group.first_batch + local_batch];
@@ -4948,23 +4983,25 @@ FrameStats render_scene(const re4dc::room::Package& room,
             }
             if(batch.primitive_count != 0U &&
                (batch.flags & re4dc::room::kBatchStripOrderPreserved) != 0U) {
-                pvr_prim(&room_strip_headers[batch.material * 3U + cull_mode],
-                         sizeof(pvr_poly_hdr_t));
+                submit_pvr(
+                    stats,
+                    &room_strip_headers[batch.material * 3U + cull_mode],
+                    sizeof(pvr_poly_hdr_t));
                 submit_room_strips(
                     room, batch, character_submit_vertices,
                     kCharacterSubmitVertexCapacity, stats, cull_mode,
                     light_selection);
                 continue;
             }
-            pvr_prim(&material_headers[batch.material],
-                     sizeof(pvr_poly_hdr_t));
+            submit_pvr(stats, &material_headers[batch.material],
+                       sizeof(pvr_poly_hdr_t));
             std::uint32_t submit_count = 0;
             const auto flush = [&]() {
                 if(submit_count == 0U) {
                     return;
                 }
-                pvr_prim(character_submit_vertices,
-                         sizeof(pvr_vertex_t) * submit_count);
+                submit_pvr(stats, character_submit_vertices,
+                           sizeof(pvr_vertex_t) * submit_count);
                 submit_count = 0;
             };
             const std::uint32_t end = batch.first_index + batch.index_count;
@@ -5000,7 +5037,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
         ganado_headers, ganado_alpha, true,
         character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
 #if defined(RE4DC_SCENE_R100)
-    draw_source_hud(source_hud, source_hud_headers, player);
+    draw_source_hud(source_hud, source_hud_headers, player, stats);
 #endif
     stats.translucent_actor_hud_us =
         timer_us_gettime64() - translucent_actor_hud_start;
@@ -5210,13 +5247,15 @@ int main() {
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
     pvr_poly_hdr_t* room_punchthrough_headers =
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
+    VisibleRoomGroup* visible_room_groups =
+        new(std::nothrow) VisibleRoomGroup[room.header().group_count];
     std::unique_ptr<bool[]> material_alpha(
         new(std::nothrow) bool[room.header().material_count]);
     std::unique_ptr<bool[]> material_punchthrough(
         new(std::nothrow) bool[room.header().material_count]);
     if(material_headers == nullptr || room_strip_headers == nullptr ||
        room_punchthrough_headers == nullptr || material_alpha == nullptr ||
-       material_punchthrough == nullptr) {
+       material_punchthrough == nullptr || visible_room_groups == nullptr) {
         std::printf("re4dc-room: material header allocation failed\n");
         return 1;
     }
@@ -5767,7 +5806,8 @@ int main() {
         const FrameStats stats = render_scene(
             room, leon, ganado, player, enemy, untextured_header,
             material_headers, room_strip_headers, room_punchthrough_headers,
-            material_alpha.get(), material_punchthrough.get(), leon_headers,
+            material_alpha.get(), material_punchthrough.get(),
+            visible_room_groups, room.header().group_count, leon_headers,
             leon_alpha.get(), ganado_headers, ganado_alpha.get(),
 #if defined(RE4DC_SCENE_R100)
             source_hud, source_hud_headers,
@@ -5909,6 +5949,12 @@ int main() {
             stats.room_direct_strips;
         g_re4dc_demo_telemetry.room_strip_fallbacks =
             stats.room_strip_fallbacks;
+        g_re4dc_demo_telemetry.room_visibility_us =
+            saturate_u32(stats.room_visibility_us);
+        g_re4dc_demo_telemetry.room_light_selection_evaluations =
+            stats.room_light_selection_evaluations;
+        g_re4dc_demo_telemetry.pvr_submit_calls = stats.pvr_submit_calls;
+        g_re4dc_demo_telemetry.pvr_submit_bytes = stats.pvr_submit_bytes;
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;
@@ -5919,7 +5965,9 @@ int main() {
                 "hp=%d ammo=%d enemy_hp=%d state=%u work_us=%llu render_us=%llu "
                 "wait_us=%llu submit_us=%llu finish_us=%llu sim_tick=%llu "
                 "sim_ticks=%llu dropped_us=%llu debt_us=%llu input_gap_us=%llu "
-                "cache=%lu/%lu/%lu near=%lu/%lu/%lu overruns=%lu\n",
+                "visibility_us=%llu light_selects=%lu pvr_calls=%lu "
+                "pvr_bytes=%lu cache=%lu/%lu/%lu near=%lu/%lu/%lu "
+                "overruns=%lu\n",
                 static_cast<unsigned long>(frame), player.x, player.y, player.z,
                 static_cast<unsigned long>(stats.groups),
                 static_cast<unsigned long>(stats.transformed_vertices),
@@ -5939,6 +5987,11 @@ int main() {
                 static_cast<unsigned long long>(simulation_dropped_us),
                 static_cast<unsigned long long>(simulation_accumulator_us),
                 static_cast<unsigned long long>(input_sample_gap_us),
+                static_cast<unsigned long long>(stats.room_visibility_us),
+                static_cast<unsigned long>(
+                    stats.room_light_selection_evaluations),
+                static_cast<unsigned long>(stats.pvr_submit_calls),
+                static_cast<unsigned long>(stats.pvr_submit_bytes),
                 static_cast<unsigned long>(stats.room_index_references),
                 static_cast<unsigned long>(stats.room_cache_hits),
                 static_cast<unsigned long>(stats.room_cache_misses),
@@ -5956,6 +6009,7 @@ int main() {
     delete[] room_punchthrough_headers;
     delete[] room_strip_headers;
     delete[] material_headers;
+    delete[] visible_room_groups;
     release_demo_audio(audio);
     std::printf("re4dc-room: clean exit\n");
     return 0;

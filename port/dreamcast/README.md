@@ -20,13 +20,15 @@ Leon uses the source body, costume, head, hair, eyes, Red9 hands and handgun;
 the Ganado uses the correct right-handed hand/hatchet assembly. Room, source
 camera, selected lighting, HUD, transparency, collision, and combat remain intact.
 
-The latest kept optimization, R3m, maps only source SMX bit-3 binary alpha to the
-Dreamcast punch-through list. All gradient alpha remains blended and all 30,895
-room triangles remain packaged. Over the full measured route it changes CPU frame
-p50/p95/p99 from 99.00/101.50/102.57 ms to 92.23/94.72/95.83 ms. Presented
-ready-to-ready p50/p95/p99 is 83.41/100.10/102.60 ms: roughly 10-12 fps, still
-far from acceptance. PVR render p50 is 7.50 ms while registration is 65.29 ms,
-so target-side preparation/submission is the current limit.
+The latest kept optimization, R3n, computes conservative room visibility, source
+cull state, and room-light selection once per render snapshot and reuses that
+source-ordered list across opaque, punch-through, and blended passes. All 30,895
+room triangles remain packaged. Against R3m over matched ticks 165-1198, CPU
+frame p50/p95/p99 falls from 92.23/94.71/94.80 ms to
+87.74/89.89/90.30 ms. Presented ready-to-ready p50/p95/p99 remains
+83.41/100.10/102.60 ms: roughly 11-12 fps, still far from acceptance. PVR render
+p50 is 7.50 ms while registration falls from 65.29 to 58.85 ms, so target-side
+preparation/submission remains the current limit.
 
 The current manual build delivered five virtual-controller action edges with no
 queue drops, a maximum one-entry queue, and a 19.96 ms worst sampling gap. The
@@ -35,7 +37,7 @@ slow render cadence. This verifies the independent input path, not human-control
 or physical-console responsiveness. Both full autoplay traces reported zero
 simulation overruns and zero discarded simulation time.
 
-Observed post-load R3m headroom is 5,640,192 main-RAM bytes and 1,521,128 PVR
+Observed post-load R3n headroom is 5,668,864 main-RAM bytes and 1,521,128 PVR
 bytes; the AICA diagnostic reports 1,378,336 bytes. Loading/restart/stack/
 fragmentation high-water instrumentation remains open. Physical Dreamcast timing,
 human input, and audiovisual latency remain untested and are reported separately
@@ -51,13 +53,15 @@ Exact active identities:
 - corrected visual ELF `c5ae9de436fd7b9f3770ce3e7cc40d1f37b8e2c000b3b9dfb9be5d46ce7c0e68`
 - R3m autoplay ELF `1feacc30cdd072b3ca03ff976892013e6c21d4966d6eac1e7303cf12e9cb7ae4`
 - R3m manual ELF `1a45de49b10711fe83762b263dfe5fc91edac9daa6fbc5aaa3c4ac98f5c56688`
+- R3n autoplay ELF `e44e19b1e98fd4bac496e81007d791a7a532f65afb6495c2647dff73e9bf2140`
+- R3n manual ELF `ca541d7dd62be942ee8a9328c4642b8053cc1863d86ebb9c2053e7a8086cf915`
 
-The next bounded experiment computes conservative room visibility and immutable
-draw state once per render snapshot, then reuses the visible list across opaque,
-punch-through, and blended passes. It must add separate visibility/packet/byte
-telemetry and preserve blended draw order. Actor eligibility/caching, SH-4 hot
-kernels, packet transport, and native texture/resource layout follow according
-to measured cost, not a predetermined milestone sequence.
+The current trace reports a median 1,219 immediate PVR calls carrying 1,071,840
+bytes per settled frame. The next bounded experiment combines each polygon header
+with its first vertex payload while preserving the exact command order, then
+measures call count and registration time before considering DMA. Actor
+eligibility/caching, SH-4 hot kernels, packet transport, and native
+texture/resource layout follow according to measured cost.
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
 The incomplete Windows checkout created during bootstrap was retained as
@@ -229,6 +233,10 @@ The room renderer now maps the source SMX `alpha_omit = 0x80` rule to Dreamcast
 punch-through only for a verified binary-alpha material. This preserves all
 soft-alpha materials while reducing the matched complete-frame interval by 8.1%
 in [the R3m source punch-through checkpoint](docs/R3M_SOURCE_PUNCHTHROUGH_CHECKPOINT.md).
+Room visibility, source cull state, and source-selected room lights are now
+computed once per render snapshot and reused by all material passes. The matched
+4.9% frame reduction and PVR call/byte telemetry are recorded in
+[the R3n visibility-reuse checkpoint](docs/R3N_VISIBILITY_REUSE_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
