@@ -23,6 +23,7 @@ PLAYER_DAMAGE_VOICE_10 ?=
 PLAYER_DAMAGE_VOICE_11 ?=
 PLAYER_DEATH_VOICE_13 ?=
 DEMO_SCENE ?= r10d
+R100_ROOM_PACKAGE ?= ../build/private/r100-encounter-source-meters-smx.re4room
 # Preserve the r100 presentation slice at native Dreamcast VGA resolution.
 # The older r10d engineering fixture stays at 240p unless explicitly overridden.
 DEMO_RESOLUTION ?= $(if $(filter r100,$(DEMO_SCENE)),480p,240p)
@@ -49,7 +50,7 @@ all: prepare-romdisk rm-elf $(TARGET)
 
 r100:
 	$(MAKE) all DEMO_SCENE=r100 \
-		ROOM_PACKAGE=../build/private/r100-encounter-source-meters.re4room \
+		ROOM_PACKAGE=$(R100_ROOM_PACKAGE) \
 		COLLISION_PACKAGE=../build/private/r100-meters.re4sat \
 		CHARACTER_PACKAGE=../build/private/leon-source-r100-gunhitcaps-pitch.re4chr \
 		ENEMY_PACKAGE=../build/private/ganado-source-r100-hitcaps.re4chr \

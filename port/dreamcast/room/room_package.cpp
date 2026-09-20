@@ -82,6 +82,19 @@ bool Package::open(const char* path) {
         close();
         return false;
     }
+    if((header_->flags & kFlagSourceGroupMetadata) != 0U) {
+        const std::uint64_t metadata_offset =
+            static_cast<std::uint64_t>(header_->index_offset) +
+            static_cast<std::uint64_t>(header_->index_count) *
+                header_->index_stride;
+        if(metadata_offset > 0xffffffffU ||
+           !range_valid(static_cast<std::uint32_t>(metadata_offset),
+                        header_->group_count, sizeof(SourceGroup))) {
+            error_ = "source group metadata exceeds package";
+            close();
+            return false;
+        }
+    }
     if(crc32(data_ + header_->header_size, size_ - header_->header_size) !=
        header_->payload_crc32) {
         error_ = "payload CRC mismatch";
@@ -120,6 +133,15 @@ const Vertex* Package::vertices() const {
 
 const std::uint32_t* Package::indices() const {
     return reinterpret_cast<const std::uint32_t*>(data_ + header_->index_offset);
+}
+
+const SourceGroup* Package::source_groups() const {
+    if((header_->flags & kFlagSourceGroupMetadata) == 0U) {
+        return nullptr;
+    }
+    const std::uint32_t offset =
+        header_->index_offset + header_->index_count * header_->index_stride;
+    return reinterpret_cast<const SourceGroup*>(data_ + offset);
 }
 
 } // namespace re4dc::room

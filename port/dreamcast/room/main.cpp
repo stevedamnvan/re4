@@ -180,35 +180,40 @@ struct SourceLight {
     float ny;
     float nz;
     float cutoff_degrees;
+    std::uint8_t source_index;
+    std::uint8_t enable_mask;
 };
 constexpr SourceLight kSourceLights[] = {
     {5, false, 0.0f, 0.0f, 0.0f, 179.7135f, 199.0f / 255.0f,
      197.0f / 255.0f, 188.0f / 255.0f, 0.84f, -49568.6875f,
-     70909.6641f, 50147.4258f, 0.0f},
+     70909.6641f, 50147.4258f, 0.0f, 0U, 0x51U},
     {5, true, 0.0f, 0.0f, 0.0f, 177.214f, 139.0f / 255.0f,
      141.0f / 255.0f, 138.0f / 255.0f, 1.0f, 99898.3125f,
-     3739.939f, 2518.0386f, 0.0f},
+     3739.939f, 2518.0386f, 0.0f, 1U, 0x47U},
     {2, false, -77.214f, 1.5135f, -36.840f, 4.8475f,
      128.0f / 255.0f, 113.0f / 255.0f, 60.0f / 255.0f, 7.18f,
-     0.0f, 0.0f, 0.0f, 0.0f},
+     0.0f, 0.0f, 0.0f, 0.0f, 2U, 0x57U},
     {3, false, -116.726f, 1.243f, 3.824f, 3.606f,
      143.0f / 255.0f, 143.0f / 255.0f, 136.0f / 255.0f, 1.0f,
-     0.3989f, -0.9074f, -0.1324f, 84.87f},
+     0.3989f, -0.9074f, -0.1324f, 84.87f, 3U, 0x10U},
     {5, false, 0.0f, 0.0f, 0.0f, 179.7135f, 139.0f / 255.0f,
      137.0f / 255.0f, 125.0f / 255.0f, 0.44f, 62716.7891f,
-     51430.25f, -58493.8828f, 0.0f},
+     51430.25f, -58493.8828f, 0.0f, 4U, 0x51U},
     {5, true, 0.0f, 0.0f, 0.0f, 179.7135f, 139.0f / 255.0f,
      137.0f / 255.0f, 125.0f / 255.0f, 0.94f, -153.8383f,
-     53135.0898f, 84715.0391f, 0.0f},
+     53135.0898f, 84715.0391f, 0.0f, 5U, 0x06U},
     {3, false, -85.380f, 4.043f, -37.774f, 4.5955f,
      150.0f / 255.0f, 148.0f / 255.0f, 137.0f / 255.0f, 3.57001f,
-     0.187246f, -0.979425f, 0.075267f, 90.0f},
+     0.187246f, -0.979425f, 0.075267f, 90.0f, 6U, 0x57U},
     {3, false, -78.237f, 3.1425f, -30.843f, 3.108f,
      94.0f / 255.0f, 92.0f / 255.0f, 80.0f / 255.0f, 1.057f,
-     -0.1899f, -0.5198f, -0.8329f, 90.0f},
+     -0.1899f, -0.5198f, -0.8329f, 90.0f, 7U, 0x57U},
     {2, false, -74.423f, 4.6765f, -35.026f, 8.1795f,
      124.0f / 255.0f, 122.0f / 255.0f, 110.0f / 255.0f, 1.26f,
-     0.0f, 0.0f, 0.0f, 0.0f},
+     0.0f, 0.0f, 0.0f, 0.0f, 8U, 0x57U},
+    {2, false, 45.6436f, 1.220f, -9.4145f, 1.5155f,
+     139.0f / 255.0f, 139.0f / 255.0f, 139.0f / 255.0f, 1.20f,
+     0.0f, 0.0f, 0.0f, 0.0f, 19U, 0x10U},
 };
 constexpr float kSourceRoomAmbientRed = 2.0f / 255.0f;
 constexpr float kSourceRoomAmbientGreen = 2.0f / 255.0f;
@@ -2179,12 +2184,16 @@ void set_source_lighting_camera(const point_t& eye, const point_t& target,
 void evaluate_source_lighting(float px, float py, float pz,
                               float nx, float ny, float nz,
                               bool actor, float& red, float& green,
-                              float& blue) {
+                              float& blue,
+                              std::uint32_t light_selection = 0x1ffU) {
     normalize_vector(nx, ny, nz);
     red = actor ? kSourceActorAmbientRed : kSourceRoomAmbientRed;
     green = actor ? kSourceActorAmbientGreen : kSourceRoomAmbientGreen;
     blue = actor ? kSourceActorAmbientBlue : kSourceRoomAmbientBlue;
     for(std::size_t index = 0; index < kSourceLightCount; ++index) {
+        if((light_selection & (1U << index)) == 0U) {
+            continue;
+        }
         const SourceLight& light = kSourceLights[index];
         const PreparedSourceLight& prepared =
             g_prepared_source_lights[index];
@@ -2332,6 +2341,7 @@ static_assert((kRoomVertexCacheCapacity & (kRoomVertexCacheCapacity - 1U)) == 0U
 struct RoomVertexCacheEntry {
     std::uint32_t generation = 0;
     std::uint32_t source_index = 0;
+    std::uint32_t light_selection = 0;
     RenderVertex vertex{};
 };
 
@@ -2344,6 +2354,110 @@ float g_ganado_lighting[kGanadoVertexCapacity * 3U];
 pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
 RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
 std::uint32_t g_room_vertex_cache_generation = 0;
+
+constexpr std::uint8_t kCullNone = 0U;
+constexpr std::uint8_t kCullFront = 1U;
+constexpr std::uint8_t kCullBack = 2U;
+constexpr std::uint8_t kCullAll = 3U;
+
+#if defined(RE4DC_SCENE_R100)
+bool source_light_hits_group(const re4dc::room::SourceGroup& group,
+                             const SourceLight& light) {
+    if((group.metadata_flags & re4dc::room::kSourceGroupHasLightVolume) == 0U ||
+       light.radius == 0.0f) {
+        return true;
+    }
+    const float dx = light.x - group.light_center[0];
+    const float dy = light.y - group.light_center[1];
+    const float dz = light.z - group.light_center[2];
+    const float local_x = group.inverse_rotation[0] * dx +
+                          group.inverse_rotation[1] * dy +
+                          group.inverse_rotation[2] * dz;
+    const float local_y = group.inverse_rotation[3] * dx +
+                          group.inverse_rotation[4] * dy +
+                          group.inverse_rotation[5] * dz;
+    const float local_z = group.inverse_rotation[6] * dx +
+                          group.inverse_rotation[7] * dy +
+                          group.inverse_rotation[8] * dz;
+    return !(local_x - light.radius > group.light_size[0] ||
+             local_x + light.radius < -group.light_size[0] ||
+             local_y - light.radius > group.light_size[1] ||
+             local_y + light.radius < -group.light_size[1] ||
+             local_z - light.radius > group.light_size[2] ||
+             local_z + light.radius < -group.light_size[2]);
+}
+
+std::uint32_t source_group_light_selection(
+    const re4dc::room::SourceGroup* group) {
+    if(group == nullptr ||
+       (group->metadata_flags & re4dc::room::kSourceGroupHasLightVolume) == 0U) {
+        return 0xffffffffU;
+    }
+    std::uint32_t selection = 0U;
+    for(std::size_t index = 0; index < kSourceLightCount; ++index) {
+        const SourceLight& light = kSourceLights[index];
+        if((light.enable_mask & 0x10U) == 0U ||
+           (group->select_mask & (1U << light.source_index)) == 0U ||
+           !source_light_hits_group(*group, light)) {
+            continue;
+        }
+        selection |= 1U << index;
+    }
+    return selection;
+}
+
+std::uint32_t source_actor_light_selection(float x, float y, float z,
+                                           std::uint8_t enable_mask) {
+    // Player::init1 and the shared em10 Ganado constructor both attach a
+    // one-metre-radius, one-metre-half-height capsule to part 0. Their source
+    // enable masks are 1 and 2 respectively. With a zero offset and the
+    // current upright actors, part 0's up axis is world Y.
+    constexpr float radius = 1.0f;
+    constexpr float half_height = 1.0f;
+    std::uint32_t selection = 0U;
+    unsigned selected_count = 0U;
+    for(std::size_t index = 0; index < kSourceLightCount; ++index) {
+        const SourceLight& light = kSourceLights[index];
+        if((light.enable_mask & enable_mask) == 0U) {
+            continue;
+        }
+        bool hit = light.radius == 0.0f;
+        if(!hit) {
+            const float dx = light.x - x;
+            const float dz = light.z - z;
+            const float bottom_dy = light.y - (y - half_height);
+            const float top_dy = light.y - (y + half_height);
+            const float reach = radius + light.radius;
+            const float reach_squared = reach * reach;
+            hit = dx * dx + bottom_dy * bottom_dy + dz * dz <
+                      reach_squared ||
+                  dx * dx + top_dy * top_dy + dz * dz < reach_squared;
+        }
+        if(!hit) {
+            continue;
+        }
+        selection |= 1U << index;
+        if(++selected_count == 8U) {
+            break;
+        }
+    }
+    return selection;
+}
+
+unsigned selected_light_count(std::uint32_t selection) {
+    unsigned count = 0U;
+    while(selection != 0U) {
+        selection &= selection - 1U;
+        ++count;
+    }
+    return count;
+}
+#else
+std::uint32_t source_group_light_selection(
+    const re4dc::room::SourceGroup*) {
+    return 0xffffffffU;
+}
+#endif
 
 float camera_depth(float reciprocal_depth) {
     if(!std::isfinite(reciprocal_depth) ||
@@ -2383,7 +2497,7 @@ RenderVertex interpolate_vertex(const RenderVertex& a, const RenderVertex& b,
 
 std::uint32_t clip_projected_triangle(const RenderVertex* source,
                                        pvr_vertex_t* output,
-                                       bool cull_backface,
+                                       std::uint8_t cull_mode,
                                        FrameStats* stats = nullptr) {
     RenderVertex clipped[4]{};
     unsigned clipped_count = 0;
@@ -2459,9 +2573,13 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
         const bool below = triangle[0].position.y > kScreenHeight &&
                            triangle[1].position.y > kScreenHeight &&
                            triangle[2].position.y > kScreenHeight;
-        if(beyond_far || left || right || above || below ||
-           (cull_backface ? signed_area >= 0.0f
-                          : std::fabs(signed_area) < 0.0001f)) {
+        const bool culled =
+            cull_mode == kCullAll ||
+            (cull_mode == kCullBack && signed_area >= 0.0f) ||
+            (cull_mode == kCullFront && signed_area <= 0.0f) ||
+            (cull_mode == kCullNone &&
+             std::fabs(signed_area) < 0.0001f);
+        if(beyond_far || left || right || above || below || culled) {
             continue;
         }
         pvr_vertex_t* destination = output + triangle_count * 3U;
@@ -2486,14 +2604,15 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
 
 const RenderVertex& cached_room_vertex(
     const re4dc::room::Vertex* source, std::uint32_t vertex_index,
-    FrameStats& stats) {
+    FrameStats& stats, std::uint32_t light_selection) {
     ++stats.room_index_references;
     const std::uint32_t slot =
-        (vertex_index * 2654435761U) &
+        ((vertex_index * 2654435761U) ^ (light_selection * 2246822519U)) &
         (kRoomVertexCacheCapacity - 1U);
     RoomVertexCacheEntry& entry = g_room_vertex_cache[slot];
     if(entry.generation == g_room_vertex_cache_generation &&
-       entry.source_index == vertex_index) {
+       entry.source_index == vertex_index &&
+       entry.light_selection == light_selection) {
         ++stats.room_cache_hits;
         return entry.vertex;
     }
@@ -2511,7 +2630,8 @@ const RenderVertex& cached_room_vertex(
 #if defined(RE4DC_SCENE_R100)
     evaluate_source_lighting(input.x, input.y, input.z,
                              input.nx, input.ny, input.nz, false,
-                             light_red, light_green, light_blue);
+                             light_red, light_green, light_blue,
+                             light_selection);
     ++stats.room_light_evaluations;
 #else
     light_red = light_green = light_blue = std::clamp(
@@ -2521,6 +2641,7 @@ const RenderVertex& cached_room_vertex(
 #endif
     entry.generation = g_room_vertex_cache_generation;
     entry.source_index = vertex_index;
+    entry.light_selection = light_selection;
     entry.vertex = {
         .position = {
             x,
@@ -2544,21 +2665,15 @@ const RenderVertex& cached_room_vertex(
 std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
                                   const std::uint32_t* indices,
                                   pvr_vertex_t* output,
-                                  FrameStats& stats) {
+                                  FrameStats& stats,
+                                  std::uint8_t cull_mode,
+                                  std::uint32_t light_selection) {
     const RenderVertex triangle[3] = {
-        cached_room_vertex(source, indices[0], stats),
-        cached_room_vertex(source, indices[1], stats),
-        cached_room_vertex(source, indices[2], stats),
+        cached_room_vertex(source, indices[0], stats, light_selection),
+        cached_room_vertex(source, indices[1], stats, light_selection),
+        cached_room_vertex(source, indices[2], stats, light_selection),
     };
-#if defined(RE4DC_SCENE_R100)
-    // The third-party SMD export does not retain the source per-object cull
-    // state. Keep both faces for this source slice until that flag is carried
-    // through the package, matching the room's visible surface set.
-    constexpr bool cull_backface = false;
-#else
-    constexpr bool cull_backface = true;
-#endif
-    return clip_projected_triangle(triangle, output, cull_backface, &stats);
+    return clip_projected_triangle(triangle, output, cull_mode, &stats);
 }
 
 void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
@@ -2711,7 +2826,8 @@ void build_character_normals(const re4dc::character::Package& character,
 
 void build_character_lighting(const re4dc::character::Package& character,
                               const ProjectedVertex* projected,
-                              const float* normals, float* lighting) {
+                              const float* normals, float* lighting,
+                              std::uint32_t light_selection) {
     for(std::uint32_t vertex = 0; vertex < character.header().vertex_count;
         ++vertex) {
         const ProjectedVertex& position = projected[vertex];
@@ -2719,7 +2835,8 @@ void build_character_lighting(const re4dc::character::Package& character,
             position.world_x, position.world_y, position.world_z,
             normals[vertex * 3U], normals[vertex * 3U + 1U],
             normals[vertex * 3U + 2U], true, lighting[vertex * 3U],
-            lighting[vertex * 3U + 1U], lighting[vertex * 3U + 2U]);
+            lighting[vertex * 3U + 1U], lighting[vertex * 3U + 2U],
+            light_selection);
     }
 }
 #endif
@@ -2782,7 +2899,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                 };
             }
             const std::uint32_t emitted = clip_projected_triangle(
-                source_triangle, submit_vertices + submit_count, true);
+                source_triangle, submit_vertices + submit_count, kCullBack);
             submit_count += emitted * 3U;
             triangles += emitted;
         }
@@ -3292,6 +3409,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const auto* batches = room.batches();
     const auto* vertices = room.vertices();
     const auto* indices = room.indices();
+    const auto* source_groups = room.source_groups();
     const auto player_blend = player_pitch_blend(
         player.animation_clip, player.aim_pitch);
     const std::uint64_t actor_pose_start = timer_us_gettime64();
@@ -3313,10 +3431,16 @@ FrameStats render_scene(const re4dc::room::Package& room,
     build_character_normals(ganado, ganado_projected, ganado_lighting);
     stats.actor_normals_us = timer_us_gettime64() - actor_normals_start;
     const std::uint64_t actor_lighting_start = timer_us_gettime64();
+    const std::uint32_t leon_light_selection =
+        source_actor_light_selection(player.x, player.y, player.z, 1U);
+    const std::uint32_t ganado_light_selection =
+        source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U);
     build_character_lighting(
-        leon, leon_projected, leon_lighting, leon_lighting);
+        leon, leon_projected, leon_lighting, leon_lighting,
+        leon_light_selection);
     build_character_lighting(
-        ganado, ganado_projected, ganado_lighting, ganado_lighting);
+        ganado, ganado_projected, ganado_lighting, ganado_lighting,
+        ganado_light_selection);
     stats.actor_lighting_us = timer_us_gettime64() - actor_lighting_start;
 #endif
     const std::uint64_t wait_start = timer_us_gettime64();
@@ -3333,6 +3457,15 @@ FrameStats render_scene(const re4dc::room::Package& room,
             continue;
         }
         ++stats.groups;
+        const std::uint8_t cull_mode = source_groups != nullptr
+            ? source_groups[group_index].cull_mode
+#if defined(RE4DC_SCENE_R100)
+            : kCullNone;
+#else
+            : kCullBack;
+#endif
+        const std::uint32_t light_selection = source_group_light_selection(
+            source_groups != nullptr ? source_groups + group_index : nullptr);
         for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
             ++local_batch) {
             const auto& batch = batches[group.first_batch + local_batch];
@@ -3356,7 +3489,8 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 }
                 const std::uint32_t emitted = transform_triangle(
                     vertices, indices + index,
-                    character_submit_vertices + submit_count, stats);
+                    character_submit_vertices + submit_count, stats,
+                    cull_mode, light_selection);
                 submit_count += emitted * 3U;
                 stats.triangles += emitted;
             }
@@ -3397,6 +3531,15 @@ FrameStats render_scene(const re4dc::room::Package& room,
         if(!group_visible(group)) {
             continue;
         }
+        const std::uint8_t cull_mode = source_groups != nullptr
+            ? source_groups[group_index].cull_mode
+#if defined(RE4DC_SCENE_R100)
+            : kCullNone;
+#else
+            : kCullBack;
+#endif
+        const std::uint32_t light_selection = source_group_light_selection(
+            source_groups != nullptr ? source_groups + group_index : nullptr);
         for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
             ++local_batch) {
             const auto& batch = batches[group.first_batch + local_batch];
@@ -3420,7 +3563,8 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 }
                 const std::uint32_t emitted = transform_triangle(
                     vertices, indices + index,
-                    character_submit_vertices + submit_count, stats);
+                    character_submit_vertices + submit_count, stats,
+                    cull_mode, light_selection);
                 submit_count += emitted * 3U;
                 stats.triangles += emitted;
             }
@@ -3528,7 +3672,7 @@ int main() {
     g_re4dc_demo_telemetry.flags = 0x10000002U;
     std::printf(
         "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
-        "leon=%lu/%lu/%lu ganado=%lu/%lu/%lu\n",
+        "leon=%lu/%lu/%lu ganado=%lu/%lu/%lu source_groups=%s\n",
         static_cast<unsigned long>(room.header().vertex_count),
         static_cast<unsigned long>(room.header().index_count / 3U),
         static_cast<unsigned long>(room.header().group_count),
@@ -3540,7 +3684,8 @@ int main() {
         static_cast<unsigned long>(leon.header().frame_count),
         static_cast<unsigned long>(ganado.header().vertex_count),
         static_cast<unsigned long>(ganado.header().index_count / 3U),
-        static_cast<unsigned long>(ganado.header().frame_count));
+        static_cast<unsigned long>(ganado.header().frame_count),
+        room.source_groups() != nullptr ? "yes" : "no");
     g_re4dc_demo_telemetry.flags = 0x10000021U;
     if(leon.header().clip_count < 11U) {
         std::printf(
@@ -3831,6 +3976,26 @@ int main() {
     }
 #if defined(RE4DC_SCENE_R100)
     prepare_source_lights();
+    std::uint32_t room_light_links = 0U;
+    if(room.source_groups() != nullptr) {
+        for(std::uint32_t group = 0; group < room.header().group_count;
+            ++group) {
+            room_light_links += selected_light_count(
+                source_group_light_selection(&room.source_groups()[group]));
+        }
+    }
+    const std::uint32_t leon_light_selection =
+        source_actor_light_selection(player.x, player.y, player.z, 1U);
+    const std::uint32_t ganado_light_selection =
+        source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U);
+    std::printf(
+        "re4dc-room: source light selection room_links=%lu "
+        "leon_mask=%08lx/%u ganado_mask=%08lx/%u\n",
+        static_cast<unsigned long>(room_light_links),
+        static_cast<unsigned long>(leon_light_selection),
+        selected_light_count(leon_light_selection),
+        static_cast<unsigned long>(ganado_light_selection),
+        selected_light_count(ganado_light_selection));
 #endif
     g_re4dc_demo_telemetry.flags = 0x10000006U;
     DemoAudio audio;

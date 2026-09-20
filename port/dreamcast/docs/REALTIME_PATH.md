@@ -6,9 +6,13 @@ execution order. [PLAYABLE_PATH.md](PLAYABLE_PATH.md)
 retains the presentation milestone, source ownership ledger, and historical
 evidence. Keep the native SH-4/KallistiOS target and direct PVR renderer.
 
-R0 telemetry and the first R1a renderer pass are now implemented and measured in
-[R1A_PERFORMANCE_CHECKPOINT.md](R1A_PERFORMANCE_CHECKPOINT.md). The source object
-and selected-light trace required to close R1b remains pending.
+R0 telemetry and the R1a renderer pass are implemented and measured in
+[R1A_PERFORMANCE_CHECKPOINT.md](R1A_PERFORMANCE_CHECKPOINT.md). The first R1b
+implementation now carries source object/cull/mask/volume data and applies the
+source-derived room and actor selection in
+[R1B_SOURCE_SELECTION_CHECKPOINT.md](R1B_SOURCE_SELECTION_CHECKPOINT.md).
+The matched original-game selected-light trace and image comparison required to
+close R1b remain pending.
 
 ## Objective and boundaries
 
@@ -140,7 +144,7 @@ an optimization commit.
 |---|---|---|
 | R0 | Freeze references; instrument target and matched original-game workload; correct input/debt and memory accounting; establish hardware route | Frame-associated trace, source-object/light/query inventory, CPU/PVR/presentation separation, complete debt counters; hardware result or explicitly pending status |
 | R1a | Bounded unique room-vertex cache and trivial clip classification | Same draw/state output, reduced transform/light counts, measured stage cost, fixed scratch ceiling |
-| R1b | Recover source object identity and per-model light selection; prepare constants; only then cache/bake static contributions | Selected light IDs/order match source trace; fidelity correction separated from subsequent numeric-equivalent optimization; measured cost and memory |
+| R1b | Recover source object identity and per-model light selection; prepare constants; only then cache/bake static contributions | **In progress:** target package/runtime implemented and measured; selected light IDs/order and changed image still need the matched source trace |
 | R2a | Export source SAT blocks/edges and adapt source traversal/filtering/primitives | Query manager, visitation order, hit attributes, and contact sequence agree with source; bounded memory and measured polygon-test cost |
 | R2b | Retain source attribute/weight-palette structure; source eligibility before preparation; benchmark skinning | Selected clip, normal, attachment and event parity; separate position/normal/corner counts and measured target cost |
 | R3 | Native draw templates from source cull/material state; child clusters; clipping/packet improvements | Same authored draw meaning; no missing surfaces, alpha/order regressions, clipping failures, or TA buffer overflow |

@@ -12,10 +12,11 @@ import hashlib
 import json
 import math
 import pathlib
+import re
 import struct
 import sys
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 
 MAGIC = b"RE4DCRM\0"
@@ -26,6 +27,15 @@ INDEX = struct.Struct("<I")
 MATERIAL = struct.Struct("<64s")
 GROUP = struct.Struct("<64sII6f")  # name, first batch, count, bounds
 BATCH = struct.Struct("<IIIII")  # material, first index, count, group, flags
+SOURCE_GROUP = struct.Struct("<I4BII15f")
+FLAG_SOURCE_GROUP_METADATA = 1 << 0
+SOURCE_GROUP_HAS_LIGHT_VOLUME = 1 << 0
+SOURCE_GROUP_NAME = re.compile(r"#SMX_(\d+)#")
+SOURCE_OBJECT_NAME = re.compile(
+    r"^([^#]+)#SMD_(\d+)#SMX_(\d+)#.*#BIN_(\d+)#(CommonBIN#)?$"
+)
+SMX_WORK_SIZE = 0x90
+SMD_WORK_SIZE = 0x48
 
 
 @dataclass
@@ -50,6 +60,201 @@ class GroupData:
         for axis, value in enumerate(xyz):
             self.bounds_min[axis] = min(self.bounds_min[axis], value)
             self.bounds_max[axis] = max(self.bounds_max[axis], value)
+
+
+@dataclass(frozen=True)
+class SourceGroupData:
+    select_mask: int
+    source_id: int
+    object_type: int
+    ot_type: int
+    cull_mode: int
+    flags: int
+    metadata_flags: int = 0
+    light_center: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    light_size: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    inverse_rotation: tuple[float, ...] = (
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    )
+
+
+def parse_smx(path: pathlib.Path) -> dict[int, SourceGroupData]:
+    data = path.read_bytes()
+    if len(data) < 0x10:
+        raise ValueError("SMX is smaller than its header")
+    count = data[1]
+    expected = 0x10 + count * SMX_WORK_SIZE
+    if expected > len(data):
+        raise ValueError("SMX work table exceeds the file")
+    records: dict[int, SourceGroupData] = {}
+    for index in range(count):
+        offset = 0x10 + index * SMX_WORK_SIZE
+        source_id, object_type, ot_type, cull_mode = struct.unpack_from(
+            "4B", data, offset
+        )
+        if cull_mode > 3:
+            raise ValueError(
+                f"SMX object {source_id} has invalid GX cull mode {cull_mode}"
+            )
+        if source_id in records:
+            raise ValueError(f"SMX contains duplicate object id {source_id}")
+        records[source_id] = SourceGroupData(
+            select_mask=struct.unpack_from(">I", data, offset + 4)[0],
+            source_id=source_id,
+            object_type=object_type,
+            ot_type=ot_type,
+            cull_mode=cull_mode,
+            flags=struct.unpack_from(">I", data, offset + 8)[0],
+        )
+    return records
+
+
+def source_groups_for_names(
+    group_names: list[str], smx_records: dict[int, SourceGroupData]
+) -> dict[str, SourceGroupData]:
+    result = {}
+    for name in group_names:
+        match = SOURCE_GROUP_NAME.search(name)
+        if match is None:
+            raise ValueError(f"group has no source SMX identity: {name!r}")
+        source_id = int(match.group(1))
+        # SmdInit leaves these defaults when id 0xFE has no SMX record or an
+        # ordinary source id is absent from the sparse table.
+        result[name] = smx_records.get(
+            source_id,
+            SourceGroupData(0xFFFFFFFF, source_id, 0, 3, 0, 0),
+        )
+    return result
+
+
+def parse_smd_roots(values: list[str]) -> dict[str, pathlib.Path]:
+    result = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"SMD mapping must be PREFIX=PATH: {value!r}")
+        prefix, raw_path = value.split("=", 1)
+        path = pathlib.Path(raw_path)
+        if not prefix or prefix in result or not path.is_file():
+            raise ValueError(f"invalid SMD mapping {value!r}")
+        result[prefix] = path
+    return result
+
+
+def smd_work(data: bytes, work_index: int) -> dict[str, object]:
+    if len(data) < 0x10:
+        raise ValueError("SMD is smaller than its header")
+    model_count = struct.unpack_from(">H", data, 2)[0]
+    if work_index >= model_count:
+        raise ValueError(f"SMD work {work_index} exceeds {model_count} models")
+    work_offset = 0x10
+    if data[1] & 1:
+        if len(data) < 0x14:
+            raise ValueError("grouped SMD is smaller than its header")
+        group_count = struct.unpack_from(">I", data, 0x10)[0]
+        work_offset = 0x14 + group_count * 4
+    offset = work_offset + work_index * SMD_WORK_SIZE
+    if offset + SMD_WORK_SIZE > len(data):
+        raise ValueError(f"SMD work {work_index} exceeds the file")
+    values = struct.unpack_from(">9f4B", data, offset)
+    return {
+        "position": values[0:3],
+        "rotation": values[3:6],
+        "scale": values[6:9],
+        "bin": values[9],
+        "id": values[12],
+        "flags": struct.unpack_from(">I", data, offset + 0x44)[0],
+    }
+
+
+def model_bounds(smd_data: bytes, bin_index: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    table_offset = struct.unpack_from(">I", smd_data, 4)[0]
+    entry_offset = table_offset + bin_index * 4
+    if entry_offset + 4 > len(smd_data):
+        raise ValueError(f"SMD BIN table has no entry {bin_index}")
+    model_offset = table_offset + struct.unpack_from(">I", smd_data, entry_offset)[0]
+    if model_offset + 0x3C > len(smd_data):
+        raise ValueError(f"SMD BIN {bin_index} header exceeds the file")
+    vertex_offset = model_offset + struct.unpack_from(">I", smd_data, model_offset + 0x30)[0]
+    vertex_count = struct.unpack_from(">H", smd_data, model_offset + 0x38)[0]
+    shift = smd_data[model_offset + 0x28]
+    if vertex_count == 0 or vertex_offset + vertex_count * 8 > len(smd_data):
+        raise ValueError(f"SMD BIN {bin_index} vertex array exceeds the file")
+    scale = float(1 << shift)
+    minimum = [math.inf, math.inf, math.inf]
+    maximum = [-math.inf, -math.inf, -math.inf]
+    for vertex in range(vertex_count):
+        values = struct.unpack_from(">3h", smd_data, vertex_offset + vertex * 8)
+        for axis, raw in enumerate(values):
+            value = raw / scale
+            minimum[axis] = min(minimum[axis], value)
+            maximum[axis] = max(maximum[axis], value)
+    center = tuple((minimum[axis] + maximum[axis]) * 0.5 for axis in range(3))
+    size = tuple((maximum[axis] - minimum[axis]) * 0.5 for axis in range(3))
+    return center, size
+
+
+def rotation_matrix(rotation: tuple[float, ...]) -> tuple[float, ...]:
+    sx, sy, sz = map(math.sin, rotation)
+    cx, cy, cz = map(math.cos, rotation)
+    return (
+        cz * cy, cz * sx * sy - sz * cx, cz * cx * sy + sz * sx,
+        sz * cy, sz * sx * sy + cz * cx, sz * cx * sy - cz * sx,
+        -sy, cy * sx, cy * cx,
+    )
+
+
+def add_source_light_volumes(
+    source_groups: dict[str, SourceGroupData], smd_roots: dict[str, pathlib.Path],
+    common_smd: pathlib.Path | None, source_unit_scale: float,
+) -> dict[str, SourceGroupData]:
+    smd_cache = {prefix: path.read_bytes() for prefix, path in smd_roots.items()}
+    common_data = common_smd.read_bytes() if common_smd is not None else None
+    bounds_cache = {}
+    result = {}
+    for name, source in source_groups.items():
+        match = SOURCE_OBJECT_NAME.match(name)
+        if match is None:
+            raise ValueError(f"group has no complete source object identity: {name!r}")
+        prefix, raw_work, raw_id, raw_bin, common_marker = match.groups()
+        if prefix not in smd_cache:
+            raise ValueError(f"group prefix has no SMD mapping: {prefix!r}")
+        placement_data = smd_cache[prefix]
+        work = smd_work(placement_data, int(raw_work))
+        if work["id"] != int(raw_id) or work["bin"] != int(raw_bin):
+            raise ValueError(f"group identity disagrees with SMD work: {name!r}")
+        model_data = common_data if common_marker else placement_data
+        if model_data is None:
+            raise ValueError(f"common BIN group requires --common-smd: {name!r}")
+        bin_index = int(raw_bin)
+        cache_key = (id(model_data), bin_index)
+        if cache_key not in bounds_cache:
+            bounds_cache[cache_key] = model_bounds(model_data, bin_index)
+        local_center, local_size = bounds_cache[cache_key]
+        matrix = rotation_matrix(work["rotation"])
+        scaled_center = tuple(
+            local_center[axis] * work["scale"][axis] for axis in range(3)
+        )
+        world_center = tuple(
+            work["position"][row] + sum(
+                matrix[row * 3 + column] * scaled_center[column]
+                for column in range(3)
+            )
+            for row in range(3)
+        )
+        inverse = tuple(matrix[column * 3 + row] for row in range(3) for column in range(3))
+        result[name] = replace(
+            source,
+            metadata_flags=source.metadata_flags | SOURCE_GROUP_HAS_LIGHT_VOLUME,
+            light_center=tuple(value * source_unit_scale for value in world_center),
+            light_size=tuple(
+                abs(local_size[axis] * work["scale"][axis]) * source_unit_scale
+                for axis in range(3)
+            ),
+            inverse_rotation=inverse,
+        )
+    return result
 
 
 def _name_bytes(name: str) -> bytes:
@@ -305,7 +510,10 @@ def cluster_geometry(parsed: dict[str, object], cluster_size: float) -> None:
     parsed["cluster_source_triangles"] = source_triangles
 
 
-def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
+def build_package(
+    parsed: dict[str, object],
+    source_groups: dict[str, SourceGroupData] | None = None,
+) -> tuple[bytes, dict[str, object]]:
     vertices = parsed["vertices"]
     materials = parsed["materials"]
     groups = parsed["groups"]
@@ -316,6 +524,7 @@ def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
     group_blob = bytearray()
     batch_blob = bytearray()
     index_blob = bytearray()
+    source_group_blob = bytearray()
     ordered_batch_count = 0
     all_min = [math.inf, math.inf, math.inf]
     all_max = [-math.inf, -math.inf, -math.inf]
@@ -350,6 +559,22 @@ def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
         for axis in range(3):
             all_min[axis] = min(all_min[axis], group.bounds_min[axis])
             all_max[axis] = max(all_max[axis], group.bounds_max[axis])
+        if source_groups is not None:
+            source = source_groups[group_name]
+            source_group_blob.extend(
+                SOURCE_GROUP.pack(
+                    source.select_mask,
+                    source.source_id,
+                    source.object_type,
+                    source.ot_type,
+                    source.cull_mode,
+                    source.flags,
+                    source.metadata_flags,
+                    *source.light_center,
+                    *source.light_size,
+                    *source.inverse_rotation,
+                )
+            )
 
     material_blob = b"".join(MATERIAL.pack(_name_bytes(name)) for name in materials)
     vertex_blob = b"".join(VERTEX.pack(*values) for values in vertices)
@@ -358,7 +583,10 @@ def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
     batch_offset = group_offset + len(group_blob)
     vertex_offset = batch_offset + len(batch_blob)
     index_offset = vertex_offset + len(vertex_blob)
-    payload = bytes(material_blob + group_blob + batch_blob + vertex_blob + index_blob)
+    payload = bytes(
+        material_blob + group_blob + batch_blob + vertex_blob + index_blob +
+        source_group_blob
+    )
     payload_crc32 = zlib.crc32(payload) & 0xFFFFFFFF
     index_count = len(index_blob) // INDEX.size
     header = HEADER.pack(
@@ -381,7 +609,7 @@ def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
         vertex_offset,
         index_offset,
         payload_crc32,
-        0,
+        FLAG_SOURCE_GROUP_METADATA if source_groups is not None else 0,
         *all_min,
         *all_max,
     )
@@ -397,6 +625,14 @@ def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
         "bounds": {"min": all_min, "max": all_max},
         "payload_crc32": f"{payload_crc32:08x}",
     }
+    if source_groups is not None:
+        metadata["source_group_metadata"] = len(source_groups)
+        metadata["source_cull_modes"] = {
+            str(mode): sum(
+                source.cull_mode == mode for source in source_groups.values()
+            )
+            for mode in sorted({source.cull_mode for source in source_groups.values()})
+        }
     return header + payload, metadata
 
 
@@ -409,6 +645,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", type=pathlib.Path, help="private exported room OBJ")
     parser.add_argument("output", type=pathlib.Path, help="private Dreamcast room package")
     parser.add_argument("--manifest", type=pathlib.Path, help="JSON manifest path")
+    parser.add_argument(
+        "--smx", type=pathlib.Path,
+        help="source room SMX whose per-object masks and cull modes are appended",
+    )
+    parser.add_argument(
+        "--smd", action="append", default=[], metavar="PREFIX=PATH",
+        help="source placed-model SMD mapping used to recover light volumes",
+    )
+    parser.add_argument(
+        "--common-smd", type=pathlib.Path,
+        help="source common SMD used by CommonBIN groups",
+    )
+    parser.add_argument(
+        "--source-unit-scale", type=float, default=0.001,
+        help="multiply SMD/BIN source units into runtime units",
+    )
     parser.add_argument(
         "--source-scale", type=float, default=1.0,
         help="multiply exported OBJ positions by this source-to-runtime scale",
@@ -429,7 +681,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if not math.isfinite(args.source_scale) or args.source_scale <= 0.0:
         raise ValueError("source scale must be finite and positive")
+    if not math.isfinite(args.source_unit_scale) or args.source_unit_scale <= 0.0:
+        raise ValueError("source unit scale must be finite and positive")
+    if args.smd and args.smx is None:
+        raise ValueError("--smd requires --smx")
     parsed = parse_obj(args.input)
+    if args.smx is not None and args.cell_size > 0.0:
+        raise ValueError("source group metadata is incompatible with spatial cells")
     if args.source_scale != 1.0:
         parsed["vertices"] = [
             (vertex[0] * args.source_scale,
@@ -443,13 +701,33 @@ def main(argv: list[str] | None = None) -> int:
             group.bounds_max = [value * args.source_scale for value in group.bounds_max]
     spatial_partition(parsed, args.cell_size)
     cluster_geometry(parsed, args.cluster_size)
-    package, metadata = build_package(parsed)
+    source_groups = None
+    if args.smx is not None:
+        source_groups = source_groups_for_names(
+            parsed["group_order"], parse_smx(args.smx)
+        )
+        if args.smd:
+            source_groups = add_source_light_volumes(
+                source_groups, parse_smd_roots(args.smd), args.common_smd,
+                args.source_unit_scale,
+            )
+    package, metadata = build_package(parsed, source_groups)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)
     metadata.update(
         {
             "source": args.input.name,
             "source_sha256": sha256_bytes(args.input.read_bytes()),
+            "source_smx": args.smx.name if args.smx is not None else None,
+            "source_smx_sha256": (
+                sha256_bytes(args.smx.read_bytes()) if args.smx is not None else None
+            ),
+            "source_light_volumes": (
+                sum(
+                    bool(source.metadata_flags & SOURCE_GROUP_HAS_LIGHT_VOLUME)
+                    for source in source_groups.values()
+                ) if source_groups is not None else 0
+            ),
             "source_positions": parsed["positions"],
             "source_normals": parsed["normals"],
             "source_texcoords": parsed["texcoords"],

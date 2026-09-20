@@ -9,6 +9,8 @@ namespace re4dc::room {
 
 inline constexpr char kMagic[8] = {'R', 'E', '4', 'D', 'C', 'R', 'M', '\0'};
 inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kFlagSourceGroupMetadata = 1U << 0U;
+inline constexpr std::uint32_t kSourceGroupHasLightVolume = 1U << 0U;
 
 struct Header {
     char magic[8];
@@ -66,11 +68,27 @@ struct Batch {
     std::uint32_t flags;
 };
 
+// Optional records appended directly after the index array when
+// kFlagSourceGroupMetadata is set. Values come from the source room SMX.
+struct SourceGroup {
+    std::uint32_t select_mask;
+    std::uint8_t source_id;
+    std::uint8_t object_type;
+    std::uint8_t ot_type;
+    std::uint8_t cull_mode;
+    std::uint32_t flags;
+    std::uint32_t metadata_flags;
+    float light_center[3];
+    float light_size[3];
+    float inverse_rotation[9];
+};
+
 static_assert(sizeof(Header) == 108);
 static_assert(sizeof(Vertex) == 32);
 static_assert(sizeof(Material) == 64);
 static_assert(sizeof(Group) == 96);
 static_assert(sizeof(Batch) == 20);
+static_assert(sizeof(SourceGroup) == 76);
 
 class Package {
 public:
@@ -88,6 +106,7 @@ public:
     const Batch* batches() const;
     const Vertex* vertices() const;
     const std::uint32_t* indices() const;
+    const SourceGroup* source_groups() const;
     const char* error() const { return error_; }
 
 private:

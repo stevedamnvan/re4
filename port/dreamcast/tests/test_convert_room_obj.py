@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import pathlib
+import struct
 import sys
 import tempfile
 import unittest
@@ -69,6 +70,80 @@ class ConvertRoomObjTests(unittest.TestCase):
             manifest = json.loads(output.with_suffix(".re4room.json").read_text())
             self.assertEqual(manifest["source_scale"], 0.1)
             self.assertEqual(manifest["bounds"]["max"], [0.2, 0.0, 0.2])
+
+    def test_appends_source_smx_group_metadata(self):
+        source_text = OBJ.replace("g floor", "g FILE_01#SMX_007#").replace(
+            "g marker", "g FILE_01#SMX_254#"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "room.obj"
+            smx = root / "room.smx"
+            output = root / "room.re4room"
+            source.write_text(source_text, encoding="utf-8")
+            smx_data = bytearray(0x10 + ROOM.SMX_WORK_SIZE)
+            smx_data[0] = 0x10
+            smx_data[1] = 1
+            struct.pack_into("4B", smx_data, 0x10, 7, 4, 5, 2)
+            struct.pack_into(">I", smx_data, 0x14, 0xF0F0AA55)
+            struct.pack_into(">I", smx_data, 0x18, 0x12345678)
+            smx.write_bytes(smx_data)
+
+            self.assertEqual(
+                ROOM.main([str(source), str(output), "--smx", str(smx)]), 0
+            )
+            package = output.read_bytes()
+            header = ROOM.HEADER.unpack_from(package)
+            self.assertEqual(header[19], ROOM.FLAG_SOURCE_GROUP_METADATA)
+            metadata_offset = header[17] + header[9] * ROOM.INDEX.size
+            first = ROOM.SOURCE_GROUP.unpack_from(package, metadata_offset)
+            second = ROOM.SOURCE_GROUP.unpack_from(
+                package, metadata_offset + ROOM.SOURCE_GROUP.size
+            )
+            self.assertEqual(first[:7], (0xF0F0AA55, 7, 4, 5, 2, 0x12345678, 0))
+            self.assertEqual(second[:7], (0xFFFFFFFF, 254, 0, 3, 0, 0, 0))
+            self.assertEqual(first[7:13], (0.0,) * 6)
+            self.assertEqual(first[13:], (1.0, 0.0, 0.0,
+                                           0.0, 1.0, 0.0,
+                                           0.0, 0.0, 1.0))
+            manifest = json.loads(output.with_suffix(".re4room.json").read_text())
+            self.assertEqual(manifest["source_group_metadata"], 2)
+            self.assertEqual(manifest["source_cull_modes"], {"0": 1, "2": 1})
+
+    def test_recovers_source_box_light_volume(self):
+        data = bytearray(0xC0)
+        data[0] = 0x40
+        struct.pack_into(">H", data, 2, 1)
+        struct.pack_into(">I", data, 4, 0x60)
+        struct.pack_into(">9f4B", data, 0x10,
+                         10.0, 20.0, 30.0,
+                         0.0, 0.0, 0.0,
+                         2.0, 3.0, 4.0,
+                         0, 0, 255, 7)
+        struct.pack_into(">I", data, 0x54, 0)
+        struct.pack_into(">I", data, 0x60, 4)
+        model = 0x64
+        struct.pack_into(">I", data, model + 0x30, 0x48)
+        struct.pack_into(">H", data, model + 0x38, 2)
+        data[model + 0x28] = 0
+        struct.pack_into(">4h", data, model + 0x48, -1, -2, -3, 0)
+        struct.pack_into(">4h", data, model + 0x50, 1, 2, 3, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            smd = pathlib.Path(directory) / "placed.smd"
+            smd.write_bytes(data)
+            name = "FILE_01#SMD_000#SMX_007#TYPE_08#BIN_000#"
+            source = {name: ROOM.SourceGroupData(0xFFFFFFFF, 7, 0, 3, 2, 0)}
+            result = ROOM.add_source_light_volumes(
+                source, {"FILE_01": smd}, None, 0.001
+            )[name]
+            self.assertEqual(result.metadata_flags,
+                             ROOM.SOURCE_GROUP_HAS_LIGHT_VOLUME)
+            self.assertEqual(result.light_center, (0.01, 0.02, 0.03))
+            self.assertEqual(result.light_size, (0.002, 0.006, 0.012))
+            self.assertEqual(result.inverse_rotation,
+                             (1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0))
 
     def test_rejects_out_of_range_index(self):
         with tempfile.TemporaryDirectory() as directory:

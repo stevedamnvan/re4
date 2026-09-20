@@ -159,8 +159,9 @@ The source mappings, deliberate behavior bounds, controls, and full-loop
 Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
 The measured LOD experiment, complete-loop replay, and remaining hardware and
 presentation limits are in [the P3 prototype checkpoint](docs/P3_PLAYABLE_BASELINE.md).
-The current measured optimization result is in
-[the r100 R1a performance checkpoint](docs/R1A_PERFORMANCE_CHECKPOINT.md).
+The current measured optimization results are in
+[the r100 R1a performance checkpoint](docs/R1A_PERFORMANCE_CHECKPOINT.md) and
+[the R1b source-selection checkpoint](docs/R1B_SOURCE_SELECTION_CHECKPOINT.md).
 
 The source audio targets privately extract `wep02.drs`, `em12.drs`, and
 `pl00.drs` from
@@ -189,9 +190,10 @@ make -C port/dreamcast/room \
 
 1. Keep the 30-second r100 cabin encounter on source camera, placement, room,
    actor, motion, collision, and sound data.
-2. Recover source object identity and ordered per-model light selection before
-   baking lighting or reducing visible assets. R0 telemetry and the first R1a
-   room-work pass are complete.
+2. Validate the recovered source object/cull/mask/volume path and ordered
+   per-model light selection against a matched debug-game trace before baking
+   lighting or reducing visible assets. R0, R1a, and the target-side R1b
+   implementation are complete; source-trace acceptance remains open.
 3. Preserve the source SAT hierarchy and source position/normal/weight-palette
    identities instead of designing replacement collision or animation systems.
 4. Service input independently of the render interval, then test manual combat,
