@@ -184,6 +184,10 @@ constexpr std::uint32_t kEnemyHitMarkerCount = kEnemyHitCapsuleCount * 2U;
 constexpr float kEnemyHitCapsuleRadii[kEnemyHitCapsuleCount] = {
     0.160f, 0.210f, 0.150f, 0.150f, 0.100f,
     0.100f, 0.170f, 0.170f, 0.120f, 0.120f};
+// pl_handgun fires from player part 10 at local (234.5, -24, 38.33),
+// along the part's local -X axis. Four baked markers recover the animated
+// muzzle and its three source-space basis vectors on SH-4.
+constexpr std::uint32_t kPlayerFireMarkerCount = 4;
 // cPlayer::init1 registers five YARARE_INFO capsules on source parts
 // 2, 3, 5, 0x13, and 0x17. The converter appends bottom/top markers for
 // each capsule after Leon's indexed render vertices.
@@ -191,6 +195,8 @@ constexpr std::uint32_t kPlayerHitCapsuleCount = 5;
 constexpr std::uint32_t kPlayerHitMarkerCount = kPlayerHitCapsuleCount * 2U;
 constexpr float kPlayerHitCapsuleRadii[kPlayerHitCapsuleCount] = {
     0.200f, 0.210f, 0.120f, 0.170f, 0.170f};
+constexpr float kHandgunRayLength = 50.0f;
+constexpr float kHandgunSpread = 0.200f;
 constexpr int kMagazineSize = 6;
 // PlayerLifeReset gives Leon 1200 life. Em10AtkTbl[0] gives the type-0 r100
 // hatchet Ganado 380 damage; rank 5 applies a 1.0 LifeDownSet2 multiplier.
@@ -1335,34 +1341,93 @@ bool segment_capsule_first_hit(
     return true;
 }
 
+std::uint16_t g_source_random = 0x0d37U;
+
+std::uint8_t source_random_byte() {
+    const std::uint16_t old = g_source_random;
+    const std::uint32_t next =
+        (static_cast<std::uint32_t>(
+             static_cast<std::uint8_t>((old >> 1U) + (old >> 8U))) << 8U) |
+        static_cast<std::uint8_t>(old >> 1U);
+    std::uint32_t value = next & 0xffffU;
+    if(value == old) {
+        value = next + 0x101U;
+    }
+    g_source_random = static_cast<std::uint16_t>(value);
+    return static_cast<std::uint8_t>(value >> 8U);
+}
+
+float source_random_1_1() {
+    const std::uint32_t bits =
+        static_cast<std::uint32_t>(source_random_byte()) |
+        (static_cast<std::uint32_t>(source_random_byte()) << 8U) |
+        ((static_cast<std::uint32_t>(source_random_byte()) & 0x7fU) << 16U) |
+        0x3f800000U;
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value * 2.0f - 3.0f;
+}
+
+re4dc::collision::Vec3 normalized_difference(
+    const re4dc::collision::Vec3& point,
+    const re4dc::collision::Vec3& origin) {
+    auto direction = subtract(point, origin);
+    const float length = std::sqrt(dot(direction, direction));
+    if(length > 0.000001f) {
+        direction.x /= length;
+        direction.y /= length;
+        direction.z /= length;
+    }
+    return direction;
+}
+
 bool shot_hits_enemy(const Player& player, const Enemy& enemy,
                      const re4dc::collision::Package& collision,
-                     const re4dc::character::Package& character) {
+                     const re4dc::character::Package& player_character,
+                     const re4dc::character::Package& enemy_character) {
     if(enemy.state == EnemyState::Dead ||
-       character.header().vertex_count <
+       player_character.header().vertex_count <
+           kPlayerFireMarkerCount + kPlayerHitMarkerCount ||
+       enemy_character.header().vertex_count <
            kEnemyHitMarkerCount + kAxeSweepMarkerCount) {
         return false;
     }
-    const re4dc::collision::Vec3 muzzle = {
-        player.x, player.y + 1.35f, player.z};
+    const std::uint32_t first_player_fire_marker =
+        player_character.header().vertex_count - kPlayerHitMarkerCount -
+        kPlayerFireMarkerCount;
+    const auto player_fire_point = [&](std::uint32_t marker) {
+        return actor_point_to_world(
+            sample_character_point(player_character, kPlayerFireClip, 0.0f,
+                                   first_player_fire_marker + marker),
+            player);
+    };
+    const auto muzzle = player_fire_point(0U);
+    const auto minus_x = normalized_difference(player_fire_point(1U), muzzle);
+    const auto plus_y = normalized_difference(player_fire_point(2U), muzzle);
+    const auto plus_z = normalized_difference(player_fire_point(3U), muzzle);
+    const float spread_y = source_random_1_1() * kHandgunSpread;
+    const float spread_z = source_random_1_1() * kHandgunSpread;
     const re4dc::collision::Vec3 end = {
-        muzzle.x + std::sin(player.yaw) * 35.0f,
-        muzzle.y,
-        muzzle.z + std::cos(player.yaw) * 35.0f};
+        muzzle.x + minus_x.x * kHandgunRayLength + plus_y.x * spread_y +
+            plus_z.x * spread_z,
+        muzzle.y + minus_x.y * kHandgunRayLength + plus_y.y * spread_y +
+            plus_z.y * spread_z,
+        muzzle.z + minus_x.z * kHandgunRayLength + plus_y.z * spread_y +
+            plus_z.z * spread_z};
     const auto direction = subtract(end, muzzle);
-    const std::uint32_t first_marker = character.header().vertex_count -
+    const std::uint32_t first_marker = enemy_character.header().vertex_count -
         kAxeSweepMarkerCount - kEnemyHitMarkerCount;
     float nearest = 2.0f;
     for(std::uint32_t capsule = 0; capsule < kEnemyHitCapsuleCount;
         ++capsule) {
         const auto bottom = actor_point_to_world(
             sample_character_point(
-                character, enemy.animation_clip, enemy.animation_frame,
+                enemy_character, enemy.animation_clip, enemy.animation_frame,
                 first_marker + capsule * 2U),
             enemy);
         const auto top = actor_point_to_world(
             sample_character_point(
-                character, enemy.animation_clip, enemy.animation_frame,
+                enemy_character, enemy.animation_clip, enemy.animation_frame,
                 first_marker + capsule * 2U + 1U),
             enemy);
         float hit_t = 0.0f;
@@ -1432,7 +1497,7 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
         snd_sfx_play(audio.fire_2, 255, 128);
     }
     const bool hit = shot_hits_enemy(
-        player, enemy, collision, enemy_character);
+        player, enemy, collision, character, enemy_character);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
         if(audio.enemy_body_hit_0c != SFXHND_INVALID) {
@@ -2300,9 +2365,9 @@ int main() {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
-    if(leon.header().vertex_count != 7030U) {
+    if(leon.header().vertex_count != 7034U) {
         std::printf(
-            "re4dc-room: r100 Leon package needs ten source hit-capsule markers\n");
+            "re4dc-room: r100 Leon package needs source gun and hit-capsule markers\n");
         return 1;
     }
     if(ganado.header().vertex_count != 2335U) {

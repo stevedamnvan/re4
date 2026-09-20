@@ -69,6 +69,10 @@ character-leon:
 		--attachment right-hand:pl00.drs:14:13 \
 		--attachment left-hand:pl00.drs:17:13 \
 		--rigid-attachment handgun:wep02.drs:2:1:10 \
+		--rigid-marker gun-muzzle:10:0:0:0:0:234.5:-24:38.33 \
+		--rigid-marker gun-minus-x:10:0:0:0:0:-265.5:-24:38.33 \
+		--rigid-marker gun-plus-y:10:0:0:0:0:234.5:476:38.33 \
+		--rigid-marker gun-plus-z:10:0:0:0:0:234.5:-24:538.33 \
 		--rigid-marker pl-hit0-bottom:1:0:0:0:0:0:-30:0 \
 		--rigid-marker pl-hit0-top:1:0:0:0:0:0:70:0 \
 		--rigid-marker pl-hit1-bottom:2:0:0:0:0:0:0:0 \
