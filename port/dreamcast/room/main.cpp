@@ -120,6 +120,8 @@ struct DemoTelemetry {
     std::uint32_t ganado_light_selection;
     std::uint32_t room_strips_culled;
     std::uint32_t room_strip_culled_vertices;
+    std::uint32_t room_strip_evictions;
+    std::uint32_t room_reserved_0;
 #if defined(RE4DC_CULL_AUDIT)
     std::uint32_t cull_audit_on_screen_strips;
     std::uint32_t cull_audit_on_screen_vertices;
@@ -147,22 +149,22 @@ struct DemoTelemetry {
 };
 
 #if defined(RE4DC_SUBMIT_PROFILE)
-static_assert(sizeof(DemoTelemetry) == 432U);
+static_assert(sizeof(DemoTelemetry) == 440U);
 #elif defined(RE4DC_CULL_AUDIT)
-static_assert(sizeof(DemoTelemetry) == 384U);
+static_assert(sizeof(DemoTelemetry) == 392U);
 #else
-static_assert(sizeof(DemoTelemetry) == 368U);
+static_assert(sizeof(DemoTelemetry) == 376U);
 #endif
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
 #if defined(RE4DC_SUBMIT_PROFILE)
-    telemetry.version = 12U;
-#elif defined(RE4DC_CULL_AUDIT)
     telemetry.version = 13U;
+#elif defined(RE4DC_CULL_AUDIT)
+    telemetry.version = 14U;
 #else
-    telemetry.version = 11U;
+    telemetry.version = 12U;
 #endif
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
@@ -550,6 +552,7 @@ struct FrameStats {
     std::uint32_t ganado_light_selection = 0;
     std::uint32_t room_strips_culled = 0;
     std::uint32_t room_strip_culled_vertices = 0;
+    std::uint32_t room_strip_evictions = 0;
 #if defined(RE4DC_CULL_AUDIT)
     std::uint32_t cull_audit_on_screen_strips = 0;
     std::uint32_t cull_audit_on_screen_vertices = 0;
@@ -3076,6 +3079,8 @@ struct RoomVertexCacheEntry {
     std::uint32_t generation = 0;
     std::uint32_t source_index = 0;
     std::uint32_t light_selection = 0;
+    // R3t: packed once per cache fill rather than once per emitted record.
+    std::uint32_t argb = 0;
     RenderVertex vertex{};
 };
 
@@ -3092,7 +3097,8 @@ std::uint32_t g_leon_colors[kLeonVertexCapacity];
 std::uint32_t g_ganado_colors[kGanadoVertexCapacity];
 #endif
 pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
-RenderVertex g_room_strip_vertices[kCharacterSubmitVertexCapacity];
+const RoomVertexCacheEntry* g_room_strip_entries[kCharacterSubmitVertexCapacity];
+std::uint32_t g_room_strip_indices[kCharacterSubmitVertexCapacity];
 RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
 std::uint32_t g_room_vertex_cache_generation = 0;
 // R3r: one bounding sphere per native strip. The accepted r100 package has
@@ -3573,7 +3579,7 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
     return triangle_count;
 }
 
-const RenderVertex& cached_room_vertex(
+const RoomVertexCacheEntry& cached_room_entry(
     const re4dc::room::Vertex* source, std::uint32_t vertex_index,
     FrameStats& stats, std::uint32_t light_selection) {
     ++stats.room_index_references;
@@ -3596,7 +3602,7 @@ const RenderVertex& cached_room_vertex(
        entry.source_index == vertex_index &&
        entry.light_selection == light_selection) {
         ++stats.room_cache_hits;
-        return entry.vertex;
+        return entry;
     }
 
     ++stats.room_cache_misses;
@@ -3666,7 +3672,15 @@ const RenderVertex& cached_room_vertex(
         .light_blue = light_blue,
         .offset_color = 0,
     };
-    return entry.vertex;
+    entry.argb = shade_color(light_red, light_green, light_blue);
+    return entry;
+}
+
+const RenderVertex& cached_room_vertex(
+    const re4dc::room::Vertex* source, std::uint32_t vertex_index,
+    FrameStats& stats, std::uint32_t light_selection) {
+    return cached_room_entry(source, vertex_index, stats, light_selection)
+        .vertex;
 }
 
 std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
@@ -3774,12 +3788,31 @@ void submit_room_strips(const re4dc::room::Package& room,
                 ++local) {
                 const std::uint32_t vertex_index =
                     primitive_indices[primitive.first_vertex + local];
-                g_room_strip_vertices[local] = cached_room_vertex(
+                const RoomVertexCacheEntry& entry = cached_room_entry(
                     source, vertex_index, stats, light_selection);
-                const float depth =
-                    g_room_strip_vertices[local].position.depth;
+                g_room_strip_entries[local] = &entry;
+                g_room_strip_indices[local] = vertex_index;
+                const float depth = entry.vertex.position.depth;
                 if(depth < kNearClipDistance || depth > kFarClipDistance) {
                     direct_strip = false;
+                    break;
+                }
+            }
+        }
+        if(direct_strip) {
+            // A later lookup in the same strip can evict an earlier entry from
+            // the direct-mapped cache. Confirm every entry still holds the
+            // vertex it was looked up for before reading through the pointers;
+            // otherwise take the fallback path, which re-looks-up each vertex.
+            for(std::uint32_t local = 0U; local < primitive.vertex_count;
+                ++local) {
+                const RoomVertexCacheEntry& entry = *g_room_strip_entries[local];
+                if(entry.generation != g_room_vertex_cache_generation ||
+                   entry.source_index != g_room_strip_indices[local] ||
+                   entry.light_selection != light_selection) {
+                    direct_strip = false;
+                    ++stats.room_strip_evictions;
+                    break;
                 }
             }
         }
@@ -3789,7 +3822,8 @@ void submit_room_strips(const re4dc::room::Package& room,
             }
             for(std::uint32_t local = 0U; local < primitive.vertex_count;
                 ++local) {
-                const auto& vertex = g_room_strip_vertices[local];
+                const RoomVertexCacheEntry& entry = *g_room_strip_entries[local];
+                const RenderVertex& vertex = entry.vertex;
                 submit_vertices[submit_count++] = {
                     .flags = local + 1U == primitive.vertex_count
                                  ? PVR_CMD_VERTEX_EOL
@@ -3799,9 +3833,7 @@ void submit_room_strips(const re4dc::room::Package& room,
                     .z = vertex.position.z,
                     .u = vertex.u,
                     .v = vertex.v,
-                    .argb = shade_color(vertex.light_red,
-                                        vertex.light_green,
-                                        vertex.light_blue),
+                    .argb = entry.argb,
                     .oargb = vertex.offset_color,
                 };
             }
@@ -3822,15 +3854,10 @@ void submit_room_strips(const re4dc::room::Package& room,
             RenderVertex triangle[3]{};
             for(unsigned corner = 0U; corner < 3U; ++corner) {
                 const std::uint32_t strip_vertex = local_indices[corner];
-                if(primitive.vertex_count <= submit_capacity) {
-                    triangle[corner] = g_room_strip_vertices[strip_vertex];
-                } else {
-                    triangle[corner] = cached_room_vertex(
-                        source,
-                        primitive_indices[primitive.first_vertex +
-                                          strip_vertex],
-                        stats, light_selection);
-                }
+                triangle[corner] = cached_room_vertex(
+                    source,
+                    primitive_indices[primitive.first_vertex + strip_vertex],
+                    stats, light_selection);
             }
             append_triangle(triangle);
         }
@@ -6380,6 +6407,9 @@ int main() {
         g_re4dc_demo_telemetry.room_strips_culled = stats.room_strips_culled;
         g_re4dc_demo_telemetry.room_strip_culled_vertices =
             stats.room_strip_culled_vertices;
+        g_re4dc_demo_telemetry.room_strip_evictions =
+            stats.room_strip_evictions;
+        g_re4dc_demo_telemetry.room_reserved_0 = 0U;
 #if defined(RE4DC_CULL_AUDIT)
         g_re4dc_demo_telemetry.cull_audit_on_screen_strips =
             stats.cull_audit_on_screen_strips;
