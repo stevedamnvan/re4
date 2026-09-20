@@ -262,9 +262,13 @@ measurement rather than by choice:
 - The romdisk filenames `r10d.re4room` and `r10d.re4sat` are legacy labels from
   an earlier slice. The `r100-autoplay` target overrides every package variable
   and ships r100 content. Renaming them is a small, separate cleanup.
-- `tools/asset_residency_report.py` is stale: it rejects the shipped v2
-  96-byte texture record and fails on every accepted package. It needs updating
-  before deliverable 5 relies on it.
+- `tools/asset_residency_report.py` was stale, rejecting the shipped v2 96-byte
+  texture record and failing on every accepted package. **Fixed**: it now
+  selects the record layout from the stride the header declares, reads the
+  version 1 88-byte record too, and reports each texture's payload layout.
+  Without the private GameCube TPL and MTL it reports the package alone, which
+  reproduces the descriptor, unique-payload and byte columns of the table above
+  independently of the runtime measurement.
 - r101's enemy set is unread. Reading its enemy list closes the only open range
   in the budget table above.
 - r101's geometry has no large paired texture chunk, unlike r100 and r10d. The
