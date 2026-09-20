@@ -20,13 +20,14 @@ from dataclasses import dataclass, field, replace
 
 
 MAGIC = b"RE4DCRM\0"
-VERSION = 1
-HEADER = struct.Struct("<8s19I6f")
+VERSION = 2
+HEADER = struct.Struct("<8s23I6f")
 VERTEX = struct.Struct("<8f")  # position, normal, UV
 INDEX = struct.Struct("<I")
 MATERIAL = struct.Struct("<64s")
 GROUP = struct.Struct("<64sII6f")  # name, first batch, count, bounds
-BATCH = struct.Struct("<IIIII")  # material, first index, count, group, flags
+BATCH = struct.Struct("<IIIIIII")  # material/index range/group/flags/primitive range
+PRIMITIVE = struct.Struct("<IHH")  # first vertex, vertex count, triangle count
 SOURCE_GROUP = struct.Struct("<I4BII15f")
 FLAG_SOURCE_GROUP_METADATA = 1 << 0
 SOURCE_GROUP_HAS_LIGHT_VOLUME = 1 << 0
@@ -578,6 +579,56 @@ def cluster_geometry(parsed: dict[str, object], cluster_size: float) -> None:
     parsed["cluster_source_triangles"] = source_triangles
 
 
+def stripify_triangles(indices: list[int]) -> list[list[int]]:
+    """Build deterministic, winding-preserving strips from one material batch."""
+    triangles = [
+        tuple(indices[index:index + 3])
+        for index in range(0, len(indices), 3)
+    ]
+    edge_map: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for triangle_index, (a, b, c) in enumerate(triangles):
+        for first, second, third in ((a, b, c), (b, c, a), (c, a, b)):
+            edge_map.setdefault((first, second), []).append(
+                (triangle_index, third)
+            )
+    unused = set(range(len(triangles)))
+    strips = []
+    while unused:
+        triangle_index = min(unused)
+        unused.remove(triangle_index)
+        a, b, c = triangles[triangle_index]
+
+        def extend(start: tuple[int, int, int]) -> tuple[list[int], list[int]]:
+            strip = list(start)
+            consumed = []
+            available = set(unused)
+            while True:
+                if len(strip) & 1:
+                    edge = strip[-1], strip[-2]
+                else:
+                    edge = strip[-2], strip[-1]
+                match = next(
+                    ((candidate, vertex)
+                     for candidate, vertex in edge_map.get(edge, ())
+                     if candidate in available),
+                    None,
+                )
+                if match is None:
+                    break
+                available.remove(match[0])
+                consumed.append(match[0])
+                strip.append(match[1])
+            return strip, consumed
+
+        strip, consumed = max(
+            (extend(start) for start in ((a, b, c), (b, c, a), (c, a, b))),
+            key=lambda result: len(result[0]),
+        )
+        unused.difference_update(consumed)
+        strips.append(strip)
+    return strips
+
+
 def build_package(
     parsed: dict[str, object],
     source_groups: dict[str, SourceGroupData] | None = None,
@@ -592,6 +643,8 @@ def build_package(
     group_blob = bytearray()
     batch_blob = bytearray()
     index_blob = bytearray()
+    primitive_blob = bytearray()
+    primitive_index_blob = bytearray()
     source_group_blob = bytearray()
     ordered_batch_count = 0
     all_min = [math.inf, math.inf, math.inf]
@@ -605,6 +658,14 @@ def build_package(
             first_index = len(index_blob) // INDEX.size
             for index in batch.indices:
                 index_blob.extend(INDEX.pack(index))
+            first_primitive = len(primitive_blob) // PRIMITIVE.size
+            for strip in stripify_triangles(batch.indices):
+                first_vertex = len(primitive_index_blob) // INDEX.size
+                for vertex in strip:
+                    primitive_index_blob.extend(INDEX.pack(vertex))
+                primitive_blob.extend(
+                    PRIMITIVE.pack(first_vertex, len(strip), len(strip) - 2)
+                )
             batch_blob.extend(
                 BATCH.pack(
                     material_ids[batch.material],
@@ -612,6 +673,8 @@ def build_package(
                     len(batch.indices),
                     group_index,
                     0,
+                    first_primitive,
+                    len(primitive_blob) // PRIMITIVE.size - first_primitive,
                 )
             )
             ordered_batch_count += 1
@@ -651,9 +714,12 @@ def build_package(
     batch_offset = group_offset + len(group_blob)
     vertex_offset = batch_offset + len(batch_blob)
     index_offset = vertex_offset + len(vertex_blob)
+    source_group_offset = index_offset + len(index_blob)
+    primitive_offset = source_group_offset + len(source_group_blob)
+    primitive_index_offset = primitive_offset + len(primitive_blob)
     payload = bytes(
         material_blob + group_blob + batch_blob + vertex_blob + index_blob +
-        source_group_blob
+        source_group_blob + primitive_blob + primitive_index_blob
     )
     payload_crc32 = zlib.crc32(payload) & 0xFFFFFFFF
     index_count = len(index_blob) // INDEX.size
@@ -671,11 +737,15 @@ def build_package(
         len(materials),
         len(group_order),
         ordered_batch_count,
+        len(primitive_blob) // PRIMITIVE.size,
+        len(primitive_index_blob) // INDEX.size,
         material_offset,
         group_offset,
         batch_offset,
         vertex_offset,
         index_offset,
+        primitive_offset,
+        primitive_index_offset,
         payload_crc32,
         FLAG_SOURCE_GROUP_METADATA if source_groups is not None else 0,
         *all_min,
@@ -690,6 +760,8 @@ def build_package(
         "materials": len(materials),
         "groups": len(group_order),
         "batches": ordered_batch_count,
+        "strips": len(primitive_blob) // PRIMITIVE.size,
+        "strip_vertices": len(primitive_index_blob) // INDEX.size,
         "bounds": {"min": all_min, "max": all_max},
         "payload_crc32": f"{payload_crc32:08x}",
     }

@@ -8,7 +8,7 @@
 namespace re4dc::room {
 
 inline constexpr char kMagic[8] = {'R', 'E', '4', 'D', 'C', 'R', 'M', '\0'};
-inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kVersion = 2;
 inline constexpr std::uint32_t kFlagSourceGroupMetadata = 1U << 0U;
 inline constexpr std::uint32_t kSourceGroupHasLightVolume = 1U << 0U;
 
@@ -26,11 +26,15 @@ struct Header {
     std::uint32_t material_count;
     std::uint32_t group_count;
     std::uint32_t batch_count;
+    std::uint32_t primitive_count;
+    std::uint32_t primitive_index_count;
     std::uint32_t material_offset;
     std::uint32_t group_offset;
     std::uint32_t batch_offset;
     std::uint32_t vertex_offset;
     std::uint32_t index_offset;
+    std::uint32_t primitive_offset;
+    std::uint32_t primitive_index_offset;
     std::uint32_t payload_crc32;
     std::uint32_t flags;
     float bounds_min[3];
@@ -66,6 +70,14 @@ struct Batch {
     std::uint32_t index_count;
     std::uint32_t group;
     std::uint32_t flags;
+    std::uint32_t first_primitive;
+    std::uint32_t primitive_count;
+};
+
+struct Primitive {
+    std::uint32_t first_vertex;
+    std::uint16_t vertex_count;
+    std::uint16_t triangle_count;
 };
 
 // Optional records appended directly after the index array when
@@ -83,11 +95,12 @@ struct SourceGroup {
     float inverse_rotation[9];
 };
 
-static_assert(sizeof(Header) == 108);
+static_assert(sizeof(Header) == 124);
 static_assert(sizeof(Vertex) == 32);
 static_assert(sizeof(Material) == 64);
 static_assert(sizeof(Group) == 96);
-static_assert(sizeof(Batch) == 20);
+static_assert(sizeof(Batch) == 28);
+static_assert(sizeof(Primitive) == 8);
 static_assert(sizeof(SourceGroup) == 76);
 
 class Package {
@@ -106,6 +119,8 @@ public:
     const Batch* batches() const;
     const Vertex* vertices() const;
     const std::uint32_t* indices() const;
+    const Primitive* primitives() const;
+    const std::uint32_t* primitive_indices() const;
     const SourceGroup* source_groups() const;
     const char* error() const { return error_; }
 

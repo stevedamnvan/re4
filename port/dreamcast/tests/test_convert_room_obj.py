@@ -53,6 +53,8 @@ class ConvertRoomObjTests(unittest.TestCase):
             self.assertEqual(values[8:13], (4, 9, 2, 2, 2))
             manifest = json.loads(first.with_suffix(".re4room.json").read_text())
             self.assertEqual(manifest["triangles"], 3)
+            self.assertEqual(manifest["strips"], 2)
+            self.assertEqual(manifest["strip_vertices"], 7)
             self.assertEqual(
                 manifest["bounds"],
                 {"min": [0.0, 0.0, 0.0], "max": [2.0, 0.0, 2.0]},
@@ -94,8 +96,8 @@ class ConvertRoomObjTests(unittest.TestCase):
             )
             package = output.read_bytes()
             header = ROOM.HEADER.unpack_from(package)
-            self.assertEqual(header[19], ROOM.FLAG_SOURCE_GROUP_METADATA)
-            metadata_offset = header[17] + header[9] * ROOM.INDEX.size
+            self.assertEqual(header[23], ROOM.FLAG_SOURCE_GROUP_METADATA)
+            metadata_offset = header[19] + header[9] * ROOM.INDEX.size
             first = ROOM.SOURCE_GROUP.unpack_from(package, metadata_offset)
             second = ROOM.SOURCE_GROUP.unpack_from(
                 package, metadata_offset + ROOM.SOURCE_GROUP.size
@@ -161,6 +163,10 @@ class ConvertRoomObjTests(unittest.TestCase):
             self.assertEqual(sum(len(batch.indices) for batch in parsed["batches"]), 9)
             self.assertEqual(parsed["source_groups"], 2)
             self.assertEqual(parsed["cell_size"], 1.0)
+
+    def test_stripifies_connected_triangles_without_changing_winding(self):
+        strips = ROOM.stripify_triangles([0, 1, 2, 2, 1, 3, 2, 3, 4])
+        self.assertEqual(strips, [[0, 1, 2, 3, 4]])
 
     def test_spatial_partition_retains_source_group_metadata(self):
         source_text = OBJ.replace("g floor", "g FILE_01#SMX_007#").replace(

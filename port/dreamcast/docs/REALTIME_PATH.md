@@ -22,6 +22,14 @@ camera-relative lights, with the measured result in
 The target-side timestamped controller service and short-edge test are recorded
 in [R0_INPUT_SERVICE_CHECKPOINT.md](R0_INPUT_SERVICE_CHECKPOINT.md); source
 sampling semantics, human-controller coverage, and hardware timing remain open.
+Character package version 4 separates animated positions, normal identities,
+and UV draw corners in
+[R2B_SOURCE_ATTRIBUTE_IDENTITIES_CHECKPOINT.md](R2B_SOURCE_ATTRIBUTE_IDENTITIES_CHECKPOINT.md).
+The first native room-strip pass is implemented and measured in
+[R3B_NATIVE_ROOM_STRIPS_CHECKPOINT.md](R3B_NATIVE_ROOM_STRIPS_CHECKPOINT.md): it
+preserves the original triangle stream and matched static room pixels while
+reducing the median Flycast render interval by 23.8 ms. The measured result is
+about 6.4 fps, so the real-time and physical-hardware gates remain open.
 
 ## Objective and boundaries
 

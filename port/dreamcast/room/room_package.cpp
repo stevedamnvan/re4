@@ -77,7 +77,12 @@ bool Package::open(const char* path) {
        !range_valid(header_->vertex_offset, header_->vertex_count,
                     header_->vertex_stride) ||
        !range_valid(header_->index_offset, header_->index_count,
-                    header_->index_stride)) {
+                    header_->index_stride) ||
+       !range_valid(header_->primitive_offset, header_->primitive_count,
+                    sizeof(Primitive)) ||
+       !range_valid(header_->primitive_index_offset,
+                    header_->primitive_index_count,
+                    sizeof(std::uint32_t))) {
         error_ = "record range exceeds package";
         close();
         return false;
@@ -100,6 +105,49 @@ bool Package::open(const char* path) {
         error_ = "payload CRC mismatch";
         close();
         return false;
+    }
+    const auto* package_indices = indices();
+    for(std::uint32_t index = 0; index < header_->index_count; ++index) {
+        if(package_indices[index] >= header_->vertex_count) {
+            error_ = "index exceeds vertex count";
+            close();
+            return false;
+        }
+    }
+    const auto* package_batches = batches();
+    for(std::uint32_t index = 0; index < header_->batch_count; ++index) {
+        const auto& batch = package_batches[index];
+        if(batch.index_count == 0U || batch.index_count % 3U != 0U ||
+           static_cast<std::uint64_t>(batch.first_index) +
+                   batch.index_count > header_->index_count ||
+           static_cast<std::uint64_t>(batch.first_primitive) +
+                   batch.primitive_count > header_->primitive_count) {
+            error_ = "batch range exceeds package counts";
+            close();
+            return false;
+        }
+    }
+    const auto* package_primitives = primitives();
+    const auto* package_primitive_indices = primitive_indices();
+    for(std::uint32_t index = 0; index < header_->primitive_count; ++index) {
+        const auto& primitive = package_primitives[index];
+        if(primitive.vertex_count < 3U ||
+           primitive.triangle_count != primitive.vertex_count - 2U ||
+           static_cast<std::uint64_t>(primitive.first_vertex) +
+                   primitive.vertex_count > header_->primitive_index_count) {
+            error_ = "invalid strip primitive";
+            close();
+            return false;
+        }
+        for(std::uint32_t vertex = primitive.first_vertex;
+            vertex < primitive.first_vertex + primitive.vertex_count;
+            ++vertex) {
+            if(package_primitive_indices[vertex] >= header_->vertex_count) {
+                error_ = "strip index exceeds vertex count";
+                close();
+                return false;
+            }
+        }
     }
     error_ = nullptr;
     return true;
@@ -133,6 +181,16 @@ const Vertex* Package::vertices() const {
 
 const std::uint32_t* Package::indices() const {
     return reinterpret_cast<const std::uint32_t*>(data_ + header_->index_offset);
+}
+
+const Primitive* Package::primitives() const {
+    return reinterpret_cast<const Primitive*>(
+        data_ + header_->primitive_offset);
+}
+
+const std::uint32_t* Package::primitive_indices() const {
+    return reinterpret_cast<const std::uint32_t*>(
+        data_ + header_->primitive_index_offset);
 }
 
 const SourceGroup* Package::source_groups() const {

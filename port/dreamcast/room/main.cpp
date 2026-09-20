@@ -107,14 +107,17 @@ struct DemoTelemetry {
     std::uint32_t actor_vertex_records;
     std::uint32_t actor_direct_strips;
     std::uint32_t actor_strip_fallbacks;
+    std::uint32_t room_vertex_records;
+    std::uint32_t room_direct_strips;
+    std::uint32_t room_strip_fallbacks;
 };
 
-static_assert(sizeof(DemoTelemetry) == 316U);
+static_assert(sizeof(DemoTelemetry) == 328U);
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
-    telemetry.version = 7U;
+    telemetry.version = 8U;
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
 }
@@ -484,6 +487,9 @@ struct FrameStats {
     std::uint32_t character_vertex_records = 0;
     std::uint32_t character_direct_strips = 0;
     std::uint32_t character_strip_fallbacks = 0;
+    std::uint32_t room_vertex_records = 0;
+    std::uint32_t room_direct_strips = 0;
+    std::uint32_t room_strip_fallbacks = 0;
 };
 
 std::uint32_t saturate_u32(std::uint64_t value) {
@@ -2763,6 +2769,7 @@ float g_leon_lighting[kLeonVertexCapacity * 3U];
 float g_ganado_lighting[kGanadoVertexCapacity * 3U];
 #endif
 pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
+RenderVertex g_room_strip_vertices[kCharacterSubmitVertexCapacity];
 RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
 std::uint32_t g_room_vertex_cache_generation = 0;
 
@@ -3170,6 +3177,109 @@ std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
         cached_room_vertex(source, indices[2], stats, light_selection),
     };
     return clip_projected_triangle(triangle, output, cull_mode, &stats);
+}
+
+void submit_room_strips(const re4dc::room::Package& room,
+                        const re4dc::room::Batch& batch,
+                        pvr_vertex_t* submit_vertices,
+                        std::uint32_t submit_capacity,
+                        FrameStats& stats, std::uint8_t cull_mode,
+                        std::uint32_t light_selection) {
+    const auto* source = room.vertices();
+    const auto* primitives = room.primitives();
+    const auto* primitive_indices = room.primitive_indices();
+    std::uint32_t submit_count = 0U;
+    const auto flush = [&]() {
+        if(submit_count == 0U) {
+            return;
+        }
+        pvr_prim(submit_vertices, sizeof(pvr_vertex_t) * submit_count);
+        submit_count = 0U;
+    };
+    const auto append_triangle = [&](const RenderVertex* triangle) {
+        if(submit_count + 6U > submit_capacity) {
+            flush();
+        }
+        const std::uint32_t emitted = clip_projected_triangle(
+            triangle, submit_vertices + submit_count, cull_mode, &stats);
+        submit_count += emitted * 3U;
+        stats.room_vertex_records += emitted * 3U;
+        stats.triangles += emitted;
+    };
+
+    const std::uint32_t primitive_end =
+        batch.first_primitive + batch.primitive_count;
+    for(std::uint32_t primitive_index = batch.first_primitive;
+        primitive_index < primitive_end; ++primitive_index) {
+        const auto& primitive = primitives[primitive_index];
+        bool direct_strip = primitive.vertex_count <= submit_capacity;
+        if(direct_strip) {
+            for(std::uint32_t local = 0U; local < primitive.vertex_count;
+                ++local) {
+                const std::uint32_t vertex_index =
+                    primitive_indices[primitive.first_vertex + local];
+                g_room_strip_vertices[local] = cached_room_vertex(
+                    source, vertex_index, stats, light_selection);
+                const float depth =
+                    g_room_strip_vertices[local].position.depth;
+                if(depth < kNearClipDistance || depth > kFarClipDistance) {
+                    direct_strip = false;
+                }
+            }
+        }
+        if(direct_strip) {
+            if(submit_count + primitive.vertex_count > submit_capacity) {
+                flush();
+            }
+            for(std::uint32_t local = 0U; local < primitive.vertex_count;
+                ++local) {
+                const auto& vertex = g_room_strip_vertices[local];
+                submit_vertices[submit_count++] = {
+                    .flags = local + 1U == primitive.vertex_count
+                                 ? PVR_CMD_VERTEX_EOL
+                                 : PVR_CMD_VERTEX,
+                    .x = vertex.position.x,
+                    .y = vertex.position.y,
+                    .z = vertex.position.z,
+                    .u = vertex.u,
+                    .v = vertex.v,
+                    .argb = shade_color(vertex.light_red,
+                                        vertex.light_green,
+                                        vertex.light_blue),
+                    .oargb = vertex.offset_color,
+                };
+            }
+            stats.room_vertex_records += primitive.vertex_count;
+            ++stats.room_direct_strips;
+            stats.triangles += primitive.triangle_count;
+            continue;
+        }
+
+        ++stats.room_strip_fallbacks;
+        for(std::uint32_t local = 2U; local < primitive.vertex_count;
+            ++local) {
+            const std::uint32_t local_indices[3] = {
+                (local & 1U) != 0U ? local - 1U : local - 2U,
+                (local & 1U) != 0U ? local - 2U : local - 1U,
+                local,
+            };
+            RenderVertex triangle[3]{};
+            for(unsigned corner = 0U; corner < 3U; ++corner) {
+                const std::uint32_t strip_vertex = local_indices[corner];
+                if(primitive.vertex_count <= submit_capacity) {
+                    triangle[corner] = g_room_strip_vertices[strip_vertex];
+                } else {
+                    triangle[corner] = cached_room_vertex(
+                        source,
+                        primitive_indices[primitive.first_vertex +
+                                          strip_vertex],
+                        stats, light_selection);
+                }
+            }
+            append_triangle(triangle);
+        }
+    }
+    flush();
 }
 
 void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
@@ -3951,6 +4061,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
                         const Player& player, const Enemy& enemy,
                         const pvr_poly_hdr_t& untextured_header,
                         const pvr_poly_hdr_t* material_headers,
+                        const pvr_poly_hdr_t* room_strip_headers,
                          const bool* material_alpha,
                          const pvr_poly_hdr_t* leon_headers,
                          const bool* leon_alpha,
@@ -4042,7 +4153,20 @@ FrameStats render_scene(const re4dc::room::Package& room,
             if(material_alpha[batch.material]) {
                 continue;
             }
-            pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
+            if(cull_mode == kCullAll) {
+                continue;
+            }
+            if(batch.primitive_count != 0U) {
+                pvr_prim(&room_strip_headers[batch.material * 3U + cull_mode],
+                         sizeof(pvr_poly_hdr_t));
+                submit_room_strips(
+                    room, batch, character_submit_vertices,
+                    kCharacterSubmitVertexCapacity, stats, cull_mode,
+                    light_selection);
+                continue;
+            }
+            pvr_prim(&material_headers[batch.material],
+                     sizeof(pvr_poly_hdr_t));
             std::uint32_t submit_count = 0;
             const auto flush = [&]() {
                 if(submit_count == 0U) {
@@ -4351,9 +4475,12 @@ int main() {
     pvr_poly_compile(&untextured_header, &context);
     pvr_poly_hdr_t* material_headers =
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count];
+    pvr_poly_hdr_t* room_strip_headers =
+        new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
     std::unique_ptr<bool[]> material_alpha(
         new(std::nothrow) bool[room.header().material_count]);
-    if(material_headers == nullptr || material_alpha == nullptr) {
+    if(material_headers == nullptr || room_strip_headers == nullptr ||
+       material_alpha == nullptr) {
         std::printf("re4dc-room: material header allocation failed\n");
         return 1;
     }
@@ -4386,6 +4513,16 @@ int main() {
             context.txr.alpha = PVR_TXRALPHA_ENABLE;
         }
         pvr_poly_compile(&material_headers[material], &context);
+        constexpr pvr_cull_mode_t kPvrCullModes[3] = {
+            PVR_CULLING_NONE,
+            PVR_CULLING_CCW,
+            PVR_CULLING_CW,
+        };
+        for(std::uint32_t cull = 0U; cull < 3U; ++cull) {
+            context.gen.culling = kPvrCullModes[cull];
+            pvr_poly_compile(&room_strip_headers[material * 3U + cull],
+                             &context);
+        }
     }
     pvr_poly_hdr_t* leon_headers =
         new(std::nothrow) pvr_poly_hdr_t[leon.header().batch_count];
@@ -4875,7 +5012,8 @@ int main() {
         const std::uint64_t camera_us = timer_us_gettime64() - camera_start;
         const FrameStats stats = render_scene(
             room, leon, ganado, player, enemy, untextured_header,
-            material_headers, material_alpha.get(), leon_headers,
+            material_headers, room_strip_headers, material_alpha.get(),
+            leon_headers,
             leon_alpha.get(), ganado_headers, ganado_alpha.get(),
 #if defined(RE4DC_SCENE_R100)
             source_hud, source_hud_headers,
@@ -5011,6 +5149,12 @@ int main() {
             stats.character_direct_strips;
         g_re4dc_demo_telemetry.actor_strip_fallbacks =
             stats.character_strip_fallbacks;
+        g_re4dc_demo_telemetry.room_vertex_records =
+            stats.room_vertex_records;
+        g_re4dc_demo_telemetry.room_direct_strips =
+            stats.room_direct_strips;
+        g_re4dc_demo_telemetry.room_strip_fallbacks =
+            stats.room_strip_fallbacks;
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;
@@ -5055,6 +5199,7 @@ int main() {
     }
     delete[] ganado_headers;
     delete[] leon_headers;
+    delete[] room_strip_headers;
     delete[] material_headers;
     release_demo_audio(audio);
     std::printf("re4dc-room: clean exit\n");

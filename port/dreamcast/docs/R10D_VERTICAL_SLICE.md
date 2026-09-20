@@ -51,10 +51,12 @@ The timer includes PVR wait time. See
 
 ## Package boundary
 
-`re4dc-room` version 1 is little-endian and starts with the eight-byte magic
+`re4dc-room` version 2 is little-endian and starts with the eight-byte magic
 `RE4DCRM\0`. It contains fixed-size material names, group records with bounds,
 material batches, interleaved position/normal/UV vertices, and 32-bit triangle
-indices. The first `r10d` build partitioned static triangles into 10-unit X/Z
+indices. Version 2 also carries winding-preserving strip records for native PVR
+submission while retaining the triangle stream for ordered transparency and
+clipping fallback. The first `r10d` build partitioned static triangles into 10-unit X/Z
 cells. The current default preserves OBJ export groups because the bounded
 gameplay-camera comparison transformed fewer vertices with the same submitted
 triangle count. Recreate the older cell package for comparison with:
