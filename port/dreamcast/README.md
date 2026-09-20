@@ -116,7 +116,17 @@ more free main RAM, the same triangles, and no room pixel changed at three
 matched ticks. The sweep, the tie with 8 m, and the manual smoke are in
 [the R3u cell-size re-sweep checkpoint](docs/R3U_CELL_SIZE_RESWEEP_CHECKPOINT.md).
 
-The opaque room pass, now 27.810 ms, is the largest remaining cost, followed by
+R3v renumbers every strip vertex reference into a batch-local index at load
+and resolves it through a slot table stamped with a per-call serial, so the
+direct-strip path no longer hashes into the room vertex cache, compares keys,
+or re-verifies against eviction. A gated probe showed only 13% of the cache's
+hits crossed batch boundaries; losing them costs 604 transforms per frame and
+the frame still falls from 71.369 to 68.789 ms at p50 and 71.463 to 68.883 ms
+at p95, with no room pixel changed. The tables cost 413,696 bytes of static
+RAM until they move into the package; see
+[the R3v batch-local slots checkpoint](docs/R3V_BATCH_LOCAL_SLOTS_CHECKPOINT.md).
+
+The opaque room pass, now 25.320 ms, is the largest remaining cost, followed by
 actor lighting at 18.198 ms with Leon's 13.960 ms median inside it. R3s keyed
 the room vertex cache on vertex identity, cut transform-and-light evaluations by
 21.5%, and was 1.274 ms slower, so that pass is dominated by per-reference and

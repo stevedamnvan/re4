@@ -3133,6 +3133,31 @@ struct RoomPrimitiveBounds {
 static_assert(sizeof(RoomPrimitiveBounds) == 16U);
 RoomPrimitiveBounds g_room_primitive_bounds[kRoomPrimitiveBoundsCapacity];
 bool g_room_primitive_bounds_ready = false;
+
+// R3v: every strip vertex reference is renumbered at load into a batch-local
+// index, and each batch gets a table from local index back to package vertex.
+// A visible batch then resolves each reference through a fixed slot array
+// stamped with a per-call serial, so the direct-strip path needs no hash, no
+// key compare and no eviction check. Batches with more distinct vertices than
+// the slot array take the hashed cache path unchanged.
+constexpr std::uint32_t kRoomLocalIndexCapacity = 65536U;
+constexpr std::uint32_t kRoomBatchVertexCapacity = 57344U;
+constexpr std::uint32_t kRoomBatchTableCapacity = 4096U;
+constexpr std::uint32_t kRoomBatchSlotCapacity = 1024U;
+struct RoomBatchSlot {
+    std::uint32_t serial = 0;
+    RoomVertexCacheEntry entry{};
+};
+std::uint16_t g_room_local_indices[kRoomLocalIndexCapacity];
+std::uint16_t g_room_batch_vertices[kRoomBatchVertexCapacity];
+std::uint32_t g_room_batch_first_vertex[kRoomBatchTableCapacity];
+std::uint16_t g_room_batch_vertex_count[kRoomBatchTableCapacity];
+RoomBatchSlot g_room_batch_slots[kRoomBatchSlotCapacity];
+bool g_room_batch_locals_ready = false;
+std::uint32_t g_room_batch_serial = 0U;
+std::uint32_t g_room_batch_local_total = 0U;
+std::uint32_t g_room_batch_local_max = 0U;
+std::uint32_t g_room_batch_local_oversize = 0U;
 #if defined(RE4DC_SUBMIT_PROFILE)
 // Diagnostic only: how many distinct room vertices a frame actually touches,
 // which bounds what any vertex cache can save.
@@ -3492,6 +3517,89 @@ bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
     return true;
 }
 
+bool prepare_room_batch_locals(const re4dc::room::Package& room) {
+    const auto& header = room.header();
+    if(header.batch_count > kRoomBatchTableCapacity ||
+       header.primitive_index_count > kRoomLocalIndexCapacity ||
+       header.vertex_count > 0xffffU) {
+        return false;
+    }
+    const auto* batches = room.batches();
+    const auto* primitives = room.primitives();
+    const auto* primitive_indices = room.primitive_indices();
+    if(batches == nullptr || primitives == nullptr ||
+       primitive_indices == nullptr) {
+        return false;
+    }
+    std::uint32_t* last_batch =
+        new (std::nothrow) std::uint32_t[header.vertex_count];
+    std::uint16_t* local_of =
+        new (std::nothrow) std::uint16_t[header.vertex_count];
+    if(last_batch == nullptr || local_of == nullptr) {
+        delete[] last_batch;
+        delete[] local_of;
+        return false;
+    }
+    std::memset(last_batch, 0xff, sizeof(std::uint32_t) * header.vertex_count);
+    std::uint32_t total = 0U;
+    std::uint32_t largest = 0U;
+    std::uint32_t oversize = 0U;
+    bool ok = true;
+    for(std::uint32_t batch_index = 0U;
+        ok && batch_index < header.batch_count; ++batch_index) {
+        const auto& batch = batches[batch_index];
+        const std::uint32_t first = total;
+        std::uint32_t count = 0U;
+        const std::uint32_t primitive_end =
+            batch.first_primitive + batch.primitive_count;
+        for(std::uint32_t primitive_index = batch.first_primitive;
+            ok && primitive_index < primitive_end; ++primitive_index) {
+            const auto& primitive = primitives[primitive_index];
+            for(std::uint32_t local = 0U; local < primitive.vertex_count;
+                ++local) {
+                const std::uint32_t position = primitive.first_vertex + local;
+                const std::uint32_t vertex_index = primitive_indices[position];
+                if(position >= header.primitive_index_count ||
+                   vertex_index >= header.vertex_count) {
+                    ok = false;
+                    break;
+                }
+                if(last_batch[vertex_index] != batch_index) {
+                    if(total >= kRoomBatchVertexCapacity || count >= 0xffffU) {
+                        ok = false;
+                        break;
+                    }
+                    last_batch[vertex_index] = batch_index;
+                    local_of[vertex_index] = static_cast<std::uint16_t>(count);
+                    g_room_batch_vertices[total++] =
+                        static_cast<std::uint16_t>(vertex_index);
+                    ++count;
+                }
+                g_room_local_indices[position] = local_of[vertex_index];
+            }
+        }
+        g_room_batch_first_vertex[batch_index] = first;
+        g_room_batch_vertex_count[batch_index] =
+            static_cast<std::uint16_t>(count);
+        if(count > largest) {
+            largest = count;
+        }
+        if(count > kRoomBatchSlotCapacity) {
+            ++oversize;
+        }
+    }
+    delete[] last_batch;
+    delete[] local_of;
+    if(!ok) {
+        return false;
+    }
+    g_room_batch_local_total = total;
+    g_room_batch_local_max = largest;
+    g_room_batch_local_oversize = oversize;
+    g_room_batch_locals_ready = true;
+    return true;
+}
+
 std::uint32_t clip_projected_triangle(const RenderVertex* source,
                                        pvr_vertex_t* output,
                                        std::uint8_t cull_mode,
@@ -3599,6 +3707,10 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
     return triangle_count;
 }
 
+void fill_room_entry(const re4dc::room::Vertex* source,
+                     std::uint32_t vertex_index, std::uint32_t light_selection,
+                     RoomVertexCacheEntry& entry, FrameStats& stats);
+
 const RoomVertexCacheEntry& cached_room_entry(
     const re4dc::room::Vertex* source, std::uint32_t vertex_index,
     FrameStats& stats, std::uint32_t light_selection) {
@@ -3626,10 +3738,20 @@ const RoomVertexCacheEntry& cached_room_entry(
     }
 
     ++stats.room_cache_misses;
-    ++stats.transformed_vertices;
 #if defined(RE4DC_SUBMIT_PROFILE)
     const std::uint64_t miss_start = timer_ns_gettime64();
 #endif
+    fill_room_entry(source, vertex_index, light_selection, entry, stats);
+#if defined(RE4DC_SUBMIT_PROFILE)
+    stats.room_miss_ns += timer_ns_gettime64() - miss_start;
+#endif
+    return entry;
+}
+
+void fill_room_entry(const re4dc::room::Vertex* source,
+                     std::uint32_t vertex_index, std::uint32_t light_selection,
+                     RoomVertexCacheEntry& entry, FrameStats& stats) {
+    ++stats.transformed_vertices;
     const re4dc::room::Vertex& input = source[vertex_index];
     float x = input.x;
     float y = input.y;
@@ -3696,10 +3818,6 @@ const RoomVertexCacheEntry& cached_room_entry(
         .offset_color = 0,
     };
     entry.argb = shade_color(light_red, light_green, light_blue);
-#if defined(RE4DC_SUBMIT_PROFILE)
-    stats.room_miss_ns += timer_ns_gettime64() - miss_start;
-#endif
-    return entry;
 }
 
 const RenderVertex& cached_room_vertex(
@@ -3737,6 +3855,14 @@ void submit_room_strips(const re4dc::room::Package& room,
     const auto* source = room.vertices();
     const auto* primitives = room.primitives();
     const auto* primitive_indices = room.primitive_indices();
+    const std::uint32_t batch_index =
+        static_cast<std::uint32_t>(&batch - room.batches());
+    const bool use_locals =
+        g_room_batch_locals_ready &&
+        g_room_batch_vertex_count[batch_index] <= kRoomBatchSlotCapacity;
+    const std::uint16_t* batch_vertices =
+        g_room_batch_vertices + g_room_batch_first_vertex[batch_index];
+    const std::uint32_t batch_serial = ++g_room_batch_serial;
     std::uint32_t submit_count = 0U;
     begin_pvr_packet(submit_vertices, submit_count, header);
     const auto flush = [&]() {
@@ -3827,25 +3953,51 @@ void submit_room_strips(const re4dc::room::Package& room,
             const std::uint64_t gather_start = timer_ns_gettime64();
             ++stats.room_gather_brackets;
 #endif
-            for(std::uint32_t local = 0U; local < primitive.vertex_count;
-                ++local) {
-                const std::uint32_t vertex_index =
-                    primitive_indices[primitive.first_vertex + local];
-                const RoomVertexCacheEntry& entry = cached_room_entry(
-                    source, vertex_index, stats, light_selection);
-                g_room_strip_entries[local] = &entry;
-                g_room_strip_indices[local] = vertex_index;
-                const float depth = entry.vertex.position.depth;
-                if(depth < kNearClipDistance || depth > kFarClipDistance) {
-                    direct_strip = false;
-                    break;
+            if(use_locals) {
+                const std::uint16_t* local_indices =
+                    g_room_local_indices + primitive.first_vertex;
+                for(std::uint32_t local = 0U; local < primitive.vertex_count;
+                    ++local) {
+                    RoomBatchSlot& slot =
+                        g_room_batch_slots[local_indices[local]];
+                    ++stats.room_index_references;
+                    if(slot.serial != batch_serial) {
+                        ++stats.room_cache_misses;
+                        fill_room_entry(source,
+                                        batch_vertices[local_indices[local]],
+                                        light_selection, slot.entry, stats);
+                        slot.serial = batch_serial;
+                    } else {
+                        ++stats.room_cache_hits;
+                    }
+                    g_room_strip_entries[local] = &slot.entry;
+                    const float depth = slot.entry.vertex.position.depth;
+                    if(depth < kNearClipDistance || depth > kFarClipDistance) {
+                        direct_strip = false;
+                        break;
+                    }
+                }
+            } else {
+                for(std::uint32_t local = 0U; local < primitive.vertex_count;
+                    ++local) {
+                    const std::uint32_t vertex_index =
+                        primitive_indices[primitive.first_vertex + local];
+                    const RoomVertexCacheEntry& entry = cached_room_entry(
+                        source, vertex_index, stats, light_selection);
+                    g_room_strip_entries[local] = &entry;
+                    g_room_strip_indices[local] = vertex_index;
+                    const float depth = entry.vertex.position.depth;
+                    if(depth < kNearClipDistance || depth > kFarClipDistance) {
+                        direct_strip = false;
+                        break;
+                    }
                 }
             }
 #if defined(RE4DC_SUBMIT_PROFILE)
             stats.room_gather_ns += timer_ns_gettime64() - gather_start;
 #endif
         }
-        if(direct_strip) {
+        if(direct_strip && !use_locals) {
 #if defined(RE4DC_SUBMIT_PROFILE)
             const std::uint64_t verify_start = timer_ns_gettime64();
 #endif
@@ -5988,6 +6140,16 @@ int main() {
     if(!prepare_room_primitive_bounds(room)) {
         std::printf("re4dc-room: room strip bounds unavailable; "
                     "strip culling disabled\n");
+    }
+    if(prepare_room_batch_locals(room)) {
+        std::printf("re4dc-room: %lu batch-local vertices, largest batch %lu, "
+                    "%lu batches over the slot table\n",
+                    static_cast<unsigned long>(g_room_batch_local_total),
+                    static_cast<unsigned long>(g_room_batch_local_max),
+                    static_cast<unsigned long>(g_room_batch_local_oversize));
+    } else {
+        std::printf("re4dc-room: batch-local vertex tables unavailable; "
+                    "hashed room cache only\n");
     }
     std::uint32_t room_light_links = 0U;
     if(room.source_groups() != nullptr) {
