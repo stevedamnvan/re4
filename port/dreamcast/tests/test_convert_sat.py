@@ -15,7 +15,7 @@ sys.modules[SPEC.name] = SAT
 SPEC.loader.exec_module(SAT)
 
 
-def make_sat() -> bytes:
+def make_sat(with_hierarchy: bool = False) -> bytes:
     vertices = [(0.0, 0.0, 0.0), (200.0, 0.0, 0.0), (0.0, 0.0, 200.0), (0.0, 200.0, 0.0)]
     normals = [(0.0, 1.0, 0.0), (1.0, 0.0, 0.0)]
     edges = [(0.0, 0.0, 0.0)] * 6
@@ -23,11 +23,23 @@ def make_sat() -> bytes:
         (0, 2, 1, 0, 0, 1, 2, 0xE0000000),
         (0, 3, 2, 1, 3, 4, 5, 0x20000000),
     ]
-    section = bytearray(SAT.SAT_HEADER.pack(0x20, 0, 4, 2, 6, 0, 2, 1, 0, 1, 0))
+    section = bytearray(SAT.SAT_HEADER.pack(
+        0x20, 0, 4, 2, 6, 0, 2, 1, 0, 1, 2 if with_hierarchy else 0
+    ))
     for vector in vertices + normals + edges:
         section.extend(SAT.SAT_VECTOR.pack(*vector))
     for polygon in polygons:
         section.extend(SAT.SAT_POLYGON.pack(*polygon))
+    if with_hierarchy:
+        section.extend(SAT.SAT_BLOCK.pack(
+            0.0, 0.0, 0.0, 200.0, 0.0, 200.0,
+            0, 0, 0, 1, 0,
+        ))
+        section.extend(SAT.SAT_BLOCK.pack(
+            0.0, 0.0, 0.0, 200.0, 0.0, 200.0,
+            1, 0, 1, 0, 0,
+        ))
+        section.extend(struct.pack(">2H", 0, 1))
     return bytes((0x80, 1, 0xFF, 0x79)) + struct.pack(">I", 8) + section
 
 
@@ -66,6 +78,33 @@ class ConvertSatTests(unittest.TestCase):
             manifest = json.loads(output.with_suffix(".re4sat.json").read_text())
             self.assertEqual(manifest["source_scale"], 0.001)
             self.assertAlmostEqual(manifest["bounds"]["max"][0], 0.2)
+
+    def test_preserves_source_edges_and_block_hierarchy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "hierarchy.SAT"
+            output = root / "hierarchy.re4sat"
+            source.write_bytes(make_sat(with_hierarchy=True))
+            self.assertEqual(SAT.main([str(source), str(output)]), 0)
+            package = output.read_bytes()
+            header = SAT.HEADER.unpack_from(package)
+            hierarchy_offset = header[14] + header[8] * SAT.POLYGON.size
+            hierarchy = SAT.HIERARCHY_HEADER.unpack_from(package, hierarchy_offset)
+            self.assertEqual(hierarchy[0], SAT.HIERARCHY_MAGIC)
+            self.assertEqual(hierarchy[7:11], (6, 2, 2, 2))
+            parent = SAT.BLOCK.unpack_from(package, hierarchy[13])
+            child = SAT.BLOCK.unpack_from(package, hierarchy[13] + SAT.BLOCK.size)
+            self.assertEqual(parent[6:10], (0, 0, 0, 1))
+            self.assertEqual(parent[10:14], (1, 0xFFFFFFFF, 0, 0))
+            self.assertEqual(child[6:10], (1, 0, 1, 0))
+            self.assertEqual(child[10:14], (0xFFFFFFFF, 0xFFFFFFFF, 0, 2))
+            self.assertEqual(
+                struct.unpack_from("<2H", package, hierarchy[14]), (0, 1)
+            )
+            manifest = json.loads(output.with_suffix(".re4sat.json").read_text())
+            self.assertEqual(manifest["source_edges"], 6)
+            self.assertEqual(manifest["source_blocks"], 2)
+            self.assertEqual(manifest["source_block_polygon_references"], 2)
 
     def test_rejects_inconsistent_polygon_classes(self):
         with tempfile.TemporaryDirectory() as directory:

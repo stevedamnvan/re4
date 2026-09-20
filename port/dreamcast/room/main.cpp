@@ -98,14 +98,17 @@ struct DemoTelemetry {
     std::uint32_t room_near_trivial_accepts;
     std::uint32_t room_near_trivial_rejects;
     std::uint32_t room_near_crossings;
+    std::uint32_t collision_queries;
+    std::uint32_t collision_block_tests;
+    std::uint32_t collision_polygon_candidates;
 };
 
-static_assert(sizeof(DemoTelemetry) == 280U);
+static_assert(sizeof(DemoTelemetry) == 292U);
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
-    telemetry.version = 4U;
+    telemetry.version = 5U;
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
 }
@@ -689,15 +692,208 @@ bool projected_floor_height(const re4dc::collision::Vec3& a,
     return true;
 }
 
+enum class CollisionCandidateGroup : std::uint8_t {
+    Floors,
+    Walls,
+};
+
+constexpr std::uint32_t kCollisionPolygonCapacity = 0x2000U;
+std::uint16_t g_collision_candidates[kCollisionPolygonCapacity];
+std::uint8_t g_collision_visited[kCollisionPolygonCapacity / 8U];
+
+struct CollisionRuntimeStats {
+    std::uint32_t queries = 0U;
+    std::uint32_t block_tests = 0U;
+    std::uint32_t polygon_candidates = 0U;
+};
+
+CollisionRuntimeStats g_collision_runtime_stats;
+
+struct CollisionBlockQuery {
+    re4dc::collision::Vec3 start;
+    re4dc::collision::Vec3 end;
+    float radius;
+    bool swept_sphere;
+};
+
+bool collision_line_cross_xz(const re4dc::collision::Vec3& a,
+                             const re4dc::collision::Vec3& b,
+                             const re4dc::collision::Vec3& c,
+                             const re4dc::collision::Vec3& d) {
+    const float denominator =
+        (b.x - a.x) * (d.z - c.z) - (b.z - a.z) * (d.x - c.x);
+    if(denominator == 0.0f) {
+        return false;
+    }
+    const float ax = a.x - c.x;
+    const float az = a.z - c.z;
+    const float t = az * (d.x - c.x) - ax * (d.z - c.z);
+    const float s = az * (b.x - a.x) - ax * (b.z - a.z);
+    const auto within = [denominator](float value) {
+        return denominator >= 0.0f
+            ? value >= 0.0f && value <= denominator
+            : value <= 0.0f && value >= denominator;
+    };
+    return within(t) && within(s);
+}
+
+bool collision_block_line_overlap(const re4dc::collision::Block& block,
+                                  const CollisionBlockQuery& query) {
+    const float mid_x = (query.start.x + query.end.x) * 0.5f;
+    const float mid_z = (query.start.z + query.end.z) * 0.5f;
+    const float direction_x = query.start.x - mid_x;
+    const float direction_z = query.start.z - mid_z;
+    const float abs_direction_x = std::fabs(direction_x);
+    const float abs_direction_z = std::fabs(direction_z);
+    const float dx = (mid_x - block.minimum[0]) - block.size[0] * 0.5f;
+    const float dz = (mid_z - block.minimum[2]) - block.size[2] * 0.5f;
+    if(std::fabs(dx) > abs_direction_x + block.size[0] * 0.5f ||
+       std::fabs(dz) > abs_direction_z + block.size[2] * 0.5f) {
+        return false;
+    }
+    return std::fabs(dx * direction_z - dz * direction_x) <=
+           (block.size[0] * abs_direction_z +
+            block.size[2] * abs_direction_x) * 0.5f;
+}
+
+bool collision_block_sphere_overlap(const re4dc::collision::Block& block,
+                                    const CollisionBlockQuery& query) {
+    const float x0 = block.minimum[0];
+    const float z0 = block.minimum[2];
+    const float x1 = x0 + block.size[0] + query.radius;
+    const float z1 = z0 + block.size[2] + query.radius;
+    const float center_x = (query.start.x + query.end.x) * 0.5f;
+    const float center_z = (query.start.z + query.end.z) * 0.5f;
+    const float half_x = std::fabs(query.start.x - query.end.x) * 0.5f +
+                         query.radius;
+    const float half_z = std::fabs(query.start.z - query.end.z) * 0.5f +
+                         query.radius;
+    if(x0 + block.size[0] < center_x - half_x ||
+       x0 - block.size[0] > center_x + half_x ||
+       z0 + block.size[2] < center_z - half_z ||
+       z0 - block.size[2] > center_z + half_z) {
+        return false;
+    }
+    const auto inside = [&](const re4dc::collision::Vec3& point) {
+        return point.x >= x0 - query.radius && point.x <= x1 &&
+               point.z >= z0 - query.radius && point.z <= z1;
+    };
+    if(inside(query.start) || inside(query.end)) {
+        return true;
+    }
+    re4dc::collision::Vec3 corner_a{x0, 0.0f, z0};
+    re4dc::collision::Vec3 corner_b{x1, 0.0f, z0};
+    if(collision_line_cross_xz(query.start, query.end,
+                               corner_a, corner_b)) {
+        return true;
+    }
+    corner_a.z = corner_b.z = z1;
+    if(collision_line_cross_xz(query.start, query.end,
+                               corner_a, corner_b)) {
+        return true;
+    }
+    corner_a.z = z0;
+    corner_b.x = x0;
+    if(collision_line_cross_xz(query.start, query.end,
+                               corner_a, corner_b)) {
+        return true;
+    }
+    corner_a.x = corner_b.x = x1;
+    return collision_line_cross_xz(query.start, query.end,
+                                    corner_a, corner_b);
+}
+
+void collect_collision_block_chain(
+    const re4dc::collision::Package& collision, std::uint32_t block_index,
+    const CollisionBlockQuery& query, CollisionCandidateGroup group,
+    std::uint32_t& block_visits, std::uint32_t& candidate_count) {
+    const auto* hierarchy = collision.hierarchy();
+    const auto* blocks = collision.blocks();
+    const auto* indices = collision.block_indices();
+    while(block_index != re4dc::collision::kNoBlock &&
+          block_visits < hierarchy->block_count) {
+        ++block_visits;
+        const auto& block = blocks[block_index];
+        const bool overlap = query.swept_sphere
+            ? collision_block_sphere_overlap(block, query)
+            : collision_block_line_overlap(block, query);
+        if(overlap) {
+            if((block.flags & 1U) != 0U) {
+                collect_collision_block_chain(
+                    collision, block.child, query, group, block_visits,
+                    candidate_count);
+            } else {
+                const std::uint32_t first = group == CollisionCandidateGroup::Walls
+                    ? static_cast<std::uint32_t>(block.floor_count) +
+                          block.slope_count
+                    : 0U;
+                const std::uint32_t end = group == CollisionCandidateGroup::Walls
+                    ? first + block.wall_count
+                    : static_cast<std::uint32_t>(block.floor_count) +
+                          block.slope_count;
+                for(std::uint32_t local = first; local < end; ++local) {
+                    const std::uint16_t polygon =
+                        indices[block.first_polygon + local];
+                    const std::uint8_t bit =
+                        static_cast<std::uint8_t>(1U << (polygon & 7U));
+                    if((g_collision_visited[polygon >> 3U] & bit) != 0U) {
+                        continue;
+                    }
+                    g_collision_visited[polygon >> 3U] |= bit;
+                    g_collision_candidates[candidate_count++] = polygon;
+                }
+            }
+        }
+        block_index = block.next;
+    }
+}
+
+std::uint32_t collect_collision_candidates(
+    const re4dc::collision::Package& collision,
+    const re4dc::collision::Vec3& start,
+    const re4dc::collision::Vec3& end, float radius,
+    CollisionCandidateGroup group, bool swept_sphere = false) {
+    const std::uint32_t first = group == CollisionCandidateGroup::Walls
+        ? collision.header().floor_count + collision.header().slope_count
+        : 0U;
+    const std::uint32_t end_index = group == CollisionCandidateGroup::Walls
+        ? collision.header().polygon_count
+        : collision.header().floor_count + collision.header().slope_count;
+    ++g_collision_runtime_stats.queries;
+    if(!collision.has_hierarchy() ||
+       collision.header().polygon_count > kCollisionPolygonCapacity) {
+        std::uint32_t count = 0U;
+        for(std::uint32_t polygon = first; polygon < end_index; ++polygon) {
+            g_collision_candidates[count++] =
+                static_cast<std::uint16_t>(polygon);
+        }
+        g_collision_runtime_stats.polygon_candidates += count;
+        return count;
+    }
+    std::memset(g_collision_visited, 0, sizeof(g_collision_visited));
+    std::uint32_t block_visits = 0U;
+    std::uint32_t candidate_count = 0U;
+    collect_collision_block_chain(
+        collision, 0U, {start, end, radius, swept_sphere}, group,
+        block_visits, candidate_count);
+    g_collision_runtime_stats.block_tests += block_visits;
+    g_collision_runtime_stats.polygon_candidates += candidate_count;
+    return candidate_count;
+}
+
 bool find_floor(const re4dc::collision::Package& collision, float x, float z,
                 float reference_y, float& floor_y) {
     const auto* vertices = collision.vertices();
     const auto* polygons = collision.polygons();
-    const std::uint32_t count =
-        collision.header().floor_count + collision.header().slope_count;
+    const re4dc::collision::Vec3 start{x, reference_y + kStepUp, z};
+    const re4dc::collision::Vec3 end{x, reference_y - kStepDown, z};
+    const std::uint32_t count = collect_collision_candidates(
+        collision, start, end, 0.0f, CollisionCandidateGroup::Floors);
     float best_delta = 1.0e9f;
     bool found = false;
-    for(std::uint32_t index = 0; index < count; ++index) {
+    for(std::uint32_t candidate_index = 0; candidate_index < count;
+        ++candidate_index) {
+        const std::uint32_t index = g_collision_candidates[candidate_index];
         const auto& polygon = polygons[index];
         float candidate = 0.0f;
         if(!projected_floor_height(vertices[polygon.vertex[0]],
@@ -723,13 +919,17 @@ std::uint32_t resolve_actor_walls(
     const auto* vertices = collision.vertices();
     const auto* normals = collision.normals();
     const auto* polygons = collision.polygons();
-    const std::uint32_t first_wall =
-        collision.header().floor_count + collision.header().slope_count;
     std::uint32_t hits = 0;
     for(unsigned pass = 0; pass < 3; ++pass) {
         bool moved = false;
-        for(std::uint32_t index = first_wall;
-            index < collision.header().polygon_count; ++index) {
+        const re4dc::collision::Vec3 position{actor_x, actor_y, actor_z};
+        const std::uint32_t candidate_count = collect_collision_candidates(
+            collision, position, position, actor_radius,
+            CollisionCandidateGroup::Walls, true);
+        for(std::uint32_t candidate_index = 0;
+            candidate_index < candidate_count; ++candidate_index) {
+            const std::uint32_t index =
+                g_collision_candidates[candidate_index];
             const auto& polygon = polygons[index];
             const auto& a = vertices[polygon.vertex[0]];
             const auto& b = vertices[polygon.vertex[1]];
@@ -1587,10 +1787,11 @@ bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
                              const re4dc::collision::Vec3& end) {
     const auto* vertices = collision.vertices();
     const auto* polygons = collision.polygons();
-    const std::uint32_t first_wall =
-        collision.header().floor_count + collision.header().slope_count;
-    for(std::uint32_t index = first_wall;
-        index < collision.header().polygon_count; ++index) {
+    const std::uint32_t candidate_count = collect_collision_candidates(
+        collision, start, end, 0.0f, CollisionCandidateGroup::Walls);
+    for(std::uint32_t candidate_index = 0;
+        candidate_index < candidate_count; ++candidate_index) {
+        const std::uint32_t index = g_collision_candidates[candidate_index];
         const auto& polygon = polygons[index];
         if(segment_intersects_triangle(
                start, end, vertices[polygon.vertex[0]],
@@ -1608,12 +1809,13 @@ bool source_camera_wall_hit(
     re4dc::collision::Vec3& hit) {
     const auto* vertices = collision.vertices();
     const auto* polygons = collision.polygons();
-    const std::uint32_t first_wall =
-        collision.header().floor_count + collision.header().slope_count;
     float nearest_fraction = 1.0f;
     bool found = false;
-    for(std::uint32_t index = first_wall;
-        index < collision.header().polygon_count; ++index) {
+    const std::uint32_t candidate_count = collect_collision_candidates(
+        collision, start, end, 0.0f, CollisionCandidateGroup::Walls);
+    for(std::uint32_t candidate_index = 0;
+        candidate_index < candidate_count; ++candidate_index) {
+        const std::uint32_t index = g_collision_candidates[candidate_index];
         const auto& polygon = polygons[index];
         float fraction = 0.0f;
         if(segment_triangle_hit_fraction(
@@ -3672,13 +3874,18 @@ int main() {
     g_re4dc_demo_telemetry.flags = 0x10000002U;
     std::printf(
         "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
-        "leon=%lu/%lu/%lu ganado=%lu/%lu/%lu source_groups=%s\n",
+        "hierarchy=%lu/%lu leon=%lu/%lu/%lu ganado=%lu/%lu/%lu "
+        "source_groups=%s\n",
         static_cast<unsigned long>(room.header().vertex_count),
         static_cast<unsigned long>(room.header().index_count / 3U),
         static_cast<unsigned long>(room.header().group_count),
         static_cast<unsigned long>(collision.header().floor_count),
         static_cast<unsigned long>(collision.header().slope_count),
         static_cast<unsigned long>(collision.header().wall_count),
+        static_cast<unsigned long>(collision.has_hierarchy()
+            ? collision.hierarchy()->block_count : 0U),
+        static_cast<unsigned long>(collision.has_hierarchy()
+            ? collision.hierarchy()->block_index_count : 0U),
         static_cast<unsigned long>(leon.header().vertex_count),
         static_cast<unsigned long>(leon.header().index_count / 3U),
         static_cast<unsigned long>(leon.header().frame_count),
@@ -4032,6 +4239,7 @@ int main() {
     while(true) {
         const std::uint64_t now = timer_us_gettime64();
         const std::uint64_t current_work_start = now;
+        g_collision_runtime_stats = {};
         const std::uint64_t outer_interval_us = now - previous_time;
         previous_time = now;
         const std::uint64_t maximum_accepted_interval =
@@ -4367,6 +4575,12 @@ int main() {
             stats.room_near_trivial_rejects;
         g_re4dc_demo_telemetry.room_near_crossings =
             stats.room_near_crossings;
+        g_re4dc_demo_telemetry.collision_queries =
+            g_collision_runtime_stats.queries;
+        g_re4dc_demo_telemetry.collision_block_tests =
+            g_collision_runtime_stats.block_tests;
+        g_re4dc_demo_telemetry.collision_polygon_candidates =
+            g_collision_runtime_stats.polygon_candidates;
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;

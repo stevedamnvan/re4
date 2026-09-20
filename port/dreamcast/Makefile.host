@@ -12,6 +12,8 @@ R10D_SAT ?= build/private/r10d.re4sat
 R10D_TEXTURE ?= build/private/r10d.re4tex
 R100_RTP_SOURCE ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_017.RTP
 R100_RTP ?= build/private/r100.re4rtp
+R100_SAT_SOURCE ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_001.SAT
+R100_SAT ?= build/private/r100-meters.re4sat
 R100_EXPORT_DIR ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/stream/r100_full_export
 R100_OBJ ?= $(R100_EXPORT_DIR)/R100.encounter-radius180.obj
 R100_SMX ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_006.SMX
@@ -30,7 +32,7 @@ CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_SAMPLE_STEP ?= 4
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source route-r100 texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source collision-r100-source route-r100 texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -68,6 +70,10 @@ room-r100-source:
 		--smd FILE_02=$(R100_EXPORT_DIR)/r100_02_000.SMD \
 		--common-smd $(R100_EXPORT_DIR)/r100_005.SMD \
 		--source-unit-scale 0.001 $(R100_OBJ) $(R100_ROOM)
+
+collision-r100-source:
+	$(PYTHON) tools/convert_sat.py --source-scale 0.001 \
+		$(R100_SAT_SOURCE) $(R100_SAT)
 
 route-r100:
 	$(PYTHON) tools/convert_rtp.py $(R100_RTP_SOURCE) $(R100_RTP)

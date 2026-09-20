@@ -12,7 +12,10 @@ implementation now carries source object/cull/mask/volume data and applies the
 source-derived room and actor selection in
 [R1B_SOURCE_SELECTION_CHECKPOINT.md](R1B_SOURCE_SELECTION_CHECKPOINT.md).
 The matched original-game selected-light trace and image comparison required to
-close R1b remain pending.
+close R1b remain pending. The first R2a implementation also preserves and uses
+the authored SAT block graph, edges, and duplicate suppression in
+[R2A_SAT_HIERARCHY_CHECKPOINT.md](R2A_SAT_HIERARCHY_CHECKPOINT.md); source
+narrow-phase/query-trace parity remains open.
 
 ## Objective and boundaries
 
@@ -145,7 +148,7 @@ an optimization commit.
 | R0 | Freeze references; instrument target and matched original-game workload; correct input/debt and memory accounting; establish hardware route | Frame-associated trace, source-object/light/query inventory, CPU/PVR/presentation separation, complete debt counters; hardware result or explicitly pending status |
 | R1a | Bounded unique room-vertex cache and trivial clip classification | Same draw/state output, reduced transform/light counts, measured stage cost, fixed scratch ceiling |
 | R1b | Recover source object identity and per-model light selection; prepare constants; only then cache/bake static contributions | **In progress:** target package/runtime implemented and measured; selected light IDs/order and changed image still need the matched source trace |
-| R2a | Export source SAT blocks/edges and adapt source traversal/filtering/primitives | Query manager, visitation order, hit attributes, and contact sequence agree with source; bounded memory and measured polygon-test cost |
+| R2a | Export source SAT blocks/edges and adapt source traversal/filtering/primitives | **In progress:** hierarchy/edges/traversal are implemented and measured; source primitive, attribute, manager, and matched query-result parity remain open |
 | R2b | Retain source attribute/weight-palette structure; source eligibility before preparation; benchmark skinning | Selected clip, normal, attachment and event parity; separate position/normal/corner counts and measured target cost |
 | R3 | Native draw templates from source cull/material state; child clusters; clipping/packet improvements | Same authored draw meaning; no missing surfaces, alpha/order regressions, clipping failures, or TA buffer overflow |
 | R4 | Qualify the unchanged encounter against the stock hardware frame budget | Live presentation/input/audio distributions and peak memory meet the acceptance section below |

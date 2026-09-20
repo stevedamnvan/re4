@@ -162,6 +162,8 @@ presentation limits are in [the P3 prototype checkpoint](docs/P3_PLAYABLE_BASELI
 The current measured optimization results are in
 [the r100 R1a performance checkpoint](docs/R1A_PERFORMANCE_CHECKPOINT.md) and
 [the R1b source-selection checkpoint](docs/R1B_SOURCE_SELECTION_CHECKPOINT.md).
+The source collision broad-phase recovery is measured in
+[the R2a SAT hierarchy checkpoint](docs/R2A_SAT_HIERARCHY_CHECKPOINT.md).
 
 The source audio targets privately extract `wep02.drs`, `em12.drs`, and
 `pl00.drs` from
@@ -194,8 +196,9 @@ make -C port/dreamcast/room \
    per-model light selection against a matched debug-game trace before baking
    lighting or reducing visible assets. R0, R1a, and the target-side R1b
    implementation are complete; source-trace acceptance remains open.
-3. Preserve the source SAT hierarchy and source position/normal/weight-palette
-   identities instead of designing replacement collision or animation systems.
+3. Complete source SAT primitive/query parity on top of the recovered hierarchy,
+   then preserve source position/normal/weight-palette identities instead of
+   designing replacement collision or animation systems.
 4. Service input independently of the render interval, then test manual combat,
    reload, death, and repeated resets without discarded simulation time.
 5. Package the private Flycast demo and validate loading, timing, memory, audio,
