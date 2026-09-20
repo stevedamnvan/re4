@@ -439,6 +439,20 @@ def sampled_frame_indices(frame_count, step):
     return list(range(0, frame_count, step))
 
 
+def root_forward_speed_mps(motion, frames_per_second):
+    """Extract FCV root motion applied to the actor by MotionMove."""
+    if motion.max_frame <= 0:
+        return 0.0
+    for joint in motion.joints:
+        if joint.kind == 1 and joint.parts_no == 0 and len(joint.axes) >= 3:
+            forward = joint.axes[2]
+            if not forward.keys:
+                return 0.0
+            displacement_mm = forward.keys[-1][0] - forward.keys[0][0]
+            return displacement_mm * 0.001 * frames_per_second / motion.max_frame
+    return 0.0
+
+
 def quantise_frames(frames, quantum_mm):
     output = bytearray()
     maximum_error = 0.0
@@ -622,8 +636,10 @@ def convert(args):
                     source_frame[index] for index in draw_sources
                 )
             frames.append(combined_frame)
+        root_speed = root_forward_speed_mps(motion, args.fps)
         clips.append((
-            name, first_frame, len(frame_indices), args.fps / args.sample_step
+            name, first_frame, len(frame_indices), args.fps / args.sample_step,
+            root_speed,
         ))
         source_manifest.append({
             "name": name,
@@ -631,6 +647,7 @@ def convert(args):
             "entry": entry_index,
             "source_frames": motion.n_frames,
             "frames": len(frame_indices),
+            "root_forward_speed_mps": root_speed,
             "sha256": hashlib.sha256(entry.data).hexdigest(),
         })
 
@@ -656,10 +673,11 @@ def convert(args):
     struct.pack_into(f"<{len(indices)}H", blob, index_offset, *indices)
     for index, batch in enumerate(batches):
         BATCH.pack_into(blob, batch_offset + index * BATCH.size, *batch)
-    for index, (name, first_frame, frame_count, fps) in enumerate(clips):
+    for index, (name, first_frame, frame_count, fps, root_speed) in enumerate(clips):
         encoded = name.encode("ascii") + b"\0"
         CLIP.pack_into(blob, clip_offset + index * CLIP.size,
-                       encoded.ljust(16, b"\0"), first_frame, frame_count, fps, 0.0)
+                       encoded.ljust(16, b"\0"), first_frame, frame_count, fps,
+                       root_speed)
     for index, uv in enumerate(texcoords):
         UV.pack_into(blob, uv_offset + index * UV.size, *uv)
     blob[frame_offset:] = frame_data

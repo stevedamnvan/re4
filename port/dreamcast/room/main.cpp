@@ -64,7 +64,7 @@ constexpr float kPlayerRadius = 0.42f;
 constexpr float kPlayerHeight = 1.8f;
 constexpr float kStepUp = 0.55f;
 constexpr float kStepDown = 2.5f;
-constexpr float kMoveSpeed = 6.0f;
+constexpr float kFallbackPlayerMoveSpeed = 6.0f;
 constexpr float kTurnSpeed = 2.4f;
 #if defined(RE4DC_SCENE_R100)
 // r100_Sce_look in src/st1/r100.cpp places Leon in the opening cabin encounter.
@@ -162,7 +162,7 @@ constexpr float kEnemySpawnZ = -256.0f;
 constexpr float kEnemySpawnYaw = 0.0f;
 constexpr float kFarClipDistance = 35.0f;
 #endif
-constexpr float kEnemyMoveSpeed = 1.9f;
+constexpr float kFallbackEnemyMoveSpeed = 1.9f;
 // em10AxeAtkCk admits the normal hatchet attack at sqrt(2890000) source
 // units. Room and actor coordinates use the port's 0.001 metre scale.
 constexpr float kEnemyAttackAcquireRange = 1.7f;
@@ -579,7 +579,8 @@ std::uint32_t resolve_actor_walls(
 }
 
 void update_player(Player& player, const re4dc::collision::Package& collision,
-                   const Input& input, float delta_seconds) {
+                   const Input& input, float move_speed,
+                   float delta_seconds) {
     player.aiming = input.aim && !player.dead;
     if(player.dead) {
         return;
@@ -588,8 +589,8 @@ void update_player(Player& player, const re4dc::collision::Package& collision,
     const float movement = player.aiming ? 0.0f : input.move;
     const float old_x = player.x;
     const float old_z = player.z;
-    player.x += std::sin(player.yaw) * movement * kMoveSpeed * delta_seconds;
-    player.z += std::cos(player.yaw) * movement * kMoveSpeed * delta_seconds;
+    player.x += std::sin(player.yaw) * movement * move_speed * delta_seconds;
+    player.z += std::cos(player.yaw) * movement * move_speed * delta_seconds;
     player.wall_hits += resolve_actor_walls(
         collision, player.x, player.y, player.z, kPlayerRadius,
         kPlayerHeight);
@@ -821,6 +822,10 @@ void update_enemy(Enemy& enemy, Player& player,
     const float dz = player.z - enemy.z;
     const float distance = std::sqrt(dx * dx + dz * dz);
     const float target_yaw = std::atan2(dx, dz);
+    const float source_walk_speed =
+        std::fabs(character.clips()[1].root_forward_speed_mps) > 0.0001f
+            ? std::fabs(character.clips()[1].root_forward_speed_mps)
+            : kFallbackEnemyMoveSpeed;
 
     // Once motion 0x80 starts, the source routine completes it even when the
     // player moves out of reach. Its SEQ hit flag is evaluated throughout the
@@ -892,7 +897,9 @@ void update_enemy(Enemy& enemy, Player& player,
         return;
     }
 
-    const float turn = std::clamp(wrap_angle(target_yaw - enemy.yaw),
+    // em10_R1_Walk feeds 30% of the route angle into Muku2 and caps the
+    // result at 0.15707964 radians per source tick.
+    const float turn = std::clamp(wrap_angle(target_yaw - enemy.yaw) * 0.3f,
                                   -kEnemyTurnSpeed * delta_seconds,
                                   kEnemyTurnSpeed * delta_seconds);
     enemy.yaw = wrap_angle(enemy.yaw + turn);
@@ -903,14 +910,16 @@ void update_enemy(Enemy& enemy, Player& player,
         player.x, player.y + 1.5f, player.z};
     const bool attack_path_blocked = segment_blocked_by_wall(
         collision, enemy_chest, player_chest);
+    const float player_angle = std::fabs(wrap_angle(target_yaw - enemy.yaw));
     if(player.dead || distance > kEnemyAttackAcquireRange ||
+       player_angle > kPi * 0.25f ||
        enemy.attack_cooldown_seconds > 0.0f || attack_path_blocked) {
         enemy.state = EnemyState::Chase;
         set_enemy_clip(enemy, 1);
         if(!player.dead && distance > 0.001f) {
-            const float step = std::min(kEnemyMoveSpeed * delta_seconds,
+            const float step = std::min(source_walk_speed * delta_seconds,
                                         distance -
-                                            kEnemyAttackAcquireRange * 0.85f);
+                                            kEnemyAttackAcquireRange);
             const float old_x = enemy.x;
             const float old_z = enemy.z;
             enemy.x += dx / distance * std::max(step, 0.0f);
@@ -2087,6 +2096,19 @@ int main() {
     const vector_t up = {0.0f, -1.0f, 0.0f, 0.0f};
     Player player{};
     Enemy enemy{};
+    const float player_move_speed =
+        std::fabs(leon.clips()[kPlayerWalkClip].root_forward_speed_mps) >
+                0.0001f
+            ? std::fabs(
+                  leon.clips()[kPlayerWalkClip].root_forward_speed_mps)
+            : kFallbackPlayerMoveSpeed;
+    const float enemy_move_speed =
+        std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f
+            ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
+            : kFallbackEnemyMoveSpeed;
+    std::printf(
+        "re4dc-room: source root speeds player=%.4f enemy=%.4f m/s\n",
+        player_move_speed, enemy_move_speed);
     Autoplay autoplay{};
     autoplay.enabled = file_exists("/rd/autoplay.flag");
     if(autoplay.enabled) {
@@ -2183,7 +2205,8 @@ int main() {
             fire_was_down = input.fire;
             reload_was_down = input.reload;
             restart_was_down = input.restart;
-            update_player(player, collision, input, kSimulationDeltaSeconds);
+            update_player(player, collision, input, player_move_speed,
+                          kSimulationDeltaSeconds);
             update_animation(player, leon, input, kSimulationDeltaSeconds);
             update_combat(player, enemy, input, fire_pressed, reload_pressed,
                           kSimulationDeltaSeconds, collision, leon, audio);

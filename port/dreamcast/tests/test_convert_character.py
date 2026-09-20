@@ -2,6 +2,7 @@ import importlib.util
 import math
 from pathlib import Path
 import struct
+from types import SimpleNamespace
 import unittest
 
 
@@ -98,6 +99,22 @@ class CharacterConverterTests(unittest.TestCase):
         self.assertAlmostEqual(point[0], 10.0)
         self.assertAlmostEqual(point[1], 15.0)
         self.assertAlmostEqual(point[2], -70.0)
+
+    def test_extracts_source_root_motion_speed(self):
+        def axis(start, end):
+            return SimpleNamespace(keys=[(start,), (end,)])
+
+        motion = SimpleNamespace(
+            max_frame=60,
+            joints=[SimpleNamespace(
+                kind=1,
+                parts_no=0,
+                axes=[axis(0.0, 0.0), axis(0.0, 0.0), axis(100.0, 3100.0)],
+            )],
+        )
+        self.assertAlmostEqual(
+            MODULE.root_forward_speed_mps(motion, 30.0), 1.5
+        )
 
     def test_clusters_every_animation_frame_and_removes_degenerate_faces(self):
         positions = [

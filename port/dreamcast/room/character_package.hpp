@@ -39,7 +39,7 @@ struct Clip {
     std::uint32_t first_frame;
     std::uint32_t frame_count;
     float frames_per_second;
-    float reserved;
+    float root_forward_speed_mps;
 };
 
 struct Uv {
