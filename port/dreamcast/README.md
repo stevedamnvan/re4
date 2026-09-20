@@ -13,38 +13,47 @@ Historical R0-R3 labels are checkpoint records rather than the task order.
 
 ## Current status
 
-The corrected-character presentation at commit `dba07e2` is the accepted visual
-baseline. Its 32-second Flycast video with game audio is retained at
+The corrected-character presentation at commit `dba07e2` remains the audiovisual
+reference. Its 32-second Flycast video with game audio is retained at
 `C:\Flycast-Evidence\re4-dreamcast\d202-current-progress-video-audio-dba07e2`.
 Leon uses the source body, costume, head, hair, eyes, Red9 hands and handgun;
 the Ganado uses the correct right-handed hand/hatchet assembly. Room, source
 camera, selected lighting, HUD, transparency, collision, and combat remain intact.
 
-The R3n optimization computes conservative room visibility, source
-cull state, and room-light selection once per render snapshot and reuses that
-source-ordered list across opaque, punch-through, and blended passes. All 30,895
-room triangles remain packaged. Against R3m over matched ticks 165-1198, CPU
-frame p50/p95/p99 falls from 92.23/94.71/94.80 ms to
-87.74/89.89/90.30 ms. Presented ready-to-ready p50/p95/p99 remains
-83.41/100.10/102.60 ms: roughly 11-12 fps, still far from acceptance. PVR render
-p50 is 7.50 ms while registration falls from 65.29 to 58.85 ms, so target-side
-preparation/submission remains the current limit. R3o then combines each PVR
-polygon header with its first payload, cutting median immediate calls from 1,219
-to 617 while keeping the same 1,071,840 bytes. Two runs improve median frame and
-registration time by only 0.12 ms, establishing that call setup is a minor cost.
+R3p is now the Dreamcast regression and performance baseline. It fixes a real
+actor-lighting defect: the old runtime overwrote transformed source normals with
+lighting output while later work items could still reference those normals.
+The corrected path keeps immutable normal scratch separate from per-work-item
+lighting. The converted packages prove the traversal was unsafe: Leon has only
+5 identity entries in 6,413 lighting work items and Ganado has only 5 in 1,900.
 
-The current manual build delivered five virtual-controller action edges with no
-queue drops, a maximum one-entry queue, and a 19.96 ms worst sampling gap. The
-host observed fire state after 158 ms and restart after 218 ms at the current
-slow render cadence. This verifies the independent input path, not human-control
-or physical-console responsiveness. Both full autoplay traces reported zero
-simulation overruns and zero discarded simulation time.
+Against R3o over matched ticks 165-1194, R3p reduces CPU frame
+p50/p95/p99 from 87.615/90.116/90.209 ms to 86.217/88.719/88.836 ms.
+TA registration p50 falls from 58.731 to 58.096 ms and actor-lighting p50
+falls from 18.959 to 18.198 ms. It preserves the same medians of 327 visible
+room groups, 9,155 room triangles, 11,900 actor triangles, 617 PVR calls, and
+1,071,840 submitted bytes. Presented cadence remains roughly 11-12 fps, far
+from the 30 fps acceptance target.
 
-Observed post-load R3n headroom is 5,668,864 main-RAM bytes and 1,521,128 PVR
-bytes; the AICA diagnostic reports 1,378,336 bytes. Loading/restart/stack/
-fragmentation high-water instrumentation remains open. Physical Dreamcast timing,
-human input, and audiovisual latency remain untested and are reported separately
-from Flycast.
+The separate normal buffers cost exactly 98,304 bytes: measured post-load
+main-RAM headroom falls from 5,668,864 to 5,570,560 bytes. Both matched traces
+report zero simulation overruns and zero discarded simulation time. A clean
+manual smoke sampled input 1,860 times with a 12.484 ms maximum gap and no queue
+drops, but did not inject combat controls and is not full manual acceptance.
+
+A corrected dual-path build established that a KallistiOS `frsqrt` candidate
+changed at most one channel value in one packed actor color over 330 captured
+frames. It was rejected because it made actor-lighting p50 0.822 ms slower than
+the portable square-root path. The fast path and validation build options do
+not remain in production source.
+
+The final framebuffer check is in
+`C:\Flycast-Evidence\re4-dreamcast\d221-actor-normal-alias-fix-visual`.
+It retains the accepted room, complete Leon and Ganado assemblies, HUD, camera,
+transparency, and coherent lighting. Full-framebuffer emulation was enabled only
+for that image extraction; performance results use the pinned normal Flycast
+configuration. Physical Dreamcast timing and human-controller acceptance remain
+pending.
 
 Exact active identities:
 
@@ -54,19 +63,15 @@ Exact active identities:
 - `sh-elf-g++ 15.2.0`
 - Flycast SHA-256 `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`
 - corrected visual ELF `c5ae9de436fd7b9f3770ce3e7cc40d1f37b8e2c000b3b9dfb9be5d46ce7c0e68`
-- R3m autoplay ELF `1feacc30cdd072b3ca03ff976892013e6c21d4966d6eac1e7303cf12e9cb7ae4`
-- R3m manual ELF `1a45de49b10711fe83762b263dfe5fc91edac9daa6fbc5aaa3c4ac98f5c56688`
-- R3n autoplay ELF `e44e19b1e98fd4bac496e81007d791a7a532f65afb6495c2647dff73e9bf2140`
-- R3n manual ELF `ca541d7dd62be942ee8a9328c4642b8053cc1863d86ebb9c2053e7a8086cf915`
 - R3o autoplay ELF `191676ca573aaaec9aed99bb33c88fca3102b1d90344a8e7c4020455bf1dfbdc`
 - R3o manual ELF `13857924539cec27012e1d6cdd46c9ec44ee17a5db942281b2f3caedaa3267ea`
+- R3p autoplay ELF `4fd89b4e929aca49a9cdc8b7e231c9a1e33ff387cac81466d42e0d49b686a44f`
+- R3p manual ELF `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
 
-The current trace reports 617 immediate calls carrying 1,071,840 bytes per
-settled frame. The next bounded work must reduce or accelerate command generation
-and payload work itself, or attack the independent 18.96 ms actor-lighting stage;
-the profiler selects between them. DMA still requires a direct representative
-benchmark. Actor eligibility/caching, SH-4 kernels, and native texture/resource
-layout follow according to measured cost.
+Room transform/lighting/submission remains the largest measured work. The next
+actor experiment should target the stable selected-light work, especially
+Leon's 13.960 ms median, while retaining the portable evaluator as a reference.
+Do not retry the rejected reciprocal-square-root path without new evidence.
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
 The incomplete Windows checkout created during bootstrap was retained as
@@ -218,6 +223,10 @@ Character package v5 now preserves source BIN normals and their reusable weight
 palettes instead of rebuilding normals from deformed triangles. Its bounded
 direction error, 2.7 ms normal-stage reduction, and temporary RAM cost are in
 [the R3h source normal-palette checkpoint](docs/R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md).
+The R3p runtime now keeps transformed source normals separate from lighting
+output; its correctness proof, 98,304-byte scratch cost, measured speedup, and
+rejected `frsqrt` subexperiment are recorded in
+[the R3p actor-normal alias-fix checkpoint](docs/R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md).
 Character package v6 now removes the redundant baked mesh poses and reuses one
 prepared source palette for both positions and normals. Its 5.34 MiB live-RAM
 gain and matched performance result are in

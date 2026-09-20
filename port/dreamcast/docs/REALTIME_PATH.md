@@ -1,9 +1,8 @@
 # Fidelity-preserving real-time r100 plan
 
-Updated 2026-09-20 from the corrected character build at `dba07e2` and the
-measured R3o header/payload candidate. This is the authoritative execution
-plan. Earlier R0-R3 checkpoint documents remain evidence records; their letter
-sequence no longer determines the next task.
+Updated 2026-09-20 from the corrected R3p actor-normal build. This is the
+authoritative execution plan. Earlier R0-R3 checkpoint documents remain evidence
+records; their letter sequence no longer determines the next task.
 
 ## Current status
 
@@ -18,82 +17,77 @@ controller sampling, source light selection, prepared static room-light terms,
 source SAT hierarchy traversal, source position/normal palette reuse, native
 actor and room strips, ordered-alpha strip protection, packed actor colors,
 validated room normals, compact selected-light evaluators, a bounded room vertex
-cache, conservative one-metre opaque child cells, and source-authorized binary
-punch-through, and one source-ordered visible-room list reused by every material
-pass. Do not propose these again as unimplemented work.
+cache, conservative one-metre opaque child cells, source-authorized binary
+punch-through, one source-ordered visible-room list reused by every material
+pass, combined header/first-payload submissions, and separate immutable actor
+normal scratch. Do not propose these again as unimplemented work.
 
-R3m is retained because it satisfies its bounded acceptance test: material 029
-is binary alpha and carries the source SMX `alpha_omit = 0x80` override; all
-gradient alpha stays blended. It preserves all source triangles and improves the
-same full encounter route. See
-[R3M_SOURCE_PUNCHTHROUGH_CHECKPOINT.md](R3M_SOURCE_PUNCHTHROUGH_CHECKPOINT.md).
-R3n is retained because it computes visibility, cull state, and room-light
-selection once per render snapshot while preserving source order and every
-submitted triangle. See
-[R3N_VISIBILITY_REUSE_CHECKPOINT.md](R3N_VISIBILITY_REUSE_CHECKPOINT.md).
-R3o is retained as a small equivalent optimization: it halves immediate call
-count by combining each header with its first payload but saves only 0.12 ms.
-See [R3O_HEADER_PAYLOAD_BATCHING_CHECKPOINT.md](R3O_HEADER_PAYLOAD_BATCHING_CHECKPOINT.md).
+R3m preserves source-authorized binary alpha while retaining gradient blend.
+R3n reuses visibility, cull state, and room-light selection across material
+passes. R3o combines each PVR header with its first payload, halving immediate
+call count but saving only 0.12 ms. R3p fixes a source-normal identity defect by
+separating transformed normals from lighting output. See the corresponding
+checkpoint records, most recently
+[R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md](R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md).
+
+The rejected R3p subexperiment used KallistiOS `frsqrt`. A valid dual-path run
+found a worst observed difference of one channel value in one packed color, but
+the fast path was 0.822 ms slower at actor-lighting p50. It has been removed.
 
 ## Current measured budget
 
 Flycast measurements use the pinned 640x480 build and stock Dreamcast memory
-sizes. They are emulator evidence. The comparison spans simulation ticks 30-1198
-and includes source-timed turn, aim, fire, reload, enemy kill, the held result
+sizes. They are emulator evidence. R3o and R3p are matched over simulation ticks
+165-1194 and include source-timed turn, aim, fire, reload, enemy kill, held result
 view, and timed retry. The current autoplay does not cover free movement, aim
-extremes, enemy contact, Leon death, or a human controller; those cases must be
-added to the benchmark set and remain separate acceptance gates.
+extremes, enemy contact, Leon death, or a human controller; those remain separate
+acceptance gates.
 
-| Matched metric, ticks 165-1198 | corrected-character baseline | R3m | R3n |
-|---|---:|---:|---:|
-| CPU frame p50 / p95 / p99 | 99.00 / 101.50 / 101.52 ms | 92.23 / 94.71 / 94.80 ms | 87.74 / 89.89 / 90.30 ms |
-| presented ready-to-ready p50 / p95 / p99 | 100.09 / 102.59 / 102.60 ms | 83.41 / 100.10 / 102.60 ms | 83.41 / 100.10 / 102.60 ms |
-| PVR registration p50 | 72.03 ms | 65.29 ms | 58.85 ms |
-| PVR render p50 | 7.50 ms | 7.50 ms | 7.50 ms |
-| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 |
+| Matched metric, ticks 165-1194 | R3o aliasing baseline | R3p corrected normals |
+|---|---:|---:|
+| CPU frame p50 / p95 / p99 | 87.615 / 90.116 / 90.209 ms | 86.217 / 88.719 / 88.836 ms |
+| presented ready-to-ready p50 / p95 | 83.411 / 100.096 ms | 83.409 / 100.096 ms |
+| PVR registration p50 | 58.731 ms | 58.096 ms |
+| actor lighting p50 | 18.959 ms | 18.198 ms |
+| main-RAM break-to-stack headroom | 5,668,864 B | 5,570,560 B |
+| dropped simulation time / overruns | 0 / 0 | 0 / 0 |
 
-R3o changes median CPU and registration time to 87.62 ms and 58.73 ms while
-leaving tails effectively unchanged. The candidate still presents at roughly
-11-12 distinct frames per second. A
-33.33 ms CPU frame needs another 54.4 ms median reduction and 56.6 ms at p95.
-PVR raster time is not the dominant measured cost; SH-4 preparation and TA
-registration are.
+The accepted candidate still presents at roughly 11-12 distinct frames per
+second. A 33.33 ms CPU frame needs another 52.9 ms median reduction and 55.4 ms
+at p95. PVR raster time was 7.50 ms p50 in the preceding matched R3n trace; SH-4
+preparation and TA registration remain the dominant measured costs.
 
-The R3n candidate median CPU stages are shown without adding the overlapping
-`submit_us` aggregate to its children:
+R3p median CPU stages are shown without adding the overlapping `submit_us`
+aggregate to its children:
 
 | Stage | p50 |
 |---|---:|
-| opaque room transform/light/clip/submit | 27.24 ms |
-| binary plus blended alpha room work | 18.03 ms |
-| actor lighting | 18.96 ms |
-| opaque actor draw | 11.78 ms |
-| actor pose palettes/projection | 5.82 ms |
-| actor normals | 1.83 ms |
-| translucent actors and HUD | 1.75 ms |
-| room visibility and light selection | 1.96 ms |
-| simulation | 0.17 ms |
-| camera | 0.15 ms |
+| opaque room transform/light/clip/submit | 26.687 ms |
+| binary plus blended alpha room work | 17.820 ms |
+| actor lighting | 18.198 ms |
+| opaque actor draw | 11.792 ms |
+| actor pose palettes/projection | 5.820 ms |
+| actor normals | 1.831 ms |
+| translucent actors and HUD | 1.760 ms |
+| room visibility and light selection | 1.959 ms |
 
-`submit_us` is 58.86 ms p50 and contains room transform, lighting, clipping,
+`submit_us` is 58.103 ms p50 and contains room transform, lighting, clipping,
 packet construction, and immediate TA submission. It is not a transfer-only
-number. Telemetry now measures visibility separately and records a median 617
-immediate PVR calls carrying 1,071,840 bytes per settled frame. Packet
-construction versus SQ copy time still needs a bounded benchmark; retain
-render/simulation snapshot IDs.
+number. The trace records median values of 617 immediate PVR calls carrying
+1,071,840 bytes, 327 visible groups, 9,155 room triangles, and 11,900 actor
+triangles. Packet construction versus SQ copy time still needs a bounded
+benchmark; retain render/simulation snapshot IDs.
 
-A 25-second manual-build virtual-controller trace delivered five action edges,
-with zero queue drops, a maximum queue depth of one, a 19.96 ms worst sampling
-gap, and no discarded simulation time. A focused host-timestamped run observed
-the fire state 158 ms after button-down and restart state 218 ms after button-down.
-Those bounds include the current slow render cadence and host observation error;
-they are not a human-controller or physical Dreamcast latency result.
+The R3p manual smoke reached simulation tick 558, sampled input 1,860 times with
+a 12.484 ms maximum gap, and reported zero queue drops, simulation overruns, or
+discarded simulation time. It did not inject combat controls and is not full
+manual acceptance or a physical-controller latency result.
 
-Post-load observed memory for R3n is 5,668,864 bytes of main-RAM break-to-stack
-headroom, 159,268 heap bytes used, 110,504 heap bytes free, 1,521,128 PVR bytes
-free, and the KOS AICA query value of 1,378,336 bytes. These are steady-state snapshots, not loading,
-restart, stack, TA-overflow, or fragmentation peaks. Add explicit high-water
-records before calling the memory budget accepted.
+Post-load observed R3p main-RAM break-to-stack headroom is 5,570,560 bytes,
+98,304 bytes below R3o because the two immutable normal buffers are fixed-size.
+Heap used remains 159,268 bytes and observed heap free is 110,376 bytes. These
+are steady-state snapshots, not loading, restart, stack, TA-overflow, or
+fragmentation peaks. Add explicit high-water records before accepting memory.
 
 Exact identities:
 
@@ -103,15 +97,15 @@ Exact identities:
 - compiler: `sh-elf-g++ 15.2.0`
 - Flycast SHA-256: `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`
 - corrected-character ELF: `c5ae9de436fd7b9f3770ce3e7cc40d1f37b8e2c000b3b9dfb9be5d46ce7c0e68`
-- R3m autoplay ELF: `1feacc30cdd072b3ca03ff976892013e6c21d4966d6eac1e7303cf12e9cb7ae4`
-- R3m manual ELF: `1a45de49b10711fe83762b263dfe5fc91edac9daa6fbc5aaa3c4ac98f5c56688`
-- R3n autoplay ELF: `e44e19b1e98fd4bac496e81007d791a7a532f65afb6495c2647dff73e9bf2140`
-- R3n manual ELF: `ca541d7dd62be942ee8a9328c4642b8053cc1863d86ebb9c2053e7a8086cf915`
 - R3o autoplay ELF: `191676ca573aaaec9aed99bb33c88fca3102b1d90344a8e7c4020455bf1dfbdc`
 - R3o manual ELF: `13857924539cec27012e1d6cdd46c9ec44ee17a5db942281b2f3caedaa3267ea`
+- R3p autoplay ELF: `4fd89b4e929aca49a9cdc8b7e231c9a1e33ff387cac81466d42e0d49b686a44f`
+- R3p manual ELF: `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
 
-Evidence is retained in `d202` through `d209` under
-`C:\Flycast-Evidence\re4-dreamcast`. Physical Dreamcast timing remains pending.
+Evidence is retained in `d202` through `d221` under
+`C:\Flycast-Evidence\re4-dreamcast`. Timing evidence for R3p is in `d219`,
+the manual smoke in `d220`, and the qualitative framebuffer check in `d221`.
+Physical Dreamcast timing remains pending.
 
 ## Measured bottleneck queue
 
@@ -196,7 +190,7 @@ Preserving current behavior is a regression check, not proof that it is correct.
 
 ## Two references and regression rules
 
-The current Dreamcast regression reference is the accepted R3o build and its
+The current Dreamcast regression reference is the accepted R3p build and its
 exact room, texture, character, and toolchain identities. The original G4BE08
 debug game is the authority for behavior and authored presentation. A pure target
 optimization must match the accepted build at equivalent simulation snapshots;
@@ -208,7 +202,9 @@ Keep the audio video at
 as the corrected-character presentation checkpoint. Keep the full timing traces
 at `d204` and `d205`, the R3m visual sequence at `d203`, manual input traces at
 `d206` and `d207`, R3n timing/visual evidence at `d208`, and R3o repeated timing
-and visual evidence at `d209`. New candidates use
+and visual evidence at `d209`. Keep corrected validation and candidate evidence
+at `d216` through `d218`, accepted R3p timing at `d219`, the manual smoke at
+`d220`, and the qualitative framebuffer check at `d221`. New candidates use
 new directories and exact hashes. The
 older `fed3e91`/manual-v3 package remains historical evidence, not the performance
 baseline.
@@ -256,6 +252,8 @@ not the task scheduler:
   room passes, plus immediate-call and byte telemetry.
 - R3o: PVR polygon headers combined with their first payload; call count halves
   but the repeated median saving is only 0.12 ms.
+- R3p: immutable actor-normal scratch fixes non-monotonic source-normal reuse;
+  the `frsqrt` candidate is rejected because it is 0.822 ms slower.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison

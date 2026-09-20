@@ -114,14 +114,18 @@ struct DemoTelemetry {
     std::uint32_t room_light_selection_evaluations;
     std::uint32_t pvr_submit_calls;
     std::uint32_t pvr_submit_bytes;
+    std::uint32_t leon_lighting_us;
+    std::uint32_t ganado_lighting_us;
+    std::uint32_t leon_light_selection;
+    std::uint32_t ganado_light_selection;
 };
 
-static_assert(sizeof(DemoTelemetry) == 344U);
+static_assert(sizeof(DemoTelemetry) == 360U);
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
-    telemetry.version = 9U;
+    telemetry.version = 10U;
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
 }
@@ -477,6 +481,8 @@ struct FrameStats {
     std::uint64_t actor_pose_us = 0;
     std::uint64_t actor_normals_us = 0;
     std::uint64_t actor_lighting_us = 0;
+    std::uint64_t leon_lighting_us = 0;
+    std::uint64_t ganado_lighting_us = 0;
     std::uint64_t opaque_room_us = 0;
     std::uint64_t opaque_actor_us = 0;
     std::uint64_t translucent_room_us = 0;
@@ -498,6 +504,8 @@ struct FrameStats {
     std::uint32_t room_light_selection_evaluations = 0;
     std::uint32_t pvr_submit_calls = 0;
     std::uint32_t pvr_submit_bytes = 0;
+    std::uint32_t leon_light_selection = 0;
+    std::uint32_t ganado_light_selection = 0;
 };
 
 void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
@@ -2951,6 +2959,8 @@ bool group_visible(const re4dc::room::Group& group) {
 constexpr std::uint32_t kCharacterSubmitVertexCapacity = 768U;
 constexpr std::uint32_t kLeonVertexCapacity = 8192U;
 constexpr std::uint32_t kGanadoVertexCapacity = 4096U;
+constexpr std::uint32_t kLeonNormalScratchCapacity = 6144U;
+constexpr std::uint32_t kGanadoNormalScratchCapacity = 2048U;
 constexpr std::uint32_t kLeonPoseMatrixCapacity = 512U;
 constexpr std::uint32_t kGanadoPoseMatrixCapacity = 128U;
 constexpr std::uint32_t kRoomVertexCacheCapacity = 2048U;
@@ -2968,6 +2978,8 @@ ProjectedVertex g_ganado_projected[kGanadoVertexCapacity];
 PreparedPoseMatrix g_leon_pose_palette[kLeonPoseMatrixCapacity];
 PreparedPoseMatrix g_ganado_pose_palette[kGanadoPoseMatrixCapacity];
 #if defined(RE4DC_SCENE_R100)
+float g_leon_normals[kLeonNormalScratchCapacity * 3U];
+float g_ganado_normals[kGanadoNormalScratchCapacity * 3U];
 float g_leon_lighting[kLeonVertexCapacity * 3U];
 float g_ganado_lighting[kGanadoVertexCapacity * 3U];
 std::uint32_t g_leon_colors[kLeonVertexCapacity];
@@ -4069,15 +4081,18 @@ void build_character_lighting(const re4dc::character::Package& character,
         const std::uint32_t source_normal = normal_sources != nullptr
             ? normal_sources[normal]
             : normal;
+        float red = 0.0f;
+        float green = 0.0f;
+        float blue = 0.0f;
         evaluate_selected_actor_lighting(
             position.world_x, position.world_y, position.world_z,
             normals[source_normal * 3U], normals[source_normal * 3U + 1U],
             normals[source_normal * 3U + 2U], light_selection,
-            lighting[normal * 3U],
-            lighting[normal * 3U + 1U], lighting[normal * 3U + 2U]);
-        colors[normal] = shade_color(
-            lighting[normal * 3U], lighting[normal * 3U + 1U],
-            lighting[normal * 3U + 2U]);
+            red, green, blue);
+        lighting[normal * 3U] = red;
+        lighting[normal * 3U + 1U] = green;
+        lighting[normal * 3U + 2U] = blue;
+        colors[normal] = shade_color(red, green, blue);
     }
 }
 #endif
@@ -4727,6 +4742,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
                         ProjectedVertex* leon_projected,
                         ProjectedVertex* ganado_projected,
 #if defined(RE4DC_SCENE_R100)
+                        float* leon_normals, float* ganado_normals,
                         float* leon_lighting, float* ganado_lighting,
 #endif
                         pvr_vertex_t* character_submit_vertices) {
@@ -4769,37 +4785,45 @@ FrameStats render_scene(const re4dc::room::Package& room,
             player.animation_clip == kPlayerIdleClip ||
                 player.animation_clip == kPlayerWalkClip ||
                 player.animation_clip == kPlayerAimLevelClip,
-            player_blend.secondary_clip, player_blend.amount, leon_lighting,
+            player_blend.secondary_clip, player_blend.amount, leon_normals,
             leon.header().version == re4dc::character::kVersion
                 ? g_leon_pose_palette
                 : nullptr);
     } else {
-        build_character_normals(leon, leon_projected, leon_lighting);
+        build_character_normals(leon, leon_projected, leon_normals);
     }
     if(ganado.header().source_normal_count != 0U) {
         build_character_source_normals(
             ganado, enemy.yaw, enemy.animation_clip, enemy.animation_frame,
             enemy.state == EnemyState::Chase, enemy.animation_clip, 0.0f,
-            ganado_lighting,
+            ganado_normals,
             ganado.header().version == re4dc::character::kVersion
                 ? g_ganado_pose_palette
                 : nullptr);
     } else {
-        build_character_normals(ganado, ganado_projected, ganado_lighting);
+        build_character_normals(ganado, ganado_projected, ganado_normals);
     }
     stats.actor_normals_us = timer_us_gettime64() - actor_normals_start;
     const std::uint64_t actor_lighting_start = timer_us_gettime64();
-    const SelectedSourceLights leon_light_selection = selected_source_lights(
-        source_actor_light_selection(player.x, player.y, player.z, 1U));
-    const SelectedSourceLights ganado_light_selection = selected_source_lights(
-        source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U));
+    stats.leon_light_selection = source_actor_light_selection(
+        player.x, player.y, player.z, 1U);
+    stats.ganado_light_selection = source_actor_light_selection(
+        enemy.x, enemy.y, enemy.z, 2U);
+    const SelectedSourceLights leon_light_selection =
+        selected_source_lights(stats.leon_light_selection);
+    const SelectedSourceLights ganado_light_selection =
+        selected_source_lights(stats.ganado_light_selection);
+    const std::uint64_t leon_lighting_start = timer_us_gettime64();
     build_character_lighting(
-        leon, leon_projected, leon_lighting, leon_lighting, g_leon_colors,
+        leon, leon_projected, leon_normals, leon_lighting, g_leon_colors,
         leon_light_selection);
+    stats.leon_lighting_us = timer_us_gettime64() - leon_lighting_start;
+    const std::uint64_t ganado_lighting_start = timer_us_gettime64();
     build_character_lighting(
-        ganado, ganado_projected, ganado_lighting, ganado_lighting,
+        ganado, ganado_projected, ganado_normals, ganado_lighting,
         g_ganado_colors,
         ganado_light_selection);
+    stats.ganado_lighting_us = timer_us_gettime64() - ganado_lighting_start;
     stats.actor_lighting_us = timer_us_gettime64() - actor_lighting_start;
 #endif
     const std::uint64_t room_visibility_start = timer_us_gettime64();
@@ -5498,6 +5522,19 @@ int main() {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
+    const std::uint32_t leon_normal_scratch_count =
+        leon.header().source_normal_count != 0U
+            ? leon.header().source_normal_count
+            : leon.header().normal_count;
+    const std::uint32_t ganado_normal_scratch_count =
+        ganado.header().source_normal_count != 0U
+            ? ganado.header().source_normal_count
+            : ganado.header().normal_count;
+    if(leon_normal_scratch_count > kLeonNormalScratchCapacity ||
+       ganado_normal_scratch_count > kGanadoNormalScratchCapacity) {
+        std::printf("re4dc-room: actor normal scratch capacity exceeded\n");
+        return 1;
+    }
     prepare_source_lights();
     if(!prepare_room_static_lighting(room)) {
         std::printf("re4dc-room: room static-light preparation failed\n");
@@ -5820,6 +5857,7 @@ int main() {
 #endif
             g_leon_projected, g_ganado_projected,
 #if defined(RE4DC_SCENE_R100)
+            g_leon_normals, g_ganado_normals,
             g_leon_lighting, g_ganado_lighting,
 #endif
             g_character_submit_vertices);
@@ -5961,6 +5999,14 @@ int main() {
             stats.room_light_selection_evaluations;
         g_re4dc_demo_telemetry.pvr_submit_calls = stats.pvr_submit_calls;
         g_re4dc_demo_telemetry.pvr_submit_bytes = stats.pvr_submit_bytes;
+        g_re4dc_demo_telemetry.leon_lighting_us =
+            saturate_u32(stats.leon_lighting_us);
+        g_re4dc_demo_telemetry.ganado_lighting_us =
+            saturate_u32(stats.ganado_lighting_us);
+        g_re4dc_demo_telemetry.leon_light_selection =
+            stats.leon_light_selection;
+        g_re4dc_demo_telemetry.ganado_light_selection =
+            stats.ganado_light_selection;
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;
