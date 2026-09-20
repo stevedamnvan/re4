@@ -246,6 +246,24 @@ before/after timing and memory, and end in a keep-or-revert decision.
    animation, transform, camera-relative light, selected-light, component, and
    material dependencies. Inspect SH-4 assembly and benchmark batch palette/
    selected-light kernels against the portable reference with numerical bounds.
+   The DCA3 audit names this the first rendering experiment and bounds it:
+   A1a merges eligibility and packet assembly into one rewindable pass over an
+   actor strip, the room-side strategy R3x already accepts; A1b emits compact
+   draw recipes offline only if assembly is still material; A1c derives
+   conservative pose-aware bounds, never rest-pose ones. Measure preparation and
+   draw together so an emission win paid back by preparation is rejected, and
+   preserve `kProjectionDepthBias` and the existing fallback exactly. Its A3
+   entry permits batching the directional light subset only, never replacing
+   RE4's point and spot terms. See
+   [DCA3_SOURCE_AUDIT.md](DCA3_SOURCE_AUDIT.md).
+3b. **Build policy as a small experiment.** DCA3 ships `-Os` with a per-file
+   `-O3` list, a no-fast-math list for camera units and link-time optimization.
+   RE4's room build asks for `-O2` and compiles nearly all frame work in one
+   translation unit. Read the effective compile and link commands first, then
+   test current settings, `-O3` with unchanged floating-point semantics, and
+   compatible LTO as separate arms, holding assets, KOS and toolchain fixed and
+   measuring linked size and RAM alongside the route. No global `-ffast-math`
+   and no indiscriminate assertion removal.
 4. **Submission transport: closed by R3q.** The KOS `pvr_prim` store-queue path
    costs 1.331 ms for the room and 2.580 ms in total. Bounded KOS DMA buffers
    cannot recover more than that even if they made the copy free, and they would
@@ -299,7 +317,11 @@ Use mechanisms, not borrowed performance claims:
   R4: offline asset conversion and archive repacking, a Dreamcast CD streaming
   path under the original streaming system, and a continuously changing
   working set on the same 16 MB / 8 MB / 2 MB target. Mechanisms only; check
-  the licence before any code reuse and never use its data.
+  the licence before any code reuse and never use its data. `vendor/librw` is
+  MIT, the game-side files are not covered by it. The audited mechanisms, their
+  pinned source regions and the RE4DC backlog they imply are in
+  [DCA3_SOURCE_AUDIT.md](DCA3_SOURCE_AUDIT.md), reconciled against this branch
+  rather than the revision it was written for.
 
 Primary references: [KallistiOS PVR scene path][kos-scene],
 [KallistiOS pvrtex][kos-pvrtex], [SH4ZAM][sh4zam],

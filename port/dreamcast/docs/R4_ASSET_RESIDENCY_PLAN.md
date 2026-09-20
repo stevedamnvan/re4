@@ -37,7 +37,17 @@ without a licence check, and never its game data. Reference:
 [DCA3 on GitLab](https://gitlab.com/skmp/dca3-game).
 
 The PS2 disc is used only as a measurement oracle for its asset choices. No
-PS2 asset enters a package.
+PS2 asset enters a package. A retail PS2 disc image is now present in the
+workspace, so the "no PS2 source" note below applies only until a manifest is
+built from it. Match assets by validated scene, material and content identity
+rather than filename or ordinal, record what fails to match, and do not infer
+transfer rate or residency from image dimensions. This does not gate any other
+deliverable.
+
+A source audit of DCA3, reconciled against this branch, is in
+[DCA3_SOURCE_AUDIT.md](DCA3_SOURCE_AUDIT.md). It pins the source regions behind
+each mechanism named here and carries the lifetime, fragmentation and evidence
+rules the remaining deliverables must satisfy.
 
 ### What DCA3 actually does, and what RE4DC takes from it
 
@@ -204,12 +214,44 @@ what the correct result is.
    twiddled payloads offline, and the runtime copies them raw instead of
    reordering every texel during `pvr_txr_load_ex()`. Texture upload fell from
    1,022,663 us to 16,945 us with the frame, VRAM, main RAM and framebuffers
-   unchanged. Still open: the VQ payloads themselves, starting with the six
-   textures deliverable 1 found, plus the palette representations, which need
-   the PVR's shared 1024-entry palette RAM budgeted across packages.
+   unchanged. Still open, and now the next R4 implementation: one shared
+   allocation per content identity, then the VQ payloads themselves.
+
+   Sharing is the part DCA3 does and RE4DC does not. Its native texture reader
+   consults a raster cache, takes a reference and skips a duplicate payload
+   instead of uploading it again, and frees the allocation only after the last
+   reference; dictionary lifetime is tracked separately from payload lifetime.
+   RE4DC allocates per descriptor and still requires
+   `data_size == width * height * 2`, which VQ and palette payloads break. The
+   schema needs encoding and layout, logical dimensions, the actual aligned
+   allocation size, mip and palette metadata where supported, a texture-address
+   offset where the format needs one, and a validated content identity: a
+   content digest with descriptor compatibility and collision validation, not a
+   bare 32-bit identifier. Per-material sampler and blend state stay separate,
+   since identical texels may share storage while material state differs.
+
+   A texture is not renderable until its upload completes, GPU references
+   outlive CPU submission, and retirement waits for the relevant render rather
+   than for submission return or the next tick. Report unique resident payload
+   bytes, total and largest-contiguous VRAM free, staging peaks, upload time and
+   loading p95, and test partial upload failure and rollback.
+
+   Then the six VQ candidates deliverable 1 already found. Fewer bytes and
+   higher PSNR make them promising, not automatically lossless: review close
+   views, motion, filter behaviour, alpha edges and the original-resolution
+   source. Unreduced textures stay uncompressed unless their own evidence says
+   otherwise. The palette paths follow the KOS formats, not DCA3's, whose reader
+   asserts one mip level and leaves palette locking unimplemented.
 3. **Package-resident batch-local tables**: emit the R3v local strip indices
-   and batch vertex tables from the converter, recovering most of the 413,696
-   bytes the runtime pass holds.
+   and batch vertex tables from the converter, preserving the R3v/R3x
+   local-index semantics, the oversized-batch fallback, source identity,
+   selected-light context and strip order. Do not promise to recover all 413,696
+   bytes by moving them into a mapped ROM disk, because package bytes are
+   resident too: remove redundant forms where safe or quantify the real
+   temporary and persistent reduction, and keep startup work removed separate
+   from any frame change. Test round-trip, corrupted offsets, index-width
+   limits, historical package behaviour, oversized batches and byte-identical
+   packets.
 4. **Residency model from the authored block sets**: enumerate the r100 active,
    staged and remove sets and the connected rooms from the decompilation;
    compute the largest converted working set and the transition overlap;
@@ -219,6 +261,18 @@ what the correct result is.
    upload staging for GD-ROM/GDEMU, replacing the embedded ROM disk and
    mandatory `fs_mmap()`. A path change from `/rd/` alone is insufficient;
    closing a mapped file does not remove its payload from the executable.
+   Model explicit states, `unloaded -> reading -> CPU-ready -> uploading ->
+   resident -> retiring`, with stable identifiers, dependency references,
+   in-flight frame pins and cancellation generations. Budget the completed-load
+   processing and the VRAM uploads, not only the reads: an asynchronous read
+   followed by an unbounded main-thread install still stutters. Treat DCA3's
+   64 KiB read chunk and its between-chunk audio servicing as a starting
+   experiment to measure on the intended storage path, and do not copy its error
+   handling, which makes no progress on a zero-length read. Measure the largest
+   free VRAM allocation as well as the total; because RE4DC caches compiled
+   material headers that encode texture addresses, any relocation must update or
+   regenerate every affected header and wait for in-flight users, so a moving
+   allocator stays optional until fragmentation evidence justifies it.
 6. **Second room transition**: the first end-to-end proof, entering a
    connected room from r100 with the previous room evicted, measured for
    load time, peak RAM, VRAM and AICA high-water marks, and frame-time impact
