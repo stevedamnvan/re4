@@ -33,7 +33,10 @@ test in the port too tight. See the corresponding checkpoint records, most
 recently
 [R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md](R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md)
 and
-[R3R_STRIP_CULL_CHECKPOINT.md](R3R_STRIP_CULL_CHECKPOINT.md).
+[R3R_STRIP_CULL_CHECKPOINT.md](R3R_STRIP_CULL_CHECKPOINT.md). R3s keyed the room
+vertex cache on vertex identity, removed 21.5% of transform-and-light
+evaluations, and was 1.274 ms slower; it is rejected and removed, see
+[R3S_ROOM_IDENTITY_CACHE_CHECKPOINT.md](R3S_ROOM_IDENTITY_CACHE_CHECKPOINT.md).
 
 **Projection bias.** KOS `mat_perspective()` leaves `w = 1 - z_view`, so
 `mat_trans_single()` divides screen coordinates by `depth + 1`. Any visibility
@@ -139,12 +142,13 @@ is byte-identical and the debug-stripped ELFs are
 and `570c36bdda2e440bc69eca4d573f4e89e0cad316063aa3b386db6eca1e7b042c` for
 manual in both trees.
 
-Evidence is retained in `d202` through `d234` under
+Evidence is retained in `d202` through `d236` under
 `C:\Flycast-Evidence\re4-dreamcast`. Timing evidence for R3p is in `d219`,
 the manual smoke in `d220`, and the qualitative framebuffer check in `d221`.
 The R3q profile captures are `d222`, `d223`, and `d224`. The R3r captures are
 `d225` through `d234`, including the culling audits in `d229` and the paired
-framebuffer comparisons in `d226`, `d231`, and `d233`.
+framebuffer comparisons in `d226`, `d231`, and `d233`. The rejected R3s
+identity-cache runs are `d235` and `d236`.
 Physical Dreamcast timing remains pending.
 
 ## Measured bottleneck queue
@@ -153,23 +157,22 @@ Choose each next experiment from the current trace. Every candidate must boot,
 retain a reference path where appropriate, pass its correctness check, record
 before/after timing and memory, and end in a keep-or-revert decision.
 
-1. **The opaque room per-vertex kernel.** R3r took the blended list from
-   17.820 ms to 3.053 ms, leaving the opaque room pass at 29.244 ms as the
-   largest single cost. Strip culling barely touched it, because the one-metre
-   child cells already cull it well: 10,156 of its vertices are genuinely
-   distinct and each costs roughly 3 us. R3q showed caching cannot reduce that
-   count. Two levers remain. First, identity reuse: across the accepted package
-   only 61.1% of the 40,419 room vertices have distinct positions and 82.4% have
-   distinct position-and-normal pairs, so a transform keyed on position identity
-   and lighting keyed on position-and-normal identity could remove up to 38.9%
-   of the transforms and 17.6% of the light evaluations. The actor path already
-   does this; the room path does not, and it would need package support and a
-   full-size identity table rather than the current short-window cache. Second,
-   the kernel itself: inspect the SH-4 output of `mat_trans_single` plus the
-   selected-light evaluator and keep the portable evaluator as the numerical
-   reference with explicit bounds. Note that Flycast will only reward work-volume
-   reductions; it does not model the SH-4 data cache, so micro-architectural
-   changes cannot be validated here.
+1. **Opaque room per-reference and per-record work.** R3r took the blended list
+   from 17.820 ms to 3.053 ms, leaving the opaque room pass at 29.244 ms as the
+   largest single cost. R3s then showed that transform and lighting are *not*
+   where that time goes: removing 2,179 of the 10,156 per-frame evaluations made
+   the frame slower once one identity lookup per reference was added, so the
+   cache-miss path costs well under 1 us and the R3q figure of 3.1 us per
+   transformed vertex was an attribution, not a measurement. Identity reuse for
+   the room is closed. What scales with the 15,050 references and 14,926 emitted
+   records per frame is the candidate list: the 52-byte gather copy into
+   `g_room_strip_vertices` that exists only to serve the depth test and the
+   fallback path, the 32-byte packet write, `shade_color()` per record rather
+   than per cache entry, the per-vertex depth test, and the batch and group
+   traversal over 362 visible groups. Measure each with a bounded ablation
+   before optimizing, and build packets directly from cache entries where the
+   direct-strip path allows it. Flycast only rewards instruction-volume
+   reductions; it does not model the SH-4 data cache.
 2. **The per-vertex transform and light kernel.** R3q showed room cost is close
    to a constant 3.1 us per transformed and lit vertex, and that caching cannot
    reduce the 15,317 distinct vertices a frame touches. After the blended-list

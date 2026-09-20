@@ -31,6 +31,7 @@ The Linux checkout is authoritative. Upstream contains distinct `src/Tools` and 
 - Checkpoint meaning: separate immutable actor normals from lighting output; retain actor timing/mask telemetry; reject and remove the slower `frsqrt` experiment
 - Latest measurement pass: R3q, which adds only the compile-gated `SUBMIT_PROFILE` room diagnostic and changes no accepted code; it closes submission transport and room vertex cache growth
 - Latest accepted optimization: R3r, per-strip bounds culling plus the `kProjectionDepthBias` fix for the KOS projection; CPU frame p50 86.217 ms to 74.139 ms while drawing more room geometry. Any new visibility test must measure projected extents at `depth + 1`
+- Latest rejected experiment: R3s room identity cache, 21.5% fewer transform-and-light evaluations but 1.274 ms slower; the opaque room pass is per-reference/per-record bound, not transform bound
 - Expected state after the handover commit and push: clean local tree with local HEAD equal to `origin/dreamcast-port`
 
 Read these first:

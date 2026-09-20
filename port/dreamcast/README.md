@@ -103,7 +103,12 @@ of static main RAM. Details and limits are in
 [the R3r strip-cull checkpoint](docs/R3R_STRIP_CULL_CHECKPOINT.md).
 
 The opaque room pass, now 29.244 ms, is the largest remaining cost, followed by
-actor lighting at 18.198 ms with Leon's 13.960 ms median inside it. Retain the
+actor lighting at 18.198 ms with Leon's 13.960 ms median inside it. R3s keyed
+the room vertex cache on vertex identity, cut transform-and-light evaluations by
+21.5%, and was 1.274 ms slower, so that pass is dominated by per-reference and
+per-record work rather than by transform and lighting; see
+[the R3s identity-cache checkpoint](docs/R3S_ROOM_IDENTITY_CACHE_CHECKPOINT.md).
+Do not retry room identity reuse without a different cost model. Retain the
 portable evaluator as the numerical reference. Do not retry the rejected
 reciprocal-square-root path without new evidence, and do not write a new
 visibility test without `kProjectionDepthBias`.
