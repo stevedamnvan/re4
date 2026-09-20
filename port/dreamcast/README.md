@@ -188,6 +188,10 @@ Actor light masks are now converted to the source-ordered, eight-entry model
 light list once per frame; the exact packed-color proof and 4.5 ms matched
 frame reduction are recorded in
 [the R3f compact actor-light checkpoint](docs/R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md).
+Actor colors are now packed once per normal and reused by native strips while
+the float clipping fallback remains intact; the 2.6 ms matched frame reduction
+and 48 KiB memory cost are recorded in
+[the R3g packed actor-color checkpoint](docs/R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 

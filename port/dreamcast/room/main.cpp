@@ -2885,6 +2885,8 @@ ProjectedVertex g_ganado_projected[kGanadoVertexCapacity];
 #if defined(RE4DC_SCENE_R100)
 float g_leon_lighting[kLeonVertexCapacity * 3U];
 float g_ganado_lighting[kGanadoVertexCapacity * 3U];
+std::uint32_t g_leon_colors[kLeonVertexCapacity];
+std::uint32_t g_ganado_colors[kGanadoVertexCapacity];
 #endif
 pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
 RenderVertex g_room_strip_vertices[kCharacterSubmitVertexCapacity];
@@ -3574,6 +3576,7 @@ void build_character_normals(const re4dc::character::Package& character,
 void build_character_lighting(const re4dc::character::Package& character,
                               const ProjectedVertex* projected,
                               const float* normals, float* lighting,
+                              std::uint32_t* colors,
                               const SelectedSourceLights& light_selection) {
     const auto* normal_positions = character.normal_positions();
     for(std::uint32_t normal = 0; normal < character.header().normal_count;
@@ -3585,6 +3588,9 @@ void build_character_lighting(const re4dc::character::Package& character,
             normals[normal * 3U + 2U], light_selection,
             lighting[normal * 3U],
             lighting[normal * 3U + 1U], lighting[normal * 3U + 2U]);
+        colors[normal] = shade_color(
+            lighting[normal * 3U], lighting[normal * 3U + 1U],
+            lighting[normal * 3U + 2U]);
     }
 }
 #endif
@@ -3593,6 +3599,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                              const ProjectedVertex* projected,
 #if defined(RE4DC_SCENE_R100)
                              const float* lighting,
+                             const std::uint32_t* colors,
 #endif
                              const pvr_poly_hdr_t* material_headers,
                              const bool* material_alpha, bool alpha_pass,
@@ -3697,13 +3704,9 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                     primitive_indices[primitive.first_vertex + local];
                 const auto& draw = draw_vertices[vertex];
 #if defined(RE4DC_SCENE_R100)
-                const float light_red = lighting[draw.normal * 3U];
-                const float light_green = lighting[draw.normal * 3U + 1U];
-                const float light_blue = lighting[draw.normal * 3U + 2U];
+                const std::uint32_t color = colors[draw.normal];
 #else
-                const float light_red = 1.0f;
-                const float light_green = 1.0f;
-                const float light_blue = 1.0f;
+                const std::uint32_t color = 0xffffffffU;
 #endif
                 submit_vertices[submit_count++] = {
                     .flags = local + 1U == primitive.vertex_count
@@ -3714,7 +3717,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                     .z = projected[draw.position].z,
                     .u = draw.u,
                     .v = draw.v,
-                    .argb = shade_color(light_red, light_green, light_blue),
+                    .argb = color,
                     .oargb = 0,
                 };
             }
@@ -4256,10 +4259,11 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const SelectedSourceLights ganado_light_selection = selected_source_lights(
         source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U));
     build_character_lighting(
-        leon, leon_projected, leon_lighting, leon_lighting,
+        leon, leon_projected, leon_lighting, leon_lighting, g_leon_colors,
         leon_light_selection);
     build_character_lighting(
         ganado, ganado_projected, ganado_lighting, ganado_lighting,
+        g_ganado_colors,
         ganado_light_selection);
     stats.actor_lighting_us = timer_us_gettime64() - actor_lighting_start;
 #endif
@@ -4336,14 +4340,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
     stats.character_triangles = draw_character(
         leon, leon_projected,
 #if defined(RE4DC_SCENE_R100)
-        leon_lighting,
+        leon_lighting, g_leon_colors,
 #endif
         leon_headers, leon_alpha, false,
         character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
     stats.character_triangles += draw_character(
         ganado, ganado_projected,
 #if defined(RE4DC_SCENE_R100)
-        ganado_lighting,
+        ganado_lighting, g_ganado_colors,
 #endif
         ganado_headers, ganado_alpha, false,
         character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
@@ -4424,14 +4428,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
     stats.character_triangles += draw_character(
         leon, leon_projected,
 #if defined(RE4DC_SCENE_R100)
-        leon_lighting,
+        leon_lighting, g_leon_colors,
 #endif
         leon_headers, leon_alpha, true,
         character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
     stats.character_triangles += draw_character(
         ganado, ganado_projected,
 #if defined(RE4DC_SCENE_R100)
-        ganado_lighting,
+        ganado_lighting, g_ganado_colors,
 #endif
         ganado_headers, ganado_alpha, true,
         character_submit_vertices, kCharacterSubmitVertexCapacity, stats);

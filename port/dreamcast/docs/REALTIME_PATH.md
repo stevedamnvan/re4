@@ -43,6 +43,9 @@ The actor evaluator now consumes each model's source-ordered selected-light
 list rather than rescanning every room light per normal, with an exact packed
 color comparison and matched timing in
 [R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md](R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md).
+Final actor colors are packed once per normal and reused by native strips, with
+the float near-plane fallback retained, in
+[R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md](R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md).
 
 ## Objective and boundaries
 
