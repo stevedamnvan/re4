@@ -506,6 +506,13 @@ void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
     stats.pvr_submit_bytes += static_cast<std::uint32_t>(byte_count);
 }
 
+void begin_pvr_packet(pvr_vertex_t* commands, std::uint32_t& command_count,
+                      const pvr_poly_hdr_t& header) {
+    static_assert(sizeof(pvr_vertex_t) == sizeof(pvr_poly_hdr_t));
+    std::memcpy(commands, &header, sizeof(header));
+    command_count = 1U;
+}
+
 std::uint32_t saturate_u32(std::uint64_t value) {
     return static_cast<std::uint32_t>(
         std::min<std::uint64_t>(value, 0xffffffffU));
@@ -3408,6 +3415,7 @@ std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
 
 void submit_room_strips(const re4dc::room::Package& room,
                         const re4dc::room::Batch& batch,
+                        const pvr_poly_hdr_t& header,
                         pvr_vertex_t* submit_vertices,
                         std::uint32_t submit_capacity,
                         FrameStats& stats, std::uint8_t cull_mode,
@@ -3416,6 +3424,7 @@ void submit_room_strips(const re4dc::room::Package& room,
     const auto* primitives = room.primitives();
     const auto* primitive_indices = room.primitive_indices();
     std::uint32_t submit_count = 0U;
+    begin_pvr_packet(submit_vertices, submit_count, header);
     const auto flush = [&]() {
         if(submit_count == 0U) {
             return;
@@ -4095,9 +4104,9 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
         if(material_alpha[batch_index] != alpha_pass) {
             continue;
         }
-        submit_pvr(stats, &material_headers[batch_index],
-                   sizeof(pvr_poly_hdr_t));
         std::uint32_t submit_count = 0;
+        begin_pvr_packet(submit_vertices, submit_count,
+                         material_headers[batch_index]);
         const auto flush = [&]() {
             if(submit_count == 0U) {
                 return;
@@ -4633,7 +4642,8 @@ void draw_source_hud(const re4dc::hud::Package& hud,
         float local_x[4];
         float local_y[4];
         source_hud_vertices(unit, local_x, local_y);
-        pvr_vertex_t vertices[4]{};
+        pvr_vertex_t commands[5]{};
+        pvr_vertex_t* vertices = commands + 1U;
         constexpr float uv_x[4] = {0.0f, 1.0f, 0.0f, 1.0f};
         constexpr float uv_y[4] = {0.0f, 0.0f, 1.0f, 1.0f};
         const std::uint32_t color = source_hud_color(hud, unit, player);
@@ -4655,8 +4665,8 @@ void draw_source_hud(const re4dc::hud::Package& hud,
                 .oargb = 0,
             };
         }
-        submit_pvr(stats, &headers[texture], sizeof(pvr_poly_hdr_t));
-        submit_pvr(stats, vertices, sizeof(vertices));
+        std::memcpy(commands, &headers[texture], sizeof(pvr_poly_hdr_t));
+        submit_pvr(stats, commands, sizeof(commands));
       }
     }
 }
@@ -4845,19 +4855,17 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 continue;
             }
             if(batch.primitive_count != 0U) {
-                submit_pvr(
-                    stats,
-                    &room_strip_headers[batch.material * 3U + cull_mode],
-                    sizeof(pvr_poly_hdr_t));
                 submit_room_strips(
-                    room, batch, character_submit_vertices,
+                    room, batch,
+                    room_strip_headers[batch.material * 3U + cull_mode],
+                    character_submit_vertices,
                     kCharacterSubmitVertexCapacity, stats, cull_mode,
                     light_selection);
                 continue;
             }
-            submit_pvr(stats, &material_headers[batch.material],
-                       sizeof(pvr_poly_hdr_t));
             std::uint32_t submit_count = 0;
+            begin_pvr_packet(character_submit_vertices, submit_count,
+                             material_headers[batch.material]);
             const auto flush = [&]() {
                 if(submit_count == 0U) {
                     return;
@@ -4927,15 +4935,15 @@ FrameStats render_scene(const re4dc::room::Package& room,
             }
             const pvr_poly_hdr_t& header =
                 room_punchthrough_headers[batch.material * 3U + cull_mode];
-            submit_pvr(stats, &header, sizeof(header));
             if(batch.primitive_count != 0U) {
                 submit_room_strips(
-                    room, batch, character_submit_vertices,
+                    room, batch, header, character_submit_vertices,
                     kCharacterSubmitVertexCapacity, stats, cull_mode,
                     light_selection);
                 continue;
             }
             std::uint32_t submit_count = 0;
+            begin_pvr_packet(character_submit_vertices, submit_count, header);
             const auto flush = [&]() {
                 if(submit_count == 0U) {
                     return;
@@ -4983,19 +4991,17 @@ FrameStats render_scene(const re4dc::room::Package& room,
             }
             if(batch.primitive_count != 0U &&
                (batch.flags & re4dc::room::kBatchStripOrderPreserved) != 0U) {
-                submit_pvr(
-                    stats,
-                    &room_strip_headers[batch.material * 3U + cull_mode],
-                    sizeof(pvr_poly_hdr_t));
                 submit_room_strips(
-                    room, batch, character_submit_vertices,
+                    room, batch,
+                    room_strip_headers[batch.material * 3U + cull_mode],
+                    character_submit_vertices,
                     kCharacterSubmitVertexCapacity, stats, cull_mode,
                     light_selection);
                 continue;
             }
-            submit_pvr(stats, &material_headers[batch.material],
-                       sizeof(pvr_poly_hdr_t));
             std::uint32_t submit_count = 0;
+            begin_pvr_packet(character_submit_vertices, submit_count,
+                             material_headers[batch.material]);
             const auto flush = [&]() {
                 if(submit_count == 0U) {
                     return;

@@ -20,7 +20,7 @@ Leon uses the source body, costume, head, hair, eyes, Red9 hands and handgun;
 the Ganado uses the correct right-handed hand/hatchet assembly. Room, source
 camera, selected lighting, HUD, transparency, collision, and combat remain intact.
 
-The latest kept optimization, R3n, computes conservative room visibility, source
+The R3n optimization computes conservative room visibility, source
 cull state, and room-light selection once per render snapshot and reuses that
 source-ordered list across opaque, punch-through, and blended passes. All 30,895
 room triangles remain packaged. Against R3m over matched ticks 165-1198, CPU
@@ -28,7 +28,10 @@ frame p50/p95/p99 falls from 92.23/94.71/94.80 ms to
 87.74/89.89/90.30 ms. Presented ready-to-ready p50/p95/p99 remains
 83.41/100.10/102.60 ms: roughly 11-12 fps, still far from acceptance. PVR render
 p50 is 7.50 ms while registration falls from 65.29 to 58.85 ms, so target-side
-preparation/submission remains the current limit.
+preparation/submission remains the current limit. R3o then combines each PVR
+polygon header with its first payload, cutting median immediate calls from 1,219
+to 617 while keeping the same 1,071,840 bytes. Two runs improve median frame and
+registration time by only 0.12 ms, establishing that call setup is a minor cost.
 
 The current manual build delivered five virtual-controller action edges with no
 queue drops, a maximum one-entry queue, and a 19.96 ms worst sampling gap. The
@@ -55,13 +58,15 @@ Exact active identities:
 - R3m manual ELF `1a45de49b10711fe83762b263dfe5fc91edac9daa6fbc5aaa3c4ac98f5c56688`
 - R3n autoplay ELF `e44e19b1e98fd4bac496e81007d791a7a532f65afb6495c2647dff73e9bf2140`
 - R3n manual ELF `ca541d7dd62be942ee8a9328c4642b8053cc1863d86ebb9c2053e7a8086cf915`
+- R3o autoplay ELF `191676ca573aaaec9aed99bb33c88fca3102b1d90344a8e7c4020455bf1dfbdc`
+- R3o manual ELF `13857924539cec27012e1d6cdd46c9ec44ee17a5db942281b2f3caedaa3267ea`
 
-The current trace reports a median 1,219 immediate PVR calls carrying 1,071,840
-bytes per settled frame. The next bounded experiment combines each polygon header
-with its first vertex payload while preserving the exact command order, then
-measures call count and registration time before considering DMA. Actor
-eligibility/caching, SH-4 hot kernels, packet transport, and native
-texture/resource layout follow according to measured cost.
+The current trace reports 617 immediate calls carrying 1,071,840 bytes per
+settled frame. The next bounded work must reduce or accelerate command generation
+and payload work itself, or attack the independent 18.96 ms actor-lighting stage;
+the profiler selects between them. DMA still requires a direct representative
+benchmark. Actor eligibility/caching, SH-4 kernels, and native texture/resource
+layout follow according to measured cost.
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
 The incomplete Windows checkout created during bootstrap was retained as
@@ -237,6 +242,9 @@ Room visibility, source cull state, and source-selected room lights are now
 computed once per render snapshot and reused by all material passes. The matched
 4.9% frame reduction and PVR call/byte telemetry are recorded in
 [the R3n visibility-reuse checkpoint](docs/R3N_VISIBILITY_REUSE_CHECKPOINT.md).
+Polygon headers and their first payload now share one immediate PVR submission;
+the repeated small result and unchanged command-byte evidence are recorded in
+[the R3o header/payload batching checkpoint](docs/R3O_HEADER_PAYLOAD_BATCHING_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 

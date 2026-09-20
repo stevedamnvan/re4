@@ -1,7 +1,7 @@
 # Fidelity-preserving real-time r100 plan
 
 Updated 2026-09-20 from the corrected character build at `dba07e2` and the
-measured R3n visibility-reuse candidate. This is the authoritative execution
+measured R3o header/payload candidate. This is the authoritative execution
 plan. Earlier R0-R3 checkpoint documents remain evidence records; their letter
 sequence no longer determines the next task.
 
@@ -31,6 +31,9 @@ R3n is retained because it computes visibility, cull state, and room-light
 selection once per render snapshot while preserving source order and every
 submitted triangle. See
 [R3N_VISIBILITY_REUSE_CHECKPOINT.md](R3N_VISIBILITY_REUSE_CHECKPOINT.md).
+R3o is retained as a small equivalent optimization: it halves immediate call
+count by combining each header with its first payload but saves only 0.12 ms.
+See [R3O_HEADER_PAYLOAD_BATCHING_CHECKPOINT.md](R3O_HEADER_PAYLOAD_BATCHING_CHECKPOINT.md).
 
 ## Current measured budget
 
@@ -49,7 +52,9 @@ added to the benchmark set and remain separate acceptance gates.
 | PVR render p50 | 7.50 ms | 7.50 ms | 7.50 ms |
 | dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 |
 
-The candidate still presents at roughly 11-12 distinct frames per second. A
+R3o changes median CPU and registration time to 87.62 ms and 58.73 ms while
+leaving tails effectively unchanged. The candidate still presents at roughly
+11-12 distinct frames per second. A
 33.33 ms CPU frame needs another 54.4 ms median reduction and 56.6 ms at p95.
 PVR raster time is not the dominant measured cost; SH-4 preparation and TA
 registration are.
@@ -72,7 +77,7 @@ The R3n candidate median CPU stages are shown without adding the overlapping
 
 `submit_us` is 58.86 ms p50 and contains room transform, lighting, clipping,
 packet construction, and immediate TA submission. It is not a transfer-only
-number. Telemetry now measures visibility separately and records a median 1,219
+number. Telemetry now measures visibility separately and records a median 617
 immediate PVR calls carrying 1,071,840 bytes per settled frame. Packet
 construction versus SQ copy time still needs a bounded benchmark; retain
 render/simulation snapshot IDs.
@@ -102,8 +107,10 @@ Exact identities:
 - R3m manual ELF: `1a45de49b10711fe83762b263dfe5fc91edac9daa6fbc5aaa3c4ac98f5c56688`
 - R3n autoplay ELF: `e44e19b1e98fd4bac496e81007d791a7a532f65afb6495c2647dff73e9bf2140`
 - R3n manual ELF: `ca541d7dd62be942ee8a9328c4642b8053cc1863d86ebb9c2053e7a8086cf915`
+- R3o autoplay ELF: `191676ca573aaaec9aed99bb33c88fca3102b1d90344a8e7c4020455bf1dfbdc`
+- R3o manual ELF: `13857924539cec27012e1d6cdd46c9ec44ee17a5db942281b2f3caedaa3267ea`
 
-Evidence is retained in `d202` through `d208` under
+Evidence is retained in `d202` through `d209` under
 `C:\Flycast-Evidence\re4-dreamcast`. Physical Dreamcast timing remains pending.
 
 ## Measured bottleneck queue
@@ -112,11 +119,10 @@ Choose each next experiment from the current trace. Every candidate must boot,
 retain a reference path where appropriate, pass its correctness check, record
 before/after timing and memory, and end in a keep-or-revert decision.
 
-1. **Room and packet work.** The visibility list is now reused. Measure unique
+1. **Room and packet work.** The visibility list and header/payload batching are
+   now reused. Measure unique
    transforms, light evaluations, clipping crossings, headers, vertices, bytes,
-   and TA calls per list. First combine each polygon header with its initial
-   payload to reduce immediate-call granularity without changing the command
-   stream. Reduce packet reconstruction/copying and exploit tighter native strips
+   and TA calls per list. Reduce packet reconstruction/copying and exploit tighter native strips
    only where winding, clipping, and alpha order remain valid.
 2. **Actor preparation and lighting.** Add conservative render eligibility before
    pose work. Cache settled death poses and other unchanged inputs using explicit
@@ -190,7 +196,7 @@ Preserving current behavior is a regression check, not proof that it is correct.
 
 ## Two references and regression rules
 
-The current Dreamcast regression reference is the accepted R3n build and its
+The current Dreamcast regression reference is the accepted R3o build and its
 exact room, texture, character, and toolchain identities. The original G4BE08
 debug game is the authority for behavior and authored presentation. A pure target
 optimization must match the accepted build at equivalent simulation snapshots;
@@ -201,7 +207,8 @@ Keep the audio video at
 `C:\Flycast-Evidence\re4-dreamcast\d202-current-progress-video-audio-dba07e2`
 as the corrected-character presentation checkpoint. Keep the full timing traces
 at `d204` and `d205`, the R3m visual sequence at `d203`, manual input traces at
-`d206` and `d207`, and R3n timing/visual evidence at `d208`. New candidates use
+`d206` and `d207`, R3n timing/visual evidence at `d208`, and R3o repeated timing
+and visual evidence at `d209`. New candidates use
 new directories and exact hashes. The
 older `fed3e91`/manual-v3 package remains historical evidence, not the performance
 baseline.
@@ -247,6 +254,8 @@ not the task scheduler:
 - R3m: source-authorized binary punch-through and alpha-child rejection.
 - R3n: one source-ordered visibility/light-selection list reused across all
   room passes, plus immediate-call and byte telemetry.
+- R3o: PVR polygon headers combined with their first payload; call count halves
+  but the repeated median saving is only 0.12 ms.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison
