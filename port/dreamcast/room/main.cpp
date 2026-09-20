@@ -2500,6 +2500,7 @@ std::uint32_t g_source_dynamic_light_mask = 0U;
 constexpr std::uint32_t kRoomStaticLightingVertexCapacity = 45000U;
 float g_room_static_lighting[kRoomStaticLightingVertexCapacity * 3U]{};
 std::uint8_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
+bool g_room_normals_are_unit = false;
 
 void normalize_vector(float& x, float& y, float& z) {
     const float length = std::sqrt(x * x + y * y + z * z);
@@ -2593,8 +2594,11 @@ void set_source_lighting_camera(const point_t& eye, const point_t& target,
 void accumulate_source_lighting(float px, float py, float pz,
                                 float nx, float ny, float nz,
                                 float& red, float& green, float& blue,
-                                std::uint32_t light_selection) {
-    normalize_vector(nx, ny, nz);
+                                std::uint32_t light_selection,
+                                bool normal_is_unit = false) {
+    if(!normal_is_unit) {
+        normalize_vector(nx, ny, nz);
+    }
     for(std::size_t index = 0; index < kSourceLightCount; ++index) {
         if((light_selection & (1U << index)) == 0U) {
             continue;
@@ -2875,6 +2879,19 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
     const auto* vertices = room.vertices();
     const auto* source_groups = room.source_groups();
     const std::uint32_t static_mask = ~g_source_dynamic_light_mask;
+    g_room_normals_are_unit = true;
+    for(std::uint32_t vertex_index = 0U;
+        vertex_index < room.header().vertex_count; ++vertex_index) {
+        const auto& vertex = vertices[vertex_index];
+        const float length_squared = vertex.nx * vertex.nx +
+                                     vertex.ny * vertex.ny +
+                                     vertex.nz * vertex.nz;
+        if(!std::isfinite(length_squared) ||
+           std::fabs(length_squared - 1.0f) > 0.00001f) {
+            g_room_normals_are_unit = false;
+            break;
+        }
+    }
     for(std::uint32_t group_index = 0U;
         group_index < room.header().group_count; ++group_index) {
         const auto& group = groups[group_index];
@@ -3125,7 +3142,8 @@ const RenderVertex& cached_room_vertex(
             input.x, input.y, input.z,
             input.nx, input.ny, input.nz,
             light_red, light_green, light_blue,
-            light_selection & g_source_dynamic_light_mask);
+            light_selection & g_source_dynamic_light_mask,
+            g_room_normals_are_unit);
         light_red = std::clamp(light_red, 0.0f, 1.0f);
         light_green = std::clamp(light_green, 0.0f, 1.0f);
         light_blue = std::clamp(light_blue, 0.0f, 1.0f);

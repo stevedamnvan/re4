@@ -34,6 +34,8 @@ Order-certified translucent batches are added in
 [R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md](R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md),
 reducing the matched interval by a further 2.3 ms while retaining the old path
 for every batch whose source triangle order would change.
+The guarded room-normal invariant and rejected actor equivalent are recorded in
+[R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md](R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md).
 
 ## Objective and boundaries
 

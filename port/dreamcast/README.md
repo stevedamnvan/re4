@@ -177,6 +177,9 @@ its representation, matched image check, and 23.8 ms render reduction are in
 Order-certified translucent batches now use the same native path without
 changing source blend order; the additional 2.3 ms reduction is recorded in
 [the R3c ordered alpha-strip checkpoint](docs/R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md).
+The room-lighting path now validates its authored unit normals once and avoids
+renormalizing them per frame; the packed-color proof and bounded result are in
+[the R3d room-normal checkpoint](docs/R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
