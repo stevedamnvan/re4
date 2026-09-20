@@ -1,6 +1,9 @@
 #include <kos.h>
+#include <arch/arch.h>
+#include <arch/stack.h>
 #include <dc/sound/sfxmgr.h>
 #include <dc/sound/sound.h>
+#include <kos/mm.h>
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <malloc.h>
 #include <new>
 #include <fcntl.h>
 
@@ -43,12 +47,20 @@ struct DemoTelemetry {
     std::uint32_t submit_us;
     std::uint32_t simulation_tick;
     std::uint32_t simulation_overruns;
+    std::uint32_t pvr_free_before_textures;
+    std::uint32_t pvr_free_after_textures;
+    std::uint32_t aica_free_after_audio;
+    std::uint32_t heap_arena_bytes;
+    std::uint32_t heap_used_bytes;
+    std::uint32_t heap_free_bytes;
+    std::uint32_t main_ram_free_bytes;
 };
 
 extern "C" {
 volatile DemoTelemetry g_re4dc_demo_telemetry = {
-    0x52453444U, 2U, 0U, 0U, 0U, 0, 0, 0, 0U, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
+    0x52453444U, 3U, 0U, 0U, 0U, 0, 0, 0, 0U, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
+    0U,
 };
 }
 
@@ -3541,6 +3553,10 @@ int main() {
     }
 #endif
     g_re4dc_demo_telemetry.flags = 0x10000005U;
+    g_re4dc_demo_telemetry.pvr_free_before_textures =
+        static_cast<std::uint32_t>(vram_before_textures);
+    g_re4dc_demo_telemetry.pvr_free_after_textures =
+        static_cast<std::uint32_t>(pvr_mem_available());
     std::printf(
         "re4dc-room: textures=%lu+%lu+%lu bytes=%lu pvr_free_before=%lu "
         "pvr_free_after=%lu\n",
@@ -3607,6 +3623,21 @@ int main() {
     if(!load_demo_audio(audio)) {
         return 1;
     }
+    g_re4dc_demo_telemetry.aica_free_after_audio = snd_mem_available();
+    const struct mallinfo heap_info = mallinfo();
+    g_re4dc_demo_telemetry.heap_arena_bytes =
+        static_cast<std::uint32_t>(heap_info.arena);
+    g_re4dc_demo_telemetry.heap_used_bytes =
+        static_cast<std::uint32_t>(heap_info.uordblks);
+    g_re4dc_demo_telemetry.heap_free_bytes =
+        static_cast<std::uint32_t>(heap_info.fordblks);
+    const std::uintptr_t heap_end =
+        reinterpret_cast<std::uintptr_t>(mm_sbrk(0));
+    const std::uintptr_t main_ram_limit =
+        static_cast<std::uintptr_t>(_arch_mem_top - THD_KERNEL_STACK_SIZE);
+    g_re4dc_demo_telemetry.main_ram_free_bytes =
+        static_cast<std::uint32_t>(
+            main_ram_limit > heap_end ? main_ram_limit - heap_end : 0U);
     std::printf(
         "re4dc-room: stick=turn/move RT/Y=aim; stick/dpad Y=pitch; "
         "A=fire X=reload B=restart "

@@ -76,14 +76,14 @@ testing and packaging; no new renderer features enter that window.
 |---|---|---|
 | D0 - complete | Extract the source-streamed r100 geometry, identify the BLK residency at the encounter, recover material bindings from the BIN ModelPart headers, and correct all coordinate scales. | Native Flycast frame shows Leon, Ganado, collision, camera, and intact textured architecture in one coherent world. |
 | D1 - complete | Lock the exact normal and aiming camera, source placements, source HP/damage, fog, restart behavior, and a bounded 30-second route. Remove any invented exit marker from r100. | Manual build begins at the post-s03 state, supports aim/fire/reload/death/retry, and remains in the encounter after a kill. |
-| D2 - active | Inspect the actual normal, aiming, firing, hit, death, and retry views. Source-cut RGB lighting, near-plane clipping, complete actor attachments, pose-derived smooth actor normals, and soft source alpha blending are now in the native path. Correct remaining material or motion faults before adding features. | Captured native frames and a 30-second moving capture are visibly coherent and use the same executable as the manual demo. |
-| D3 - active | Shared SAT wall resolution, wall-occluded shots, and exact handgun fire/reload cues are implemented. Replace the remaining temporary behavior in risk order: source attack/damage timing, then enemy, impact, and room audio cues. | No visible through-wall shot or movement in the permitted route; each action has matching visible and audible feedback. |
-| D4 | Freeze and package the private Flycast candidate. Record exact executable/package hashes, controls, memory use, and observed frame rate without turning performance into today's acceptance gate. | Launchable manual demo, death/retry and kill/retry checked, private assets excluded from Git, code/tools/tests/docs pushed and remote SHA verified. |
+| D2 - complete in Flycast | Inspect the actual normal, aiming, firing, hit, death, and retry views. Source-cut RGB lighting, near-plane clipping, complete actor attachments, pose-derived smooth actor normals, and soft source alpha blending are now in the native path. Correct remaining material or motion faults before adding features. | Captured native frames and a 30-second moving capture are visibly coherent and use the same executable as the manual demo. |
+| D3 - complete for this slice | Shared SAT wall resolution, wall-occluded shots, exact attack/damage timing, and source weapon, enemy, impact, and player cues are implemented. Room ambience remains later fidelity work. | No visible through-wall shot or movement in the permitted route; each combat action has matching visible and audible feedback. |
+| D4 - complete in Flycast | Freeze and package the private Flycast candidate. Record exact executable/package hashes, controls, memory use, and observed frame rate without turning performance into today's acceptance gate. | Launchable manual demo, death/retry and kill/retry checked, private assets excluded from Git, code/tools/tests/docs pushed and remote SHA verified. |
 
-D2 is the current acceptance risk. We have a native textured picture; every
-new change must now be judged against it. Preserve the source camera and intact
-nearby geometry while correcting visible animation, material, and interaction
-faults.
+The Flycast presentation slice has passed D2-D4. Preserve this frozen visual
+baseline while moving to physical Dreamcast validation; future work must not
+trade away the source camera, intact nearby geometry, actor completeness, or
+combat feedback merely to improve frame rate.
 
 The D1 loss-path check used the same manual 640x480 ELF as the presentation
 candidate. Flycast recorded axe contacts at source frame 50 and health
@@ -126,6 +126,28 @@ The fixed 30 Hz trace resets at tick 900; a later sample at tick 2,401 had again
 defeated the 500-HP Ganado and reported 66 bounded catch-up overruns. This low
 frame rate is accepted for the 30-second fidelity milestone and remains a later
 optimization target rather than a claim of final Dreamcast performance.
+
+The frozen Flycast presentation candidate is the normal-controller ELF
+`re4dc-r100-source-hud-manual-v3.elf`, SHA-256
+`b70858d412876496f740a8bea3e5cf2752203210d952d97d04d77a268db13c36`.
+Its private launch package is
+`C:\Flycast-Evidence\re4-dreamcast\d110-exact-r100-manual-v3`. The exact ELF's
+30-second 640x480 capture includes loopback audio and has SHA-256
+`c8dc6a0825f71b0a21b8b6a783d809987542e01d7ae47805a920ebdb4a6a65ad`.
+The repeatable capture was driven through Flycast's normal Xbox-controller path;
+the game-side autoplay flag was absent, and the packaged build remains directly
+playable with a controller.
+
+Telemetry version 3 records stock-pool headroom after all textures and source
+combat cues load. The frozen candidate retained 1,892,352 bytes between the
+main heap break and reserved kernel stack, with another 205,368 free bytes
+inside the heap arena; PVR VRAM retained 1,488,296 bytes and AICA RAM retained
+1,378,336 bytes. A 39-second controller-path trace, SHA-256
+`1087a8603c97328cfdc2b41e865c4ac372cd4c80190f586cd8a030a5146eeaed`,
+recorded the exact state sequence: kill, magazine `6 -> 0`, reload `0 -> 6`,
+restart, source damage `1200 -> 820 -> 440 -> 60 -> 0`, and restart to 1200.
+Representative complete frames remained 0.78-0.84 seconds; this is disclosed
+low-rate Flycast evidence, not a physical-console timing result.
 
 ## Shortest asset and renderer path
 
