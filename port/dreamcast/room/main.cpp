@@ -786,6 +786,24 @@ void advance_enemy_animation(Enemy& enemy,
     }
 }
 
+void move_enemy_forward(Enemy& enemy,
+                        const re4dc::collision::Package& collision,
+                        float distance) {
+    const float old_x = enemy.x;
+    const float old_z = enemy.z;
+    enemy.x += std::sin(enemy.yaw) * distance;
+    enemy.z += std::cos(enemy.yaw) * distance;
+    resolve_actor_walls(collision, enemy.x, enemy.y, enemy.z,
+                        kPlayerRadius, kPlayerHeight);
+    float floor_y = enemy.y;
+    if(find_floor(collision, enemy.x, enemy.z, enemy.y, floor_y)) {
+        enemy.y = floor_y;
+    } else {
+        enemy.x = old_x;
+        enemy.z = old_z;
+    }
+}
+
 bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
                              const re4dc::collision::Vec3& start,
                              const re4dc::collision::Vec3& end);
@@ -843,6 +861,8 @@ void update_enemy(Enemy& enemy, Player& player,
                 -0.19634955f, 0.19634955f);
             enemy.yaw = wrap_angle(enemy.yaw + attack_turn);
         }
+        move_enemy_forward(enemy, collision,
+                           clip.root_forward_speed_mps * delta_seconds);
         advance_enemy_animation(enemy, character, delta_seconds, false);
         const float attack_seconds = enemy.animation_frame /
                                      clip.frames_per_second;
@@ -920,19 +940,7 @@ void update_enemy(Enemy& enemy, Player& player,
             const float step = std::min(source_walk_speed * delta_seconds,
                                         distance -
                                             kEnemyAttackAcquireRange);
-            const float old_x = enemy.x;
-            const float old_z = enemy.z;
-            enemy.x += dx / distance * std::max(step, 0.0f);
-            enemy.z += dz / distance * std::max(step, 0.0f);
-            resolve_actor_walls(collision, enemy.x, enemy.y, enemy.z,
-                                kPlayerRadius, kPlayerHeight);
-            float floor_y = enemy.y;
-            if(find_floor(collision, enemy.x, enemy.z, enemy.y, floor_y)) {
-                enemy.y = floor_y;
-            } else {
-                enemy.x = old_x;
-                enemy.z = old_z;
-            }
+            move_enemy_forward(enemy, collision, std::max(step, 0.0f));
         }
         advance_enemy_animation(enemy, character, delta_seconds, true);
         return;
@@ -1677,7 +1685,7 @@ void draw_text(const char* text, float x, float y, float scale,
     }
 }
 
-void draw_hud(const Player& player, const Enemy& enemy) {
+void draw_hud(const Player& player) {
     submit_screen_quad(252.0f, 188.0f, 316.0f, 236.0f, 0xff171917U, 0.95f);
     const float health_fraction = std::clamp(
         static_cast<float>(player.health) / static_cast<float>(kPlayerMaxHealth),
@@ -1715,8 +1723,6 @@ void draw_hud(const Player& player, const Enemy& enemy) {
                            0.95f);
         draw_text("YOU ARE DEAD", 88.0f, 106.0f, 2.0f, 0xffb9211cU);
         draw_text("PRESS B TO RETRY", 113.0f, 130.0f, 1.0f, 0xffd6cfbaU);
-    } else if(enemy.state == EnemyState::Dead) {
-        draw_text("AREA CLEAR", 130.0f, 107.0f, 1.0f, 0xff8ee875U);
     }
 }
 
@@ -1821,7 +1827,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #if !defined(RE4DC_SCENE_R100)
     draw_goal(enemy.state == EnemyState::Dead);
 #endif
-    draw_hud(player, enemy);
+    draw_hud(player);
     pvr_list_finish();
 
     pvr_list_begin(PVR_LIST_PT_POLY);
