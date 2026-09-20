@@ -3573,19 +3573,133 @@ void build_character_normals(const re4dc::character::Package& character,
     }
 }
 
+void transform_source_normal(
+    const std::int16_t* matrices,
+    const re4dc::character::SourceNormal& normal,
+    float& x, float& y, float& z) {
+    constexpr float kNormalScale = 1.0f / 16384.0f;
+    constexpr float kMatrixScale = 1.0f / 32767.0f;
+    const float source_x = static_cast<float>(normal.x) * kNormalScale;
+    const float source_y = static_cast<float>(normal.y) * kNormalScale;
+    const float source_z = static_cast<float>(normal.z) * kNormalScale;
+    const std::int16_t* matrix = matrices + normal.matrix * 9U;
+    x = (static_cast<float>(matrix[0]) * source_x +
+         static_cast<float>(matrix[1]) * source_y +
+         static_cast<float>(matrix[2]) * source_z) * kMatrixScale;
+    y = (static_cast<float>(matrix[3]) * source_x +
+         static_cast<float>(matrix[4]) * source_y +
+         static_cast<float>(matrix[5]) * source_z) * kMatrixScale;
+    z = (static_cast<float>(matrix[6]) * source_x +
+         static_cast<float>(matrix[7]) * source_y +
+         static_cast<float>(matrix[8]) * source_z) * kMatrixScale;
+}
+
+void build_character_source_normals(
+    const re4dc::character::Package& character, float actor_yaw,
+    std::uint32_t animation_clip, float animation_frame, bool loop,
+    std::uint32_t secondary_clip, float pose_blend, float* normals) {
+    const auto& clip = character.clips()[animation_clip];
+    const float wrapped_frame = std::fmod(
+        std::max(animation_frame, 0.0f), static_cast<float>(clip.frame_count));
+    const std::uint32_t local_frame = static_cast<std::uint32_t>(wrapped_frame);
+    const std::uint32_t next_frame = loop
+        ? (local_frame + 1U) % clip.frame_count
+        : std::min(local_frame + 1U, clip.frame_count - 1U);
+    const float frame_blend = wrapped_frame - static_cast<float>(local_frame);
+    const std::int16_t* source = character.frame_normal_matrices(
+        clip.first_frame + local_frame);
+    const std::int16_t* next_source = character.frame_normal_matrices(
+        clip.first_frame + next_frame);
+    const std::int16_t* secondary_source = nullptr;
+    const std::int16_t* secondary_next_source = nullptr;
+    float secondary_frame_blend = 0.0f;
+    if(pose_blend > 0.0f && secondary_clip != animation_clip) {
+        const auto& secondary = character.clips()[secondary_clip];
+        const float secondary_time_frame = std::max(
+            animation_frame * secondary.frames_per_second /
+                clip.frames_per_second,
+            0.0f);
+        const float secondary_frame = loop
+            ? std::fmod(secondary_time_frame,
+                        static_cast<float>(secondary.frame_count))
+            : std::min(secondary_time_frame,
+                       static_cast<float>(secondary.frame_count - 1U));
+        const std::uint32_t secondary_local =
+            static_cast<std::uint32_t>(secondary_frame);
+        const std::uint32_t secondary_next = loop
+            ? (secondary_local + 1U) % secondary.frame_count
+            : std::min(secondary_local + 1U, secondary.frame_count - 1U);
+        secondary_frame_blend =
+            secondary_frame - static_cast<float>(secondary_local);
+        secondary_source = character.frame_normal_matrices(
+            secondary.first_frame + secondary_local);
+        secondary_next_source = character.frame_normal_matrices(
+            secondary.first_frame + secondary_next);
+    }
+    const float sine = std::sin(actor_yaw);
+    const float cosine = std::cos(actor_yaw);
+    const auto* source_normals = character.source_normals();
+    for(std::uint32_t index = 0U;
+        index < character.header().source_normal_count; ++index) {
+        float current_x = 0.0f;
+        float current_y = 0.0f;
+        float current_z = 0.0f;
+        float next_x = 0.0f;
+        float next_y = 0.0f;
+        float next_z = 0.0f;
+        transform_source_normal(
+            source, source_normals[index], current_x, current_y, current_z);
+        transform_source_normal(
+            next_source, source_normals[index], next_x, next_y, next_z);
+        float local_x = current_x + (next_x - current_x) * frame_blend;
+        float local_y = current_y + (next_y - current_y) * frame_blend;
+        float local_z = current_z + (next_z - current_z) * frame_blend;
+        if(secondary_source != nullptr) {
+            float secondary_x = 0.0f;
+            float secondary_y = 0.0f;
+            float secondary_z = 0.0f;
+            float secondary_next_x = 0.0f;
+            float secondary_next_y = 0.0f;
+            float secondary_next_z = 0.0f;
+            transform_source_normal(
+                secondary_source, source_normals[index],
+                secondary_x, secondary_y, secondary_z);
+            transform_source_normal(
+                secondary_next_source, source_normals[index],
+                secondary_next_x, secondary_next_y, secondary_next_z);
+            secondary_x +=
+                (secondary_next_x - secondary_x) * secondary_frame_blend;
+            secondary_y +=
+                (secondary_next_y - secondary_y) * secondary_frame_blend;
+            secondary_z +=
+                (secondary_next_z - secondary_z) * secondary_frame_blend;
+            local_x += (secondary_x - local_x) * pose_blend;
+            local_y += (secondary_y - local_y) * pose_blend;
+            local_z += (secondary_z - local_z) * pose_blend;
+        }
+        normals[index * 3U] = local_x * cosine + local_z * sine;
+        normals[index * 3U + 1U] = local_y;
+        normals[index * 3U + 2U] = -local_x * sine + local_z * cosine;
+    }
+}
+
 void build_character_lighting(const re4dc::character::Package& character,
                               const ProjectedVertex* projected,
                               const float* normals, float* lighting,
                               std::uint32_t* colors,
                               const SelectedSourceLights& light_selection) {
     const auto* normal_positions = character.normal_positions();
+    const auto* normal_sources = character.normal_sources();
     for(std::uint32_t normal = 0; normal < character.header().normal_count;
         ++normal) {
         const ProjectedVertex& position = projected[normal_positions[normal]];
+        const std::uint32_t source_normal = normal_sources != nullptr
+            ? normal_sources[normal]
+            : normal;
         evaluate_selected_actor_lighting(
             position.world_x, position.world_y, position.world_z,
-            normals[normal * 3U], normals[normal * 3U + 1U],
-            normals[normal * 3U + 2U], light_selection,
+            normals[source_normal * 3U], normals[source_normal * 3U + 1U],
+            normals[source_normal * 3U + 2U], light_selection,
             lighting[normal * 3U],
             lighting[normal * 3U + 1U], lighting[normal * 3U + 2U]);
         colors[normal] = shade_color(
@@ -4250,8 +4364,24 @@ FrameStats render_scene(const re4dc::room::Package& room,
     stats.actor_pose_us = timer_us_gettime64() - actor_pose_start;
 #if defined(RE4DC_SCENE_R100)
     const std::uint64_t actor_normals_start = timer_us_gettime64();
-    build_character_normals(leon, leon_projected, leon_lighting);
-    build_character_normals(ganado, ganado_projected, ganado_lighting);
+    if(leon.header().source_normal_count != 0U) {
+        build_character_source_normals(
+            leon, player.yaw, player_blend.base_clip, player.animation_frame,
+            player.animation_clip == kPlayerIdleClip ||
+                player.animation_clip == kPlayerWalkClip ||
+                player.animation_clip == kPlayerAimLevelClip,
+            player_blend.secondary_clip, player_blend.amount, leon_lighting);
+    } else {
+        build_character_normals(leon, leon_projected, leon_lighting);
+    }
+    if(ganado.header().source_normal_count != 0U) {
+        build_character_source_normals(
+            ganado, enemy.yaw, enemy.animation_clip, enemy.animation_frame,
+            enemy.state == EnemyState::Chase, enemy.animation_clip, 0.0f,
+            ganado_lighting);
+    } else {
+        build_character_normals(ganado, ganado_projected, ganado_lighting);
+    }
     stats.actor_normals_us = timer_us_gettime64() - actor_normals_start;
     const std::uint64_t actor_lighting_start = timer_us_gettime64();
     const SelectedSourceLights leon_light_selection = selected_source_lights(
@@ -4568,6 +4698,14 @@ int main() {
             "re4dc-room: r100 Ganado package needs source hit capsules and axe markers\n");
         return 1;
     }
+    if(leon.header().source_normal_count != 5860U ||
+       leon.header().normal_matrix_count != 394U ||
+       ganado.header().source_normal_count != 1818U ||
+       ganado.header().normal_matrix_count != 112U) {
+        std::printf(
+            "re4dc-room: r100 actors need source normals and weight palettes\n");
+        return 1;
+    }
 #endif
 
     g_re4dc_demo_telemetry.flags = 0x10000022U;
@@ -4850,8 +4988,10 @@ int main() {
     InputService input_service{};
     if(leon.header().position_count > kLeonVertexCapacity ||
        leon.header().normal_count > kLeonVertexCapacity ||
+       leon.header().source_normal_count > kLeonVertexCapacity ||
        ganado.header().position_count > kGanadoVertexCapacity ||
-       ganado.header().normal_count > kGanadoVertexCapacity) {
+       ganado.header().normal_count > kGanadoVertexCapacity ||
+       ganado.header().source_normal_count > kGanadoVertexCapacity) {
         std::printf("re4dc-room: actor transform capacity exceeded\n");
         return 1;
     }

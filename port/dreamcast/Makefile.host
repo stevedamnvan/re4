@@ -32,7 +32,7 @@ CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_SAMPLE_STEP ?= 4
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source collision-r100-source route-r100 texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source collision-r100-source route-r100 texture-r10d character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -156,6 +156,14 @@ character-ganado:
 		--cluster-mm $(CHARACTER_CLUSTER_MM) --quantum-mm 0.125 \
 		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(GANADO_CHARACTER)
+
+characters-r100:
+	$(MAKE) -f Makefile.host character-leon \
+		LEON_CHARACTER=build/private/leon-source-r100-gunhitcaps-pitch.re4chr \
+		CHARACTER_TEXTURE_MAX_DIMENSION=128
+	$(MAKE) -f Makefile.host character-ganado \
+		GANADO_CHARACTER=build/private/ganado-source-r100-hitcaps.re4chr \
+		CHARACTER_TEXTURE_MAX_DIMENSION=128
 
 source-weapon-audio:
 	@mkdir -p $(SOURCE_AUDIO_DIR)

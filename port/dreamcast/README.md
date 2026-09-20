@@ -192,6 +192,10 @@ Actor colors are now packed once per normal and reused by native strips while
 the float clipping fallback remains intact; the 2.6 ms matched frame reduction
 and 48 KiB memory cost are recorded in
 [the R3g packed actor-color checkpoint](docs/R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md).
+Character package v5 now preserves source BIN normals and their reusable weight
+palettes instead of rebuilding normals from deformed triangles. Its bounded
+direction error, 2.7 ms normal-stage reduction, and temporary RAM cost are in
+[the R3h source normal-palette checkpoint](docs/R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 

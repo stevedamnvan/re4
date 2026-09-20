@@ -46,6 +46,9 @@ color comparison and matched timing in
 Final actor colors are packed once per normal and reused by native strips, with
 the float near-plane fallback retained, in
 [R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md](R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md).
+Source BIN normals and their original weight-palette identities now replace
+per-frame triangle-normal reconstruction in
+[R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md](R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md).
 
 ## Objective and boundaries
 

@@ -50,13 +50,18 @@ class CharacterConverterTests(unittest.TestCase):
             struct.pack_into(">4H", data, 0xC3 + index * 8, index, index, 0, index)
             struct.pack_into(">2h", data, 0x100 + index * 4,
                              index * 64, index * 32)
+            struct.pack_into(">3hH", data, 0x120 + index * 8,
+                             0, 16384, 0, 0)
 
-        (positions, palette, weights, draw_sources, draw_normals, normal_count,
-         texcoords, indices, batches, bindings, primitive_indices, primitives,
+        (positions, palette, weights, source_normals, normal_palettes,
+         draw_sources, draw_normals, normal_count, texcoords, indices,
+         batches, bindings, primitive_indices, primitives,
          batch_primitive_ranges) = MODULE.parse_geometry(data)
         self.assertEqual(positions[0], (1.0, 2.0, 3.0))
         self.assertEqual(palette, [0, 0, 0, 0])
         self.assertEqual(weights, [((0,), (100,))])
+        self.assertEqual(source_normals, [(0, 16384, 0)] * 4)
+        self.assertEqual(normal_palettes, [0, 0, 0, 0])
         self.assertEqual(draw_sources, [0, 1, 2, 3])
         self.assertEqual(draw_normals, [0, 1, 2, 3])
         self.assertEqual(normal_count, 4)
