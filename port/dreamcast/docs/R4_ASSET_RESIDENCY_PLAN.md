@@ -38,8 +38,34 @@ without a licence check, and never its game data. Reference:
 
 The PS2 disc is used only as a measurement oracle for its asset choices. No
 PS2 asset enters a package. A retail PS2 disc image is now present in the
-workspace, so the "no PS2 source" note below applies only until a manifest is
-built from it. Match assets by validated scene, material and content identity
+workspace and has been surveyed read-only; nothing was extracted. What it
+contains, so the manifest work starts from fact rather than assumption:
+
+- Plain unencrypted ISO9660, eight files. The assets are three CRI AFS
+  archives: `BIO4DAT.AFS` (1.54 GB, 2,628 entries), `BIO4MOV.AFS` (1.96 GB,
+  cutscenes) and `BIO4MOV2.AFS` (910 MB, Separate Ways).
+- AFS is trivially parseable: magic, entry count, offset and size pairs, and a
+  trailing 48-bytes-per-entry metadata block carrying plain-text filenames.
+- The PS2 build keeps the GameCube naming. `BIO4DAT.AFS` holds 965 `.dat`, 564
+  `.tpl`, 358 `.snd`, 252 `.bin`, 214 `.adx` and 207 `.rel` entries. 753 entries
+  are zero-size stubs, including 272 of the `.tpl` names, leaving 292 real
+  texture files.
+- Rooms are addressable by the same `rNNN` scheme, 166 of them. r100 is present
+  as `r100.dat` (5.2 MB) plus five `r100_NN.dat` parts and a `r100.snd`.
+  `r100.dat` is a chunk archive of 49 entries whose magics include `B404`,
+  `AEV`, `PTR2`, `FSE`, `BLK` and six TPL chunks holding 25 textures.
+- The TPL header is `magic 0x00001000`, texture count, table offset, then
+  48-byte descriptors carrying width, height, a format enum, the pixel-data
+  offset, the palette offset and PS2 GS register words. All 292 non-empty
+  files parse: 1,078 textures, no failures, all power-of-two dimensions.
+
+So the per-texture side of the manifest is a small job. Two things make it
+medium. Material identity is not in the TPL descriptors, so binding a texture
+slot to a mesh material means reading the model chunks, which is reverse
+engineering rather than parsing; skip it if the oracle only needs "what does
+r100 use, at what size and format". And the format enum's high bits and the mip
+count are inferred rather than confirmed, so they need cross-checking against
+actual data-region lengths before any number derived from them is quoted. Match assets by validated scene, material and content identity
 rather than filename or ordinal, record what fails to match, and do not infer
 transfer rate or residency from image dimensions. This does not gate any other
 deliverable.
