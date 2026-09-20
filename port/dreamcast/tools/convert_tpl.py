@@ -39,6 +39,7 @@ FORMAT_RGB565 = 0
 FORMAT_ARGB1555 = 1
 FORMAT_ARGB4444 = 2
 FLAG_ALPHA = 1
+FLAG_BINARY_ALPHA = 2
 HEADER = struct.Struct("<8s10I")
 TEXTURE = struct.Struct("<64s6I")
 IMAGE_NUMBER = re.compile(r"-(\d+)\.png$", re.IGNORECASE)
@@ -492,7 +493,12 @@ def build_package(
             raw = b"".join(struct.pack("<H", pack_pixel(pixel)) for pixel in pixels)
             relative_offset = len(data_blob)
             data_blob.extend(raw)
+            binary_alpha = (
+                has_alpha and all(pixel[3] in (0, 255) for pixel in pixels)
+            )
             flags = FLAG_ALPHA if has_alpha else 0
+            if binary_alpha:
+                flags |= FLAG_BINARY_ALPHA
             packed[key] = (
                 relative_offset, len(raw), image_format, flags,
                 width, height,
@@ -511,6 +517,7 @@ def build_package(
             "width": width,
             "height": height,
             "format": "argb4444" if flags & FLAG_ALPHA else "rgb565",
+            "binary_alpha": bool(flags & FLAG_BINARY_ALPHA),
             "bytes": raw_size,
         })
 

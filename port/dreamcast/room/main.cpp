@@ -4660,6 +4660,15 @@ void draw_source_hud(const re4dc::hud::Package& hud,
     }
 }
 
+bool uses_source_punchthrough(
+    const re4dc::room::SourceGroup* source_groups,
+    const bool* material_punchthrough, std::uint32_t group_index,
+    std::uint32_t material_index) {
+    return source_groups != nullptr && material_punchthrough[material_index] &&
+           (source_groups[group_index].flags &
+            re4dc::room::kSourceGroupAlphaOmit128) != 0U;
+}
+
 FrameStats render_scene(const re4dc::room::Package& room,
                         const re4dc::character::Package& leon,
                         const re4dc::character::Package& ganado,
@@ -4667,8 +4676,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
                         const pvr_poly_hdr_t& untextured_header,
                         const pvr_poly_hdr_t* material_headers,
                         const pvr_poly_hdr_t* room_strip_headers,
-                         const bool* material_alpha,
-                         const pvr_poly_hdr_t* leon_headers,
+                        const pvr_poly_hdr_t* room_punchthrough_headers,
+                        const bool* material_alpha,
+                        const bool* material_punchthrough,
+                        const pvr_poly_hdr_t* leon_headers,
                          const bool* leon_alpha,
                          const pvr_poly_hdr_t* ganado_headers,
                          const bool* ganado_alpha,
@@ -4847,8 +4858,8 @@ FrameStats render_scene(const re4dc::room::Package& room,
     stats.opaque_actor_us = timer_us_gettime64() - opaque_actor_start;
     pvr_list_finish();
 
-    pvr_list_begin(PVR_LIST_TR_POLY);
     const std::uint64_t translucent_room_start = timer_us_gettime64();
+    pvr_list_begin(PVR_LIST_PT_POLY);
     for(std::uint32_t group_index = 0; group_index < room.header().group_count;
         ++group_index) {
         const auto& group = groups[group_index];
@@ -4867,7 +4878,69 @@ FrameStats render_scene(const re4dc::room::Package& room,
         for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
             ++local_batch) {
             const auto& batch = batches[group.first_batch + local_batch];
-            if(!material_alpha[batch.material]) {
+            if(!uses_source_punchthrough(source_groups, material_punchthrough,
+                                         group_index, batch.material) ||
+               cull_mode == kCullAll) {
+                continue;
+            }
+            const pvr_poly_hdr_t& header =
+                room_punchthrough_headers[batch.material * 3U + cull_mode];
+            pvr_prim(&header, sizeof(header));
+            if(batch.primitive_count != 0U) {
+                submit_room_strips(
+                    room, batch, character_submit_vertices,
+                    kCharacterSubmitVertexCapacity, stats, cull_mode,
+                    light_selection);
+                continue;
+            }
+            std::uint32_t submit_count = 0;
+            const auto flush = [&]() {
+                if(submit_count == 0U) {
+                    return;
+                }
+                pvr_prim(character_submit_vertices,
+                         sizeof(pvr_vertex_t) * submit_count);
+                submit_count = 0;
+            };
+            const std::uint32_t end = batch.first_index + batch.index_count;
+            for(std::uint32_t index = batch.first_index; index < end; index += 3) {
+                if(submit_count + 6U > kCharacterSubmitVertexCapacity) {
+                    flush();
+                }
+                const std::uint32_t emitted = transform_triangle(
+                    vertices, indices + index,
+                    character_submit_vertices + submit_count, stats,
+                    cull_mode, light_selection);
+                submit_count += emitted * 3U;
+                stats.triangles += emitted;
+            }
+            flush();
+        }
+    }
+    pvr_list_finish();
+
+    pvr_list_begin(PVR_LIST_TR_POLY);
+    for(std::uint32_t group_index = 0; group_index < room.header().group_count;
+        ++group_index) {
+        const auto& group = groups[group_index];
+        if(!group_visible(group)) {
+            continue;
+        }
+        const std::uint8_t cull_mode = source_groups != nullptr
+            ? source_groups[group_index].cull_mode
+#if defined(RE4DC_SCENE_R100)
+            : kCullNone;
+#else
+            : kCullBack;
+#endif
+        const std::uint32_t light_selection = source_group_light_selection(
+            source_groups != nullptr ? source_groups + group_index : nullptr);
+        for(std::uint32_t local_batch = 0; local_batch < group.batch_count;
+            ++local_batch) {
+            const auto& batch = batches[group.first_batch + local_batch];
+            if(!material_alpha[batch.material] ||
+               uses_source_punchthrough(source_groups, material_punchthrough,
+                                        group_index, batch.material)) {
                 continue;
             }
             if(cull_mode == kCullAll) {
@@ -5083,6 +5156,8 @@ int main() {
         std::printf("re4dc-room: PVR initialization failed\n");
         return 1;
     }
+    // Match the source SMX alpha-omit reference used by the binary cutout path.
+    PVR_SET(PVR_PT_ALPHA_REF, 0x80U);
     g_re4dc_demo_telemetry.flags = 0x10000025U;
 #if defined(RE4DC_SCENE_R100)
     // r100_002.LIT cut 0 supplies the background/fog colour and distances.
@@ -5133,10 +5208,15 @@ int main() {
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count];
     pvr_poly_hdr_t* room_strip_headers =
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
+    pvr_poly_hdr_t* room_punchthrough_headers =
+        new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
     std::unique_ptr<bool[]> material_alpha(
         new(std::nothrow) bool[room.header().material_count]);
+    std::unique_ptr<bool[]> material_punchthrough(
+        new(std::nothrow) bool[room.header().material_count]);
     if(material_headers == nullptr || room_strip_headers == nullptr ||
-       material_alpha == nullptr) {
+       room_punchthrough_headers == nullptr || material_alpha == nullptr ||
+       material_punchthrough == nullptr) {
         std::printf("re4dc-room: material header allocation failed\n");
         return 1;
     }
@@ -5152,6 +5232,8 @@ int main() {
             static_cast<std::uint32_t>(texture - textures.textures());
         material_alpha[material] =
             (texture->flags & re4dc::texture::kAlpha) != 0;
+        material_punchthrough[material] =
+            (texture->flags & re4dc::texture::kBinaryAlpha) != 0;
         const pvr_list_t list = material_alpha[material]
                                     ? PVR_LIST_TR_POLY
                                     : PVR_LIST_OP_POLY;
@@ -5178,6 +5260,20 @@ int main() {
             context.gen.culling = kPvrCullModes[cull];
             pvr_poly_compile(&room_strip_headers[material * 3U + cull],
                              &context);
+        }
+        if(material_punchthrough[material]) {
+            pvr_poly_cxt_txr(
+                &context, PVR_LIST_PT_POLY, format, texture->width,
+                texture->height, textures.pvr_texture(texture_index),
+                PVR_FILTER_BILINEAR);
+            context.gen.fog_type = PVR_FOG_TABLE;
+            context.txr.alpha = PVR_TXRALPHA_ENABLE;
+            for(std::uint32_t cull = 0U; cull < 3U; ++cull) {
+                context.gen.culling = kPvrCullModes[cull];
+                pvr_poly_compile(
+                    &room_punchthrough_headers[material * 3U + cull],
+                    &context);
+            }
         }
     }
     pvr_poly_hdr_t* leon_headers =
@@ -5670,8 +5766,8 @@ int main() {
         const std::uint64_t camera_us = timer_us_gettime64() - camera_start;
         const FrameStats stats = render_scene(
             room, leon, ganado, player, enemy, untextured_header,
-            material_headers, room_strip_headers, material_alpha.get(),
-            leon_headers,
+            material_headers, room_strip_headers, room_punchthrough_headers,
+            material_alpha.get(), material_punchthrough.get(), leon_headers,
             leon_alpha.get(), ganado_headers, ganado_alpha.get(),
 #if defined(RE4DC_SCENE_R100)
             source_hud, source_hud_headers,
@@ -5857,6 +5953,7 @@ int main() {
     }
     delete[] ganado_headers;
     delete[] leon_headers;
+    delete[] room_punchthrough_headers;
     delete[] room_strip_headers;
     delete[] material_headers;
     release_demo_audio(audio);

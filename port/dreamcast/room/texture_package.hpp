@@ -13,7 +13,8 @@ inline constexpr std::uint32_t kVersion = 1;
 inline constexpr std::uint32_t kRgb565 = 0;
 inline constexpr std::uint32_t kArgb1555 = 1;
 inline constexpr std::uint32_t kArgb4444 = 2;
-inline constexpr std::uint32_t kAlpha = 1;
+inline constexpr std::uint32_t kAlpha = 1U << 0U;
+inline constexpr std::uint32_t kBinaryAlpha = 1U << 1U;
 
 struct Header {
     char magic[8];

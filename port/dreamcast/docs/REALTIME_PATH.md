@@ -1,61 +1,168 @@
 # Fidelity-preserving real-time r100 plan
 
-Revised 2026-09-20 after auditing `fed3e91aa18a246b027b8291fa0b1f41b9a9dda0`.
-The follow-up source-engine audit is incorporated below. This is the current
-execution order. [PLAYABLE_PATH.md](PLAYABLE_PATH.md)
-retains the presentation milestone, source ownership ledger, and historical
-evidence. Keep the native SH-4/KallistiOS target and direct PVR renderer.
+Updated 2026-09-20 from the corrected character build at `dba07e2` and the
+measured R3m source punch-through candidate. This is the authoritative execution
+plan. Earlier R0-R3 checkpoint documents remain evidence records; their letter
+sequence no longer determines the next task.
 
-R0 telemetry and the R1a renderer pass are implemented and measured in
-[R1A_PERFORMANCE_CHECKPOINT.md](R1A_PERFORMANCE_CHECKPOINT.md). The first R1b
-implementation now carries source object/cull/mask/volume data and applies the
-source-derived room and actor selection in
-[R1B_SOURCE_SELECTION_CHECKPOINT.md](R1B_SOURCE_SELECTION_CHECKPOINT.md).
-The matched original-game selected-light trace and image comparison required to
-close R1b remain pending. The first R2a implementation also preserves and uses
-the authored SAT block graph, edges, and duplicate suppression in
-[R2A_SAT_HIERARCHY_CHECKPOINT.md](R2A_SAT_HIERARCHY_CHECKPOINT.md); source
-narrow-phase/query-trace parity remains open. R1c now prepares the fixed
-world-space part of source-selected room lighting once while retaining the
-camera-relative lights, with the measured result in
-[R1C_STATIC_ROOM_LIGHTING_CHECKPOINT.md](R1C_STATIC_ROOM_LIGHTING_CHECKPOINT.md).
-The target-side timestamped controller service and short-edge test are recorded
-in [R0_INPUT_SERVICE_CHECKPOINT.md](R0_INPUT_SERVICE_CHECKPOINT.md); source
-sampling semantics, human-controller coverage, and hardware timing remain open.
-Character package version 4 separates animated positions, normal identities,
-and UV draw corners in
-[R2B_SOURCE_ATTRIBUTE_IDENTITIES_CHECKPOINT.md](R2B_SOURCE_ATTRIBUTE_IDENTITIES_CHECKPOINT.md).
-The first native room-strip pass is implemented and measured in
-[R3B_NATIVE_ROOM_STRIPS_CHECKPOINT.md](R3B_NATIVE_ROOM_STRIPS_CHECKPOINT.md): it
-preserves the original triangle stream and matched static room pixels while
-reducing the median Flycast render interval by 23.8 ms. The measured result is
-about 6.4 fps, so the real-time and physical-hardware gates remain open.
-Order-certified translucent batches are added in
-[R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md](R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md),
-reducing the matched interval by a further 2.3 ms while retaining the old path
-for every batch whose source triangle order would change.
-The guarded room-normal invariant and rejected actor equivalent are recorded in
-[R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md](R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md).
-The source cut's two camera-relative directional room lights are specialized,
-with an exact packed-color comparison and general fallback, in
-[R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md](R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md).
-The actor evaluator now consumes each model's source-ordered selected-light
-list rather than rescanning every room light per normal, with an exact packed
-color comparison and matched timing in
-[R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md](R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md).
-Final actor colors are packed once per normal and reused by native strips, with
-the float near-plane fallback retained, in
-[R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md](R3G_PACKED_ACTOR_COLORS_CHECKPOINT.md).
-Source BIN normals and their original weight-palette identities now replace
-per-frame triangle-normal reconstruction in
-[R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md](R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md).
-Source BIN positions now share the same prepared pose palettes; complete baked
-mesh poses have been removed while gameplay marker tracks remain exact in
-[R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md](R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md).
-The room vertex-cache bound is increased only to the measured 2,048-entry
-reuse ceiling in
-[R3J_ROOM_VERTEX_CACHE_BOUND_CHECKPOINT.md](R3J_ROOM_VERTEX_CACHE_BOUND_CHECKPOINT.md).
+## Current status
 
+The accepted visual baseline is the native 640x480 r100 cabin encounter with the
+source room, camera/FOV, selected lighting, complete handgun Leon assembly,
+right-handed Ganado assembly, source-facing actor culling, HUD, combat events,
+and audio. The original GameCube build remains the behavioral and presentation
+authority when that baseline contains a known approximation or defect.
+
+Implemented target optimizations include fixed-step/input telemetry, independent
+controller sampling, source light selection, prepared static room-light terms,
+source SAT hierarchy traversal, source position/normal palette reuse, native
+actor and room strips, ordered-alpha strip protection, packed actor colors,
+validated room normals, compact selected-light evaluators, a bounded room vertex
+cache, conservative one-metre opaque child cells, and source-authorized binary
+punch-through. Do not propose these again as unimplemented work.
+
+R3m is retained because it satisfies its bounded acceptance test: material 029
+is binary alpha and carries the source SMX `alpha_omit = 0x80` override; all
+gradient alpha stays blended. It preserves all source triangles and improves the
+same full encounter route. See
+[R3M_SOURCE_PUNCHTHROUGH_CHECKPOINT.md](R3M_SOURCE_PUNCHTHROUGH_CHECKPOINT.md).
+
+## Current measured budget
+
+Flycast measurements use the pinned 640x480 build and stock Dreamcast memory
+sizes. They are emulator evidence. The comparison spans simulation ticks 30-1198
+and includes source-timed turn, aim, fire, reload, enemy kill, the held result
+view, and timed retry. The current autoplay does not cover free movement, aim
+extremes, enemy contact, Leon death, or a human controller; those cases must be
+added to the benchmark set and remain separate acceptance gates.
+
+| Full-route metric | corrected-character baseline | R3m candidate |
+|---|---:|---:|
+| CPU frame p50 / p95 / p99 | 99.00 / 101.50 / 102.57 ms | 92.23 / 94.72 / 95.83 ms |
+| presented ready-to-ready p50 / p95 / p99 | 100.09 / 102.59 / 102.60 ms | 83.41 / 100.10 / 102.60 ms |
+| PVR registration p50 | 72.03 ms | 65.29 ms |
+| PVR render p50 | 7.50 ms | 7.50 ms |
+| dropped simulation time / overruns | 0 / 0 | 0 / 0 |
+
+The candidate still presents at roughly 10-12 distinct frames per second. A
+33.33 ms CPU frame needs another 58.9 ms median reduction and 61.4 ms at p95.
+PVR raster time is not the dominant measured cost; SH-4 preparation and TA
+registration are.
+
+The R3m candidate median CPU stages are shown without adding the overlapping
+`submit_us` aggregate to its children:
+
+| Stage | p50 |
+|---|---:|
+| opaque room transform/light/clip/submit | 29.19 ms |
+| binary plus blended alpha room work | 22.50 ms |
+| actor lighting | 18.96 ms |
+| opaque actor draw | 11.78 ms |
+| actor pose palettes/projection | 5.82 ms |
+| actor normals | 1.83 ms |
+| translucent actors and HUD | 1.75 ms |
+| simulation | 0.17 ms |
+| camera | 0.15 ms |
+
+`submit_us` is 65.30 ms p50 and contains room transform, lighting, clipping,
+packet construction, and immediate TA submission. It is not a transfer-only
+number. The next profiler revision must separate visibility, packet construction,
+bytes submitted, TA registration, render completion, and presentation while
+retaining render/simulation snapshot IDs.
+
+A 25-second manual-build virtual-controller trace delivered five action edges,
+with zero queue drops, a maximum queue depth of one, a 19.96 ms worst sampling
+gap, and no discarded simulation time. A focused host-timestamped run observed
+the fire state 158 ms after button-down and restart state 218 ms after button-down.
+Those bounds include the current slow render cadence and host observation error;
+they are not a human-controller or physical Dreamcast latency result.
+
+Post-load observed memory for R3m is 5,640,192 bytes of main-RAM break-to-stack
+headroom, 121,884 heap bytes used, 176,592 heap bytes free, 1,521,128 PVR bytes
+free, and the KOS AICA query value of 1,378,336 bytes. R3m costs 94,208 bytes of
+main-RAM headroom and 4,168 heap bytes versus the corrected-character baseline;
+PVR and AICA values are unchanged. These are steady-state snapshots, not loading,
+restart, stack, TA-overflow, or fragmentation peaks. Add explicit high-water
+records before calling the memory budget accepted.
+
+Exact identities:
+
+- source: `9dcd989370be7f083a9b66cfd19907fda627c893`
+- KallistiOS: `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`
+- kos-ports: `f4faacc42faaf552625777b7709e871a827e1055`
+- compiler: `sh-elf-g++ 15.2.0`
+- Flycast SHA-256: `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`
+- corrected-character ELF: `c5ae9de436fd7b9f3770ce3e7cc40d1f37b8e2c000b3b9dfb9be5d46ce7c0e68`
+- R3m autoplay ELF: `1feacc30cdd072b3ca03ff976892013e6c21d4966d6eac1e7303cf12e9cb7ae4`
+- R3m manual ELF: `1a45de49b10711fe83762b263dfe5fc91edac9daa6fbc5aaa3c4ac98f5c56688`
+
+Evidence is retained in `d202` through `d207` under
+`C:\Flycast-Evidence\re4-dreamcast`. Physical Dreamcast timing remains pending.
+
+## Measured bottleneck queue
+
+Choose each next experiment from the current trace. Every candidate must boot,
+retain a reference path where appropriate, pass its correctness check, record
+before/after timing and memory, and end in a keep-or-revert decision.
+
+1. **Visibility and pass preparation.** Build one conservative visible source-child
+   list per render snapshot, cache static bounds, source cull mode, light selection,
+   and material pass classification, then reuse it across opaque, punch-through,
+   and blended passes. Measure visibility separately. Preserve surviving alpha
+   order and do not stop off-screen gameplay or event updates.
+2. **Room and packet work.** With the visibility list in place, measure unique
+   transforms, light evaluations, clipping crossings, headers, vertices, bytes,
+   and TA calls per list. Reduce packet reconstruction/copying and exploit tighter
+   native strips only where winding, clipping, and alpha order remain valid.
+3. **Actor preparation and lighting.** Add conservative render eligibility before
+   pose work. Cache settled death poses and other unchanged inputs using explicit
+   animation, transform, camera-relative light, selected-light, component, and
+   material dependencies. Inspect SH-4 assembly and benchmark batch palette/
+   selected-light kernels against the portable reference with numerical bounds.
+4. **Submission transport.** The current KOS `pvr_prim` path already uses store
+   queues. Benchmark direct SQ against bounded KOS DMA buffers only after byte and
+   call counts exist; DMA adds main-RAM buffers and pipeline latency. Preserve list
+   ownership, clipping fallbacks, synchronization, and presentation ordering.
+5. **Native texture/resource layout.** Extend the current package with offline
+   twiddled payloads, explicit layout metadata, and one uploaded handle per deduped
+   payload. Credit this to load time and memory unless a frame trace changes. Then
+   evaluate `pvrtex` VQ, palette, and mip candidates per texture with native upload,
+   previews, moving-scene review, and uncompressed fallbacks. Alpha edges, HUD,
+   faces, and nearby architecture receive separate quality decisions.
+6. **Gameplay/source parity in parallel.** Continue bounded source checks for
+   collision narrow phase, camera blockers, state/RNG/event behavior, expressions,
+   and cloth where they affect this encounter. They do not block independent
+   renderer experiments, and known prototype defects are corrected against the
+   GameCube reference rather than preserved.
+
+The benchmark set must grow into repeatable movement, camera turns, aim extremes,
+fire/reload, enemy attacks, Leon death, kill, and retry segments. Track p50/p95/
+p99/max presented intervals, simulation debt/drops, input sample/edge latency,
+audio-event timing, and memory high-water marks. Autoplay is engineering evidence;
+final acceptance requires responsive human control and stock physical hardware.
+
+## Targeted Dreamcast references
+
+Use mechanisms, not borrowed performance claims:
+
+- Pinned KallistiOS immediate `pvr_prim` already copies aligned packets through
+  store queues; its optional DMA mode copies per-list packets into double-buffered
+  main-RAM buffers before TA DMA. Benchmark the exact RE4 packet mix before choosing.
+- The pinned KallistiOS `pvrtex` tool emits twiddled native payloads, mip chains,
+  palette formats, VQ with adjustable codebooks, preview images, and a DMA-aligned
+  `.DT` container. Reuse the mature encoder or its format rather than writing a
+  compressor.
+- SH4ZAM provides MIT-licensed SH-4 matrix/vector kernels and is available through
+  kos-ports. Adopt only individual kernels that beat the current FTRV path on an
+  RE4 fixture while satisfying the reference error bound; pin the adopted source.
+- QuakeSpasm-DC demonstrates a native PVR renderer, direct geometry streaming,
+  SH4ZAM math, fog, lighting, and mipmapped textures. Doom 64 DC demonstrates
+  level-time texture caching and 8bpp world textures. Their layouts are study
+  cases, not RE4 quality or frame-rate targets.
+
+Primary references: [KallistiOS PVR scene path][kos-scene],
+[KallistiOS pvrtex][kos-pvrtex], [SH4ZAM][sh4zam],
+[QuakeSpasm-DC][quakespasm-dc], and [Doom 64 DC][doom64-dc].
 ## Objective and boundaries
 
 Make the same post-s03 cabin encounter responsive and measure its cost on a
@@ -77,367 +184,65 @@ behavior. Its reduced state machines, RNG call sequence, sampled poses, rebuilt
 normals, light selection, and incomplete camera blockers remain source-port debt.
 Preserving current behavior is a regression check, not proof that it is correct.
 
-## Two references and a reproducible baseline
+## Two references and regression rules
 
-1. Preserve `fed3e91` and the existing private manual-v3 package unchanged as the
-   Dreamcast regression reference. New runs get separate directories.
-2. Use the original G4BE08 debug game, with the same post-s03 state and camera,
-   as the source-fidelity reference. Record matching tick/state/camera/RNG/input
-   identities; an unrelated outdoor retail screenshot is not an exact reference
-   for this cabin. Build paired reference captures where these do not yet exist.
+The current Dreamcast regression reference is the accepted R3m build and its
+exact room, texture, character, and toolchain identities. The original G4BE08
+debug game is the authority for behavior and authored presentation. A pure target
+optimization must match the accepted build at equivalent simulation snapshots;
+a source-correctness fix may intentionally change it and must instead be checked
+against the original game.
 
-Frozen artifacts were hash-checked during this audit:
-
-| Artifact | SHA-256 |
-|---|---|
-| Manual ELF | `b70858d412876496f740a8bea3e5cf2752203210d952d97d04d77a268db13c36` |
-| 30-second recording with audio | `c8dc6a0825f71b0a21b8b6a783d809987542e01d7ae47805a920ebdb4a6a65ad` |
-| Controller-path state trace | `1087a8603c97328cfdc2b41e865c4ac372cd4c80190f586cd8a030a5146eeaed` |
-| Packaged Flycast executable | `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a` |
-
-Private directory:
-`C:\Flycast-Evidence\re4-dreamcast\d110-exact-r100-manual-v3`.
-The trace used a virtual controller through the normal input path; it is not a
-human responsiveness test. A video encoded at 30 fps is not 30 new game frames.
-No executable was run or physical hardware tested in this planning audit.
-
-Record the compiler commands, KOS revision/local patches, all package hashes,
-ELF, emulator executable/settings, controller/input trace, video mode, and capture
-configuration for each comparison. The packaged Flycast settings do not explicitly
-pin every CPU/memory/renderer option: verify effective settings, stock memory
-sizes and clock, and disable enhancements for acceptance. Do not infer the packaged
-binary's source revision from the separate, modified Soulcalibur checkout.
+Keep the audio video at
+`C:\Flycast-Evidence\re4-dreamcast\d202-current-progress-video-audio-dba07e2`
+as the corrected-character presentation checkpoint. Keep the full timing traces
+at `d204` and `d205`, the R3m visual sequence at `d203`, and manual input traces
+at `d206` and `d207`. New candidates use new directories and exact hashes. The
+older `fed3e91`/manual-v3 package remains historical evidence, not the performance
+baseline.
 
 Use `tools/evidence_manifest.py` and the exact-identity discipline in
 [SOULCALIBUR_REUSE.md](SOULCALIBUR_REUSE.md). Keep that other checkout read-only.
+## Source architecture status
 
-## What the code audit confirms
+The original audit identified valuable GameCube mechanisms. Current disposition:
 
-Locations below refer to `room/main.cpp` at `fed3e91`.
-
-| Finding | Evidence | Consequence |
+| Source mechanism | Dreamcast status | Remaining fidelity question |
 |---|---|---|
-| Room processing is per triangle corner | `transform_triangle`, lines 2329-2381, transforms and lights each indexed corner; `render_scene` calls it per triangle | Restore reuse with bounded scratch storage; the current room path is not a unique-vertex cache |
-| Lighting repeats invariant math and omits source selection | `evaluate_source_lighting`, 2040-2121; nine global lights at 134-161, two view-relative | Recover per-model source light lists before baking; prepare constants and reuse only proven invariants |
-| Actor preparation is outside the named submission interval | Projection, normal rebuild, and lighting at 3109-3126 precede timing at 3128 | Measure those stages before assigning bottleneck percentages |
-| Existing frame statistics are not one paired frame | Prior outer-loop `frame_us` is stored with current render counters at 3867-3878 | Associate frame, render snapshot, simulation, and presentation IDs explicitly |
-| Fixed step is not real-time scheduling | Input once at 3659, up to 24 reused-input ticks, then accumulator truncation at 3718 | Queue observed input transitions; count all discarded time and service input regularly |
-| Source SAT structure was dropped | Runtime scans at 617-725; `convert_sat.py` keeps the block count only as metadata and discards edge references | Preserve and adapt the authored hierarchy and original query rules before considering a new tree |
-| Basic target optimizations are already present | `-O2`, `mat_trans_single`, material headers, 768-vertex batches; KOS immediate submission uses SQ | No generic compiler/assembly/store-queue rewrite without a measured reason |
+| SAT block traversal and duplicate suppression | hierarchy, edges, traversal, and measured candidate integrated | original narrow-phase primitives, attributes, manager split, and matched query results |
+| per-model light filtering and eight-entry order | target-side room/actor selection and compact evaluators integrated | matched original selected IDs/order and event-dependent changes |
+| shared position/normal weight palettes | package v6 and runtime pose-palette reuse integrated | live source motion/state path and SH-4 kernel alternatives |
+| render eligibility before preparation | source child bounds exist; actor preparation is still unconditional | source parent registration/visibility rules and conservative actor eligibility |
+| authored BLK residency | source policy understood, current slice remains ROM-disk resident | converted active/staged working sets and intended storage path |
+| source material/cull/alpha state | cull and SMX alpha-omit paths integrated; gradient order protected | remaining part alpha references, depth/blend variants, and matched images |
 
-Reported 780-840 ms frames imply about 1.19-1.28 fps and a 23.4-25.2x interval
-reduction to reach 33.33 ms. These are emulator observations, not a measured stock
-hardware budget or GPU duration. The CPU-preparation bottleneck is a strong
-hypothesis, not a measured percentage.
+The decompilation determines behavior and authored state. Compiler-matching
+constructs, PowerPC assembly, GX display-list execution, pointer ranges, and
+fixed scratch addresses do not enter the SH-4 hot path unless they carry a
+verified semantic requirement.
 
-The intact room package has 40,419 vertices and 92,685 indices. Its whole-package
-index/vertex ratio is about 2.29, not a predicted frame speedup: actual visible
-reuse, clipping, actor work, and simulation cost matter. A whole-room array of the
-current 52-byte `RenderVertex` would require 2,101,788 bytes before cache metadata.
-That exceeds the reported uncommitted heap-to-stack gap. Do not restore an
-unbounded cache or assume the previous HUD-era memory tradeoff disappeared.
+Keep original position, normal, UV-corner, material, weight, part, instance,
+and source-object identities through conversion. Optimize their storage and
+execution without welding by coordinate or flattening a source distinction that
+changes deformation, shading, material state, or visibility.
+## Completed checkpoint index
 
-## Source architecture recovered by this audit
+These records explain the current implementation and negative results; they are
+not the task scheduler:
 
-The decomp provides executable algorithms, not only constants. These mechanisms
-were checked in the source bodies; their actual r100 workload is still untraced.
+- R0/R1a: corrected frame/debt accounting, input service, bounded room cache,
+  and transform/light reuse.
+- R1b/R1c/R3e/R3f: source-selected and prepared room/actor lighting paths.
+- R2a: source SAT hierarchy traversal with narrow-phase parity still open.
+- R2b/R3h/R3i: source position/normal identities and shared pose palettes.
+- R3b/R3c/R3g: native strips, protected alpha order, and packed actor colors.
+- R3d/R3j/R3k: validated room normals, measured cache bound, and conservative
+  source-child spatial cells.
+- R3l: corrected complete character assembly and actor culling.
+- R3m: source-authorized binary punch-through and alpha-child rejection.
 
-| Source path | Confirmed mechanism | Plan consequence |
-|---|---|---|
-| `atari.cpp::blkPolySphereCk/Core`, `blkPolyLineCk/Core` | Child/sibling block traversal, query filtering, per-query polygon duplicate suppression, position mutation during contact processing | Export the hierarchy and adapt the source queries, preserving order and separate SatMgr/EatMgr ownership |
-| `light.cpp::cLightMgr::setModel2`, `lightHitCheck*` | Active/mask/kind/parent/color/volume filtering in engine order; eight slots; an additional qualifying light triggers error handling | Recover model masks and lighting volumes, validate selected IDs, then cache selected contributions |
-| `trans.cpp::calcWeightMat`, `MakeWeightPalette/Ext` | Shared blended palettes feed CPU position/normal skinning; source remainder-weight rule and rigid shortcut | Retain palette references and separate attribute identities; benchmark against baked poses |
-| `trans.cpp::ModelTrans`, `scroll.cpp::setObj/SmdSetParam` | Model registration precedes expensive preparation; authored objects retain placement/shared-model/block identity | Recover source object ownership before adding child render clusters |
-| `block.cpp::checkBlockConnect/checkBlockMemory` | Authored active/staged sets and maximum main-memory pool calculation; required loads can stop gameplay | Recalculate those sets using converted resource costs, with Dreamcast storage replacing ARAM staging |
-
-Primary source: [collision][re4-atari], [lighting][re4-light],
-[transform/draw][re4-trans], [object placement][re4-scroll],
-[block residency][re4-block]. These confirm architecture, not a speedup.
-
-The current r100 SAT manifest lists 1,157 source blocks and 1,507 polygons; the
-runtime package has no block records. It exports section 0 of a two-section
-container. Establish each section's original manager/use before assigning the
-other one to bullet or effect queries. `convert_sat.py` also drops the three
-source edge references per polygon and the edge-vector table; retain the fields
-needed by the original narrow phase instead of rebuilding an approximate solver.
-
-Preserve BIN/SMD/SMX identities in the next package revision. Count original
-positions, normals, render corners, matrix-palette entries, instances, and emitted
-PVR vertices separately. A UV seam needs another corner, not necessarily another
-position transform. Reuse keys include source identity, weight/rigid-part
-association, morph state, instance transform, and (for shading) selected-light
-context. Never weld by coordinate equality. Use a small direct source-model
-converter for this encounter; an OBJ export is a visual aid, not the authority for
-engine semantics. Version packages and fail on missing required semantics rather
-than silently substituting guessed flags.
-
-Source correctness can properly change the frozen image or collision response.
-Such changes need a separate fidelity checkpoint against the original game;
-do not insist on preserving an identified prototype error, or report its correction
-as an image-identical optimization.
-
-## Ordered work packages
-
-Each change gets its own baseline/candidate result, including negative results.
-Keep the reference executable bootable; no asset simplification is bundled into
-an optimization commit.
-
-| Order | Bounded work | Required exit evidence |
-|---|---|---|
-| R0 | Freeze references; instrument target and matched original-game workload; correct input/debt and memory accounting; establish hardware route | **In progress:** target telemetry, debt accounting, independent input sampling, and a 50 ms edge test are implemented; matched source traces, human coverage, presentation attribution, and hardware results remain open |
-| R1a | Bounded unique room-vertex cache and trivial clip classification | Same draw/state output, reduced transform/light counts, measured stage cost, fixed scratch ceiling |
-| R1b | Recover source object identity and per-model light selection; prepare constants; only then cache/bake static contributions | **In progress:** target package/runtime implemented and measured; selected light IDs/order and changed image still need the matched source trace |
-| R1c | Reuse selected fixed room-light contributions while retaining view-relative lights | **Target-side complete:** prior packed vertex colors matched at the checked camera; original-game image/light trace and hardware timing remain open |
-| R2a | Export source SAT blocks/edges and adapt source traversal/filtering/primitives | **In progress:** hierarchy/edges/traversal are implemented and measured; source primitive, attribute, manager, and matched query-result parity remain open |
-| R2b | Retain source attribute/weight-palette structure; source eligibility before preparation; benchmark skinning | **In progress:** package v6 retains source positions, authored normals, independent UV draw corners, and shared weight palettes. Runtime palette reuse is measured and complete for the current actors; source eligibility, live motion integration, and parity traces remain open |
-| R3 | Native draw templates from source cull/material state; child clusters; clipping/packet improvements | **In progress:** source actor strips and one-metre conservative source-object child cells are integrated and measured; alpha batches retain source order. Source material state, complete character presentation, matched image tests, clipping stress, and TA limits remain open |
-| R4 | Qualify the unchanged encounter against the stock hardware frame budget | Live presentation/input/audio distributions and peak memory meet the acceptance section below |
-| R5 | Explicit residency and source-runtime integration before expanding content | Bounded loading/restart/transition peaks; original behavior coverage grows instead of a second gameplay implementation |
-
-R0 input service and the texture-sharing fix below are small supporting tracks.
-R2a/R2b priority follows measured cost, without creating a new collision tree or
-animation framework. Source traces can begin while R1a proceeds; unavailable
-traces must not be replaced with invented per-model light lists.
-Hardware setup begins at R0 and hardware reruns follow meaningful changes.
-Unavailable hardware does not prevent R1-R3 implementation, but Flycast results
-cannot close R4. Do not wait for a generalized streamer or full skeletal rewrite
-before removing the demonstrated repeated room work.
-
-The first implementation patch is R0 target telemetry/input-debt accounting plus
-a bounded source-workload inventory, with no renderer or gameplay change. Start
-source probes on Leon, Ganado, one cabin object, and one sphere/line query, then
-extend coverage. R1a follows as its own measurable renderer patch. No full engine
-port is a prerequisite, and no phase is complete on static code inspection alone.
-
-### R0: measure the right work and capture input
-
-Reuse the original `Trans()`/game subsystem timing boundaries and collision query
-counters where useful. Collect paired snapshots from the original debug binary
-or a verified matching source build in Dolphin, using a separate instrumentation
-build or read-only probes. Source timings explain structure; they cannot predict
-Dreamcast milliseconds. Begin with spawn, normal/aim extremes, a shot, wall contact,
-reload, and death/retry before extending to the full route.
-
-| Matched source/target record | Question answered |
-|---|---|
-| Object ID, model/instance/block ID, eligibility result and bounds | Are we preparing source-rejected models? |
-| Ordered light IDs, model masks/volumes, active light state | Are we shading with extra or wrong lights? |
-| Position/normal/corner/palette counts, rigid/skinned path | Which independent transforms can be shared? |
-| Query manager/flags, block visits, polygon IDs/tests/hits | What work and behavior did SAT flattening change? |
-| Draw part, cull/depth/blend/alpha state, passes | What native material templates are actually needed? |
-| Active/staged block IDs and converted byte totals | What working set does the encounter require? |
-| Actor states, motion times, contacts, camera, input, RNG | Does a change preserve the authored encounter? |
-
-Trace actual values rather than inferring that actors use only two or three
-lights or that all off-screen animation work is unnecessary. Before source traces
-exist, mark recovered algorithms as source-derived and encounter behavior as
-unverified. Preserve source game-update/render-registration separation.
-
-Use fixed-size trace storage with completion/sequence markers so host reads do
-not combine half-written frames. Record `frame_id`, render `snapshot_tick`,
-simulation tick range, input sequence IDs, and the presented-buffer identity.
-Measure overhead with tracing enabled/disabled. Export traces outside the hot
-loop; avoid per-triangle timers and serial printing during timed intervals.
-
-Record separate spans for input/simulation, collision/route/camera queries, actor
-pose interpolation/transforms, actor normals, actor lighting, room visibility,
-room transforms/lighting, clipping, packet construction, transfer, audio/storage,
-TA readiness, render completion, and presentation. Nested timings must not be
-summed twice, and overlapping CPU/PVR timelines are not additive.
-
-KOS `pvr_scene_finish()` completes submission work and returns before the
-asynchronous render completes. Immediate `pvr_prim()` already uses store queues.
-Preserve overlap; do not insert a blocking render wait just to simplify the
-profiler. [Pinned scene implementation][kos-scene].
-
-KOS records render completion separately from page-flip intervals and page-flip
-counts. Associate those events with the submitted snapshot; sampling last-value
-statistics alone can mix frames. Use a minimal, documented SDK trace hook if
-necessary, with a bounded event ring and no heavy interrupt work.
-[Pinned statistics implementation][kos-stats].
-
-On physical hardware use PRFC1 for one event class per repeatable run, such as
-cache misses or pipeline stalls. Leave PRFC0's timer role intact. Verify support
-before interpreting emulator counter output as hardware measurements.
-[KOS performance-counter API][kos-perf].
-
-Retain fixed 1/30-second source updates. Timestamp observed button transitions
-and analog samples using the same monotonic clock. Add a small periodic input
-service in normal thread context, independent of render completion; measure its
-worst service gap. Keep simulation state single-owned and render from a stable
-snapshot. Do not put controller API calls or gameplay in an interrupt handler.
-
-Define the timestamp-to-tick policy and consume each edge once, in order. New
-input must not be applied retroactively to every overdue tick. Retain bounded
-catch-up and count accumulator clamping, dropped whole ticks, dropped microseconds,
-maximum debt, input queue overflow, and observed sample gaps. The current
-`simulation_overruns` event count misses the initial wall-time clamp and does not
-quantify lost time. Extra threads or a larger catch-up limit cannot create CPU
-capacity. Test short presses/releases at different render phases, held fire,
-simultaneous controls, disconnect, and retry; compare against the selected
-source input-sampling semantics.
-
-Run diagnostic builds with constant lighting, actor drawing/preparation disabled
-while simulation continues, and 320x240 versus 640x480 at the same camera/FOV.
-Report stage deltas. A lower-resolution run changes pixel and buffer costs; it
-does not isolate the GPU by itself. Restore the full presentation for acceptance.
-
-### Memory correction and a narrow early fix
-
-The frozen telemetry is a post-load snapshot, not measured peak headroom:
-
-| Field | Bytes | Interpretation |
-|---|---:|---|
-| Heap break to reserved kernel stack | 1,892,352 | About 1.80 MiB address-space gap; not a measured largest successful allocation |
-| Free within heap arena | 205,368 | Separate from the gap; fragmentation and other stacks still matter |
-| PVR allocator free bytes | 1,488,296 | About 1.42 MiB after loading; not peak/contiguous-block evidence |
-| `snd_mem_available()` result | 1,378,336 | About 1.31 MiB raw API result; free-space semantics require correction |
-
-The pinned sound allocator's query selects the largest block without testing its
-`inuse` flag. It is not a reliable total-free or largest-free metric. Audit/fix
-the diagnostic in a separately recorded SDK patch or obtain equivalent verified
-allocator accounting; retain the original raw value in historical evidence.
-[Pinned sound allocator][kos-snd].
-
-Read-only package inspection found another concrete opportunity:
-
-| Current actor texture package | Descriptors | Distinct referenced payloads | Redundant uploaded payload bytes |
-|---|---:|---:|---:|
-| `leon-source-r100-gunhitcaps-pitch.re4tex` | 78 | 11 | 1,228,800 |
-| `ganado-source-r100-hitcaps.re4tex` | 14 | 4 | 311,296 |
-
-Their hashes are respectively
-`563145f7a8cd88372426dd2f5de9f27a6a3e4a360439f955c714503836e8de58` and
-`bb8bb7175da2300682dac038351544f2fe5d714cabc61f7a25e30f77b2ef1d54`.
-`room/texture_package.cpp::upload` currently allocates every descriptor; the
-converter has already shared these payloads on disk. Sharing immutable uploads
-with identical payload range, dimensions, and pixel format could save 1,540,096
-bytes (about 1.47 MiB) of VRAM payload before allocator overhead. This is a
-calculated opportunity, not an implemented saving or frame-rate gain.
-
-Preserve distinct material headers/sampler/blend settings while sharing texture
-storage. Track allocation ownership so close, failure cleanup, and retry free
-each allocation exactly once. Keep scope within each package initially.
-
-Measure main RAM/VRAM/AICA current usage, peaks, largest free blocks, stack
-high-water marks, PVR parameter-buffer maxima, and failed allocations during boot,
-play, death, repeated restart, and later transitions. Include trace/cache/input
-buffers. Reserve a documented safety margin before approving larger caches.
-
-### R1: room reuse, source light selection, and prepared lighting
-
-Partition existing indexed work into bounded chunks without welding positions or
-losing UV/normal/material seams. Start with capped scratch sizes (for example,
-512 vertices, then compare 256/1024); enforce the actual byte budget at build/load.
-Preserve triangle order, especially for translucent work. Avoid per-frame heap
-allocation. Cache original-index identity, projected position, pre-divide depth,
-RGB, and clip flags. Count input index references, per-cluster unique vertices,
-cache misses/retransforms, light evaluations by class, accepted/rejected triangles,
-and triangles entering the full clipper. Reuse group visibility across passes.
-
-Trivially accept/reject using cached plane flags; keep the existing correct
-near-plane fallback for crossing triangles. Preserve depth directly where the
-matrix path allows it, rather than computing a reciprocal and then reversing it.
-Do not replace SH-4 FTRV with slower generic transforms merely to obtain depth.
-Validate near-plane crossings, far limits, screen edges, extreme aim, and wall
-camera probes against the reference before changing packet topology.
-
-Before baking, port the relevant `setModel2` selection with source model masks,
-volumes, active/parent/event state, kind filtering, iteration order, and overflow
-handling. Its eight slots are not a nearest-light selector or permission to
-silently truncate nine candidates. Compare selected IDs for Leon, Ganado, and
-each cabin object against the original-game trace. Selection may correct the
-reference image: accept that as source-fidelity work separately.
-
-Then prepare normalized directions, cutoff terms, attenuation constants, and
-normal invariants once. Cache only selected world-space contributions for static
-models; update selected view-relative directions once per camera change. The
-current nine-light approximation contains seven world-space and two view-space
-lights, but that is not the source-selected list for every model. Actors still
-need pose/position-dependent terms. Invalidate on selection, masks, parent/event
-state, lighting cut, geometry, normal, or transform changes.
-
-Retain source radius-based model-volume selection. That is separate from the
-attenuation equation: do not invent a hard per-vertex radius cutoff. Do not bake
-camera-relative terms into static room colors.
-
-Keep partial lighting unclamped; apply the original final clamp after accumulation.
-Summing the static subset changes floating-point addition order, even without
-early clamping. First compare a version preserving per-light order, then quantify
-any aggregate-cache difference before accepting it. Report max/RMS RGB error,
-affected pixels and annotated views; do not assume bit identity or choose an
-error tolerance after seeing the result. Initial fidelity-preserving target is
-identical packed color; any exception needs an explicit comparison and disposition.
-
-Float RGB for all 40,419 current room vertices costs 485,028 bytes before metadata.
-Account for that residency and loading peak, not only the small transform scratch.
-Prefer room-load computation first to compare on the same SH-4 arithmetic path;
-offline baking is a later measured representation choice.
-
-### R2-R3: reduce remaining work without changing the encounter
-
-Recover source `ModelTrans` eligibility, bounds, ordering-table acceptance, and
-normal-path preparation order. Keep source model instances/shared data/block and
-SMX identity as the first visibility level, with smaller Dreamcast clusters below.
-Reject only conservatively invisible actors before render preparation, including
-blended poses, attachments, and effects. Continue off-screen gameplay, motion
-events, root motion, and hit-volume updates required by the original. Cache
-unchanged object-space poses/normals (including a settled death pose), while still
-updating camera projection and applicable lighting.
-Remove duplicate normalization only with verified unit/degenerate-normal contracts.
-The current normal and lighting arrays alias: caching requires explicit ownership.
-
-Use [REAL_MOTION_SH4_BASELINE.md](REAL_MOTION_SH4_BASELINE.md) as the starting point
-for source motion/IK integration. Its four sampled poses do not prove full selected
-clip coverage, source-normal skinning, or runtime cost. Benchmark the existing
-source motion code plus `calcWeightMat`,
-`MakeWeightPalette/Ext`, and source position/normal skinning against the baked path
-using actual Leon/Ganado clips. Prepare each weight-combination matrix once and
-reuse its references; retain the final remainder weight, quantization, morph and
-rigid/single-part conditions. Keep original positions, normals, and UV corners
-separate and assemble native PVR vertices at emission. Packed sampled normals are
-an optional memory/performance experiment; interpolating them is not equivalent
-to reconstructing face normals.
-Do not introduce a second animation system.
-
-SAT work starts with the source block records, sibling/child relationships, leaf
-polygon references, attributes, edge data, and manager/instance transforms. Convert
-endianness and units explicitly, replacing pointers with validated offsets/IDs.
-Bound depth, traversal scratch and per-query duplicate bits by package counts.
-Adapt `blkPolySphereCk`, `blkPolyLineCk` and relevant `at_sub` primitives with their
-filter flags, manager distinctions, order, tolerances and contact mutations.
-The source traversal order, not a sorted global polygon list, is authoritative.
-
-Validate against source query/contact traces; keep brute-force checks as candidate
-coverage diagnostics and the old solver as a regression aid. A source correction
-need not reproduce the old approximate solver. Test corners, slopes, steps,
-overlapping floors, long sweeps, behind-wall hits and camera probes, including
-a first contact that changes later block tests. A new grid/BVH is considered only
-if the recovered source hierarchy is unavailable or measurably unsuitable.
-
-Recover authored cull, blend, depth-write/test, and alpha-test semantics from
-BIN/GX source records. Texture alpha alone cannot classify a material. Preserve
-double-sided and soft-alpha surfaces. Then subdivide large source groups spatially
-without dropping triangles. Test free camera turns, windows/doors, unseen-to-seen
-actors, and near-wall views. General portal/PVS work is conditional on a measured
-visibility bottleneck and recoverable source semantics, not mandatory infrastructure.
-
-Build native draw templates for the observed r100 material operations; some can
-map to one PVR pass, others need offline preparation or an explicitly measured
-extra pass/approximation. Do not build a general GX command interpreter. Texture
-`min_lod`/`max_lod` in this source path control mip levels, not mesh simplification.
-PowerPC assembly, fixed scratch addresses, and compiler-matching constructs have
-no automatic place in the portable hot path; preserve semantics, not those mechanisms.
-
-Evaluate strips/native packets within compatible material boundaries after the
-cache/clip path is correct. Keep winding, attributes, transparency ordering, and
-clipped-triangle fallback; measure actual transferred bytes and TA buffer peaks.
-Benchmark current SQ against a bounded buffered/DMA alternative only if transfer
-or overlap costs justify it. Buffering consumes RAM; it is not a free switch.
-Inspect effective compiler output and hot-loop assembly; keep global fast-math
-away from source simulation and fidelity comparisons.
-
-### R4: real-time acceptance, separately from image/state comparison
+Choose the next task from the measured bottleneck queue at the top of this file.
+## 30 fps acceptance, separately from image/state comparison
 
 Lock the reference route and additional stress cases before final measurement.
 At stock 60 Hz output the target is one new game frame per two refreshes
@@ -475,7 +280,7 @@ re-plan that stage. Do not multiply isolated speedups into a promised 24x result
 If the intact scene still misses the budget after these passes, present measured
 remaining costs and options; a fidelity concession needs a separate decision.
 
-### R5: scale the port after the same-encounter work
+## Scale after the same-encounter work
 
 Start from authored BLK active/staged/remove sets and `checkBlockMemory`, recomputing
 the largest active set and transition overlap using converted sizes and shared
@@ -509,3 +314,8 @@ No expanded content until the runtime and resource model support it.
 [re4-trans]: https://github.com/adonis-singh/re4/blob/9dcd989370be7f083a9b66cfd19907fda627c893/src/game/trans.cpp
 [re4-scroll]: https://github.com/adonis-singh/re4/blob/9dcd989370be7f083a9b66cfd19907fda627c893/src/game/scroll.cpp
 [re4-block]: https://github.com/adonis-singh/re4/blob/9dcd989370be7f083a9b66cfd19907fda627c893/src/game/block.cpp
+
+[kos-pvrtex]: https://github.com/KallistiOS/KallistiOS/tree/804b3195ebd1a06a27cc2b3a5eacf7a2429040a3/utils/pvrtex
+[sh4zam]: https://github.com/gyrovorbis/sh4zam
+[quakespasm-dc]: https://github.com/maximqaxd/quakespasm
+[doom64-dc]: https://github.com/jnmartin84/doom64-dc

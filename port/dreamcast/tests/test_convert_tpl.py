@@ -113,11 +113,29 @@ class ConvertTplTests(unittest.TestCase):
         self.assertEqual(values[4], 1)
         descriptor = TPL.TEXTURE.unpack_from(first, values[5])
         self.assertEqual(descriptor[1:4], (8, 8, TPL.FORMAT_ARGB4444))
-        self.assertEqual(descriptor[6], TPL.FLAG_ALPHA)
+        self.assertEqual(
+            descriptor[6], TPL.FLAG_ALPHA | TPL.FLAG_BINARY_ALPHA
+        )
+        self.assertTrue(metadata["materials"][0]["binary_alpha"])
         self.assertEqual(metadata["texture_bytes"], 128)
 
     def test_argb4444_preserves_alpha_gradient(self):
         self.assertEqual(TPL._pack_4444((0x12, 0x34, 0x56, 0x78)), 0x7135)
+
+    def test_gradient_alpha_is_not_marked_binary(self):
+        color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4
+        alpha_block = bytes([0xF8]) * 32
+        images = TPL.parse_tpl(make_tpl([
+            (8, 8, TPL.GX_TF_CMPR, color_block),
+            (8, 8, TPL.GX_TF_I4, alpha_block),
+        ]))
+        package, metadata = TPL.build_package(images, [
+            TPL.MaterialBinding("ROOM_MATERIAL_000", 0, 1),
+        ])
+        values = TPL.HEADER.unpack_from(package)
+        descriptor = TPL.TEXTURE.unpack_from(package, values[5])
+        self.assertEqual(descriptor[6], TPL.FLAG_ALPHA)
+        self.assertFalse(metadata["materials"][0]["binary_alpha"])
 
     def test_reuses_identical_texture_payloads_across_materials(self):
         color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4

@@ -1,52 +1,63 @@
 # Resident Evil 4 Dreamcast port
 
-This directory contains the new Dreamcast target. It is deliberately separate
-from the byte-matching GameCube build: the upstream build remains the behavior
-and asset reference, while this target is compiled for SH-4 with KallistiOS.
+This directory contains the native SH-4/KallistiOS target. The GameCube build is
+the behavioral and authored-presentation authority; Dreamcast-native data,
+precomputation, visibility, math, texture, and PVR paths determine how that work
+runs on the target.
 
-**Current objective (2026-09-20): the source-derived r100 encounter with measured
-real-time performance and responsive input, preserving its authored presentation.**
-The [current plan](docs/REALTIME_PATH.md) prioritizes correct profiling, bounded
-room-vertex reuse, original light selection, SAT hierarchy, model/weight-palette
-structure, and hardware measurement. Approximately 30 fps at current fidelity is
-a target whose feasibility remains unproven.
+**Current objective (2026-09-20): sustain a responsive 30 fps at 640x480 for the
+accepted r100 cabin encounter without reducing its room, lighting, complete
+characters, camera/FOV, transparency, source-timed gameplay, or audio.** The
+[real-time plan](docs/REALTIME_PATH.md) is scheduled from measured bottlenecks.
+Historical R0-R3 labels are checkpoint records rather than the task order.
 
-The textured native 640x480 slice at `fed3e91` is frozen as an integration
-reference with source HUD, combat audio, and controller-path traces. Reported
-0.78-0.84-second frames do not establish real-time playability. Physical hardware,
-peak memory, human responsiveness and full source fidelity remain open. The
-[integration record and source ownership ledger](docs/PLAYABLE_PATH.md) retain
-exact artifact identities and remaining adaptations.
+## Current status
 
-## Current checkpoint
+The corrected-character presentation at commit `dba07e2` is the accepted visual
+baseline. Its 32-second Flycast video with game audio is retained at
+`C:\Flycast-Evidence\re4-dreamcast\d202-current-progress-video-audio-dba07e2`.
+Leon uses the source body, costume, head, hair, eyes, Red9 hands and handgun;
+the Ganado uses the correct right-handed hand/hatchet assembly. Room, source
+camera, selected lighting, HUD, transparency, collision, and combat remain intact.
 
-- RE4 source baseline: `9dcd989370be7f083a9b66cfd19907fda627c893`
-- Branch: `dreamcast-port`
-- Authoritative checkout: `/root/work/re4-dreamcast` in Ubuntu 24.04 WSL2
-- KallistiOS baseline: `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`
-- kos-ports baseline: `f4faacc42faaf552625777b7709e871a827e1055`
-- G4BE08 debug Disc 1: locally supplied, header-verified, hashed, and kept
-  outside Git (SHA-256 `b7fcbf121cf7c527aae23838e9c3f0818e31115bb597eb77a2c49c9e8fa46492`)
-- `sh-elf` toolchain: GCC 15.2.0 installed at `/opt/toolchains/dc/sh-elf`
-- KallistiOS: built successfully from the pinned revision (reports v2.3.0)
-- Native smoke ELF: built and booted past frame 300 in an isolated Flycast run
-- RE4 motion/IK slice: upstream game functions compile for SH-4 and pass both
-  the synthetic fixture and a private real-data fixture from Leon's `pl00.drs`
-- Historical walkable r10d prototype: disc SAT floor/wall collision, tank movement, a
-  shoulder follow camera, reset/exit controls, and a visible route marker run
-  together in the native room executable
-- Disc-derived Leon prototype: the original 1,484-vertex body is skinned
-  offline with the source motion evaluator and plays the starting-handgun idle
-  and walk cycles in the native room executable
-- Small combat loop: one disc-derived village Ganado approaches, turns, attacks,
-  reacts to aimed shots, and dies; Leon has a reticle, health, six-round ammo,
-  timed reload, death/restart, and a defeat-gated room exit
-- Historical experimental performance profile: coarse offline LOD, a 35 m horizon, and
-  triangle rejection reduced one Flycast spawn sample from 117.1 to 29.4 ms.
-  A later normal-boot sample was 26.8 ms; the recorded end-of-route sample was
-  37.8 ms. The automated loop passes, but these point samples do not establish
-  sustained 30 fps or acceptable visual quality.
+The latest kept optimization, R3m, maps only source SMX bit-3 binary alpha to the
+Dreamcast punch-through list. All gradient alpha remains blended and all 30,895
+room triangles remain packaged. Over the full measured route it changes CPU frame
+p50/p95/p99 from 99.00/101.50/102.57 ms to 92.23/94.72/95.83 ms. Presented
+ready-to-ready p50/p95/p99 is 83.41/100.10/102.60 ms: roughly 10-12 fps, still
+far from acceptance. PVR render p50 is 7.50 ms while registration is 65.29 ms,
+so target-side preparation/submission is the current limit.
 
+The current manual build delivered five virtual-controller action edges with no
+queue drops, a maximum one-entry queue, and a 19.96 ms worst sampling gap. The
+host observed fire state after 158 ms and restart after 218 ms at the current
+slow render cadence. This verifies the independent input path, not human-control
+or physical-console responsiveness. Both full autoplay traces reported zero
+simulation overruns and zero discarded simulation time.
+
+Observed post-load R3m headroom is 5,640,192 main-RAM bytes and 1,521,128 PVR
+bytes; the AICA diagnostic reports 1,378,336 bytes. Loading/restart/stack/
+fragmentation high-water instrumentation remains open. Physical Dreamcast timing,
+human input, and audiovisual latency remain untested and are reported separately
+from Flycast.
+
+Exact active identities:
+
+- source `9dcd989370be7f083a9b66cfd19907fda627c893`
+- KallistiOS `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`
+- kos-ports `f4faacc42faaf552625777b7709e871a827e1055`
+- `sh-elf-g++ 15.2.0`
+- Flycast SHA-256 `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`
+- corrected visual ELF `c5ae9de436fd7b9f3770ce3e7cc40d1f37b8e2c000b3b9dfb9be5d46ce7c0e68`
+- R3m autoplay ELF `1feacc30cdd072b3ca03ff976892013e6c21d4966d6eac1e7303cf12e9cb7ae4`
+- R3m manual ELF `1a45de49b10711fe83762b263dfe5fc91edac9daa6fbc5aaa3c4ac98f5c56688`
+
+The next bounded experiment computes conservative room visibility and immutable
+draw state once per render snapshot, then reuses the visible list across opaque,
+punch-through, and blended passes. It must add separate visibility/packet/byte
+telemetry and preserve blended draw order. Actor eligibility/caching, SH-4 hot
+kernels, packet transport, and native texture/resource layout follow according
+to measured cost, not a predetermined milestone sequence.
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
 The incomplete Windows checkout created during bootstrap was retained as
@@ -214,6 +225,10 @@ the source-neutral hidden expression overlay, the right-handed Ganado hand pair,
 and source-facing actor culling. The defect evidence and remaining character-system
 boundary are recorded in
 [the R3l source character-assembly checkpoint](docs/R3L_SOURCE_CHARACTER_ASSEMBLY_CHECKPOINT.md).
+The room renderer now maps the source SMX `alpha_omit = 0x80` rule to Dreamcast
+punch-through only for a verified binary-alpha material. This preserves all
+soft-alpha materials while reducing the matched complete-frame interval by 8.1%
+in [the R3m source punch-through checkpoint](docs/R3M_SOURCE_PUNCHTHROUGH_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
@@ -242,24 +257,22 @@ make -C port/dreamcast/room \
 
 ## Near-term sequence
 
-1. Keep the 30-second r100 cabin encounter on source camera, placement, room,
-   actor, motion, collision, and sound data.
-2. Validate the recovered source object/cull/mask/volume path and ordered
-   per-model light selection against a matched debug-game trace. The R1c cache
-   reuses the current source-derived fixed contribution without reducing visible
-   assets; R0, R1a, and the target-side R1b/R1c implementations are complete,
-   while source-trace acceptance remains open.
-3. Complete source SAT primitive/query parity on top of the recovered hierarchy.
-   Character package version 6 now preserves source positions, normals,
-   draw-corner identities, and reusable weight palettes. Next integrate or
-   behaviorally trace the source motion/state path rather than adding another
-   animation representation.
-4. Complete human-controller combat, reload, death, disconnect, and repeated
-   reset acceptance on the independent input service; its short-edge and
-   autoplay tests are complete in Flycast.
-5. Package the private Flycast demo and validate loading, timing, memory, audio,
-   controller, and output on physical Dreamcast.
+1. Reuse one conservative visibility/draw-state list across all room passes and
+   add separate visibility, packet, byte, TA-registration, render, and present
+   measurements.
+2. Attack the next largest measured room/actor cost with an explicit cache or
+   SH-4 kernel dependency contract; retain and compare the reference path.
+3. Benchmark packet aggregation and KOS DMA only after exact list byte/call
+   counts exist. Immediate submission already uses store queues.
+4. Add offline native texture layout and shared upload handles, then evaluate
+   VQ/palette/mipmap candidates per texture with previews and moving-scene
+   quality acceptance.
+5. Expand the repeatable route to movement, aim extremes, enemy contact, death,
+   and retry; complete human-controller and physical Dreamcast acceptance.
 
+Source collision, camera, state/event, expression, and cloth parity continue as
+bounded encounter fixes, but they do not block independently verifiable target
+optimizations.
 The authoritative real-time task order and acceptance criteria are in
 [the real-time path](docs/REALTIME_PATH.md). The presentation history and
 ownership ledger remain in [the playable backlog](docs/PLAYABLE_PATH.md). The
