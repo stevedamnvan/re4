@@ -155,11 +155,21 @@ struct DemoTelemetry {
     std::uint32_t room_batch_us;
     std::uint32_t room_batches;
     std::uint32_t room_gather_brackets;
+    // Flycast cost-model calibration: ns x100 per loop iteration for six
+    // hand-written SH-4 loops, each "dt/bf" plus one instruction under test.
+    std::uint32_t calib_int_add_ns_x100;
+    std::uint32_t calib_fmul_ns_x100;
+    std::uint32_t calib_fdiv_ns_x100;
+    std::uint32_t calib_fsqrt_ns_x100;
+    std::uint32_t calib_load_ns_x100;
+    std::uint32_t calib_store_ns_x100;
+    std::uint32_t actor_light_mismatches;
+    std::uint32_t actor_light_compared;
 #endif
 };
 
 #if defined(RE4DC_SUBMIT_PROFILE)
-static_assert(sizeof(DemoTelemetry) == 480U);
+static_assert(sizeof(DemoTelemetry) == 512U);
 #elif defined(RE4DC_CULL_AUDIT)
 static_assert(sizeof(DemoTelemetry) == 392U);
 #else
@@ -595,6 +605,8 @@ struct FrameStats {
     std::uint64_t room_batch_ns = 0;
     std::uint32_t room_batches = 0;
     std::uint32_t room_gather_brackets = 0;
+    std::uint32_t actor_light_mismatches = 0;
+    std::uint32_t actor_light_compared = 0;
 #endif
 };
 
@@ -2919,7 +2931,132 @@ SelectedSourceLights selected_source_lights(std::uint32_t selection) {
     return result;
 }
 
-void evaluate_selected_actor_lighting(
+// R3w: one contiguous record per selected light, copied once per actor per
+// frame from kSourceLights and g_prepared_source_lights, so the per-normal
+// loop reads a small fixed layout instead of indexing two tables through the
+// selection list. The arithmetic below is the selected-light evaluator's,
+// operation for operation and in the same order, so results are bit-identical.
+struct PreparedActorLight {
+    float x;
+    float y;
+    float z;
+    float red;
+    float green;
+    float blue;
+    float intensity;
+    float radius;
+    float quadratic_attenuation;
+    float direction_x;
+    float direction_y;
+    float direction_z;
+    float spot_cutoff;
+    float spot_scale;
+    std::uint32_t type;
+};
+
+struct PreparedActorLights {
+    PreparedActorLight lights[8]{};
+    std::uint32_t count = 0U;
+};
+
+PreparedActorLights prepare_actor_lights(const SelectedSourceLights& selection) {
+    PreparedActorLights result{};
+    for(std::uint8_t slot = 0U; slot < selection.count; ++slot) {
+        const std::size_t index = selection.indices[slot];
+        const SourceLight& light = kSourceLights[index];
+        const PreparedSourceLight& prepared = g_prepared_source_lights[index];
+        PreparedActorLight& out = result.lights[result.count++];
+        out.type = light.type;
+        if(light.type == 5U) {
+            out.x = prepared.current_direction_x;
+            out.y = prepared.current_direction_y;
+            out.z = prepared.current_direction_z;
+        } else {
+            out.x = light.x;
+            out.y = light.y;
+            out.z = light.z;
+        }
+        out.red = light.red;
+        out.green = light.green;
+        out.blue = light.blue;
+        out.intensity = light.intensity;
+        out.radius = light.radius;
+        out.quadratic_attenuation = prepared.quadratic_attenuation;
+        out.direction_x = prepared.direction_x;
+        out.direction_y = prepared.direction_y;
+        out.direction_z = prepared.direction_z;
+        out.spot_cutoff = prepared.spot_cutoff;
+        out.spot_scale = prepared.spot_scale;
+    }
+    return result;
+}
+
+void evaluate_prepared_actor_lighting(
+    float px, float py, float pz, float nx, float ny, float nz,
+    const PreparedActorLights& lights,
+    float& out_red, float& out_green, float& out_blue) {
+    normalize_vector(nx, ny, nz);
+    float red = kSourceActorAmbientRed;
+    float green = kSourceActorAmbientGreen;
+    float blue = kSourceActorAmbientBlue;
+    const PreparedActorLight* light = lights.lights;
+    const PreparedActorLight* const end = light + lights.count;
+    for(; light != end; ++light) {
+        float lx = 0.0f;
+        float ly = 0.0f;
+        float lz = 0.0f;
+        float attenuation = light->intensity;
+        if(light->type == 5U) {
+            lx = light->x;
+            ly = light->y;
+            lz = light->z;
+        } else {
+            lx = light->x - px;
+            ly = light->y - py;
+            lz = light->z - pz;
+            const float distance = std::sqrt(lx * lx + ly * ly + lz * lz);
+            if(distance <= 0.000001f) {
+                continue;
+            }
+            lx /= distance;
+            ly /= distance;
+            lz /= distance;
+            if(light->type == 1U) {
+                attenuation = light->radius > 0.0f
+                                  ? light->intensity * std::max(
+                                        0.0f, 1.0f - distance / light->radius)
+                                  : light->intensity;
+            } else {
+                attenuation = light->intensity /
+                              std::max(1.0f, 1.0f +
+                                                light->quadratic_attenuation *
+                                                    distance * distance);
+            }
+            if(light->type == 3U) {
+                const float cone_cosine =
+                    light->direction_x * -lx +
+                    light->direction_y * -ly +
+                    light->direction_z * -lz;
+                if(cone_cosine <= light->spot_cutoff) {
+                    continue;
+                }
+                attenuation *= (cone_cosine - light->spot_cutoff) *
+                               light->spot_scale;
+            }
+        }
+        const float diffuse = std::max(0.0f, nx * lx + ny * ly + nz * lz);
+        red += light->red * attenuation * diffuse;
+        green += light->green * attenuation * diffuse;
+        blue += light->blue * attenuation * diffuse;
+    }
+    out_red = std::clamp(red, 0.0f, 1.0f);
+    out_green = std::clamp(green, 0.0f, 1.0f);
+    out_blue = std::clamp(blue, 0.0f, 1.0f);
+}
+
+// Reference evaluator, retained for the SUBMIT_PROFILE dual-path check of
+// evaluate_prepared_actor_lighting() and compiled out of production.
+[[maybe_unused]] void evaluate_selected_actor_lighting(
     float px, float py, float pz, float nx, float ny, float nz,
     const SelectedSourceLights& selection,
     float& red, float& green, float& blue) {
@@ -3471,6 +3608,98 @@ bool primitive_visible(std::uint32_t primitive_index) {
     return true;
 #endif
 }
+
+#if defined(RE4DC_SUBMIT_PROFILE)
+std::uint32_t g_calib_ns_x100[6] = {0U, 0U, 0U, 0U, 0U, 0U};
+std::uint32_t g_calib_sink[4] = {0U, 0U, 0U, 0U};
+
+void run_flycast_calibration() {
+    constexpr std::uint32_t kIterations = 200000U;
+    std::uint64_t start = 0U;
+    std::uint64_t elapsed[6] = {0U, 0U, 0U, 0U, 0U, 0U};
+    float f0 = 1.0001f;
+    float f1 = 1.00001f;
+    std::uint32_t r0 = 0U;
+    std::uint32_t* sink = g_calib_sink;
+
+    {
+        std::uint32_t count = kIterations;
+        start = timer_ns_gettime64();
+        __asm__ __volatile__(
+            "1:\n\t"
+            "add #1, %0\n\t"
+            "dt %1\n\t"
+            "bf 1b\n\t"
+            : "+r"(r0), "+r"(count) : : "t");
+        elapsed[0] = timer_ns_gettime64() - start;
+        g_calib_sink[0] = r0;
+    }
+
+    {
+        std::uint32_t count = kIterations;
+        start = timer_ns_gettime64();
+        __asm__ __volatile__(
+            "1:\n\t"
+            "fmul %1, %0\n\t"
+            "dt %2\n\t"
+            "bf 1b\n\t"
+            : "+f"(f0), "+f"(f1), "+r"(count) : : "t");
+        elapsed[1] = timer_ns_gettime64() - start;
+    }
+    {
+        std::uint32_t count = kIterations;
+        start = timer_ns_gettime64();
+        __asm__ __volatile__(
+            "1:\n\t"
+            "fdiv %1, %0\n\t"
+            "dt %2\n\t"
+            "bf 1b\n\t"
+            : "+f"(f0), "+f"(f1), "+r"(count) : : "t");
+        elapsed[2] = timer_ns_gettime64() - start;
+    }
+    {
+        std::uint32_t count = kIterations;
+        start = timer_ns_gettime64();
+        __asm__ __volatile__(
+            "1:\n\t"
+            "fsqrt %0\n\t"
+            "dt %1\n\t"
+            "bf 1b\n\t"
+            : "+f"(f0), "+r"(count) : : "t");
+        elapsed[3] = timer_ns_gettime64() - start;
+    }
+    {
+        std::uint32_t count = kIterations;
+        std::uint32_t value = 0U;
+        start = timer_ns_gettime64();
+        __asm__ __volatile__(
+            "1:\n\t"
+            "mov.l @%1, %0\n\t"
+            "dt %2\n\t"
+            "bf 1b\n\t"
+            : "=&r"(value), "+r"(sink), "+r"(count) : : "t", "memory");
+        elapsed[4] = timer_ns_gettime64() - start;
+        g_calib_sink[1] = value;
+    }
+    {
+        std::uint32_t count = kIterations;
+        std::uint32_t value = 7U;
+        start = timer_ns_gettime64();
+        __asm__ __volatile__(
+            "1:\n\t"
+            "mov.l %0, @%1\n\t"
+            "dt %2\n\t"
+            "bf 1b\n\t"
+            : "+r"(value), "+r"(sink), "+r"(count) : : "t", "memory");
+        elapsed[5] = timer_ns_gettime64() - start;
+    }
+    g_calib_sink[2] = static_cast<std::uint32_t>(f0 + f1);
+    for(unsigned index = 0U; index < 6U; ++index) {
+        g_calib_ns_x100[index] = static_cast<std::uint32_t>(
+            elapsed[index] * 100U / kIterations);
+    }
+}
+#endif
 
 bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
     const auto& header = room.header();
@@ -4619,26 +4848,52 @@ void build_character_lighting(const re4dc::character::Package& character,
                               const ProjectedVertex* projected,
                               const float* normals, float* lighting,
                               std::uint32_t* colors,
-                              const SelectedSourceLights& light_selection) {
+                              const SelectedSourceLights& light_selection,
+                              FrameStats& stats) {
     const auto* normal_positions = character.normal_positions();
     const auto* normal_sources = character.normal_sources();
-    for(std::uint32_t normal = 0; normal < character.header().normal_count;
-        ++normal) {
+    const PreparedActorLights lights = prepare_actor_lights(light_selection);
+    const std::uint32_t normal_count = character.header().normal_count;
+    for(std::uint32_t normal = 0; normal < normal_count; ++normal) {
         const ProjectedVertex& position = projected[normal_positions[normal]];
         const std::uint32_t source_normal = normal_sources != nullptr
             ? normal_sources[normal]
             : normal;
+        const float* source = normals + source_normal * 3U;
         float red = 0.0f;
         float green = 0.0f;
         float blue = 0.0f;
-        evaluate_selected_actor_lighting(
+        evaluate_prepared_actor_lighting(
             position.world_x, position.world_y, position.world_z,
-            normals[source_normal * 3U], normals[source_normal * 3U + 1U],
-            normals[source_normal * 3U + 2U], light_selection,
-            red, green, blue);
-        lighting[normal * 3U] = red;
-        lighting[normal * 3U + 1U] = green;
-        lighting[normal * 3U + 2U] = blue;
+            source[0], source[1], source[2], lights, red, green, blue);
+#if defined(RE4DC_SUBMIT_PROFILE)
+        {
+            float check_red = 0.0f;
+            float check_green = 0.0f;
+            float check_blue = 0.0f;
+            evaluate_selected_actor_lighting(
+                position.world_x, position.world_y, position.world_z,
+                source[0], source[1], source[2], light_selection,
+                check_red, check_green, check_blue);
+            std::uint32_t bits[6];
+            std::memcpy(bits, &red, 4U);
+            std::memcpy(bits + 1, &green, 4U);
+            std::memcpy(bits + 2, &blue, 4U);
+            std::memcpy(bits + 3, &check_red, 4U);
+            std::memcpy(bits + 4, &check_green, 4U);
+            std::memcpy(bits + 5, &check_blue, 4U);
+            ++stats.actor_light_compared;
+            if(bits[0] != bits[3] || bits[1] != bits[4] || bits[2] != bits[5]) {
+                ++stats.actor_light_mismatches;
+            }
+        }
+#else
+    (void)stats;
+#endif
+        float* out = lighting + normal * 3U;
+        out[0] = red;
+        out[1] = green;
+        out[2] = blue;
         colors[normal] = shade_color(red, green, blue);
     }
 }
@@ -5363,13 +5618,13 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const std::uint64_t leon_lighting_start = timer_us_gettime64();
     build_character_lighting(
         leon, leon_projected, leon_normals, leon_lighting, g_leon_colors,
-        leon_light_selection);
+        leon_light_selection, stats);
     stats.leon_lighting_us = timer_us_gettime64() - leon_lighting_start;
     const std::uint64_t ganado_lighting_start = timer_us_gettime64();
     build_character_lighting(
         ganado, ganado_projected, ganado_normals, ganado_lighting,
         g_ganado_colors,
-        ganado_light_selection);
+        ganado_light_selection, stats);
     stats.ganado_lighting_us = timer_us_gettime64() - ganado_lighting_start;
     stats.actor_lighting_us = timer_us_gettime64() - actor_lighting_start;
 #endif
@@ -6141,6 +6396,17 @@ int main() {
         std::printf("re4dc-room: room strip bounds unavailable; "
                     "strip culling disabled\n");
     }
+#if defined(RE4DC_SUBMIT_PROFILE)
+    run_flycast_calibration();
+    std::printf("re4dc-room: calibration ns x100: add %lu fmul %lu fdiv %lu "
+                "fsqrt %lu load %lu store %lu\n",
+                static_cast<unsigned long>(g_calib_ns_x100[0]),
+                static_cast<unsigned long>(g_calib_ns_x100[1]),
+                static_cast<unsigned long>(g_calib_ns_x100[2]),
+                static_cast<unsigned long>(g_calib_ns_x100[3]),
+                static_cast<unsigned long>(g_calib_ns_x100[4]),
+                static_cast<unsigned long>(g_calib_ns_x100[5]));
+#endif
     if(prepare_room_batch_locals(room)) {
         std::printf("re4dc-room: %lu batch-local vertices, largest batch %lu, "
                     "%lu batches over the slot table\n",
@@ -6686,6 +6952,16 @@ int main() {
         g_re4dc_demo_telemetry.room_batches = stats.room_batches;
         g_re4dc_demo_telemetry.room_gather_brackets =
             stats.room_gather_brackets;
+        g_re4dc_demo_telemetry.calib_int_add_ns_x100 = g_calib_ns_x100[0];
+        g_re4dc_demo_telemetry.calib_fmul_ns_x100 = g_calib_ns_x100[1];
+        g_re4dc_demo_telemetry.calib_fdiv_ns_x100 = g_calib_ns_x100[2];
+        g_re4dc_demo_telemetry.calib_fsqrt_ns_x100 = g_calib_ns_x100[3];
+        g_re4dc_demo_telemetry.calib_load_ns_x100 = g_calib_ns_x100[4];
+        g_re4dc_demo_telemetry.calib_store_ns_x100 = g_calib_ns_x100[5];
+        g_re4dc_demo_telemetry.actor_light_mismatches =
+            stats.actor_light_mismatches;
+        g_re4dc_demo_telemetry.actor_light_compared =
+            stats.actor_light_compared;
 #endif
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;

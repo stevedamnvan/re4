@@ -126,8 +126,20 @@ at p95, with no room pixel changed. The tables cost 413,696 bytes of static
 RAM until they move into the package; see
 [the R3v batch-local slots checkpoint](docs/R3V_BATCH_LOCAL_SLOTS_CHECKPOINT.md).
 
+R3w first measured what Flycast charges for SH-4 instructions: about 3.3 ns
+for anything that is not a load or store, including `fdiv` and `fsqrt`, and
+about 13.3 ns for a load or store, with no floating-point latency and no
+cache. Guided by that, each actor now lights its normals from a contiguous
+prepared list of its selected lights instead of indexing two wide tables per
+normal per light; the arithmetic is unchanged and a gated dual-path build
+found zero differing bits over 676 frames. CPU frame p50 falls from 68.789 to
+64.758 ms and actor lighting from 18.198 to 14.189 ms, with every other stage
+identical to the microsecond. The calibration, the model, and
+`tools/sh4_loop_cost.py` are in
+[the R3w prepared actor lights checkpoint](docs/R3W_PREPARED_ACTOR_LIGHTS_CHECKPOINT.md).
+
 The opaque room pass, now 25.320 ms, is the largest remaining cost, followed by
-actor lighting at 18.198 ms with Leon's 13.960 ms median inside it. R3s keyed
+actor lighting at 14.189 ms with Leon's 10.948 ms median inside it. R3s keyed
 the room vertex cache on vertex identity, cut transform-and-light evaluations by
 21.5%, and was 1.274 ms slower, so that pass is dominated by per-reference and
 per-record work rather than by transform and lighting; see
