@@ -87,16 +87,16 @@ view, and timed retry. The current autoplay does not cover free movement, aim
 extremes, enemy contact, Leon death, or a human controller; those remain separate
 acceptance gates.
 
-| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w | R3x | R4c | R4d accepted |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms | 61.229 / 61.289 / 63.781 ms | 60.791 / 60.874 / 63.343 ms | 57.951 / 58.015 / 60.509 ms |
-| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms | 38.319 ms | 37.890 ms | 33.391 ms |
-| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms | 14.189 ms | 14.189 ms | 16.207 ms |
-| opaque actor draw p50 | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.430 ms | 9.900 ms |
-| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
-| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 | 11,008 | 11,008 | 11,008 |
-| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B | 5,357,568 B | 5,357,568 B | 5,353,472 B |
-| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w | R3x | R4c | R4d | R4f accepted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms | 61.229 / 61.289 / 63.781 ms | 60.791 / 60.874 / 63.343 ms | 57.951 / 58.015 / 60.509 ms | 57.565 / 57.641 / 60.127 ms |
+| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms | 38.319 ms | 37.890 ms | 33.391 ms | 33.006 ms |
+| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms | 14.189 ms | 14.189 ms | 16.207 ms | 16.207 ms |
+| opaque actor draw p50 | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.430 ms | 9.900 ms | 9.595 ms |
+| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
+| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 | 11,008 | 11,008 | 11,008 | 11,008 |
+| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B | 5,357,568 B | 5,357,568 B | 5,353,472 B | 5,353,472 B |
+| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
 
 R3r draws more room geometry than R3p because the corrected group test restores
 groups that R3p discarded, and is still 12.078 ms faster at p50. R3u draws the
@@ -114,7 +114,7 @@ lighting gets 2.018 ms worse, which is why actor lighting rises in this table
 while the frame falls, and why a per-file optimization policy is now queued.
 
 The accepted candidate presents at roughly 17 distinct frames per second. A
-33.33 ms CPU frame needs another 24.6 ms median reduction and 24.7 ms at p95.
+33.33 ms CPU frame needs another 24.2 ms median reduction and 24.3 ms at p95.
 SH-4 preparation remains the dominant measured cost.
 
 R3x median CPU stages are shown without adding the overlapping `submit_us`
@@ -273,8 +273,16 @@ before/after timing and memory, and end in a keep-or-revert decision.
    has seven translation units and one of them holds nearly all the frame work.
    The measurement overturned that: actor lighting is 2.018 ms *slower* at
    `-O3`, so splitting the prepared-light evaluators into their own unit at
-   `-O2` is worth up to 2 ms and is the next experiment. `-ffast-math` and
-   friends remain out of scope and unneeded.
+   `-O2` is worth up to 2 ms. That follow-up was attempted in
+   [R4F_BUILD_POLICY_REFINEMENT_CHECKPOINT.md](R4F_BUILD_POLICY_REFINEMENT_CHECKPOINT.md)
+   and has **not** succeeded: a per-function `optimize("O2")` attribute makes
+   the stage 2.968 ms *worse* by blocking inlining, and seven `-O3` sub-flag
+   arms leave actor lighting at 16,207 us to the microsecond, so the cause is
+   not any individual pass. One flag did pay, `-fno-predictive-commoning`, worth
+   0.386 ms elsewhere, and is adopted. Before attempting the translation-unit
+   split, read the generated SH-4 for the kernel at both levels: it costs far
+   less than the refactor and says whether the hypothesis holds.
+   `-ffast-math` and friends remain out of scope and unneeded.
 4. **Submission transport: closed by R3q.** The KOS `pvr_prim` store-queue path
    costs 1.331 ms for the room and 2.580 ms in total. Bounded KOS DMA buffers
    cannot recover more than that even if they made the copy free, and they would
@@ -445,6 +453,11 @@ not the task scheduler:
 - R4e: one PVR allocation per distinct texture payload instead of one per
   descriptor, the DCA3 audit's B1. 1,509,728 bytes of texture memory recovered,
   36.7% of the total, with the frame and the framebuffers unchanged.
+- R4f: `-fno-predictive-commoning` adopted for 0.386 ms. The actor-lighting
+  regression R4d introduced is unexplained and unrecovered; the per-function
+  optimization attribute and seven sub-flag arms all failed, and those routes
+  are closed. Also establishes that a stream digest covers polygon headers, so
+  a digest baseline must come from the same texture-allocation regime.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison

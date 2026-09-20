@@ -35,7 +35,9 @@ romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
 # A2: the optimization level and any link-time optimization are variables so
 # the build-policy arms can be measured against each other. The accepted build
 # is the default; an arm is selected on the command line, never by editing.
-ROOM_OPT ?= -O3
+# -fno-predictive-commoning is measured, not inherited: it is worth 0.386 ms
+# here and the pass wins nothing on these loops. See R4F.
+ROOM_OPT ?= -O3 -fno-predictive-commoning
 ROOM_LTO ?= 1
 ROOM_LTO_FLAGS := $(if $(ROOM_LTO),-flto=1 -ffat-lto-objects,)
 CPPFLAGS += -std=c++20 $(ROOM_OPT) $(ROOM_LTO_FLAGS) -Wall -Wextra -Werror -I../include
