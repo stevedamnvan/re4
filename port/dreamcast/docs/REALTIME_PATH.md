@@ -1,7 +1,7 @@
 # Fidelity-preserving real-time r100 plan
 
-Updated 2026-09-20 from the corrected R3p actor-normal build. This is the
-authoritative execution plan. Earlier R0-R3 checkpoint documents remain evidence
+Updated 2026-09-20 from the corrected R3p actor-normal build and the R3q
+submission profile. This is the authoritative execution plan. Earlier R0-R3 checkpoint documents remain evidence
 records; their letter sequence no longer determines the next task.
 
 ## Current status
@@ -26,9 +26,12 @@ R3m preserves source-authorized binary alpha while retaining gradient blend.
 R3n reuses visibility, cull state, and room-light selection across material
 passes. R3o combines each PVR header with its first payload, halving immediate
 call count but saving only 0.12 ms. R3p fixes a source-normal identity defect by
-separating transformed normals from lighting output. See the corresponding
-checkpoint records, most recently
-[R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md](R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md).
+separating transformed normals from lighting output. R3q changes no accepted
+code; it profiles the room submission path and closes two candidates. See the
+corresponding checkpoint records, most recently
+[R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md](R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md)
+and
+[R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md](R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md).
 
 The rejected R3p subexperiment used KallistiOS `frsqrt`. A valid dual-path run
 found a worst observed difference of one channel value in one packed color, but
@@ -75,8 +78,19 @@ aggregate to its children:
 packet construction, and immediate TA submission. It is not a transfer-only
 number. The trace records median values of 617 immediate PVR calls carrying
 1,071,840 bytes, 327 visible groups, 9,155 room triangles, and 11,900 actor
-triangles. Packet construction versus SQ copy time still needs a bounded
-benchmark; retain render/simulation snapshot IDs.
+triangles.
+
+R3q answered the packet-construction-versus-copy question with a calibrated
+nanosecond bracket around every `pvr_prim()` call. Real store-queue transport is
+1.331 ms for the room and 1.249 ms for actors, 2.580 ms in total, which is 4.4%
+of `submit_us` and 3.0% of the room path. R3q also showed the 2,048-entry room
+vertex cache misses 15,350 times against a floor of 15,317 distinct vertex
+indices, so only 33 misses per frame are evictions. The room path is close to
+3.1 us per transformed and lit vertex across 15,350 of them; per-pass costs are
+29.456 ms for 7,437 opaque triangles at 9,117 transforms, 0.135 ms for an empty
+punch-through list, and 18.917 ms for 1,718 blended triangles at 6,233
+transforms. Full method, overhead accounting, and limits are in
+[R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md](R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md).
 
 The R3p manual smoke reached simulation tick 558, sampled input 1,860 times with
 a 12.484 ms maximum gap, and reported zero queue drops, simulation overruns, or
@@ -102,9 +116,18 @@ Exact identities:
 - R3p autoplay ELF: `4fd89b4e929aca49a9cdc8b7e231c9a1e33ff387cac81466d42e0d49b686a44f`
 - R3p manual ELF: `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
 
-Evidence is retained in `d202` through `d221` under
+The R3q diagnostic option added preprocessor lines to `room/main.cpp`, so the
+two R3p ELF hashes above reproduce only from the pre-R3q tree. The executable
+code is unchanged: with `SUBMIT_PROFILE` unset the preprocessed translation unit
+is byte-identical and the debug-stripped ELFs are
+`932c1647a1901157474f238988167a49a5a84cdac9fe99d2b3b079fa4b84b7ad` for autoplay
+and `570c36bdda2e440bc69eca4d573f4e89e0cad316063aa3b386db6eca1e7b042c` for
+manual in both trees.
+
+Evidence is retained in `d202` through `d224` under
 `C:\Flycast-Evidence\re4-dreamcast`. Timing evidence for R3p is in `d219`,
 the manual smoke in `d220`, and the qualitative framebuffer check in `d221`.
+The R3q profile captures are `d222`, `d223`, and `d224`.
 Physical Dreamcast timing remains pending.
 
 ## Measured bottleneck queue
@@ -113,27 +136,45 @@ Choose each next experiment from the current trace. Every candidate must boot,
 retain a reference path where appropriate, pass its correctness check, record
 before/after timing and memory, and end in a keep-or-revert decision.
 
-1. **Room and packet work.** The visibility list and header/payload batching are
-   now reused. Measure unique
-   transforms, light evaluations, clipping crossings, headers, vertices, bytes,
-   and TA calls per list. Reduce packet reconstruction/copying and exploit tighter native strips
-   only where winding, clipping, and alpha order remain valid.
-2. **Actor preparation and lighting.** Add conservative render eligibility before
+1. **Blended room vertex efficiency.** R3q measured the blended list at 18.917 ms
+   for 1,718 triangles, transforming 3.63 vertices per triangle at a 3.7% vertex
+   cache hit rate, against 1.23 per triangle and 33.5% for the opaque list. The
+   accepted room package carries ordered strips on 3,333 of 3,570 batches. First
+   confirm that the visible blended batches are exactly the 237 without strips,
+   then extend order-certified strips to them while preserving the source blend
+   order, winding, and clipping fallbacks that R3c established. At the measured
+   per-vertex rate this is worth roughly 12 ms of CPU frame and is the largest
+   identified saving in the current trace. Skipping the empty punch-through list
+   is correct but worth only 0.135 ms; do not confuse the two.
+2. **The per-vertex transform and light kernel.** R3q showed room cost is close
+   to a constant 3.1 us per transformed and lit vertex, and that caching cannot
+   reduce the 15,317 distinct vertices a frame touches. After the blended-list
+   work, the remaining room lever is the kernel itself: inspect the SH-4 output of
+   `mat_trans_single` plus the selected-light evaluator, consider batching
+   transforms through the matrix unit, and keep the portable evaluator as the
+   numerical reference with explicit bounds. Reducing the distinct vertex count
+   is a package-level question about the one-metre child cells, which duplicate
+   boundary vertices; it must be measured against the culling those cells buy.
+
+3. **Actor preparation and lighting.** Add conservative render eligibility before
    pose work. Cache settled death poses and other unchanged inputs using explicit
    animation, transform, camera-relative light, selected-light, component, and
    material dependencies. Inspect SH-4 assembly and benchmark batch palette/
    selected-light kernels against the portable reference with numerical bounds.
-3. **Submission transport.** The current KOS `pvr_prim` path already uses store
-   queues. Benchmark direct SQ against bounded KOS DMA buffers only after byte and
-   call counts exist; DMA adds main-RAM buffers and pipeline latency. Preserve list
-   ownership, clipping fallbacks, synchronization, and presentation ordering.
-4. **Native texture/resource layout.** Extend the current package with offline
+4. **Submission transport: closed by R3q.** The KOS `pvr_prim` store-queue path
+   costs 1.331 ms for the room and 2.580 ms in total. Bounded KOS DMA buffers
+   cannot recover more than that even if they made the copy free, and they would
+   add main-RAM buffers and pipeline latency. Do not revisit DMA without a trace
+   in which transport is a materially larger share. Enlarging or re-hashing the
+   room vertex cache is closed for the same reason: it can save at most 33
+   evaluations per frame.
+5. **Native texture/resource layout.** Extend the current package with offline
    twiddled payloads, explicit layout metadata, and one uploaded handle per deduped
    payload. Credit this to load time and memory unless a frame trace changes. Then
    evaluate `pvrtex` VQ, palette, and mip candidates per texture with native upload,
    previews, moving-scene review, and uncompressed fallbacks. Alpha edges, HUD,
    faces, and nearby architecture receive separate quality decisions.
-5. **Gameplay/source parity in parallel.** Continue bounded source checks for
+6. **Gameplay/source parity in parallel.** Continue bounded source checks for
    collision narrow phase, camera blockers, state/RNG/event behavior, expressions,
    and cloth where they affect this encounter. They do not block independent
    renderer experiments, and known prototype defects are corrected against the

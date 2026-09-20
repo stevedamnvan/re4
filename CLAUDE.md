@@ -29,6 +29,7 @@ The Linux checkout is authoritative. Upstream contains distinct `src/Tools` and 
 - Original project remote: `upstream = https://github.com/adonis-singh/re4.git`
 - Latest accepted implementation checkpoint: `000bdb4f5e5ef7090c9fa27fe36113ba9ca4a9f7`
 - Checkpoint meaning: separate immutable actor normals from lighting output; retain actor timing/mask telemetry; reject and remove the slower `frsqrt` experiment
+- Latest measurement pass: R3q, which adds only the compile-gated `SUBMIT_PROFILE` room diagnostic and changes no accepted code; it closes submission transport and room vertex cache growth, and names the blended room list as the next target
 - Expected state after the handover commit and push: clean local tree with local HEAD equal to `origin/dreamcast-port`
 
 Read these first:

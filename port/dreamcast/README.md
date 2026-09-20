@@ -68,10 +68,29 @@ Exact active identities:
 - R3p autoplay ELF `4fd89b4e929aca49a9cdc8b7e231c9a1e33ff387cac81466d42e0d49b686a44f`
 - R3p manual ELF `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
 
-Room transform/lighting/submission remains the largest measured work. The next
-actor experiment should target the stable selected-light work, especially
-Leon's 13.960 ms median, while retaining the portable evaluator as a reference.
-Do not retry the rejected reciprocal-square-root path without new evidence.
+R3q profiled that room path without changing any accepted code. With
+`SUBMIT_PROFILE` unset the room build is byte-identical to R3p once DWARF line
+tables are stripped; only the unstripped hashes above moved. Real store-queue
+transport is 1.331 ms for the room and 2.580 ms in total, so submission
+transport and KOS DMA are closed. The 2,048-entry room vertex cache misses
+15,350 times against a floor of 15,317 distinct vertex indices, so enlarging it
+is closed too. Room cost is close to 3.1 us per transformed and lit vertex, and
+the blended list spends 18.917 ms on 1,718 triangles because it transforms 3.63
+vertices per triangle against 1.23 for the opaque list. Extending
+order-certified strips to the visible blended batches is the next experiment and
+the largest identified saving; see
+[the R3q submission profile checkpoint](docs/R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md).
+The next actor experiment should still target the stable selected-light work,
+especially Leon's 13.960 ms median, while retaining the portable evaluator as a
+reference. Do not retry the rejected reciprocal-square-root path without new
+evidence.
+
+Rebuild the diagnostic with:
+
+```sh
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/room r100-autoplay-profile
+```
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
 The incomplete Windows checkout created during bootstrap was retained as
