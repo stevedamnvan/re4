@@ -57,6 +57,19 @@ class ConvertRoomObjTests(unittest.TestCase):
                 {"min": [0.0, 0.0, 0.0], "max": [2.0, 0.0, 2.0]},
             )
 
+    def test_source_scale_converts_export_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "room.obj"
+            output = root / "scaled.re4room"
+            source.write_text(OBJ, encoding="utf-8")
+            self.assertEqual(
+                ROOM.main([str(source), str(output), "--source-scale", "0.1"]), 0
+            )
+            manifest = json.loads(output.with_suffix(".re4room.json").read_text())
+            self.assertEqual(manifest["source_scale"], 0.1)
+            self.assertEqual(manifest["bounds"]["max"], [0.2, 0.0, 0.2])
+
     def test_rejects_out_of_range_index(self):
         with tempfile.TemporaryDirectory() as directory:
             source = pathlib.Path(directory) / "bad.obj"

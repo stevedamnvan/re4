@@ -54,6 +54,19 @@ class ConvertSatTests(unittest.TestCase):
             self.assertEqual(manifest["polygons"], 2)
             self.assertEqual(manifest["bounds"]["max"], [2.0, 2.0, 2.0])
 
+    def test_source_scale_can_emit_runtime_metres(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "fixture.SAT"
+            output = root / "scaled.re4sat"
+            source.write_bytes(make_sat())
+            self.assertEqual(
+                SAT.main([str(source), str(output), "--source-scale", "0.001"]), 0
+            )
+            manifest = json.loads(output.with_suffix(".re4sat.json").read_text())
+            self.assertEqual(manifest["source_scale"], 0.001)
+            self.assertAlmostEqual(manifest["bounds"]["max"][0], 0.2)
+
     def test_rejects_inconsistent_polygon_classes(self):
         with tempfile.TemporaryDirectory() as directory:
             source = pathlib.Path(directory) / "bad.SAT"

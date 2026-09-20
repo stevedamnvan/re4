@@ -33,6 +33,15 @@ def make_tpl(images):
 
 
 class ConvertTplTests(unittest.TestCase):
+    def test_box_downsample_averages_rgba_channels(self):
+        pixels = [
+            (0, 0, 0, 0), (100, 0, 0, 100),
+            (0, 100, 0, 200), (0, 0, 100, 255),
+        ]
+        result, width, height = TPL.downsample_box(pixels, 2, 2)
+        self.assertEqual((width, height), (1, 1))
+        self.assertEqual(result, [(25, 25, 25, 138)])
+
     def test_i4_block_decodes_high_nibble_first(self):
         image = TPL.TplImage(8, 8, TPL.GX_TF_I4, bytes([0xF0]) + bytes(31))
         pixels = TPL.decode_i4(image)

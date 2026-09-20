@@ -51,7 +51,7 @@ def _sat_offsets(data: bytes) -> list[int]:
     return offsets
 
 
-def parse_sat(path: pathlib.Path, sat_index: int = 0) -> dict[str, object]:
+def parse_sat(path: pathlib.Path, sat_index: int = 0, source_scale: float = SOURCE_SCALE) -> dict[str, object]:
     data = path.read_bytes()
     offsets = _sat_offsets(data)
     if sat_index < 0 or sat_index >= len(offsets):
@@ -85,7 +85,7 @@ def parse_sat(path: pathlib.Path, sat_index: int = 0) -> dict[str, object]:
     _checked_span(polygon_offset, polygon_count, SAT_POLYGON.size, len(data), "polygon")
 
     vertices = [
-        tuple(value * SOURCE_SCALE for value in SAT_VECTOR.unpack_from(data, vertex_offset + i * SAT_VECTOR.size))
+        tuple(value * source_scale for value in SAT_VECTOR.unpack_from(data, vertex_offset + i * SAT_VECTOR.size))
         for i in range(vertex_count)
     ]
     normals = [
@@ -110,6 +110,7 @@ def parse_sat(path: pathlib.Path, sat_index: int = 0) -> dict[str, object]:
     bounds_max = [max(vertex[axis] for vertex in vertices) for axis in range(3)]
     return {
         "source_version": source_version,
+        "source_scale": source_scale,
         "sat_index": sat_index,
         "sat_sections": len(offsets),
         "block_count": block_count,
@@ -161,7 +162,7 @@ def build_package(parsed: dict[str, object]) -> tuple[bytes, dict[str, object]]:
         "source_version": parsed["source_version"],
         "sat_index": parsed["sat_index"],
         "sat_sections": parsed["sat_sections"],
-        "source_scale": SOURCE_SCALE,
+        "source_scale": parsed["source_scale"],
         "vertices": len(vertices),
         "normals": len(normals),
         "polygons": len(polygons),
@@ -181,8 +182,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("source", type=pathlib.Path)
     parser.add_argument("output", type=pathlib.Path)
     parser.add_argument("--sat-index", type=int, default=0)
+    parser.add_argument("--source-scale", type=float, default=SOURCE_SCALE)
     args = parser.parse_args(argv)
-    parsed = parse_sat(args.source, args.sat_index)
+    if not math.isfinite(args.source_scale) or args.source_scale <= 0.0:
+        raise ValueError("source scale must be finite and positive")
+    parsed = parse_sat(args.source, args.sat_index, args.source_scale)
     package, manifest = build_package(parsed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)

@@ -9,16 +9,20 @@ ENEMY_TEXTURE_PACKAGE ?= ../build/private/ganado.re4tex
 TEXTURE_PACKAGE ?= ../build/private/r10d.re4tex
 AUTOPLAY_FLAG ?=
 DEMO_SCENE ?= r10d
+DEMO_RESOLUTION ?= 240p
 KOS_ROMDISK_DIR = ../build/room-romdisk
 
 romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
 
-KOS_CPPFLAGS += -std=c++20 -Wall -Wextra -Werror -I../include
+CPPFLAGS += -std=c++20 -Wall -Wextra -Werror -I../include
 ifeq ($(DEMO_SCENE),r100)
-KOS_CPPFLAGS += -DRE4DC_SCENE_R100
+CPPFLAGS += -DRE4DC_SCENE_R100
+endif
+ifeq ($(DEMO_RESOLUTION),480p)
+CPPFLAGS += -DRE4DC_480P
 endif
 ifneq ($(DEMO_YAW),)
-KOS_CPPFLAGS += -DRE4DC_DEMO_YAW=$(DEMO_YAW)
+CPPFLAGS += -DRE4DC_DEMO_YAW=$(DEMO_YAW)
 endif
 KOS_GCCVER_MIN = 12.0.0
 

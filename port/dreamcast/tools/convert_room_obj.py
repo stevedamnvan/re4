@@ -410,6 +410,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output", type=pathlib.Path, help="private Dreamcast room package")
     parser.add_argument("--manifest", type=pathlib.Path, help="JSON manifest path")
     parser.add_argument(
+        "--source-scale", type=float, default=1.0,
+        help="multiply exported OBJ positions by this source-to-runtime scale",
+    )
+    parser.add_argument(
         "--cell-size",
         type=float,
         default=0.0,
@@ -423,7 +427,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if not math.isfinite(args.source_scale) or args.source_scale <= 0.0:
+        raise ValueError("source scale must be finite and positive")
     parsed = parse_obj(args.input)
+    if args.source_scale != 1.0:
+        parsed["vertices"] = [
+            (vertex[0] * args.source_scale,
+             vertex[1] * args.source_scale,
+             vertex[2] * args.source_scale,
+             *vertex[3:])
+            for vertex in parsed["vertices"]
+        ]
+        for group in parsed["groups"].values():
+            group.bounds_min = [value * args.source_scale for value in group.bounds_min]
+            group.bounds_max = [value * args.source_scale for value in group.bounds_max]
     spatial_partition(parsed, args.cell_size)
     cluster_geometry(parsed, args.cluster_size)
     package, metadata = build_package(parsed)
@@ -437,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
             "source_normals": parsed["normals"],
             "source_texcoords": parsed["texcoords"],
             "source_faces": parsed["source_faces"],
+            "source_scale": args.source_scale,
             "source_groups": parsed.get("source_groups", len(parsed["group_order"])),
             "cell_size": parsed.get("cell_size", 0.0),
             "cluster_size": parsed.get("cluster_size", 0.0),

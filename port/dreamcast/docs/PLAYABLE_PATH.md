@@ -1,27 +1,45 @@
-# A convincing RE4 Dreamcast demo
+# A source-accurate 30-second RE4 Dreamcast slice
 
-Replanned 2026-09-19 following the user's requirement for a much more convincing
-demo **today, in Flycast first; physical Dreamcast next**. This is the authoritative
-execution queue. The previous P0-P3 records are engineering checkpoints, not
+Replanned 2026-09-19 around the shortest credible port: **the exact post-s03
+`r100_Sce_look` encounter, today in Flycast first; physical Dreamcast next**.
+Low frame rate is acceptable for this milestone. Source ownership and a
+recognizable native image take priority over expanding scope or tuning toward a
+frame-rate claim. The previous P0-P3 records are engineering checkpoints, not
 acceptance of a presentation-ready game.
 
 ## What we are delivering
 
-A roughly 60-second, manually playable encounter in a small, recognizable part
-of r10d: textured scenery, complete textured Leon with his handgun, one complete
-textured Ganado, a stable shoulder camera, visible weapon and damage animations,
-gunfire/reload/impact sounds, a readable HUD, and a clear ending and retry.
+A roughly 30-second, manually playable excerpt beginning at the positions written
+by `r100_Sce_look` after event s03: textured source scenery, Leon at
+`(-82910, 860, -38480)`, the id-0x12 Ganado at
+`(-79116, 860, -38890)`, and the room's source gameplay camera. The exact source
+view is the visual acceptance reference. This is the opening cabin encounter,
+not a reconstruction of the outdoor truck screenshot.
 
 The program remains native SH-4/KallistiOS code running in Flycast under normal
-Dreamcast settings. The working presentation target is 320x240 at a paced 30 fps.
-Use native-resolution capture for acceptance; display scaling is allowed but
-does not stand in for correct assets. Physical hardware testing follows today's
-Flycast presentation and is separately reported.
+Dreamcast settings. The presentation build uses 640x480 because image clarity is
+currently more important than frame rate. Use native output for acceptance;
+display scaling does not stand in for correct assets. Physical hardware testing
+follows today's Flycast presentation and is separately reported.
 
-Today's scope is one encounter, one handgun, one enemy, one coherent location.
-It must allow the presenter to move, turn, aim, miss, reload, fight, win, and
-retry with a controller. A replay or video is useful backup evidence but cannot
-replace that live interaction.
+Today's scope is one source encounter, one handgun, one enemy, and the resident
+r100 room blocks that the GameCube keeps for this area. It must allow the
+presenter to turn, aim, fire, reload, survive or die, and retry. A fixed-input
+capture is useful visual evidence, but the presentation package remains manually
+controlled.
+
+## Source ownership ledger
+
+| Subsystem | Current classification | Today's boundary |
+|---|---|---|
+| Room and material selection | Original data, converted offline | Main/shared SMD plus BLK-resident FILE_00/01/02; retain intact selected meshes and repair material IDs from ModelPart headers. |
+| World scale and collision | Behavior-preserving adaptation | SMD OBJ positions receive the exporter's remaining `0.1` scale; raw SAT and game positions receive `0.001`, so both occupy metres. |
+| Player/enemy placement | Original code/data | Values and yaw come directly from `r100_Sce_look`. |
+| Camera and fog | Original data with Dreamcast projection adaptation | Use r100 CAM area 2 cut 2 offsets/FOV, the global handgun-ready offsets/FOV, and r100 LIT fog/background values. |
+| Enemy HP and handgun body damage | Original data | Ganado starts at 500 HP; weapon 1 body damage is 150 x the starting 0.9 multiplier = 135. |
+| Character geometry/motion | Original data, converted offline | Preserve complete source batches, materials, and sampled original motion; baked frames are a Dreamcast memory/runtime adaptation. |
+| Player and Ganado state machines | Temporary approximation | Direct pursuit, attack timing, reload timing, and the reduced input/state layer remain explicit port debt. Do not add rooms or enemies before replacing approximations along this slice. |
+| HUD and sound | Temporary presentation layer | HUD is native and readable. Source sound integration remains open and cannot be claimed complete. |
 
 ## Why the previous finish line was insufficient
 
@@ -55,26 +73,25 @@ testing and packaging; no new renderer features enter that window.
 
 | Order | Work | Reviewable result / exit condition |
 |---|---|---|
-| D0 - first 30 minutes | Establish the current native image and three representative views: entry, shoulder aiming, and close enemy. Choose a small reachable r10d encounter area with a visually coherent backdrop. Check a local GameCube reference if accessible; do not let reference setup consume the pass. | Saved current images and an explicit route/camera/asset list. Known visual omissions are recorded; no claim of source-image parity without a matching reference. |
-| D1 - first visual pass, review within 60-90 minutes | Decode the local room TPL, bind materials using the exported MTL, preserve UVs, and render original textures on the nearby environment. Keep intact foreground meshes within the bounded scene. Handle alpha masks for any visible cutouts. | A native Flycast image of the chosen textured area, followed by a short moving-camera capture. No random material colors, melted foreground silhouettes, incorrect UVs, or disappearing surfaces in the presentation path. If still blocked, reduce the visible material/scene subset rather than starting a general asset system. |
-| D2 - second visual pass, review within 60-90 minutes | Complete Leon's head/hair/hands/handgun and the Ganado's visible parts; add original texture coordinates and bindings. Use verified source attachments and motions for aiming, firing/recoil, reload, hit reaction, and death. | Moving native footage shows recognizable complete actors, a held weapon aligned with the hands, correct cutouts, and animation matching input. Discovery of a suitable cheaper source model is useful but timeboxed; a general model-variant audit is not a dependency. |
-| D3 - encounter and sound | Put both actors in the same reachable combat space. Resolve enemy wall motion, block shots at walls, align the reticle with the actual hit test, and recheck attack range/contact at the strike. Add muzzle flash, impact response, footsteps, gunshot, reload, enemy vocal/hit sound, and a restrained ambience loop. | The player can move away, aim, miss, hit, reload, take visibly explained damage, win, and retry. No through-wall hits or pursuit, invisible gunfire, frozen reload, or unexplained long-range contact damage. Audio comes from the running demo. |
-| D4 - presentation and measured tuning | Add legible health/ammo, a brief control prompt, a completion/retry screen, basic actor lighting/grounding shadows, and fog only where needed to make the chosen backdrop coherent. Measure the full textured encounter. | A continuous 60-second live-input run looks and sounds coherent. Tune the measured bottleneck while protecting Leon, enemy faces, weapon, nearby architecture, collision, and aim readability. |
-| D5 - final verification and handoff | Freeze the candidate, run the manual route and three win/retry cycles plus death/retry, capture synchronized video/audio, and prepare a private launch folder with instructions. Commit/push only code, tools, tests, and documentation. | Launchable native demo, verified controller mapping, clean replay/restart, exact executable/assets/config identities, footage, and a concise honest list of remaining limits. Verify remote SHA and keep all disc art and audio private. |
+| D0 - complete | Extract the source-streamed r100 geometry, identify the BLK residency at the encounter, recover material bindings from the BIN ModelPart headers, and correct all coordinate scales. | Native Flycast frame shows Leon, Ganado, collision, camera, and intact textured architecture in one coherent world. |
+| D1 - current | Lock the exact normal and aiming camera, source placements, source HP/damage, fog, restart behavior, and a bounded 30-second route. Remove any invented exit marker from r100. | Manual build begins at the post-s03 state, supports aim/fire/reload/death/retry, and remains in the encounter after a kill. |
+| D2 | Inspect the actual normal, aiming, firing, hit, death, and retry views. Correct visible actor attachment, alpha, near clipping, or material faults before adding features. | Captured native frames and a 30-second moving capture are visibly coherent and use the same executable as the manual demo. |
+| D3 | Replace the temporary behavior on the slice in risk order: shot occlusion and aim agreement, enemy wall collision, source attack/damage timing, then source audio cues. | No visible through-wall shot or movement in the permitted route; each action has matching visible and audible feedback. |
+| D4 | Freeze and package the private Flycast candidate. Record exact executable/package hashes, controls, memory use, and observed frame rate without turning performance into today's acceptance gate. | Launchable manual demo, death/retry and kill/retry checked, private assets excluded from Git, code/tools/tests/docs pushed and remote SHA verified. |
 
-D1-D2 are the highest-risk work: the texture binding path and complete actor
-assembly are not implemented yet. Report an early visible result or the precise
-blocker at each review; do not spend today's window accumulating tests without
-a native picture. Implementation may interleave actor and room work to get a
-recognizable frame sooner, but neither visual gate is optional.
+D1-D2 are the current acceptance risk. We have a native textured picture; every
+new change must now be judged against it. Preserve the source camera and intact
+nearby geometry while correcting visible animation, material, and interaction
+faults.
 
 ## Shortest asset and renderer path
 
-The private room already contains `r10d_004.TPL` (903,008 bytes), an exported
-OBJ with UVs, and `r10d_004.scenario.mtl` with 59 material entries. The MTL names
-color PNGs and some separate alpha images, but those PNGs are not present in
-the inspected room tree. Decode the existing TPL and verify material-to-image
-and alpha mappings rather than treating MTL filenames as available textures.
+The source r100 runtime streams five DAT archives. At the post-s03 encounter,
+the BLK table keeps blocks 0, 1, and 2 resident alongside the shared room data.
+The official SMD exporter preserves geometry and UVs but labels some streamed
+Type08 parts `UNKNOWN_MATERIAL`; `prepare_streamed_room_obj.py` restores their
+exact diffuse/alpha texture IDs from the original BIN ModelPart headers before
+the normal room conversion.
 
 Start with simple offline 16-bit color/alpha conversion and native PVR textured
 batches. Use RGB565 for opaque materials and appropriate alpha formats for
@@ -84,11 +101,11 @@ mip coverage, and a generalized texture cache are added only when measured
 memory or visible sampling requires them. They are not prerequisites for the
 first convincing frame.
 
-The character format needs a versioned extension: per-corner UV/material
-mapping, vertex splits at seams, texture identity, and attachment transforms
-consistent with the baked pose. Keep an offline source-to-output mapping and
-retain source clip timing. The runtime currently has only the primary bodies;
-adding a texture file alone cannot complete the actors.
+The character package now carries per-corner UV/material mapping and complete
+source batches, with original motion evaluated offline into bounded animated
+frames. Keep the source part map and timing manifest beside each private build.
+Any missing handgun, hand, hair, or face element is a converter defect, not an
+acceptable model simplification.
 
 Use the unsimplified source meshes as the visual reference. For today's small
 area, retain foreground geometry and omit only objects outside every permitted
@@ -122,18 +139,18 @@ All of these are required before calling the demo convincing:
    player/enemy wall behavior and shot occlusion, stable camera, reachable end
    condition, clear HUD, sound, and manual retry. A state counter alone cannot
    establish any of these visible properties.
-3. **Whole-route performance:** capture complete frame intervals and phase
-   timings over the manual route and three loops. Target a paced 30 fps; report
-   median, p95, p99, worst frame and count of missed 33.33 ms budgets, with the
-   VBlank cadence made explicit. A strict 30 fps claim requires no recurring
-   gameplay misses; a result that falls short is disclosed, not relabeled a pass.
+3. **Measured performance:** capture complete frame intervals and phase timings
+   over the 30-second route. Report observed rate and overruns. Frame rate is not
+   an acceptance gate for this milestone, but the fixed simulation step and
+   dropped-catch-up count must keep slow rendering visible rather than silently
+   changing gameplay behavior.
 4. **Bounded memory:** record main RAM, PVR/VRAM, and AICA allocation peaks with
    textures and audio loaded, including framebuffers, tile/parameter buffers,
    baked animation, conversion/staging copies, and safety headroom. The stock
    16/8/2 MiB pools remain constraints even when showing it in Flycast.
 5. **Usable delivery:** a normal manually controlled build with autoplay off,
    isolated Flycast configuration, known controller mapping, private asset pack,
-   launch instructions, and a 60-second recording from that exact candidate.
+   launch instructions, and a 30-second recording from that exact candidate.
    Backup footage is labeled as footage. Physical Dreamcast is a later gate.
 
 Use the Soulcalibur evidence discipline already documented in

@@ -282,7 +282,31 @@ def _pack_1555(pixel: tuple[int, int, int, int]) -> int:
     return ((1 if alpha >= 128 else 0) << 15) | ((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)
 
 
-def build_package(images: list[TplImage], bindings: list[MaterialBinding]) -> tuple[bytes, dict[str, object]]:
+def downsample_box(
+    pixels: list[tuple[int, int, int, int]], width: int, height: int
+) -> tuple[list[tuple[int, int, int, int]], int, int]:
+    new_width = max(1, width // 2)
+    new_height = max(1, height // 2)
+    result: list[tuple[int, int, int, int]] = []
+    for y in range(new_height):
+        for x in range(new_width):
+            samples = [
+                pixels[min(y * 2 + dy, height - 1) * width +
+                       min(x * 2 + dx, width - 1)]
+                for dy in range(2)
+                for dx in range(2)
+            ]
+            result.append(tuple(
+                sum(pixel[channel] for pixel in samples) // len(samples)
+                for channel in range(4)
+            ))
+    return result, new_width, new_height
+
+
+def build_package(
+    images: list[TplImage], bindings: list[MaterialBinding],
+    max_dimension: int | None = None,
+) -> tuple[bytes, dict[str, object]]:
     decoded: dict[int, list[tuple[int, int, int, int]]] = {}
     packed: dict[tuple[int, int | None], tuple[int, int, int, int, int, int]] = {}
 
@@ -314,6 +338,10 @@ def build_package(images: list[TplImage], bindings: list[MaterialBinding]) -> tu
                     for color, alpha in zip(pixels, alpha_pixels)
                 ]
                 has_alpha = True
+            width = source.width
+            height = source.height
+            while max_dimension is not None and max(width, height) > max_dimension:
+                pixels, width, height = downsample_box(pixels, width, height)
             image_format = FORMAT_ARGB1555 if has_alpha else FORMAT_RGB565
             pack_pixel = _pack_1555 if has_alpha else _pack_565
             raw = b"".join(struct.pack("<H", pack_pixel(pixel)) for pixel in pixels)
@@ -322,7 +350,7 @@ def build_package(images: list[TplImage], bindings: list[MaterialBinding]) -> tu
             flags = FLAG_ALPHA if has_alpha else 0
             packed[key] = (
                 relative_offset, len(raw), image_format, flags,
-                source.width, source.height,
+                width, height,
             )
         relative_offset, raw_size, image_format, flags, width, height = packed[key]
         texture_blob.extend(
@@ -354,6 +382,7 @@ def build_package(images: list[TplImage], bindings: list[MaterialBinding]) -> tu
         "materials": manifest_materials,
         "texture_bytes": len(data_blob),
         "payload_crc32": f"{payload_crc32:08x}",
+        "max_dimension": max_dimension,
     }
     return header + payload, metadata
 
@@ -368,13 +397,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("mtl", type=pathlib.Path, help="private exported MTL")
     parser.add_argument("output", type=pathlib.Path, help="private Dreamcast texture pack")
     parser.add_argument("--manifest", type=pathlib.Path, help="JSON manifest path")
+    parser.add_argument(
+        "--max-dimension", type=int,
+        help="halve oversized textures until both dimensions fit this limit",
+    )
     args = parser.parse_args(argv)
 
     tpl_data = args.tpl.read_bytes()
     mtl_data = args.mtl.read_bytes()
     images = parse_tpl(tpl_data)
     bindings = parse_mtl(mtl_data.decode("utf-8-sig"))
-    package, metadata = build_package(images, bindings)
+    if args.max_dimension is not None and args.max_dimension < 8:
+        raise ValueError("max dimension must be at least 8")
+    package, metadata = build_package(images, bindings, args.max_dimension)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)
     metadata.update({

@@ -565,7 +565,11 @@ def convert(args):
         if entry.tag != "FCV":
             raise ValueError(f"{archive_name}:{entry_index} is not FCV")
         motion = fcv.parse(entry.data)
-        player = evalhost.Player(model, motion, loop=True)
+        # Evaluate the source frame range without the host's loop attribute.
+        # The Dreamcast runtime decides which clips loop. Enabling it here can
+        # wrap the final sampled frame of one-shot hit/death motions back toward
+        # their starting pose and bake the wrong terminal silhouette.
+        player = evalhost.Player(model, motion, loop=False)
         first_frame = len(frames)
         frame_indices = sampled_frame_indices(motion.n_frames, args.sample_step)
         for frame in frame_indices:
@@ -639,7 +643,7 @@ def convert(args):
         else output.with_suffix(".re4tex")
     )
     texture_package, texture_metadata = convert_tpl.build_package(
-        texture_images, texture_bindings
+        texture_images, texture_bindings, args.texture_max_dimension
     )
     texture_output.parent.mkdir(parents=True, exist_ok=True)
     texture_temporary = texture_output.with_suffix(texture_output.suffix + ".tmp")
@@ -728,6 +732,10 @@ def main():
     parser.add_argument("--cache-dir")
     parser.add_argument("--output", required=True)
     parser.add_argument("--texture-output")
+    parser.add_argument(
+        "--texture-max-dimension", type=int,
+        help="halve oversized character textures to fit a bounded VRAM budget",
+    )
     parser.add_argument("--manifest")
     args = parser.parse_args()
     if (args.fps <= 0.0 or args.quantum_mm <= 0.0 or
@@ -735,6 +743,8 @@ def main():
         parser.error(
             "fps, quantum, and sample step must be positive; cluster must be non-negative"
         )
+    if args.texture_max_dimension is not None and args.texture_max_dimension < 8:
+        parser.error("texture max dimension must be at least 8")
     convert(args)
 
 

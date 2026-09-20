@@ -49,6 +49,15 @@ volatile DemoTelemetry g_re4dc_demo_telemetry = {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
+#if defined(RE4DC_480P)
+constexpr float kScreenWidth = 640.0f;
+constexpr float kScreenHeight = 480.0f;
+constexpr float kHudScale = 2.0f;
+#else
+constexpr float kScreenWidth = 320.0f;
+constexpr float kScreenHeight = 240.0f;
+constexpr float kHudScale = 1.0f;
+#endif
 constexpr float kPlayerRadius = 0.42f;
 constexpr float kPlayerHeight = 1.8f;
 constexpr float kStepUp = 0.55f;
@@ -56,23 +65,33 @@ constexpr float kStepDown = 2.5f;
 constexpr float kMoveSpeed = 6.0f;
 constexpr float kTurnSpeed = 2.4f;
 #if defined(RE4DC_SCENE_R100)
-// Dense walkable forest pocket derived from r100's visual and collision mesh.
-// Keep this presentation spawn separate from the r10d gameplay checkpoint.
-constexpr float kSpawnX = -883.09f;
-constexpr float kSpawnY = -1.425f;
-constexpr float kSpawnZ = -14.0f;
+// r100_Sce_look in src/st1/r100.cpp places Leon in the opening cabin encounter.
+// Room, collision, actor, camera, and light coordinates use metres (source * 0.001).
+constexpr float kSpawnX = -82.910f;
+constexpr float kSpawnY = 0.860f;
+constexpr float kSpawnZ = -38.480f;
 #if defined(RE4DC_DEMO_YAW)
 constexpr float kSpawnYaw = RE4DC_DEMO_YAW;
 #else
-constexpr float kSpawnYaw = 2.36f;
+constexpr float kSpawnYaw = 1.75f;
 #endif
-constexpr float kGoalX = -866.2f;
-constexpr float kGoalY = -1.425f;
-constexpr float kGoalZ = -30.0f;
-constexpr float kEnemySpawnX = -875.0f;
-constexpr float kEnemySpawnY = -1.425f;
-constexpr float kEnemySpawnZ = -22.0f;
-constexpr float kFarClipDistance = 90.0f;
+constexpr float kGoalX = -82.910f;
+constexpr float kGoalY = 0.860f;
+constexpr float kGoalZ = -38.480f;
+// The first Ganado and Leon placements written by r100_Sce_look after s03.
+constexpr float kEnemySpawnX = -79.116f;
+constexpr float kEnemySpawnY = 0.860f;
+constexpr float kEnemySpawnZ = -38.890f;
+constexpr float kEnemySpawnYaw = -1.39f;
+// r100_002.LIT cut 0: fog end 106857 and far-play ratio 0.6. Room
+// coordinates use the source 0.001 metre scale; cLightMgr shortens the gameplay
+// far plane to fogEnd * (1 - farPlayRatio) + 1 in source coordinates.
+constexpr float kSourceFogStartDistance = -1.089f;
+constexpr float kFogEndDistance = 106.857f;
+constexpr float kFarClipDistance = 42.7438f;
+constexpr float kBackgroundRed = 141.0f / 255.0f;
+constexpr float kBackgroundGreen = 135.0f / 255.0f;
+constexpr float kBackgroundBlue = 117.0f / 255.0f;
 #else
 constexpr float kSpawnX = 0.0f;
 constexpr float kSpawnY = -7.98f;
@@ -84,6 +103,7 @@ constexpr float kGoalZ = -284.0f;
 constexpr float kEnemySpawnX = 0.0f;
 constexpr float kEnemySpawnY = -7.98f;
 constexpr float kEnemySpawnZ = -256.0f;
+constexpr float kEnemySpawnYaw = 0.0f;
 constexpr float kFarClipDistance = 35.0f;
 #endif
 constexpr float kEnemyMoveSpeed = 1.9f;
@@ -91,7 +111,17 @@ constexpr float kEnemyAttackRange = 2.4f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
 constexpr int kMagazineSize = 6;
 constexpr int kPlayerMaxHealth = 100;
+#if defined(RE4DC_SCENE_R100)
+// R100Init creates this exact id-0x12 Ganado with 500 HP. Weapon 1 uses the
+// em10 base value 150 at the starting 0.9 power multiplier: 135 body damage.
+// Preserve those source values even while the wider enemy state machine is
+// still being integrated.
+constexpr int kEnemyMaxHealth = 500;
+constexpr int kHandgunBodyDamage = 135;
+#else
 constexpr int kEnemyMaxHealth = 3;
+constexpr int kHandgunBodyDamage = 1;
+#endif
 constexpr std::uint64_t kSimulationStepUs = 33333U;
 constexpr unsigned kMaxSimulationCatchupTicks = 3U;
 constexpr float kSimulationDeltaSeconds = 1.0f / 30.0f;
@@ -123,7 +153,7 @@ struct Enemy {
     float x = kEnemySpawnX;
     float y = kEnemySpawnY;
     float z = kEnemySpawnZ;
-    float yaw = 0.0f;
+    float yaw = kEnemySpawnYaw;
     EnemyState state = EnemyState::Chase;
     int health = kEnemyMaxHealth;
     std::uint32_t animation_clip = 1;
@@ -159,6 +189,7 @@ struct Autoplay {
     AutoplayPhase phase = AutoplayPhase::WaitForDeath;
     float fire_cooldown = 0.0f;
     std::uint32_t exit_waypoint = 0;
+    std::uint32_t tick = 0;
 };
 
 struct FrameStats {
@@ -447,6 +478,39 @@ float wrap_angle(float angle) {
 Input autoplay_input(Autoplay& autoplay, const Player& player,
                      const Enemy& enemy, float delta_seconds) {
     Input input{};
+#if defined(RE4DC_SCENE_R100)
+    // A 30-second fixed-tick presentation trace for visual capture. The normal
+    // package omits autoplay.flag and remains fully manual. Keep this trace
+    // source-neutral: it only exercises the same public controls a player uses.
+    (void)delta_seconds;
+    const std::uint32_t tick = autoplay.tick++;
+    if(tick >= 900U) {
+        input.restart = true;
+        autoplay.tick = 0;
+        return input;
+    }
+    if(player.dead) {
+        input.restart = true;
+        autoplay.tick = 0;
+        autoplay.observed_death = true;
+        return input;
+    }
+    if(enemy.state != EnemyState::Dead && tick < 150U) {
+        input.aim = true;
+        const float target_yaw = std::atan2(enemy.x - player.x,
+                                            enemy.z - player.z);
+        input.turn = std::clamp(wrap_angle(target_yaw - player.yaw) * 2.0f,
+                                -1.0f, 1.0f);
+        input.fire = tick == 6U || tick == 16U || tick == 26U || tick == 36U;
+    } else if(tick >= 150U && tick < 360U) {
+        // Hold the source handgun-ready camera for a readable result shot.
+        input.aim = true;
+    }
+    if(tick == 60U) {
+        input.reload = true;
+    }
+    return input;
+#else
     autoplay.fire_cooldown = std::max(0.0f, autoplay.fire_cooldown - delta_seconds);
     switch(autoplay.phase) {
     case AutoplayPhase::WaitForDeath:
@@ -526,6 +590,7 @@ Input autoplay_input(Autoplay& autoplay, const Player& player,
         break;
     }
     return input;
+#endif
 }
 
 void set_enemy_clip(Enemy& enemy, std::uint32_t clip) {
@@ -663,7 +728,7 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
     const bool hit = shot_hits_enemy(player, enemy);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
-        --enemy.health;
+        enemy.health = std::max(0, enemy.health - kHandgunBodyDamage);
         if(enemy.health <= 0) {
             enemy.state = EnemyState::Dead;
             set_enemy_clip(enemy, 4);
@@ -683,9 +748,11 @@ std::uint32_t shade_color(float light) {
 
 bool group_visible(const re4dc::room::Group& group) {
 #if defined(RE4DC_SCENE_R100)
-    // The presentation camera often sits inside a 20 m forest cell. Projecting
-    // only the eight AABB corners can reject that cell even when its road cuts
-    // through the view, so rely on per-triangle clipping for this bounded scene.
+    // The source gameplay shot is the acceptance reference. Until the SMD
+    // object's own visibility volumes are carried into RE4DCRM, keep every
+    // source group eligible and let the exact per-triangle frustum reject it.
+    // The cell AABB projection can reject thin distant forest cells even when
+    // their triangles cross this camera frustum.
     (void)group;
     return true;
 #else
@@ -706,15 +773,16 @@ bool group_visible(const re4dc::room::Group& group) {
         behind = false;
         beyond_far &= z < (1.0f / kFarClipDistance);
         left &= x < 0.0f;
-        right &= x > 320.0f;
+        right &= x > kScreenWidth;
         above &= y < 0.0f;
-        below &= y > 240.0f;
+        below &= y > kScreenHeight;
     }
     return !(behind || beyond_far || left || right || above || below);
 #endif
 }
 
-constexpr float kNearClipDistance = 1.0f;
+constexpr float kNearClipDistance = 0.1f;
+constexpr std::uint32_t kCharacterSubmitVertexCapacity = 3072U;
 
 float camera_depth(float reciprocal_depth) {
     if(!std::isfinite(reciprocal_depth) ||
@@ -792,15 +860,15 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
         const bool left = triangle[0].position.x < 0.0f &&
                           triangle[1].position.x < 0.0f &&
                           triangle[2].position.x < 0.0f;
-        const bool right = triangle[0].position.x > 320.0f &&
-                           triangle[1].position.x > 320.0f &&
-                           triangle[2].position.x > 320.0f;
+        const bool right = triangle[0].position.x > kScreenWidth &&
+                           triangle[1].position.x > kScreenWidth &&
+                           triangle[2].position.x > kScreenWidth;
         const bool above = triangle[0].position.y < 0.0f &&
                            triangle[1].position.y < 0.0f &&
                            triangle[2].position.y < 0.0f;
-        const bool below = triangle[0].position.y > 240.0f &&
-                           triangle[1].position.y > 240.0f &&
-                           triangle[2].position.y > 240.0f;
+        const bool below = triangle[0].position.y > kScreenHeight &&
+                           triangle[1].position.y > kScreenHeight &&
+                           triangle[2].position.y > kScreenHeight;
         if(beyond_far || left || right || above || below ||
            (cull_backface ? signed_area >= 0.0f
                           : std::fabs(signed_area) < 0.0001f)) {
@@ -857,6 +925,9 @@ std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
         };
     }
 #if defined(RE4DC_SCENE_R100)
+    // The third-party SMD export does not retain the source per-object cull
+    // state. Keep both faces for this source slice until that flag is carried
+    // through the package, matching the room's visible surface set.
     constexpr bool cull_backface = false;
 #else
     constexpr bool cull_backface = true;
@@ -929,7 +1000,9 @@ void project_character(const re4dc::character::Package& character,
 std::uint32_t draw_character(const re4dc::character::Package& character,
                              const ProjectedVertex* projected,
                              const pvr_poly_hdr_t* material_headers,
-                             const bool* material_alpha, bool alpha_pass) {
+                             const bool* material_alpha, bool alpha_pass,
+                             pvr_vertex_t* submit_vertices,
+                             std::uint32_t submit_capacity) {
     const auto* indices = character.indices();
     const auto* uvs = character.uvs();
     std::uint32_t triangles = 0;
@@ -940,8 +1013,19 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             continue;
         }
         pvr_prim(&material_headers[batch_index], sizeof(pvr_poly_hdr_t));
+        std::uint32_t submit_count = 0;
+        const auto flush = [&]() {
+            if(submit_count == 0U) {
+                return;
+            }
+            pvr_prim(submit_vertices, sizeof(pvr_vertex_t) * submit_count);
+            submit_count = 0;
+        };
         const std::uint32_t end = batch.first_index + batch.index_count;
         for(std::uint32_t index = batch.first_index; index < end; index += 3U) {
+            if(submit_count + 6U > submit_capacity) {
+                flush();
+            }
             const std::uint16_t source_indices[3] = {
                 indices[index], indices[index + 1U], indices[index + 2U]
             };
@@ -955,21 +1039,22 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                     .offset_color = 0xff20180cU,
                 };
             }
-            pvr_vertex_t output[6]{};
-            const std::uint32_t emitted =
-                clip_projected_triangle(source_triangle, output, true);
-            for(std::uint32_t triangle = 0; triangle < emitted; ++triangle) {
-                pvr_prim(output + triangle * 3U,
-                         sizeof(pvr_vertex_t) * 3U);
-            }
+            const std::uint32_t emitted = clip_projected_triangle(
+                source_triangle, submit_vertices + submit_count, true);
+            submit_count += emitted * 3U;
             triangles += emitted;
         }
+        flush();
     }
     return triangles;
 }
 
 void submit_screen_quad(float left, float top, float right, float bottom,
                          std::uint32_t color, float depth = 1.0f) {
+    left *= kHudScale;
+    top *= kHudScale;
+    right *= kHudScale;
+    bottom *= kHudScale;
     const pvr_vertex_t vertices[4] = {
         {.flags = PVR_CMD_VERTEX, .x = left, .y = top, .z = depth,
          .u = 0.0f, .v = 0.0f, .argb = color, .oargb = 0},
@@ -1074,7 +1159,7 @@ void draw_hud(const Player& player, const Enemy& enemy) {
     }
 }
 
-void draw_goal(bool unlocked) {
+[[maybe_unused]] void draw_goal(bool unlocked) {
     constexpr float radius = 0.55f;
     const point_t base[4] = {
         {kGoalX - radius, kGoalY + 0.05f, kGoalZ - radius, 1.0f},
@@ -1103,6 +1188,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
                         ProjectedVertex* projected, std::uint32_t* transformed_at,
                         ProjectedVertex* leon_projected,
                         ProjectedVertex* ganado_projected,
+                        pvr_vertex_t* character_submit_vertices,
                         std::uint32_t frame_token) {
     FrameStats stats{};
     const auto* groups = room.groups();
@@ -1151,10 +1237,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
     }
     pvr_prim(&untextured_header, sizeof(untextured_header));
     stats.character_triangles = draw_character(
-        leon, leon_projected, leon_headers, leon_alpha, false);
+        leon, leon_projected, leon_headers, leon_alpha, false,
+        character_submit_vertices, kCharacterSubmitVertexCapacity);
     stats.character_triangles += draw_character(
-        ganado, ganado_projected, ganado_headers, ganado_alpha, false);
+        ganado, ganado_projected, ganado_headers, ganado_alpha, false,
+        character_submit_vertices, kCharacterSubmitVertexCapacity);
+#if !defined(RE4DC_SCENE_R100)
     draw_goal(enemy.state == EnemyState::Dead);
+#endif
     draw_hud(player, enemy);
     pvr_list_finish();
 
@@ -1187,9 +1277,11 @@ FrameStats render_scene(const re4dc::room::Package& room,
         }
     }
     stats.character_triangles += draw_character(
-        leon, leon_projected, leon_headers, leon_alpha, true);
+        leon, leon_projected, leon_headers, leon_alpha, true,
+        character_submit_vertices, kCharacterSubmitVertexCapacity);
     stats.character_triangles += draw_character(
-        ganado, ganado_projected, ganado_headers, ganado_alpha, true);
+        ganado, ganado_projected, ganado_headers, ganado_alpha, true,
+        character_submit_vertices, kCharacterSubmitVertexCapacity);
     pvr_list_finish();
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
@@ -1258,18 +1350,31 @@ int main() {
         return 1;
     }
 
+#if defined(RE4DC_480P)
+    vid_set_mode(DM_640x480, PM_RGB565);
+#else
     vid_set_mode(DM_320x240, PM_RGB565);
+#endif
     pvr_init_params_t pvr_params = pvr_default_params;
     pvr_params.opb_sizes[PVR_LIST_PT_POLY] = PVR_BINSIZE_16;
     if(pvr_init(&pvr_params) < 0) {
         std::printf("re4dc-room: PVR initialization failed\n");
         return 1;
     }
+#if defined(RE4DC_SCENE_R100)
+    // r100_002.LIT cut 0 supplies the background/fog colour and distances.
+    pvr_set_bg_color(kBackgroundRed, kBackgroundGreen, kBackgroundBlue);
+    pvr_fog_table_color(1.0f, kBackgroundRed, kBackgroundGreen,
+                        kBackgroundBlue);
+    // GX accepts r100's negative fog start. The PVR table helper does not;
+    // clamp it to the visible near plane, which is equivalent for submitted
+    // geometry and avoids saturating the entire Dreamcast fog table.
+    pvr_fog_table_linear(
+        std::max(kSourceFogStartDistance, kNearClipDistance),
+        kFogEndDistance);
+#else
     pvr_set_bg_color(0.16f, 0.15f, 0.13f);
     pvr_fog_table_color(1.0f, 0.16f, 0.15f, 0.13f);
-#if defined(RE4DC_SCENE_R100)
-    pvr_fog_table_linear(12.0f, 70.0f);
-#else
     pvr_fog_table_linear(14.0f, 48.0f);
 #endif
     const std::size_t vram_before_textures = pvr_mem_available();
@@ -1406,9 +1511,13 @@ int main() {
     Autoplay autoplay{};
     autoplay.enabled = file_exists("/rd/autoplay.flag");
     if(autoplay.enabled) {
+#if defined(RE4DC_SCENE_R100)
+        std::printf("re4dc-room: r100 30-second presentation trace enabled\n");
+#else
         enemy.x = player.x + std::sin(player.yaw) * kEnemyAttackRange * 0.85f;
         enemy.z = player.z + std::cos(player.yaw) * kEnemyAttackRange * 0.85f;
         player.health = 25;
+#endif
     }
     float initial_floor = player.y;
     if(!find_floor(collision, player.x, player.z, player.y, initial_floor)) {
@@ -1432,14 +1541,21 @@ int main() {
         new(std::nothrow) ProjectedVertex[leon.header().vertex_count]);
     std::unique_ptr<ProjectedVertex[]> ganado_projected(
         new(std::nothrow) ProjectedVertex[ganado.header().vertex_count]);
+    std::unique_ptr<pvr_vertex_t[]> character_submit_vertices(
+        new(std::nothrow) pvr_vertex_t[kCharacterSubmitVertexCapacity]);
     if(projected == nullptr || transformed_at == nullptr ||
-       leon_projected == nullptr || ganado_projected == nullptr) {
+       leon_projected == nullptr || ganado_projected == nullptr ||
+       character_submit_vertices == nullptr) {
         std::printf("re4dc-room: transform cache allocation failed\n");
         return 1;
     }
     std::printf(
         "re4dc-room: stick=turn/move RT/Y=aim A=fire X=reload B=restart "
+#if defined(RE4DC_SCENE_R100)
+        "START=exit; defeat Ganado or retry the source encounter\n");
+#else
         "START=exit; defeat Ganado then reach green marker\n");
+#endif
     if(autoplay.enabled) {
         std::printf("re4dc-room: deterministic autoplay enabled\n");
     }
@@ -1482,7 +1598,14 @@ int main() {
             const float goal_dx = player.x - kGoalX;
             const float goal_dz = player.z - kGoalZ;
             if(enemy.state == EnemyState::Dead && !player.dead &&
-               goal_dx * goal_dx + goal_dz * goal_dz < 16.0f) {
+               goal_dx * goal_dx + goal_dz * goal_dz < 16.0f
+#if defined(RE4DC_SCENE_R100)
+               // The r100 presentation stays in the source encounter after
+               // the kill. B explicitly restarts it; there is no invented
+               // exit marker at this placement.
+               && false
+#endif
+               ) {
                 ++player.completed_loops;
                 std::printf("re4dc-room: demo loop complete loops=%lu tick=%llu\n",
                             static_cast<unsigned long>(player.completed_loops),
@@ -1502,9 +1625,12 @@ int main() {
         if(simulation_accumulator_us >= kSimulationStepUs) {
             simulation_accumulator_us %= kSimulationStepUs;
             ++simulation_overruns;
-            std::printf("re4dc-room: simulation catch-up dropped tick=%llu overruns=%lu\n",
-                        static_cast<unsigned long long>(simulation_tick),
-                        static_cast<unsigned long>(simulation_overruns));
+            if(simulation_overruns == 1U || simulation_overruns % 120U == 0U) {
+                std::printf(
+                    "re4dc-room: simulation catch-up dropped tick=%llu overruns=%lu\n",
+                    static_cast<unsigned long long>(simulation_tick),
+                    static_cast<unsigned long>(simulation_overruns));
+            }
         }
         g_re4dc_demo_telemetry.frame = frame;
         g_re4dc_demo_telemetry.autoplay_phase =
@@ -1524,43 +1650,77 @@ int main() {
         g_re4dc_demo_telemetry.player_yaw = player.yaw;
         g_re4dc_demo_telemetry.enemy_x = enemy.x;
         g_re4dc_demo_telemetry.enemy_z = enemy.z;
-#if defined(RE4DC_SCENE_R100)
-        player.aiming = true;
-#endif
         const float fx = std::sin(player.yaw);
         const float fz = std::cos(player.yaw);
         const float rx = std::cos(player.yaw);
         const float rz = -std::sin(player.yaw);
         const bool shoulder_view = player.aiming && !player.dead;
+        point_t eye{};
+        point_t target{};
+        float half_fov = kPi / 6.0f;
+        if(shoulder_view) {
+            // g_readyOfs[0][0][1] in src/game/cam_qfps.cpp: Leon's
+            // default mid-site handgun camera. The player matrix applies the
+            // model-to-world 0.001 scale to these source offsets.
+            constexpr float camera_x = -0.530f;
+            constexpr float camera_y = 1.765f;
+            constexpr float camera_z = -0.590f;
+            constexpr float target_x = -0.065f;
+            constexpr float target_y = 1.340f;
+            constexpr float target_z = 1.480f;
+            eye = {
+                player.x + camera_x * rx + camera_z * fx,
+                player.y + camera_y,
+                player.z + camera_x * rz + camera_z * fz, 1.0f};
+            target = {
+                player.x + target_x * rx + target_z * fx,
+                player.y + target_y,
+                player.z + target_x * rz + target_z * fz, 1.0f};
+            half_fov = 45.0f * kPi / 360.0f;
+        } else {
 #if defined(RE4DC_SCENE_R100)
-        const float camera_distance = shoulder_view ? 2.2f : 3.0f;
-        const float camera_lateral = shoulder_view ? 0.8f : 0.55f;
-        const float camera_height = shoulder_view ? 2.05f : 2.35f;
+            // r100_000.CAM area 2, neutral middle site (cut 2 entries 7/19).
+            // This is the source-authored normal gameplay camera at the
+            // r100_Sce_look encounter placement.
+            constexpr float camera_x = -0.500f;
+            constexpr float camera_y = 1.765f;
+            constexpr float camera_z = -1.190f;
+            constexpr float target_x = 0.0f;
+            constexpr float target_y = 1.340f;
+            constexpr float target_z = 1.480f;
+            eye = {
+                player.x + camera_x * rx + camera_z * fx,
+                player.y + camera_y,
+                player.z + camera_x * rz + camera_z * fz, 1.0f};
+            target = {
+                player.x + target_x * rx + target_z * fx,
+                player.y + target_y,
+                player.z + target_x * rz + target_z * fz, 1.0f};
+            half_fov = 50.0f * kPi / 360.0f;
 #else
-        const float camera_distance = shoulder_view ? 2.65f : 4.75f;
-        const float camera_lateral = shoulder_view ? 1.0f : 0.85f;
-        const float camera_height = shoulder_view ? 2.2f : 2.55f;
+            constexpr float camera_distance = 4.75f;
+            constexpr float camera_lateral = 0.85f;
+            eye = {
+                player.x - fx * camera_distance + rx * camera_lateral,
+                player.y + 2.55f,
+                player.z - fz * camera_distance + rz * camera_lateral, 1.0f};
+            target = {
+                player.x + fx * 2.0f,
+                player.y + 1.2f,
+                player.z + fz * 2.0f, 1.0f};
 #endif
-        const float target_distance = shoulder_view ? 5.0f : 2.0f;
-        const point_t eye = {
-            player.x - fx * camera_distance + rx * camera_lateral,
-            player.y + camera_height,
-            player.z - fz * camera_distance + rz * camera_lateral, 1.0f};
-        const point_t target = {
-            player.x + fx * target_distance,
-            player.y + (shoulder_view ? 1.45f : 1.2f),
-            player.z + fz * target_distance, 1.0f};
-        const float half_fov = shoulder_view ? (kPi / 8.5f) : (kPi / 6.0f);
+        }
         mat_identity();
-        mat_perspective(160.0f, 120.0f, 1.0f / std::tan(half_fov), 1.0f,
-                        500.0f);
+        mat_perspective(kScreenWidth * 0.5f, kScreenHeight * 0.5f,
+                        1.0f / std::tan(half_fov), kNearClipDistance,
+                        kFarClipDistance);
         mat_lookat(&eye, &target, &up);
         const FrameStats stats = render_scene(
             room, leon, ganado, player, enemy, untextured_header,
             material_headers, material_alpha.get(), leon_headers,
             leon_alpha.get(), ganado_headers, ganado_alpha.get(), projected.get(),
             transformed_at.get(), leon_projected.get(), ganado_projected.get(),
-            frame + 1U);
+            character_submit_vertices.get(), frame + 1U);
         g_re4dc_demo_telemetry.visible_groups = stats.groups;
         g_re4dc_demo_telemetry.transformed_vertices =
             stats.transformed_vertices;

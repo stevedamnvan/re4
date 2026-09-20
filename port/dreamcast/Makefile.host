@@ -16,6 +16,8 @@ RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
 LEON_CHARACTER ?= build/private/leon.re4chr
 GANADO_CHARACTER ?= build/private/ganado.re4chr
 CHARACTER_CLUSTER_MM ?= 0
+CHARACTER_TEXTURE_MAX_DIMENSION ?=
+CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
 .PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado demo-r10d script-check unit clean
 
@@ -62,6 +64,7 @@ character-leon:
 		--rigid-attachment handgun:wep02.drs:2:1:10 \
 		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 \
 		--sample-step 2 --cluster-mm $(CHARACTER_CLUSTER_MM) \
+		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(LEON_CHARACTER)
 
 character-ganado:
@@ -69,8 +72,9 @@ character-ganado:
 		--cache-dir build/private/disc-cache --model-archive em10.drs --model-entry 440 \
 		--clip idle:em10.drs:1 --clip walk:em10.drs:4 \
 		--clip attack:em10.drs:130 --clip hit:em10.drs:42 \
-		--clip death:em10.drs:101 --sample-step 2 \
+		--clip death:em10.drs:103 --sample-step 2 \
 		--cluster-mm $(CHARACTER_CLUSTER_MM) \
+		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(GANADO_CHARACTER)
 
 demo-r10d: room-r10d texture-r10d character-leon character-ganado
