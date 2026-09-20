@@ -103,9 +103,13 @@ make -C port/dreamcast/room
 ```
 
 The executable validates the room, collision, and character packages, culls
-room groups, submits flat-shaded PVR geometry, and supports analog-stick or
-D-pad tank movement, SAT floor/wall collision, a shoulder follow camera,
-source-derived actor animation, and the combat loop. Controls are stick/D-pad
+room groups, submits textured PVR geometry, and supports analog-stick or D-pad
+tank movement, SAT floor/wall collision, a shoulder follow camera,
+source-derived actor animation, source-cut RGB lighting for r100, and the combat
+loop. The r100 path evaluates the non-empty cabin lights from
+`r100_002.LIT` cut 0, including its separate scenery/enemy ambient colours and
+view-relative parallel lights; animated actor normals are rebuilt from each
+sampled pose before lighting. Controls are stick/D-pad
 move and turn, right trigger or Y aim, A fire, X reload, B restart, and START
 exit. Defeat the Ganado before the route marker unlocks.
 The generated packages stay ignored. The first broad orbit proof and the
