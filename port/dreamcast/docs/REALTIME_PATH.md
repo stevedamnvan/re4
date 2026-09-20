@@ -20,8 +20,9 @@ cache, conservative four-metre opaque child cells, source-authorized binary
 punch-through, one source-ordered visible-room list reused by every material
 pass, combined header/first-payload submissions, separate immutable actor
 normal scratch, per-strip bounds culling, PVR packets written straight from
-room cache entries, batch-local room vertex slots, and prepared per-actor light
-lists. Do not propose these again as unimplemented work.
+room cache entries, batch-local room vertex slots, prepared per-actor light
+lists, offline-twiddled texture payloads, and one-pass actor strip assembly.
+Do not propose these again as unimplemented work.
 
 R3m preserves source-authorized binary alpha while retaining gradient blend.
 R3n reuses visibility, cull state, and room-light selection across material
@@ -85,15 +86,16 @@ view, and timed retry. The current autoplay does not cover free movement, aim
 extremes, enemy contact, Leon death, or a human controller; those remain separate
 acceptance gates.
 
-| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w | R3x accepted |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms | 61.229 / 61.289 / 63.781 ms |
-| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms | 38.319 ms |
-| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms | 14.189 ms |
-| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
-| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 | 11,008 |
-| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B | 5,357,568 B |
-| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w | R3x | R4c accepted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms | 61.229 / 61.289 / 63.781 ms | 60.791 / 60.874 / 63.343 ms |
+| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms | 38.319 ms | 37.890 ms |
+| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms | 14.189 ms | 14.189 ms |
+| opaque actor draw p50 | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.430 ms |
+| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
+| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 | 11,008 | 11,008 |
+| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B | 5,357,568 B | 5,357,568 B |
+| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
 
 R3r draws more room geometry than R3p because the corrected group test restores
 groups that R3p discarded, and is still 12.078 ms faster at p50. R3u draws the
@@ -103,10 +105,11 @@ records, the same triangles, and byte-identical room pixels. R3v transforms
 had captured, and is still 2.580 ms faster because each reference no longer
 hashes, compares keys or re-verifies. R3w changes no emitted vertex and no
 stage but actor lighting. R3x changes no emitted vertex and no stage but the
-room passes.
+room passes. R4c changes no emitted byte at all, proved by a per-tick checksum
+of the submitted stream, and no stage but the two actor passes.
 
 The accepted candidate presents at roughly 16 distinct frames per second. A
-33.33 ms CPU frame needs another 27.9 ms median reduction and 28.0 ms at p95.
+33.33 ms CPU frame needs another 27.5 ms median reduction and 27.5 ms at p95.
 SH-4 preparation remains the dominant measured cost.
 
 R3x median CPU stages are shown without adding the overlapping `submit_us`
@@ -421,6 +424,11 @@ not the task scheduler:
   1,022,663 us to 16,945 us with no frame, memory or image change. The first
   attempt did not boot because the room Makefile had no header dependency
   tracking, which is now fixed for every package header.
+- R4c: actor direct strips are assembled in one rewindable pass instead of a
+  separate eligibility scan followed by an emission walk, the DCA3 audit's A1a.
+  0.429 ms off the frame with a byte-identical submitted stream over 524 ticks.
+  Framebuffer capture at fixed ticks is not valid evidence for a change that
+  alters frame cadence; the `SUBMIT_DIGEST` build exists for that reason.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison

@@ -50,9 +50,14 @@ endif
 ifneq ($(CULL_AUDIT),)
 CPPFLAGS += -DRE4DC_CULL_AUDIT
 endif
+# Diagnostic checksum of the submitted vertex stream. Not part of any accepted
+# build: it reads back every submitted byte and is far too slow to time with.
+ifneq ($(SUBMIT_DIGEST),)
+CPPFLAGS += -DRE4DC_SUBMIT_DIGEST
+endif
 KOS_GCCVER_MIN = 12.0.0
 
-.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit FORCE
+.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit r100-autoplay-digest FORCE
 
 all: prepare-romdisk rm-elf $(TARGET)
 
@@ -88,6 +93,9 @@ r100-autoplay-profile:
 
 r100-autoplay-cull-audit:
 	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag CULL_AUDIT=1
+
+r100-autoplay-digest:
+	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag SUBMIT_DIGEST=1
 
 include $(KOS_BASE)/Makefile.rules
 

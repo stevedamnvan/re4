@@ -130,6 +130,13 @@ struct DemoTelemetry {
     std::uint32_t cull_audit_worst_x;
     std::uint32_t cull_audit_worst_y;
 #endif
+#if defined(RE4DC_SUBMIT_DIGEST)
+    // FNV-1a over every byte handed to the tile accelerator this frame, so two
+    // builds can be proved to emit the same stream without depending on when
+    // a frame happens to land relative to a simulation tick.
+    std::uint32_t submit_digest;
+    std::uint32_t submit_digest_bytes;
+#endif
 #if defined(RE4DC_SUBMIT_PROFILE)
     std::uint32_t room_submit_calls;
     std::uint32_t room_submit_bytes;
@@ -170,7 +177,9 @@ struct DemoTelemetry {
 #endif
 };
 
-#if defined(RE4DC_SUBMIT_PROFILE)
+#if defined(RE4DC_SUBMIT_DIGEST)
+static_assert(sizeof(DemoTelemetry) == 384U);
+#elif defined(RE4DC_SUBMIT_PROFILE)
 static_assert(sizeof(DemoTelemetry) == 512U);
 #elif defined(RE4DC_CULL_AUDIT)
 static_assert(sizeof(DemoTelemetry) == 392U);
@@ -181,7 +190,9 @@ static_assert(sizeof(DemoTelemetry) == 376U);
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
-#if defined(RE4DC_SUBMIT_PROFILE)
+#if defined(RE4DC_SUBMIT_DIGEST)
+    telemetry.version = 15U;
+#elif defined(RE4DC_SUBMIT_PROFILE)
     telemetry.version = 13U;
 #elif defined(RE4DC_CULL_AUDIT)
     telemetry.version = 14U;
@@ -570,6 +581,10 @@ struct FrameStats {
     std::uint32_t room_light_selection_evaluations = 0;
     std::uint32_t pvr_submit_calls = 0;
     std::uint32_t pvr_submit_bytes = 0;
+#if defined(RE4DC_SUBMIT_DIGEST)
+    std::uint32_t submit_digest = 0x811c9dc5U;
+    std::uint32_t submit_digest_bytes = 0;
+#endif
     std::uint32_t leon_light_selection = 0;
     std::uint32_t ganado_light_selection = 0;
     std::uint32_t room_strips_culled = 0;
@@ -651,6 +666,17 @@ void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
 #endif
     ++stats.pvr_submit_calls;
     stats.pvr_submit_bytes += static_cast<std::uint32_t>(byte_count);
+#if defined(RE4DC_SUBMIT_DIGEST)
+    {
+        const auto* bytes = static_cast<const std::uint8_t*>(data);
+        std::uint32_t digest = stats.submit_digest;
+        for(std::size_t index = 0; index < byte_count; ++index) {
+            digest = (digest ^ bytes[index]) * 0x01000193U;
+        }
+        stats.submit_digest = digest;
+        stats.submit_digest_bytes += static_cast<std::uint32_t>(byte_count);
+    }
+#endif
 }
 
 void begin_pvr_packet(pvr_vertex_t* commands, std::uint32_t& command_count,
@@ -5075,53 +5101,63 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             const auto& primitive = primitives[primitive_index];
             bool direct_strip = primitive.opcode == 0x98U &&
                                 primitive.vertex_count <= submit_capacity;
-            for(std::uint32_t local = 0;
-                direct_strip && local < primitive.vertex_count; ++local) {
-                const std::uint16_t vertex =
-                    primitive_indices[primitive.first_vertex + local];
-                const float depth =
-                    projected[draw_vertices[vertex].position].depth;
-                if(depth < kNearClipDistance || depth > kFarClipDistance) {
-                    direct_strip = false;
+            if(direct_strip) {
+                // R4c/A1a: one pass. The separate eligibility scan used to
+                // walk primitive_indices, draw_vertices and the projected
+                // record for every vertex and then walk all three again to
+                // emit. Assemble speculatively instead and rewind the whole
+                // strip on the first ineligible vertex.
+                //
+                // Capacity is reserved before the first write, so a rewind
+                // never has to undo a flush and no partial strip can reach
+                // the tile accelerator. `direct_strip` already required the
+                // strip to fit inside the buffer, so one flush is enough.
+                if(submit_count + primitive.vertex_count > submit_capacity) {
+                    flush();
                 }
-            }
-            if(!direct_strip) {
-                if(primitive.opcode == 0x98U) {
-                    ++stats.character_strip_fallbacks;
-                }
-                submit_triangle_range(
-                    primitive.first_index, primitive.index_count);
-                continue;
-            }
-            if(submit_count + primitive.vertex_count > submit_capacity) {
-                flush();
-            }
-            for(std::uint32_t local = 0; local < primitive.vertex_count;
-                ++local) {
-                const std::uint16_t vertex =
-                    primitive_indices[primitive.first_vertex + local];
-                const auto& draw = draw_vertices[vertex];
+                const std::uint32_t strip_start = submit_count;
+                const std::uint32_t last_local = primitive.vertex_count - 1U;
+                for(std::uint32_t local = 0; local < primitive.vertex_count;
+                    ++local) {
+                    const std::uint16_t vertex =
+                        primitive_indices[primitive.first_vertex + local];
+                    const auto& draw = draw_vertices[vertex];
+                    const ProjectedVertex& position = projected[draw.position];
+                    if(position.depth < kNearClipDistance ||
+                       position.depth > kFarClipDistance) {
+                        submit_count = strip_start;
+                        direct_strip = false;
+                        break;
+                    }
 #if defined(RE4DC_SCENE_R100)
-                const std::uint32_t color = colors[draw.normal];
+                    const std::uint32_t color = colors[draw.normal];
 #else
-                const std::uint32_t color = 0xffffffffU;
+                    const std::uint32_t color = 0xffffffffU;
 #endif
-                submit_vertices[submit_count++] = {
-                    .flags = local + 1U == primitive.vertex_count
-                                 ? PVR_CMD_VERTEX_EOL
-                                 : PVR_CMD_VERTEX,
-                    .x = projected[draw.position].x,
-                    .y = projected[draw.position].y,
-                    .z = projected[draw.position].z,
-                    .u = draw.u,
-                    .v = draw.v,
-                    .argb = color,
-                    .oargb = 0,
-                };
+                    submit_vertices[submit_count++] = {
+                        .flags = local == last_local ? PVR_CMD_VERTEX_EOL
+                                                     : PVR_CMD_VERTEX,
+                        .x = position.x,
+                        .y = position.y,
+                        .z = position.z,
+                        .u = draw.u,
+                        .v = draw.v,
+                        .argb = color,
+                        .oargb = 0,
+                    };
+                }
+                if(direct_strip) {
+                    stats.character_vertex_records += primitive.vertex_count;
+                    ++stats.character_direct_strips;
+                    triangles += primitive.index_count / 3U;
+                    continue;
+                }
             }
-            stats.character_vertex_records += primitive.vertex_count;
-            ++stats.character_direct_strips;
-            triangles += primitive.index_count / 3U;
+            if(primitive.opcode == 0x98U) {
+                ++stats.character_strip_fallbacks;
+            }
+            submit_triangle_range(
+                primitive.first_index, primitive.index_count);
         }
         flush();
     }
@@ -6980,6 +7016,10 @@ int main() {
             stats.room_light_selection_evaluations;
         g_re4dc_demo_telemetry.pvr_submit_calls = stats.pvr_submit_calls;
         g_re4dc_demo_telemetry.pvr_submit_bytes = stats.pvr_submit_bytes;
+#if defined(RE4DC_SUBMIT_DIGEST)
+        g_re4dc_demo_telemetry.submit_digest = stats.submit_digest;
+        g_re4dc_demo_telemetry.submit_digest_bytes = stats.submit_digest_bytes;
+#endif
         g_re4dc_demo_telemetry.leon_lighting_us =
             saturate_u32(stats.leon_lighting_us);
         g_re4dc_demo_telemetry.ganado_lighting_us =

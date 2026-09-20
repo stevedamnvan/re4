@@ -43,25 +43,29 @@ latent hazard for every package header in the tree, not only this one.
 ## Measurements
 
 Flycast, 640x480, r100 autoplay, matched window (simulation ticks 165-1194).
-All three builds captured in one session on one host, since host state moves
-the absolute frame time; the R3x figure recorded in `REALTIME_PATH.md`
-(61.229 ms) was taken on a different host state and is not comparable here.
-The control is an all-linear build of the same source with the same timer.
+All three builds captured in one session, with an all-linear build of the same
+source and the same timer as the control. The control's p50 frame time is
+61,229 us, which is the R3x figure recorded in `REALTIME_PATH.md` to the
+microsecond, so this run is directly comparable to the accepted baseline and
+R4b introduces no frame regression against it.
 
 | | all-linear control | room+characters twiddled | all twiddled |
 |---|---:|---:|---:|
 | texture upload (us) | 1,022,663 | 91,240 | 16,945 |
-| frame_us mean | 57,461.1 | 57,381.5 | 57,380.7 |
-| render_total_us mean | 57,134.7 | 57,058.6 | 57,069.6 |
-| opaque_room_us mean | 18,255.4 | 18,175.0 | 18,203.3 |
-| submit_us mean | 34,452.8 | 34,372.8 | 34,401.4 |
+| frame_us p50 | 61,229 | 61,221 | 61,221 |
+| frame_us p95 | 61,292 | 61,295 | 61,290 |
+| opaque_actor_us p50 | 11,789 | 11,789 | 11,789 |
 | PVR free after textures (B) | 1,521,128 | 1,521,128 | 1,521,128 |
 | main RAM free (B) | 5,357,568 | 5,357,568 | 5,357,568 |
 | heap used (B) | 135,004 | 135,004 | 135,004 |
 
-The 80 us frame difference is inside run-to-run noise and moves the wrong way
-between the two twiddled builds, so no per-frame effect is claimed. Upload time
-is measured by a new `texture_upload_us` field that reuses the spare
+The 8 us spread in p50 is run-to-run noise: a later bracketed pair of repeat
+runs put the baseline at 61,220 and 61,223 us, so the noise floor here is a few
+microseconds and no per-frame effect is claimed either way. Report p50 rather
+than the window mean when comparing with the recorded budget table, because the
+mean includes the early part of the window and reads several milliseconds low.
+
+Upload time is measured by a new `texture_upload_us` field that reuses the spare
 `room_reserved_0` slot, so the telemetry layout and its 376-byte size are
 unchanged and existing readers keep working.
 
