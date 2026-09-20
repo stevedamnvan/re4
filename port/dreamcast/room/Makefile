@@ -8,6 +8,9 @@ CHARACTER_TEXTURE_PACKAGE ?= ../build/private/leon.re4tex
 ENEMY_TEXTURE_PACKAGE ?= ../build/private/ganado.re4tex
 TEXTURE_PACKAGE ?= ../build/private/r10d.re4tex
 AUTOPLAY_FLAG ?=
+FIRE_SOUND_0 ?=
+FIRE_SOUND_2 ?=
+RELOAD_SOUND ?=
 DEMO_SCENE ?= r10d
 DEMO_RESOLUTION ?= 240p
 KOS_ROMDISK_DIR = ../build/room-romdisk
@@ -51,9 +54,22 @@ prepare-romdisk:
 	cp $(ENEMY_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4tex
 	cp $(TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4tex
 	rm -f $(KOS_ROMDISK_DIR)/autoplay.flag
+	rm -f $(KOS_ROMDISK_DIR)/wep02-fire-0.wav \
+		$(KOS_ROMDISK_DIR)/wep02-fire-2.wav \
+		$(KOS_ROMDISK_DIR)/wep02-reload-16.wav
 	@if [ -n "$(AUTOPLAY_FLAG)" ]; then \
 		test -f "$(AUTOPLAY_FLAG)" || { echo 'missing autoplay flag: $(AUTOPLAY_FLAG)' >&2; exit 1; }; \
 		cp "$(AUTOPLAY_FLAG)" $(KOS_ROMDISK_DIR)/autoplay.flag; \
+	fi
+	@if [ -n "$(FIRE_SOUND_0)$(FIRE_SOUND_2)$(RELOAD_SOUND)" ]; then \
+		test -n "$(FIRE_SOUND_0)" -a -n "$(FIRE_SOUND_2)" -a -n "$(RELOAD_SOUND)" || \
+			{ echo 'source weapon audio requires fire cues 0 and 2 plus reload cue 0x16' >&2; exit 1; }; \
+		test -f "$(FIRE_SOUND_0)" || { echo 'missing fire cue 0: $(FIRE_SOUND_0)' >&2; exit 1; }; \
+		test -f "$(FIRE_SOUND_2)" || { echo 'missing fire cue 2: $(FIRE_SOUND_2)' >&2; exit 1; }; \
+		test -f "$(RELOAD_SOUND)" || { echo 'missing reload cue 0x16: $(RELOAD_SOUND)' >&2; exit 1; }; \
+		cp "$(FIRE_SOUND_0)" $(KOS_ROMDISK_DIR)/wep02-fire-0.wav; \
+		cp "$(FIRE_SOUND_2)" $(KOS_ROMDISK_DIR)/wep02-fire-2.wav; \
+		cp "$(RELOAD_SOUND)" $(KOS_ROMDISK_DIR)/wep02-reload-16.wav; \
 	fi
 
 romdisk.img: prepare-romdisk

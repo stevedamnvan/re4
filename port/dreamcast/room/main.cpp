@@ -1,4 +1,6 @@
 #include <kos.h>
+#include <dc/sound/sfxmgr.h>
+#include <dc/sound/sound.h>
 
 #include <algorithm>
 #include <cmath>
@@ -130,6 +132,11 @@ constexpr int kHandgunBodyDamage = 1;
 constexpr std::uint64_t kSimulationStepUs = 33333U;
 constexpr unsigned kMaxSimulationCatchupTicks = 3U;
 constexpr float kSimulationDeltaSeconds = 1.0f / 30.0f;
+// cObjMauser::moveReload refills the starting handgun at motion frame 44 and
+// ejects its stripper clip at frame 55. Keep the action locked through that
+// second source event instead of using the prototype's one-second timer.
+constexpr float kStartingReloadRefillSeconds = 44.0f / 30.0f;
+constexpr float kStartingReloadFinishSeconds = 55.0f / 30.0f;
 
 enum class EnemyState : std::uint8_t {
     Chase,
@@ -150,6 +157,7 @@ struct Player {
     int health = kPlayerMaxHealth;
     int ammo = kMagazineSize;
     float reload_seconds = 0.0f;
+    bool reload_refilled = false;
     float fire_animation_seconds = 0.0f;
     bool aiming = false;
     bool dead = false;
@@ -165,6 +173,13 @@ struct Enemy {
     std::uint32_t animation_clip = 1;
     float animation_frame = 0.0f;
     bool attack_landed = false;
+};
+
+struct DemoAudio {
+    sfxhnd_t fire_0 = SFXHND_INVALID;
+    sfxhnd_t fire_2 = SFXHND_INVALID;
+    sfxhnd_t reload_16 = SFXHND_INVALID;
+    bool initialized = false;
 };
 
 struct Input {
@@ -274,6 +289,48 @@ bool file_exists(const char* path) {
     }
     fs_close(file);
     return true;
+}
+
+bool load_demo_audio(DemoAudio& audio) {
+    constexpr const char* fire_0_path = "/rd/wep02-fire-0.wav";
+    constexpr const char* fire_2_path = "/rd/wep02-fire-2.wav";
+    constexpr const char* reload_path = "/rd/wep02-reload-16.wav";
+    const bool fire_0_exists = file_exists(fire_0_path);
+    const bool fire_2_exists = file_exists(fire_2_path);
+    const bool reload_exists = file_exists(reload_path);
+    if(!fire_0_exists && !fire_2_exists && !reload_exists) {
+        std::printf("re4dc-room: source weapon audio not packaged\n");
+        return true;
+    }
+    if(!fire_0_exists || !fire_2_exists || !reload_exists) {
+        std::printf("re4dc-room: incomplete source weapon audio package\n");
+        return false;
+    }
+    snd_init();
+    audio.initialized = true;
+    audio.fire_0 = snd_sfx_load(fire_0_path);
+    audio.fire_2 = snd_sfx_load(fire_2_path);
+    audio.reload_16 = snd_sfx_load(reload_path);
+    if(audio.fire_0 == SFXHND_INVALID || audio.fire_2 == SFXHND_INVALID ||
+       audio.reload_16 == SFXHND_INVALID) {
+        std::printf("re4dc-room: source weapon audio load failed\n");
+        snd_sfx_unload_all();
+        snd_shutdown();
+        audio = DemoAudio{};
+        return false;
+    }
+    std::printf(
+        "re4dc-room: source wep02 cues loaded fire=0+2 reload=0x16\n");
+    return true;
+}
+
+void release_demo_audio(DemoAudio& audio) {
+    if(!audio.initialized) {
+        return;
+    }
+    snd_sfx_unload_all();
+    snd_shutdown();
+    audio = DemoAudio{};
 }
 
 void write_autoplay_result(const Autoplay& autoplay,
@@ -809,21 +866,36 @@ bool shot_hits_enemy(const Player& player, const Enemy& enemy,
 void update_combat(Player& player, Enemy& enemy, const Input& input,
                    bool fire_pressed, bool reload_pressed,
                    float delta_seconds,
-                   const re4dc::collision::Package& collision) {
+                   const re4dc::collision::Package& collision,
+                   const re4dc::character::Package& character,
+                   const DemoAudio& audio) {
     if(player.dead) {
         return;
     }
     if(player.reload_seconds > 0.0f) {
         player.reload_seconds -= delta_seconds;
+        const float reload_elapsed =
+            kStartingReloadFinishSeconds - player.reload_seconds;
+        if(!player.reload_refilled &&
+           reload_elapsed >= kStartingReloadRefillSeconds) {
+            player.ammo = kMagazineSize;
+            player.reload_refilled = true;
+            std::printf("re4dc-room: source reload frame 44 ammo=%d\n",
+                        player.ammo);
+        }
         if(player.reload_seconds <= 0.0f) {
             player.reload_seconds = 0.0f;
-            player.ammo = kMagazineSize;
-            std::printf("re4dc-room: reload complete ammo=%d\n", player.ammo);
+            std::printf("re4dc-room: source reload frame 55 complete ammo=%d\n",
+                        player.ammo);
         }
         return;
     }
     if(reload_pressed && player.ammo < kMagazineSize) {
-        player.reload_seconds = 1.0f;
+        player.reload_seconds = kStartingReloadFinishSeconds;
+        player.reload_refilled = false;
+        if(audio.reload_16 != SFXHND_INVALID) {
+            snd_sfx_play(audio.reload_16, 255, 128);
+        }
         std::printf("re4dc-room: reload start\n");
         return;
     }
@@ -831,7 +903,14 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
         return;
     }
     --player.ammo;
-    player.fire_animation_seconds = 0.4f;
+    const auto& fire_clip = character.clips()[kPlayerFireClip];
+    player.fire_animation_seconds =
+        static_cast<float>(fire_clip.frame_count - 1U) /
+        fire_clip.frames_per_second;
+    if(audio.fire_0 != SFXHND_INVALID) {
+        snd_sfx_play(audio.fire_0, 255, 128);
+        snd_sfx_play(audio.fire_2, 255, 128);
+    }
     const bool hit = shot_hits_enemy(player, enemy, collision);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
@@ -1660,6 +1739,10 @@ int main() {
         std::printf("re4dc-room: transform cache allocation failed\n");
         return 1;
     }
+    DemoAudio audio;
+    if(!load_demo_audio(audio)) {
+        return 1;
+    }
     std::printf(
         "re4dc-room: stick=turn/move RT/Y=aim A=fire X=reload B=restart "
 #if defined(RE4DC_SCENE_R100)
@@ -1703,7 +1786,7 @@ int main() {
             update_player(player, collision, input, kSimulationDeltaSeconds);
             update_animation(player, leon, input, kSimulationDeltaSeconds);
             update_combat(player, enemy, input, fire_pressed, reload_pressed,
-                          kSimulationDeltaSeconds, collision);
+                          kSimulationDeltaSeconds, collision, leon, audio);
             update_enemy(enemy, player, ganado, collision,
                          kSimulationDeltaSeconds);
             const float goal_dx = player.x - kGoalX;
@@ -1868,6 +1951,7 @@ int main() {
     delete[] ganado_headers;
     delete[] leon_headers;
     delete[] material_headers;
+    release_demo_audio(audio);
     std::printf("re4dc-room: clean exit\n");
     return 0;
 }

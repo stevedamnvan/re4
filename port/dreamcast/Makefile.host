@@ -13,13 +13,15 @@ R10D_TEXTURE ?= build/private/r10d.re4tex
 R10D_CELL_SIZE ?= 20
 R10D_CLUSTER_SIZE ?= 0
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
+DTK ?= $(REPO_ROOT)/build/tools/dtk
+SOURCE_AUDIO_DIR ?= build/private/source-audio
 LEON_CHARACTER ?= build/private/leon.re4chr
 GANADO_CHARACTER ?= build/private/ganado.re4chr
 CHARACTER_CLUSTER_MM ?= 0
 CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado source-weapon-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -79,7 +81,14 @@ character-ganado:
 		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(GANADO_CHARACTER)
 
-demo-r10d: room-r10d texture-r10d character-leon character-ganado
+source-weapon-audio:
+	@mkdir -p $(SOURCE_AUDIO_DIR)
+	$(DTK) vfs cp $(RE4_DISC):/files/em/wep02.drs $(SOURCE_AUDIO_DIR)/wep02.drs
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_AUDIO_DIR)/wep02.drs 0 $(SOURCE_AUDIO_DIR)/wep02-cue00.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_AUDIO_DIR)/wep02.drs 2 $(SOURCE_AUDIO_DIR)/wep02-cue02.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_AUDIO_DIR)/wep02.drs 0x16 $(SOURCE_AUDIO_DIR)/wep02-cue16.wav
+
+demo-r10d: room-r10d texture-r10d character-leon character-ganado source-weapon-audio
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

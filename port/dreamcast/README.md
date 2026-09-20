@@ -122,6 +122,21 @@ Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
 The measured LOD experiment, complete-loop replay, and remaining hardware and
 presentation limits are in [the P3 prototype checkpoint](docs/P3_PLAYABLE_BASELINE.md).
 
+The source weapon-audio target privately extracts `wep02.drs` from Disc 1 and
+decodes the GameCube DSP-ADPCM cues used by the starting handgun. The fire
+event plays cues 0 and 2 together exactly as `cObjMauser::moveFire` requests;
+the starting reload uses cue `0x16`. No DRS, encoded sample, or decoded WAV is
+tracked by Git:
+
+```sh
+make -C port/dreamcast -f Makefile.host source-weapon-audio
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/room \
+  FIRE_SOUND_0=../build/private/source-audio/wep02-cue00.wav \
+  FIRE_SOUND_2=../build/private/source-audio/wep02-cue02.wav \
+  RELOAD_SOUND=../build/private/source-audio/wep02-cue16.wav
+```
+
 ## Near-term sequence
 
 1. Capture the current appearance and choose one small r10d encounter area.
