@@ -174,6 +174,21 @@ introduce a guessed loading radius. Preserve original load-stop behaviour where
 the source has it; seamless loading everywhere is not a source requirement.
 GameCube ARAM is not spare AICA memory.
 
+Those sets are now measured rather than assumed, in
+[R4_D4_RESIDENCY_MODEL_CHECKPOINT.md](R4_D4_RESIDENCY_MODEL_CHECKPOINT.md), and
+three of the assumptions above need correcting. The active and prefetch sets are
+**derived at run time, not stored**: `cBlock::checkBlockConnect` takes the
+area's own block plus its link neighbours as the active set and everything one
+hop beyond as the staged set, and the per-area arrays are overrides on the
+staged set whose names invert their effect. r100 leaves every override unset.
+**r100 is also the only room on the disc with block files at all**, five of them
+totalling 1,537,344 bytes, against which `cBlock::checkBlockMemory()` sizes a
+single 1,126,272-byte pool; every other room is one block. And the load-stop is
+not merely preserved but total: `gameDoordemo` frees the room heap and then
+loads the next room, so **transition overlap in the source is zero**. The
+prefetch tier therefore has no Dreamcast counterpart to build, and the residency
+unit is one room at a time.
+
 ## Lesson three: choose a texture representation per texture
 
 DCA3's authors describe RAM and VRAM as their main constraint and their early
@@ -290,14 +305,41 @@ what the correct result is.
    from any frame change. Test round-trip, corrupted offsets, index-width
    limits, historical package behaviour, oversized batches and byte-identical
    packets.
-4. **Residency model from the authored block sets**: enumerate the r100 active,
-   staged and remove sets and the connected rooms from the decompilation;
-   compute the largest converted working set and the transition overlap;
-   record the storage path the source intends.
+4. **Residency model from the authored block sets** — **done**, in
+   [R4_D4_RESIDENCY_MODEL_CHECKPOINT.md](R4_D4_RESIDENCY_MODEL_CHECKPOINT.md).
+   r100 connects to exactly one room, r101, through a symmetric unlocked door
+   pair decoded from the authored `AEV` tables, and r100 is a leaf of the
+   stage-1 graph. The active, staged and evict sets are tabulated per trigger
+   area from the `BLK` link table. Always-resident content is 2,599,070 romdisk
+   bytes, 508,928 of VRAM and 357,952 of AICA; r100's room-specific content is
+   5,836,118, 2,093,056 and 164,256, so 69.2% of the romdisk and 80.4% of unique
+   VRAM payload leaves with the room.
+
+   Two findings change the following deliverables. **Nothing is reclaimable
+   today**: all six package classes `fs_mmap` a romdisk linked into `.rodata`
+   and never copy or free, so the transition is blocked architecturally rather
+   than by budget. And once the romdisk leaves the image the arena ceiling is
+   13,790,208 bytes against 2,599,070 always-resident, leaving 11,191,138 for
+   room content; r100 uses 52% of that and r101 is estimated at 4.0 to 6.0 MB
+   from its source chunks and r100's measured conversion ratios. So one room at
+   a time fits with about 5.1 MB spare, while holding both complete rooms is
+   marginal to over. Main RAM is the binding limit; VRAM and AICA are not.
+
+   Resource identity in the source is `(archive, three-letter tag, ordinal)` via
+   `GetDataExt`, not a filename, and the heap model nests system, game, stage,
+   DLL and room so that a room change re-carves the room heap in one operation.
+   Both carry straight into the model below.
 5. **Asynchronous reads and a staging arena**: bounded read buffers, active
    room blocks, immutable shared resources, texture handles and reclaimable
    upload staging for GD-ROM/GDEMU, replacing the embedded ROM disk and
-   mandatory `fs_mmap()`. A path change from `/rd/` alone is insufficient;
+   mandatory `fs_mmap()`. Deliverable 4 fixes its shape: **size the arena for
+   one room, not two**, release the outgoing room's region in a single operation
+   behind the authored fade as `gameDoordemo` does, key resources by
+   `(archive, tag, ordinal)` plus a content digest, and do not build the ARAM
+   staged tier, which has no Dreamcast counterpart and covers only 1,537,344
+   bytes that the port already holds resident. Removing the romdisk from
+   `.rodata` comes first: until it does, no room byte is reclaimable and no
+   transition measurement means anything. A path change from `/rd/` alone is insufficient;
    closing a mapped file does not remove its payload from the executable.
    Model explicit states, `unloaded -> reading -> CPU-ready -> uploading ->
    resident -> retiring`, with stable identifiers, dependency references,
@@ -311,10 +353,13 @@ what the correct result is.
    material headers that encode texture addresses, any relocation must update or
    regenerate every affected header and wait for in-flight users, so a moving
    allocator stays optional until fragmentation evidence justifies it.
-6. **Second room transition**: the first end-to-end proof, entering a
-   connected room from r100 with the previous room evicted, measured for
-   load time, peak RAM, VRAM and AICA high-water marks, and frame-time impact
-   during prefetch.
+6. **Second room transition**: the first end-to-end proof, entering **r101**
+   from r100 with the previous room evicted, measured for load time, peak RAM,
+   VRAM and AICA high-water marks, and frame-time impact during prefetch. The
+   target is not a choice: r101 is r100's only authored neighbour, and the
+   reverse direction comes almost free because the door pair is symmetric and
+   unlocked. Expected peak is always-resident plus the larger of the two rooms
+   plus one bounded read buffer, about 8.6 MB against a 13.79 MB ceiling.
 
 Items 1-3 can proceed alongside the remaining R3 frame work; items 4-6 need
 the residency model first. Memory high-water records precede any acceptance.

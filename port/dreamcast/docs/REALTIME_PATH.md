@@ -242,15 +242,26 @@ before/after timing and memory, and end in a keep-or-revert decision.
    instruction count is 166 before and 169 after, because a 60-field record
    never forced a load of a field the code does not mention. Record size
    affected addressing, not load count, while the dispatch cost a byte load and
-   a branch per light per entry. What is left is narrower. Both actors run
-   exactly four lights from one unchanging selection mask each, Leon
-   directional, directional, directional, spot and Ganado directional, point,
-   directional, point, so a bounded specialization of those observed sequences
-   as straight-line code, with the general evaluator retained as a fallback for
-   any other selection, is the next branch. It preserves accumulation order by
-   construction. R4i also establishes two facts that survive its revert:
-   premultiplying a directional light's colour by its intensity is bit-exact,
-   and an ordered code stream preserves the accumulation sequence exactly. `project_character()` is 5.820 ms
+   a branch per light per entry. R4i also establishes two facts that survive its
+   revert: premultiplying a directional light's colour by its intensity is
+   bit-exact, and an ordered code stream preserves the accumulation sequence
+   exactly.
+
+   **This branch is stopped after R4i.** The accepted runtime is unchanged and
+   the 2.018 ms regression stands, with four routes to it closed by measurement:
+   build policy in R4f, the translation-unit split in R4g, per-entry input
+   caching in R4h and general per-type light records in R4i.
+
+   One **deferred candidate** is recorded rather than built. Both actors in this
+   scene run exactly four lights from a single selection mask each that never
+   changes over the route, Leon directional, directional, directional, spot and
+   Ganado directional, point, directional, point. Writing those two observed
+   sequences as straight-line code with no dispatch, keeping the general
+   evaluator as a fallback for any other selection, would preserve accumulation
+   order by construction. It may be revisited **only** if a broader gameplay
+   profile shows the same sequences are common enough across rooms to justify
+   specializing them. Two actors in one room is not that evidence, and
+   specializing to a fixture would be fitting the code to the test. `project_character()` is 5.820 ms
    at roughly 200 memory instructions per position and the actor packet loop
    in `draw_character()` 11.789 ms; both should be read the same way. Count
    with `tools/sh4_loop_cost.py`, change the data layout, keep the arithmetic
