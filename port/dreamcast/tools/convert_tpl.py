@@ -34,14 +34,19 @@ GX_TL_RGB565 = 1
 GX_TL_RGB5A3 = 2
 
 MAGIC = b"RE4DCTX\0"
-VERSION = 1
+VERSION = 2
 FORMAT_RGB565 = 0
 FORMAT_ARGB1555 = 1
 FORMAT_ARGB4444 = 2
 FLAG_ALPHA = 1
 FLAG_BINARY_ALPHA = 2
+# R4b: how the payload is laid out, so the runtime can upload it without
+# interpreting it. Version 1 had no such field and was always LINEAR.
+PAYLOAD_LINEAR = 0
+PAYLOAD_TWIDDLED = 1
+PAYLOAD_VQ = 2
 HEADER = struct.Struct("<8s10I")
-TEXTURE = struct.Struct("<64s6I")
+TEXTURE = struct.Struct("<64s8I")
 IMAGE_NUMBER = re.compile(r"-(\d+)\.png$", re.IGNORECASE)
 
 
@@ -447,7 +452,7 @@ def downsample_box(
 
 def build_package(
     images: list[TplImage], bindings: list[MaterialBinding],
-    max_dimension: int | None = None,
+    max_dimension: int | None = None, twiddle: bool = False,
 ) -> tuple[bytes, dict[str, object]]:
     decoded: dict[int, list[tuple[int, int, int, int]]] = {}
     packed: dict[tuple[int, int | None], tuple[int, int, int, int, int, int]] = {}
@@ -490,7 +495,12 @@ def build_package(
             # silhouettes.
             image_format = FORMAT_ARGB4444 if has_alpha else FORMAT_RGB565
             pack_pixel = _pack_4444 if has_alpha else _pack_565
-            raw = b"".join(struct.pack("<H", pack_pixel(pixel)) for pixel in pixels)
+            texels = [pack_pixel(pixel) for pixel in pixels]
+            payload_format = PAYLOAD_LINEAR
+            if twiddle:
+                texels = twiddle_16bpp(texels, width, height)
+                payload_format = PAYLOAD_TWIDDLED
+            raw = b"".join(struct.pack("<H", texel) for texel in texels)
             relative_offset = len(data_blob)
             data_blob.extend(raw)
             binary_alpha = (
@@ -501,13 +511,15 @@ def build_package(
                 flags |= FLAG_BINARY_ALPHA
             packed[key] = (
                 relative_offset, len(raw), image_format, flags,
-                width, height,
+                width, height, payload_format,
             )
-        relative_offset, raw_size, image_format, flags, width, height = packed[key]
+        (relative_offset, raw_size, image_format, flags, width, height,
+         payload_format) = packed[key]
         texture_blob.extend(
             TEXTURE.pack(
                 _name_bytes(binding.name), width, height,
-                image_format, data_offset + relative_offset, raw_size, flags
+                image_format, data_offset + relative_offset, raw_size, flags,
+                payload_format, 0
             )
         )
         manifest_materials.append({
@@ -519,6 +531,8 @@ def build_package(
             "format": "argb4444" if flags & FLAG_ALPHA else "rgb565",
             "binary_alpha": bool(flags & FLAG_BINARY_ALPHA),
             "bytes": raw_size,
+            "payload": ("twiddled" if payload_format == PAYLOAD_TWIDDLED
+                        else "vq" if payload_format == PAYLOAD_VQ else "linear"),
         })
 
     payload = bytes(texture_blob + data_blob)
@@ -535,8 +549,38 @@ def build_package(
         "texture_bytes": len(data_blob),
         "payload_crc32": f"{payload_crc32:08x}",
         "max_dimension": max_dimension,
+        "twiddled": twiddle,
     }
     return header + payload, metadata
+
+
+def _twiddle_table(value: int) -> int:
+    """Spread the low bits of `value` into even bit positions."""
+    result = 0
+    for bit in range(10):
+        result |= (value & (1 << bit)) << bit
+    return result
+
+
+def twiddle_16bpp(pixels: list[int], width: int, height: int) -> list[int]:
+    """Reorder 16-bit texels into the PVR's twiddled layout.
+
+    This is the same mapping `pvr_txr_load_ex()` applies while uploading, moved
+    to build time so the runtime can copy the payload straight into texture
+    memory. Doing it here and uploading raw must produce byte-identical VRAM.
+    """
+    minimum = min(width, height)
+    mask = minimum - 1
+    out = [0] * (width * height)
+    for y in range(height):
+        row = y * width
+        twiddled_y = _twiddle_table(y & mask)
+        block = (y // minimum) * minimum * minimum
+        for x in range(width):
+            index = (twiddled_y | (_twiddle_table(x & mask) << 1)) + \
+                (x // minimum) * minimum * minimum + block
+            out[index] = pixels[row + x]
+    return out
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -553,6 +597,11 @@ def main(argv: list[str] | None = None) -> int:
         "--max-dimension", type=int,
         help="halve oversized textures until both dimensions fit this limit",
     )
+    parser.add_argument(
+        "--twiddle", action="store_true",
+        help="write payloads in the PVR's twiddled order so the runtime can "
+             "copy them straight into texture memory",
+    )
     args = parser.parse_args(argv)
 
     tpl_data = args.tpl.read_bytes()
@@ -561,7 +610,8 @@ def main(argv: list[str] | None = None) -> int:
     bindings = parse_mtl(mtl_data.decode("utf-8-sig"))
     if args.max_dimension is not None and args.max_dimension < 8:
         raise ValueError("max dimension must be at least 8")
-    package, metadata = build_package(images, bindings, args.max_dimension)
+    package, metadata = build_package(
+        images, bindings, args.max_dimension, args.twiddle)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)
     metadata.update({

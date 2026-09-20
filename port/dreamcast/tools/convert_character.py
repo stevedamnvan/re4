@@ -1109,7 +1109,8 @@ def convert(args):
         else output.with_suffix(".re4tex")
     )
     texture_package, texture_metadata = convert_tpl.build_package(
-        texture_images, texture_bindings, args.texture_max_dimension
+        texture_images, texture_bindings, args.texture_max_dimension,
+        args.twiddle_textures
     )
     texture_output.parent.mkdir(parents=True, exist_ok=True)
     texture_temporary = texture_output.with_suffix(texture_output.suffix + ".tmp")
@@ -1233,6 +1234,10 @@ def main():
     parser.add_argument("--cache-dir")
     parser.add_argument("--output", required=True)
     parser.add_argument("--texture-output")
+    parser.add_argument(
+        "--twiddle-textures", action="store_true",
+        help="write texture payloads in the PVR's twiddled order",
+    )
     parser.add_argument(
         "--texture-max-dimension", type=int,
         help="halve oversized character textures to fit a bounded VRAM budget",

@@ -231,7 +231,8 @@ def unit_uses_r100_slice_texture(
 
 
 def build_packages(
-    core_data: bytes, texture_offset: int, tables: list[tuple[int, int]]
+    core_data: bytes, texture_offset: int, tables: list[tuple[int, int]],
+    twiddle: bool = False,
 ) -> tuple[bytes, bytes, dict[str, object]]:
     textures, source_metadata = parse_hud_textures(core_data, texture_offset)
     units = [
@@ -282,7 +283,10 @@ def build_packages(
             has_alpha = any(pixel[3] < 255 for pixel in padded)
             image_format = tpl.FORMAT_ARGB4444 if has_alpha else tpl.FORMAT_RGB565
             pack_pixel = tpl._pack_4444 if has_alpha else tpl._pack_565
-            raw = b"".join(struct.pack("<H", pack_pixel(pixel)) for pixel in padded)
+            texels = [pack_pixel(pixel) for pixel in padded]
+            if twiddle:
+                texels = tpl.twiddle_16bpp(texels, padded_width, padded_height)
+            raw = b"".join(struct.pack("<H", texel) for texel in texels)
             payload_key = (raw, padded_width, padded_height, image_format)
             if payload_key not in packed_payloads:
                 packed_payloads[payload_key] = (len(image_blob), len(raw))
@@ -295,6 +299,7 @@ def build_packages(
                 tpl._name_bytes(name), padded_width, padded_height, image_format,
                 image_data_offset + relative_offset, raw_size,
                 tpl.FLAG_ALPHA if has_alpha else 0,
+                tpl.PAYLOAD_TWIDDLED if twiddle else tpl.PAYLOAD_LINEAR, 0,
             ))
             texture_metadata.append({
                 "name": name,
@@ -303,6 +308,7 @@ def build_packages(
                 "width": padded_width,
                 "height": padded_height,
                 "format": "argb4444" if has_alpha else "rgb565",
+                "payload": "twiddled" if twiddle else "linear",
             })
             descriptor_index += 1
         variant_runtime[key] = (
@@ -391,6 +397,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("layout_output", type=pathlib.Path)
     parser.add_argument("texture_output", type=pathlib.Path)
     parser.add_argument("--manifest", type=pathlib.Path)
+    parser.add_argument(
+        "--twiddle", action="store_true",
+        help="write payloads in the PVR's twiddled order so the runtime can "
+             "copy them straight into texture memory",
+    )
     parser.add_argument("--arc-offset", type=integer, default=DEFAULT_ARC_OFFSET)
     parser.add_argument("--texture-offset", type=integer, default=DEFAULT_TEXTURE_OFFSET)
     parser.add_argument("--life-offset", type=integer, default=DEFAULT_LIFE_OFFSET)
@@ -408,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
             (TABLE_LIFE, arc + args.life_offset),
             (TABLE_BULLET, arc + args.bullet_offset),
         ],
+        twiddle=args.twiddle,
     )
     args.layout_output.parent.mkdir(parents=True, exist_ok=True)
     args.texture_output.parent.mkdir(parents=True, exist_ok=True)

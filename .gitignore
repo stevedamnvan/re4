@@ -29,6 +29,8 @@ tools/research/mwccdbg/retrowin32
 /port/dreamcast/kos/*.o
 /port/dreamcast/kos/*.elf
 /port/dreamcast/**/*.o
+# Compiler-generated header dependency files (room/Makefile -MMD -MP).
+/port/dreamcast/**/*.d
 /port/dreamcast/room/.build-config
 /port/dreamcast/room/.build-config.tmp
 /port/dreamcast/**/*.elf

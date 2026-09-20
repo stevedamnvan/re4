@@ -121,7 +121,9 @@ struct DemoTelemetry {
     std::uint32_t room_strips_culled;
     std::uint32_t room_strip_culled_vertices;
     std::uint32_t room_strip_evictions;
-    std::uint32_t room_reserved_0;
+    // Microseconds spent uploading every texture package into VRAM,
+    // published once at load. R4b measures offline payload layouts here.
+    std::uint32_t texture_upload_us;
 #if defined(RE4DC_CULL_AUDIT)
     std::uint32_t cull_audit_on_screen_strips;
     std::uint32_t cull_audit_on_screen_vertices;
@@ -6186,6 +6188,7 @@ int main() {
 #endif
     g_re4dc_demo_telemetry.flags = 0x10000003U;
     const std::size_t vram_before_textures = pvr_mem_available();
+    const std::uint64_t texture_upload_begin = timer_us_gettime64();
     if(!textures.upload()) {
         std::printf("re4dc-room: texture upload failed: %s\n", textures.error());
         return 1;
@@ -6207,6 +6210,8 @@ int main() {
         return 1;
     }
 #endif
+    g_re4dc_demo_telemetry.texture_upload_us =
+        static_cast<std::uint32_t>(timer_us_gettime64() - texture_upload_begin);
     g_re4dc_demo_telemetry.flags = 0x10000004U;
     pvr_poly_cxt_t context{};
     pvr_poly_hdr_t untextured_header{};
@@ -6988,7 +6993,6 @@ int main() {
             stats.room_strip_culled_vertices;
         g_re4dc_demo_telemetry.room_strip_evictions =
             stats.room_strip_evictions;
-        g_re4dc_demo_telemetry.room_reserved_0 = 0U;
 #if defined(RE4DC_CULL_AUDIT)
         g_re4dc_demo_telemetry.cull_audit_on_screen_strips =
             stats.cull_audit_on_screen_strips;

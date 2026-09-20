@@ -9,12 +9,18 @@
 namespace re4dc::texture {
 
 inline constexpr char kMagic[8] = {'R', 'E', '4', 'D', 'C', 'T', 'X', '\0'};
-inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kVersion = 2;
 inline constexpr std::uint32_t kRgb565 = 0;
 inline constexpr std::uint32_t kArgb1555 = 1;
 inline constexpr std::uint32_t kArgb4444 = 2;
 inline constexpr std::uint32_t kAlpha = 1U << 0U;
 inline constexpr std::uint32_t kBinaryAlpha = 1U << 1U;
+// How the payload is laid out. The runtime never converts a payload; it only
+// copies it, so anything the PVR cannot consume directly must be produced by
+// the converter.
+inline constexpr std::uint32_t kPayloadLinear = 0;
+inline constexpr std::uint32_t kPayloadTwiddled = 1;
+inline constexpr std::uint32_t kPayloadVq = 2;
 
 struct Header {
     char magic[8];
@@ -38,10 +44,12 @@ struct Texture {
     std::uint32_t data_offset;
     std::uint32_t data_size;
     std::uint32_t flags;
+    std::uint32_t payload;
+    std::uint32_t reserved_0;
 };
 
 static_assert(sizeof(Header) == 48);
-static_assert(sizeof(Texture) == 88);
+static_assert(sizeof(Texture) == 96);
 
 class Package {
 public:

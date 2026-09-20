@@ -112,8 +112,16 @@ bool Package::upload() {
             error_ = "PVR texture allocation failed";
             return false;
         }
-        pvr_txr_load_ex(data_ + texture.data_offset, pvr_textures_[index],
-                        texture.width, texture.height, PVR_TXRLOAD_16BPP);
+        if(texture.payload == kPayloadLinear) {
+            // Legacy layout: the PVR cannot consume it, so it is reordered
+            // here during upload.
+            pvr_txr_load_ex(data_ + texture.data_offset, pvr_textures_[index],
+                            texture.width, texture.height, PVR_TXRLOAD_16BPP);
+        } else {
+            // Already in the layout the PVR expects; copy it straight in.
+            pvr_txr_load(data_ + texture.data_offset, pvr_textures_[index],
+                         texture.data_size);
+        }
         vram_bytes_ += texture.data_size;
     }
     error_ = nullptr;

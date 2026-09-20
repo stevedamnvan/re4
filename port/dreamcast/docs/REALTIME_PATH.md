@@ -253,10 +253,13 @@ before/after timing and memory, and end in a keep-or-revert decision.
    in which transport is a materially larger share. Enlarging or re-hashing the
    room vertex cache is closed for the same reason: it can save at most 33
    evaluations per frame.
-5. **Native texture/resource layout, now the first R4 deliverable.** Extend the
-   current package with offline twiddled payloads, explicit layout metadata, and
-   one uploaded handle per deduped payload. Credit this to load time and memory
-   unless a frame trace changes. Then evaluate `pvrtex` VQ, palette, and mip
+5. **Native texture/resource layout, now the first R4 deliverable.** The
+   offline twiddled payloads and explicit layout metadata are done and measured
+   in
+   [R4B_NATIVE_TEXTURE_LAYOUT_CHECKPOINT.md](R4B_NATIVE_TEXTURE_LAYOUT_CHECKPOINT.md):
+   a 60x cut in texture upload time and no per-frame, VRAM or image change, as
+   predicted. One uploaded handle per deduped payload is still open. Then
+   evaluate `pvrtex` VQ, palette, and mip
    candidates per texture with native upload, previews, moving-scene review,
    and uncompressed fallbacks, choosing the representation per texture from
    the asset inventory in
@@ -389,6 +392,13 @@ not the task scheduler:
   but the repeated median saving is only 0.12 ms.
 - R3p: immutable actor-normal scratch fixes non-monotonic source-normal reuse;
   the `frsqrt` candidate is rejected because it is 0.822 ms slower.
+- R4a: the asset inventory tool and the previously untracked r100 texture and
+  HUD build recipes.
+- R4b: `re4tex` carries a payload format and the converters twiddle offline, so
+  the SH-4 no longer reorders 2.6 MB of texels at load; upload falls from
+  1,022,663 us to 16,945 us with no frame, memory or image change. The first
+  attempt did not boot because the room Makefile had no header dependency
+  tracking, which is now fixed for every package header.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison

@@ -39,6 +39,52 @@ without a licence check, and never its game data. Reference:
 The PS2 disc is used only as a measurement oracle for its asset choices. No
 PS2 asset enters a package.
 
+### What DCA3 actually does, and what RE4DC takes from it
+
+Read from the beta source tree the user supplied. Only the four mechanisms
+below are borrowed, restated in RE4DC's own terms; no DCA3 code, asset or
+generated file is copied into this repository. The tree carries licences for
+its vendored dependencies (librw, miniLZO, OpenAL Soft, the emulator shim) but
+no licence of its own for `src/`, and its base `re3` has a contested licence
+history, so the source stays a reference and nothing more.
+
+**Textures are converted by a separate offline program, not by the game.**
+`src/tools/texconv.cpp` repacks a whole archive at a time, taking a target
+width, height, a downsample flag and a choice of PVR encoder (`pvrtool` or the
+vendored `pvrtex`). RE4DC's equivalent is `tools/convert_tpl.py`, which already
+runs at build time; the missing half was that its output was still a linear
+16-bit blob the runtime had to reorder. R4b closed that for twiddled payloads
+and measured it: one second of load time.
+
+**The payload is read, not interpreted, and its PVR flags travel with it.**
+`vendor/librw/src/dc/tex-util.h` reads the offline `.PVR` file (skipping a
+`GBIX` block when present), derives the `PVR_TXRFMT_*` bits from the stored
+data format, and `fread`s the body straight into texture memory. It asserts the
+format is one it can consume and that the size is a multiple of 256, or 32 for
+small textures. That is exactly the contract R4b adds to `re4tex`: a payload
+format field per texture, a raw copy at upload, and a converter that refuses to
+emit anything the PVR cannot consume directly.
+
+**A small VQ codebook costs less VRAM than a full one, addressed by an
+offset.** `vendor/librw/src/dc/vq.cpp` builds codebooks whose first entry is
+`256 - codebookSize`, and the raster carries a `texoffs` that biases the
+texture address backwards so the hardware still indexes a nominal 256-entry
+book. RE4DC can use the same trick once VQ payloads exist; the r100 inventory
+already shows which textures would take them. Related: DCA3's VRAM allocator
+(`vendor/librw/src/dc/alloc.cpp`) hands out 2 KB-aligned blocks specifically so
+a texture does not straddle a 2 KB boundary and so a 2 KB codebook lands on its
+own page. RE4DC uses `pvr_mem_malloc()` today and has not measured that effect.
+
+**Reads happen on their own thread behind semaphores.**
+`src/liberty/core/CdStreamDC.cpp` keeps the GTA `CdStream` queue shape and
+supplies a Dreamcast reader thread with `pthread` and semaphores, with an
+explicit thread priority step and an abort state. Deliverable 5 needs the same
+shape; the queue depth and buffer sizing are RE4DC's to measure, not to inherit.
+
+What RE4DC does **not** take: GTA's arbitrary-radius world streaming. RE4's
+authored block and connection sets make residency a discrete problem, and
+deliverable 4 starts from those sets rather than from a loading radius.
+
 ## Lesson one: the SH-4 must not interpret GameCube assets at play time
 
 The current slice already converts offline into `re4room`, `re4chr`, `re4tex`,
@@ -152,14 +198,15 @@ what the correct result is.
    472,576 B. No PS2 disc is present in this workspace, so that column reads
    "no PS2 source" until one is supplied to `--ps2-manifest`. Meshes are not
    yet inventoried; extend the tool when the residency model needs them.
-2. **Native texture layout** (next): offline twiddled payloads with explicit
-   layout metadata and one uploaded handle per deduplicated payload, then the
-   per-texture representations deliverable 1 selected. This needs the `re4tex`
-   header to carry the payload format, since the runtime currently assumes
-   linear 16-bit and twiddles during `pvr_txr_load_ex()`; VQ and palette
-   payloads cannot be expressed in the present format. Take the six
-   restorations first: they are strictly better and exercise the whole path.
-   Credit this to load time and memory unless a frame trace changes.
+2. **Native texture layout** — **half done**, recorded in
+   [R4B_NATIVE_TEXTURE_LAYOUT_CHECKPOINT.md](R4B_NATIVE_TEXTURE_LAYOUT_CHECKPOINT.md).
+   The `re4tex` record now carries a payload format, the converters write
+   twiddled payloads offline, and the runtime copies them raw instead of
+   reordering every texel during `pvr_txr_load_ex()`. Texture upload fell from
+   1,022,663 us to 16,945 us with the frame, VRAM, main RAM and framebuffers
+   unchanged. Still open: the VQ payloads themselves, starting with the six
+   textures deliverable 1 found, plus the palette representations, which need
+   the PVR's shared 1024-entry palette RAM budgeted across packages.
 3. **Package-resident batch-local tables**: emit the R3v local strip indices
    and batch vertex tables from the converter, recovering most of the 413,696
    bytes the runtime pass holds.

@@ -105,6 +105,11 @@ $(BUILD_CONFIG): FORCE
 
 main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o source_hud_package.o: $(BUILD_CONFIG)
 
+# Header dependency tracking. Without it a package-layout change in a header
+# left main.o compiled against the old layout (R4b, 2026-09-20).
+KOS_CFLAGS += -MMD -MP
+-include $(OBJS:.o=.d)
+
 prepare-romdisk:
 	@test -f $(ROOM_PACKAGE) || { echo 'missing private room package: $(ROOM_PACKAGE)' >&2; exit 1; }
 	@test -f $(COLLISION_PACKAGE) || { echo 'missing private collision package: $(COLLISION_PACKAGE)' >&2; exit 1; }
@@ -190,7 +195,7 @@ endif
 romdisk.img: prepare-romdisk
 
 clean: rm-elf
-	-rm -f $(OBJS) romdisk.img $(BUILD_CONFIG) $(BUILD_CONFIG).tmp
+	-rm -f $(OBJS) $(OBJS:.o=.d) romdisk.img $(BUILD_CONFIG) $(BUILD_CONFIG).tmp
 	-rm -rf $(KOS_ROMDISK_DIR)
 
 rm-elf:

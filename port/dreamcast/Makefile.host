@@ -20,10 +20,19 @@ R100_SMX ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_006.SMX
 R100_ROOM ?= build/private/r100-encounter-source-meters-smx.re4room
 R100_PRODUCTION_ROOM ?= build/private/r100-source-cell-4.re4room
 R100_PRODUCTION_CELL_SIZE ?= 4
+SOURCE_HUD_CORE ?= build/private/core/core.das
+SOURCE_HUD_LAYOUT ?= build/private/source-hud.re4hud
+SOURCE_HUD_TEXTURE ?= build/private/source-hud.re4tex
+SOURCE_HUD_TWIDDLE ?= 1
+SOURCE_HUD_TWIDDLE_ARG := $(if $(SOURCE_HUD_TWIDDLE),--twiddle,)
 R100_TPL ?= $(R100_EXPORT_DIR)/R100.TPL.TPL
 R100_MTL ?= $(R100_EXPORT_DIR)/R100.allparts.mtl
 R100_TEXTURE ?= build/private/r100-entry-source.re4tex
 R100_TEXTURE_MAX_DIMENSION ?= 256
+# R4b: payloads are written in the PVR's order at build time, so the
+# runtime copies them straight into texture memory.
+R100_TEXTURE_TWIDDLE ?= 1
+R100_TEXTURE_TWIDDLE_ARG := $(if $(R100_TEXTURE_TWIDDLE),--twiddle,)
 R100_UNPARTITIONED_MATERIALS := ROOM_MATERIAL_002 ROOM_MATERIAL_003 \
 	ROOM_MATERIAL_004 ROOM_MATERIAL_005 ROOM_MATERIAL_008 ROOM_MATERIAL_009 \
 	ROOM_MATERIAL_014 ROOM_MATERIAL_015 ROOM_MATERIAL_016 ROOM_MATERIAL_027 \
@@ -42,8 +51,10 @@ CHARACTER_CLUSTER_MM ?= 0
 CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_SAMPLE_STEP ?= 4
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
+CHARACTER_TWIDDLE ?=
+CHARACTER_TWIDDLE_ARG := $(if $(CHARACTER_TWIDDLE),--twiddle-textures,)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production collision-r100-source route-r100 texture-r10d texture-r100-production asset-residency-r100 character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production collision-r100-source route-r100 texture-r10d texture-r100-production asset-residency-r100 hud-source character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -108,7 +119,12 @@ texture-r10d:
 # the accepted package was built with; it is a source-asset reduction and is
 # recorded as such in the asset residency report.
 texture-r100-production:
-	$(PYTHON) tools/convert_tpl.py 		--max-dimension $(R100_TEXTURE_MAX_DIMENSION) 		$(R100_TPL) $(R100_MTL) $(R100_TEXTURE)
+	$(PYTHON) tools/convert_tpl.py 		--max-dimension $(R100_TEXTURE_MAX_DIMENSION) $(R100_TEXTURE_TWIDDLE_ARG) 		$(R100_TPL) $(R100_MTL) $(R100_TEXTURE)
+
+# The HUD layout and textures the r100 build consumes. core.das is extracted
+# from the private disc; this rule converts it and is otherwise deterministic.
+hud-source:
+	$(PYTHON) tools/convert_core_hud.py 		$(SOURCE_HUD_CORE) $(SOURCE_HUD_LAYOUT) $(SOURCE_HUD_TEXTURE) 		--manifest build/private/source-hud.json $(SOURCE_HUD_TWIDDLE_ARG)
 
 # R4 deliverable 1. Reports every r100 texture's GameCube source, the
 # representation the accepted package ships, and each Dreamcast candidate with
@@ -151,7 +167,7 @@ character-leon:
 		--clip death:pl00.drs:72 \
 		--sample-step $(CHARACTER_SAMPLE_STEP) --cluster-mm $(CHARACTER_CLUSTER_MM) \
 		--quantum-mm 0.125 \
-		$(CHARACTER_TEXTURE_MAX_ARG) \
+		$(CHARACTER_TEXTURE_MAX_ARG) $(CHARACTER_TWIDDLE_ARG) \
 		--output $(LEON_CHARACTER)
 
 character-ganado:
@@ -188,16 +204,16 @@ character-ganado:
 		--clip attack:em12.drs:128 --clip hit:em12.drs:38 \
 		--clip death:em12.drs:103 --sample-step 2 \
 		--cluster-mm $(CHARACTER_CLUSTER_MM) --quantum-mm 0.125 \
-		$(CHARACTER_TEXTURE_MAX_ARG) \
+		$(CHARACTER_TEXTURE_MAX_ARG) $(CHARACTER_TWIDDLE_ARG) \
 		--output $(GANADO_CHARACTER)
 
 characters-r100:
 	$(MAKE) -f Makefile.host character-leon \
 		LEON_CHARACTER=build/private/leon-source-r100-gunhitcaps-pitch.re4chr \
-		CHARACTER_TEXTURE_MAX_DIMENSION=128
+		CHARACTER_TEXTURE_MAX_DIMENSION=128 		CHARACTER_TWIDDLE=1
 	$(MAKE) -f Makefile.host character-ganado \
 		GANADO_CHARACTER=build/private/ganado-source-r100-hitcaps.re4chr \
-		CHARACTER_TEXTURE_MAX_DIMENSION=128
+		CHARACTER_TEXTURE_MAX_DIMENSION=128 		CHARACTER_TWIDDLE=1
 
 source-weapon-audio:
 	@mkdir -p $(SOURCE_AUDIO_DIR)
