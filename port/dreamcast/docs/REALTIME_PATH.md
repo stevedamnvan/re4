@@ -53,6 +53,9 @@ RAM, see
 R3w calibrates Flycast's SH-4 cost model and, guided by it, gives each actor a
 contiguous prepared light list, 4.031 ms with bit-identical lighting, see
 [R3W_PREPARED_ACTOR_LIGHTS_CHECKPOINT.md](R3W_PREPARED_ACTOR_LIGHTS_CHECKPOINT.md).
+R3x slims the room slot to the seven words the packet needs and packs in the
+same pass, 3.529 ms with identical counters and pixels, see
+[R3X_SLIM_ROOM_SLOTS_CHECKPOINT.md](R3X_SLIM_ROOM_SLOTS_CHECKPOINT.md).
 
 **Flycast cost model.** Measured in R3w: about 3.3 ns per non-memory SH-4
 instruction including `fdiv` and `fsqrt`, about 13.3 ns per load or store, no
@@ -76,21 +79,21 @@ the fast path was 0.822 ms slower at actor-lighting p50. It has been removed.
 ## Current measured budget
 
 Flycast measurements use the pinned 640x480 build and stock Dreamcast memory
-sizes. They are emulator evidence. R3p through R3w are matched over
+sizes. They are emulator evidence. R3p through R3x are matched over
 simulation ticks 165-1194 and include source-timed turn, aim, fire, reload, enemy kill, held result
 view, and timed retry. The current autoplay does not cover free movement, aim
 extremes, enemy contact, Leon death, or a human controller; those remain separate
 acceptance gates.
 
-| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w accepted |
-|---|---:|---:|---:|---:|---:|---:|
-| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms |
-| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms |
-| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms |
-| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
-| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 |
-| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B |
-| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w | R3x accepted |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms | 61.229 / 61.289 / 63.781 ms |
+| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms | 38.319 ms |
+| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms | 14.189 ms |
+| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
+| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 | 11,008 |
+| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B | 5,357,568 B |
+| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
 
 R3r draws more room geometry than R3p because the corrected group test restores
 groups that R3p discarded, and is still 12.078 ms faster at p50. R3u draws the
@@ -99,22 +102,23 @@ records, the same triangles, and byte-identical room pixels. R3v transforms
 604 more vertices per frame than R3u, the cross-batch reuse the hashed cache
 had captured, and is still 2.580 ms faster because each reference no longer
 hashes, compares keys or re-verifies. R3w changes no emitted vertex and no
-stage but actor lighting.
+stage but actor lighting. R3x changes no emitted vertex and no stage but the
+room passes.
 
-The accepted candidate presents at roughly 15 distinct frames per second. A
-33.33 ms CPU frame needs another 31.4 ms median reduction and 31.5 ms at p95.
+The accepted candidate presents at roughly 16 distinct frames per second. A
+33.33 ms CPU frame needs another 27.9 ms median reduction and 28.0 ms at p95.
 SH-4 preparation remains the dominant measured cost.
 
-R3w median CPU stages are shown without adding the overlapping `submit_us`
+R3x median CPU stages are shown without adding the overlapping `submit_us`
 aggregate to its children:
 
 | Stage | p50 |
 |---|---:|
-| opaque room transform/light/clip/submit | 25.320 ms |
+| opaque room transform/light/clip/submit | 21.981 ms |
 | actor lighting | 14.189 ms |
 | opaque actor draw | 11.789 ms |
 | actor pose palettes/projection | 5.820 ms |
-| binary plus blended alpha room work | 2.908 ms |
+| binary plus blended alpha room work | 2.735 ms |
 | actor normals | 1.831 ms |
 | translucent actors and HUD | 1.760 ms |
 | room visibility and light selection | 0.806 ms |
@@ -170,6 +174,8 @@ Exact identities:
 - R3v manual ELF: `7cf43e0e976138f2d29a0b692a60994a28cfa0c24db329bff7397de5a4ec9260`
 - R3w autoplay ELF: `1f49b029e61492419e6e0b75652ba68d34528b7353144c3a6c866b83d9e5fbf3`
 - R3w manual ELF: `fa036e868d40d224c5d1eff16a0536b509c8eac2d0e4524934e6db315f47d0e7`
+- R3x autoplay ELF: `4ca5ab47734d936d5ac6e95e7cca48e2ce01c1720e0676da6a354601ddf42c97`
+- R3x manual ELF: `73793fb4c8e04e9153a35fed433ffe2e40c16a960b4c21b8801d473543e8e957`
 
 The R3q diagnostic option added preprocessor lines to `room/main.cpp`, so the
 two R3p ELF hashes above reproduce only from the pre-R3q tree. The executable
@@ -179,7 +185,7 @@ is byte-identical and the debug-stripped ELFs are
 and `570c36bdda2e440bc69eca4d573f4e89e0cad316063aa3b386db6eca1e7b042c` for
 manual in both trees.
 
-Evidence is retained in `d202` through `d254` under
+Evidence is retained in `d202` through `d257` under
 `C:\Flycast-Evidence\re4-dreamcast`. Timing evidence for R3p is in `d219`,
 the manual smoke in `d220`, and the qualitative framebuffer check in `d221`.
 The R3q profile captures are `d222`, `d223`, and `d224`. The R3r captures are
@@ -191,7 +197,8 @@ through `d243`, its framebuffer check `d244`, and its manual smoke `d245`.
 R3v is the cross-batch probe `d246`, timing `d247`, framebuffers `d248` and
 manual smoke `d249`. R3w is the R3v loop profile `d250`, the Flycast
 calibration `d251`, timing `d252`, the dual-path bit comparison `d253` and
-manual smoke `d254`.
+manual smoke `d254`. R3x is timing `d255`, framebuffers `d256` and manual
+smoke `d257`.
 Physical Dreamcast timing remains pending.
 
 ## Measured bottleneck queue
@@ -202,10 +209,11 @@ before/after timing and memory, and end in a keep-or-revert decision.
 
 1. **Memory instructions in the per-record loops.** Under the calibrated
    model every remaining CPU stage is priced by its memory instructions. The
-   opaque room pass is 25.320 ms: the R3v slot fill writes a 68-byte cache
-   entry of which the direct path reads seven words, the fallback and
-   triangle paths alone need the rest, and `fill_room_entry()` is 482
-   instructions with 152 memory instructions. Actor lighting is 14.189 ms
+   opaque room pass is 21.981 ms after R3x slimmed the slot fill and merged
+   the pack pass; what remains there is the transform-and-light body itself
+   (vertex loads, static light loads, `mat_trans_single` register traffic,
+   `shade_color`) and the per-strip overhead of the sphere test, whose basis
+   and eye globals are reloaded per strip. Actor lighting is 14.189 ms
    after R3w with 66 memory instructions per normal; the exact remaining
    restructurings are one normalization per source normal instead of per
    entry (6,413 entries over 5,774 normals for Leon) and per-position

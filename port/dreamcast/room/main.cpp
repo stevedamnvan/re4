@@ -3281,10 +3281,20 @@ constexpr std::uint32_t kRoomLocalIndexCapacity = 65536U;
 constexpr std::uint32_t kRoomBatchVertexCapacity = 57344U;
 constexpr std::uint32_t kRoomBatchTableCapacity = 4096U;
 constexpr std::uint32_t kRoomBatchSlotCapacity = 1024U;
+// R3x: the direct-strip path reads exactly these seven words per vertex, so
+// the slot holds only them (32 bytes). The fallback and triangle paths, which
+// need the full RenderVertex, use the hashed cache and never read a slot.
 struct RoomBatchSlot {
     std::uint32_t serial = 0;
-    RoomVertexCacheEntry entry{};
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    float depth = 0.0f;
+    std::uint32_t argb = 0;
 };
+static_assert(sizeof(RoomBatchSlot) == 32U);
 std::uint16_t g_room_local_indices[kRoomLocalIndexCapacity];
 std::uint16_t g_room_batch_vertices[kRoomBatchVertexCapacity];
 std::uint32_t g_room_batch_first_vertex[kRoomBatchTableCapacity];
@@ -3977,18 +3987,17 @@ const RoomVertexCacheEntry& cached_room_entry(
     return entry;
 }
 
-void fill_room_entry(const re4dc::room::Vertex* source,
-                     std::uint32_t vertex_index, std::uint32_t light_selection,
-                     RoomVertexCacheEntry& entry, FrameStats& stats) {
-    ++stats.transformed_vertices;
-    const re4dc::room::Vertex& input = source[vertex_index];
-    float x = input.x;
-    float y = input.y;
-    float z = input.z;
-    mat_trans_single(x, y, z);
-    float light_red = 0.0f;
-    float light_green = 0.0f;
-    float light_blue = 0.0f;
+// Lighting of one room vertex, shared by the hashed cache fill and the slot
+// fill so both produce the same bits. Counts one light evaluation per call in
+// the r100 scene; the caller adds it to the frame stats.
+inline void light_room_vertex(const re4dc::room::Vertex& input,
+                              std::uint32_t vertex_index,
+                              std::uint32_t light_selection,
+                              float& light_red, float& light_green,
+                              float& light_blue) {
+    light_red = 0.0f;
+    light_green = 0.0f;
+    light_blue = 0.0f;
 #if defined(RE4DC_SCENE_R100)
     if(vertex_index < kRoomStaticLightingVertexCapacity &&
        g_room_static_lighting_owner[vertex_index] <
@@ -4019,12 +4028,32 @@ void fill_room_entry(const re4dc::room::Vertex* source,
                                  light_red, light_green, light_blue,
                                  light_selection);
     }
-    ++stats.room_light_evaluations;
 #else
+    (void)vertex_index;
+    (void)light_selection;
     light_red = light_green = light_blue = std::clamp(
         0.76f + 0.08f * input.nx + 0.12f * input.ny +
             0.04f * input.nz,
         0.58f, 1.0f);
+#endif
+}
+
+void fill_room_entry(const re4dc::room::Vertex* source,
+                     std::uint32_t vertex_index, std::uint32_t light_selection,
+                     RoomVertexCacheEntry& entry, FrameStats& stats) {
+    ++stats.transformed_vertices;
+    const re4dc::room::Vertex& input = source[vertex_index];
+    float x = input.x;
+    float y = input.y;
+    float z = input.z;
+    mat_trans_single(x, y, z);
+    float light_red = 0.0f;
+    float light_green = 0.0f;
+    float light_blue = 0.0f;
+    light_room_vertex(input, vertex_index, light_selection,
+                      light_red, light_green, light_blue);
+#if defined(RE4DC_SCENE_R100)
+    ++stats.room_light_evaluations;
 #endif
     entry.generation = g_room_vertex_cache_generation;
     entry.source_index = vertex_index;
@@ -4047,6 +4076,32 @@ void fill_room_entry(const re4dc::room::Vertex* source,
         .offset_color = 0,
     };
     entry.argb = shade_color(light_red, light_green, light_blue);
+}
+
+// Slot fill for the direct-strip path: the same transform and lighting as
+// fill_room_entry(), writing only the words the packet needs. The caller
+// accounts the transform and light evaluation once per strip.
+inline void fill_room_slot(const re4dc::room::Vertex* source,
+                           std::uint32_t vertex_index,
+                           std::uint32_t light_selection,
+                           RoomBatchSlot& slot) {
+    const re4dc::room::Vertex& input = source[vertex_index];
+    float x = input.x;
+    float y = input.y;
+    float z = input.z;
+    mat_trans_single(x, y, z);
+    float light_red = 0.0f;
+    float light_green = 0.0f;
+    float light_blue = 0.0f;
+    light_room_vertex(input, vertex_index, light_selection,
+                      light_red, light_green, light_blue);
+    slot.x = x;
+    slot.y = y;
+    slot.z = z;
+    slot.u = input.u;
+    slot.v = input.v;
+    slot.depth = camera_depth(z);
+    slot.argb = shade_color(light_red, light_green, light_blue);
 }
 
 const RenderVertex& cached_room_vertex(
@@ -4183,29 +4238,64 @@ void submit_room_strips(const re4dc::room::Package& room,
             ++stats.room_gather_brackets;
 #endif
             if(use_locals) {
+                // Resolve, fill and pack in one pass. A vertex outside the
+                // depth window discards the packets written so far for this
+                // strip and sends it to the fallback path; the slots filled
+                // on the way stay valid for the rest of the batch.
+                if(submit_count + primitive.vertex_count > submit_capacity) {
+                    flush();
+                }
                 const std::uint16_t* local_indices =
                     g_room_local_indices + primitive.first_vertex;
-                for(std::uint32_t local = 0U; local < primitive.vertex_count;
-                    ++local) {
+                const std::uint32_t strip_start = submit_count;
+                const std::uint32_t last = primitive.vertex_count - 1U;
+                std::uint32_t strip_misses = 0U;
+                std::uint32_t processed = 0U;
+                for(std::uint32_t local = 0U; local <= last; ++local) {
                     RoomBatchSlot& slot =
                         g_room_batch_slots[local_indices[local]];
-                    ++stats.room_index_references;
                     if(slot.serial != batch_serial) {
-                        ++stats.room_cache_misses;
-                        fill_room_entry(source,
-                                        batch_vertices[local_indices[local]],
-                                        light_selection, slot.entry, stats);
+                        ++strip_misses;
+                        fill_room_slot(source,
+                                       batch_vertices[local_indices[local]],
+                                       light_selection, slot);
                         slot.serial = batch_serial;
-                    } else {
-                        ++stats.room_cache_hits;
                     }
-                    g_room_strip_entries[local] = &slot.entry;
-                    const float depth = slot.entry.vertex.position.depth;
+                    ++processed;
+                    const float depth = slot.depth;
                     if(depth < kNearClipDistance || depth > kFarClipDistance) {
                         direct_strip = false;
                         break;
                     }
+                    submit_vertices[submit_count++] = {
+                        .flags = local == last ? PVR_CMD_VERTEX_EOL
+                                               : PVR_CMD_VERTEX,
+                        .x = slot.x,
+                        .y = slot.y,
+                        .z = slot.z,
+                        .u = slot.u,
+                        .v = slot.v,
+                        .argb = slot.argb,
+                        .oargb = 0U,
+                    };
                 }
+                stats.room_index_references += processed;
+                stats.room_cache_misses += strip_misses;
+                stats.room_cache_hits += processed - strip_misses;
+                stats.transformed_vertices += strip_misses;
+#if defined(RE4DC_SCENE_R100)
+                stats.room_light_evaluations += strip_misses;
+#endif
+                if(direct_strip) {
+#if defined(RE4DC_SUBMIT_PROFILE)
+                    stats.room_gather_ns += timer_ns_gettime64() - gather_start;
+#endif
+                    stats.room_vertex_records += primitive.vertex_count;
+                    ++stats.room_direct_strips;
+                    stats.triangles += primitive.triangle_count;
+                    continue;
+                }
+                submit_count = strip_start;
             } else {
                 for(std::uint32_t local = 0U; local < primitive.vertex_count;
                     ++local) {

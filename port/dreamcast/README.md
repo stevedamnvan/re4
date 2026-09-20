@@ -138,7 +138,14 @@ identical to the microsecond. The calibration, the model, and
 `tools/sh4_loop_cost.py` are in
 [the R3w prepared actor lights checkpoint](docs/R3W_PREPARED_ACTOR_LIGHTS_CHECKPOINT.md).
 
-The opaque room pass, now 25.320 ms, is the largest remaining cost, followed by
+R3x applies the same model to the room slot fill: the slot is now the seven
+words the packet needs, filled by the same arithmetic, and each vertex is
+resolved, filled and packed in one pass with the stat counts accumulated per
+strip. CPU frame p50 falls from 64.758 to 61.229 ms and the opaque room pass
+from 25.320 to 21.981 ms with identical counters and no room pixel changed;
+see [the R3x slim room slots checkpoint](docs/R3X_SLIM_ROOM_SLOTS_CHECKPOINT.md).
+
+The opaque room pass, now 21.981 ms, is the largest remaining cost, followed by
 actor lighting at 14.189 ms with Leon's 10.948 ms median inside it. R3s keyed
 the room vertex cache on vertex identity, cut transform-and-light evaluations by
 21.5%, and was 1.274 ms slower, so that pass is dominated by per-reference and

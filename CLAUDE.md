@@ -37,7 +37,8 @@ The Linux checkout is authoritative. Upstream contains distinct `src/Tools` and 
 - R3v (accepted): batch-local room vertex slots replace the hashed cache on the direct-strip path; 71.369 ms to 68.789 ms, no room pixel changed, +413,696 B static RAM that a converter-side table should recover
 - R3w (accepted): prepared per-actor light lists, arithmetic unchanged, zero differing bits in a dual-path build; 68.789 ms to 64.758 ms
 - Flycast cost model, measured in R3w: ~3.3 ns per non-memory SH-4 instruction (fdiv and fsqrt included), ~13.3 ns per load or store, no FP latency, no cache. Size candidates by memory instructions per record with `port/dreamcast/tools/sh4_loop_cost.py`; hardware weighs divides more and memory less, so prefer changes that cut both
-- Next target: memory instructions in the per-record loops, in order: room slot fill (`fill_room_entry`, 152 memory instructions), actor lighting normalization and per-position terms, `project_character`, actor packet loop. Keep arithmetic identical and prove it with a dual-path bit comparison. Strip count is not a lever
+- R3x (accepted): 32-byte room slots filled by the same arithmetic, resolve/fill/pack in one pass, per-strip stat accumulation; 64.758 ms to 61.229 ms, identical counters and pixels
+- Next target: memory instructions in the per-record loops, in order: the room transform-and-light body and per-strip sphere-test loads, actor lighting normalization and per-position terms, `project_character`, actor packet loop. Keep arithmetic identical and prove it with a dual-path bit comparison. Strip count is not a lever
 - Expected state after the handover commit and push: clean local tree with local HEAD equal to `origin/dreamcast-port`
 
 Read these first:
