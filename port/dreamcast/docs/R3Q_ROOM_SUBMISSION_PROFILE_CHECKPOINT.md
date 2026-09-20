@@ -106,17 +106,47 @@ Two consequences:
 
 - The blended list spends 18.917 ms to draw 1,718 triangles because it
   transforms 3.63 vertices per triangle at a 3.7% cache hit rate. The opaque
-  list transforms 1.23 per triangle at a 33.5% hit rate. The accepted room
-  package reports 3,570 batches of which 3,333 carry ordered strips, so 237
-  batches still submit unindexed triangles. Confirming that the visible blended
-  batches are exactly those non-strip batches is the first task of the next
-  experiment. If the blended list reached opaque-pass vertex efficiency it would
-  transform roughly 2,100 vertices instead of 6,233, which is worth about 12 ms
-  of CPU frame at the measured per-vertex rate. That is the largest single
-  saving identified in the current trace.
+  list transforms 1.23 per triangle at a 33.5% hit rate. The cause is stated in
+  the next section; it is not a missing strip stream.
 - The punch-through pass draws nothing under this camera and still walks 327
   visible groups and their batches for 0.135 ms. Skipping an empty list is
   correct but small; do not confuse it with the blended result.
+
+## Why the blended list is inefficient
+
+A first reading blamed missing strips, because the package reports 3,570 batches
+of which 3,333 carry ordered strips. Reading the package directly disproves
+that. The 237 batches without the order certificate are all opaque, and the
+opaque pass never tests the certificate. **All 22 blended batches already carry
+certified strips.**
+
+The real cause is the deliberate R3k boundary: alpha-bearing materials were left
+unpartitioned so their source draw order stayed intact. Opaque geometry is split
+into 2,988 groups with a median extent of 4.00 m, but the blended geometry sits
+in 17 groups whose extents reach 273.83 m, against a declared 35 m horizon.
+Group visibility therefore barely culls it.
+
+| Package totals | opaque | punch-through | blended |
+|---|---:|---:|---:|
+| batches | 3,439 | 109 | 22 |
+| groups | 2,988 | 109 | 17 |
+| triangles | 24,985 | 1,612 | 4,298 |
+| strip vertices | 48,887 | 3,708 | 8,432 |
+
+Against the measured frame: the opaque pass references 13,704 of its 48,887
+strip vertices, 28%, and emits 7,437 of 24,985 triangles, 30% — culling tracks
+the work. The blended pass references 6,474 of its 8,432 strip vertices, 77%,
+and emits 1,718 of 4,298 triangles, 40%. It pays a full transform and lighting
+for most of the room's alpha geometry, then discards well over half of it in the
+per-vertex depth test and the clipper, because those tests run only after
+`cached_room_vertex()` has already done the work.
+
+The order-safe fix is per-strip bounds culling rather than finer partitioning:
+skipping a whole strip before touching its vertices removes work without
+reordering any triangle that is still drawn, so the R3c blend-order certificate
+continues to hold by construction. Finer alpha cells would reorder across cell
+boundaries and would need a new order argument. Bounds for the 2,067 blended
+primitives cost about 33 KB.
 
 ## Retained evidence
 

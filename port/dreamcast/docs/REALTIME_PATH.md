@@ -136,16 +136,21 @@ Choose each next experiment from the current trace. Every candidate must boot,
 retain a reference path where appropriate, pass its correctness check, record
 before/after timing and memory, and end in a keep-or-revert decision.
 
-1. **Blended room vertex efficiency.** R3q measured the blended list at 18.917 ms
-   for 1,718 triangles, transforming 3.63 vertices per triangle at a 3.7% vertex
-   cache hit rate, against 1.23 per triangle and 33.5% for the opaque list. The
-   accepted room package carries ordered strips on 3,333 of 3,570 batches. First
-   confirm that the visible blended batches are exactly the 237 without strips,
-   then extend order-certified strips to them while preserving the source blend
-   order, winding, and clipping fallbacks that R3c established. At the measured
-   per-vertex rate this is worth roughly 12 ms of CPU frame and is the largest
-   identified saving in the current trace. Skipping the empty punch-through list
-   is correct but worth only 0.135 ms; do not confuse the two.
+1. **Per-strip bounds culling for unpartitioned alpha.** R3q measured the blended
+   list at 18.917 ms for 1,718 triangles, transforming 3.63 vertices per triangle
+   against 1.23 for the opaque list. All 22 blended batches already carry
+   certified strips, so this is not a strip-coverage problem. R3k deliberately
+   left the alpha materials unpartitioned to protect source draw order, so
+   blended geometry sits in 17 groups with extents up to 273.83 m against a 35 m
+   horizon. The pass references 77% of the package's blended strip vertices and
+   emits 40% of its blended triangles; the depth and clip tests that discard the
+   rest run only after the transform and lighting are already paid.
+   Attach bounds to each strip and reject the strip before touching its vertices.
+   Skipping a strip removes work without reordering any triangle that is still
+   drawn, so the R3c blend-order certificate holds by construction; finer alpha
+   cells would not. Bounds for the 2,067 blended primitives cost about 33 KB.
+   Skipping the empty punch-through list is correct but worth only 0.135 ms; do
+   not confuse the two.
 2. **The per-vertex transform and light kernel.** R3q showed room cost is close
    to a constant 3.1 us per transformed and lit vertex, and that caching cannot
    reduce the 15,317 distinct vertices a frame touches. After the blended-list
