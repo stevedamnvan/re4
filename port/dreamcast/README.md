@@ -161,8 +161,9 @@ make -C port/dreamcast/room \
    ambience; review moving output after each fidelity change. The level handgun
    shot now starts at the source animated hand/muzzle transform, uses the source
    50-metre direction and spread generator, and tests the Ganado's ten exact
-   animated damage capsules. Leon and the Ganado use their source hit/death
-   motions and voice cues on the bounded encounter path.
+   animated damage capsules. Held fire repeats at the source starting-handgun
+   frame-12 ready point. Leon and the Ganado use their source hit/death motions
+   and voice cues on the bounded encounter path.
 4. Test manual play and repeated resets, then package the private Flycast demo
    and short recording.
 5. Validate loading, memory, audio, controller, and output on physical

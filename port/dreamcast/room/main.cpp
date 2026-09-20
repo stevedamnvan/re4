@@ -228,6 +228,10 @@ constexpr float kSimulationDeltaSeconds = 1.0f / 30.0f;
 // second source event instead of using the prototype's one-second timer.
 constexpr float kStartingReloadRefillSeconds = 44.0f / 30.0f;
 constexpr float kStartingReloadFinishSeconds = 55.0f / 30.0f;
+// PlShotFrameTbl[1][0] is 14 for the starting handgun. pl_handgun returns
+// from fire step 1 when motion frame (14 - 2) is crossed; a held fire input
+// may then enter fire step 0 again.
+constexpr float kStartingHandgunShotReadySeconds = 12.0f / 30.0f;
 
 enum class EnemyState : std::uint8_t {
     Chase,
@@ -1457,6 +1461,14 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
     if(player.dead || player.hit_reaction) {
         return;
     }
+    const auto start_reload = [&]() {
+        player.reload_seconds = kStartingReloadFinishSeconds;
+        player.reload_refilled = false;
+        if(audio.reload_16 != SFXHND_INVALID) {
+            snd_sfx_play(audio.reload_16, 255, 128);
+        }
+        std::printf("re4dc-room: reload start\n");
+    };
     if(player.reload_seconds > 0.0f) {
         player.reload_seconds -= delta_seconds;
         const float reload_elapsed =
@@ -1476,22 +1488,23 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
         return;
     }
     if(reload_pressed && player.ammo < kMagazineSize) {
-        player.reload_seconds = kStartingReloadFinishSeconds;
-        player.reload_refilled = false;
-        if(audio.reload_16 != SFXHND_INVALID) {
-            snd_sfx_play(audio.reload_16, 255, 128);
-        }
-        std::printf("re4dc-room: reload start\n");
+        start_reload();
         return;
     }
-    if(!fire_pressed || !input.aim || player.ammo <= 0) {
+    if(!input.aim) {
+        return;
+    }
+    if(player.ammo <= 0) {
+        if(fire_pressed) {
+            start_reload();
+        }
+        return;
+    }
+    if(!input.fire || player.fire_animation_seconds > 0.0f) {
         return;
     }
     --player.ammo;
-    const auto& fire_clip = character.clips()[kPlayerFireClip];
-    player.fire_animation_seconds =
-        static_cast<float>(fire_clip.frame_count - 1U) /
-        fire_clip.frames_per_second;
+    player.fire_animation_seconds = kStartingHandgunShotReadySeconds;
     if(audio.fire_0 != SFXHND_INVALID) {
         snd_sfx_play(audio.fire_0, 255, 128);
         snd_sfx_play(audio.fire_2, 255, 128);
