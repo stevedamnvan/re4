@@ -63,6 +63,8 @@ character-leon:
 		--attachment left-hand:pl00.drs:17:13 \
 		--rigid-attachment handgun:wep02.drs:2:1:10 \
 		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 \
+		--clip aim:wep02.drs:39 --clip fire:wep02.drs:42 \
+		--clip reload:wep02.drs:45 \
 		--sample-step 2 --cluster-mm $(CHARACTER_CLUSTER_MM) \
 		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(LEON_CHARACTER)

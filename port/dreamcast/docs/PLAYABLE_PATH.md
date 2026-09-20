@@ -37,7 +37,7 @@ controlled.
 | Player/enemy placement | Original code/data | Values and yaw come directly from `r100_Sce_look`. |
 | Camera and fog | Original data with Dreamcast projection adaptation | Use r100 CAM area 2 cut 2 offsets/FOV, the global handgun-ready offsets/FOV, and r100 LIT fog/background values. |
 | Enemy HP and handgun body damage | Original data | Ganado starts at 500 HP; weapon 1 body damage is 150 x the starting 0.9 multiplier = 135. |
-| Character geometry/motion | Original data, converted offline | Preserve complete source batches, materials, and sampled original motion; baked frames are a Dreamcast memory/runtime adaptation. |
+| Character geometry/motion | Original data, converted offline | Preserve complete source batches, materials, and sampled original motion; Leon now uses the handgun archive's level aim `0x27`, fire `0x2A`, and starting reload `0x2D`, while baked frames remain a Dreamcast memory/runtime adaptation. |
 | Player and Ganado state machines | Temporary approximation | Direct pursuit, attack timing, reload timing, and the reduced input/state layer remain explicit port debt. Do not add rooms or enemies before replacing approximations along this slice. |
 | HUD and sound | Temporary presentation layer | HUD is native and readable. Source sound integration remains open and cannot be claimed complete. |
 

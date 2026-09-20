@@ -111,6 +111,11 @@ constexpr float kEnemyAttackRange = 2.4f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
 constexpr int kMagazineSize = 6;
 constexpr int kPlayerMaxHealth = 100;
+constexpr std::uint32_t kPlayerIdleClip = 0;
+constexpr std::uint32_t kPlayerWalkClip = 1;
+constexpr std::uint32_t kPlayerAimClip = 2;
+constexpr std::uint32_t kPlayerFireClip = 3;
+constexpr std::uint32_t kPlayerReloadClip = 4;
 #if defined(RE4DC_SCENE_R100)
 // R100Init creates this exact id-0x12 Ganado with 500 HP. Weapon 1 uses the
 // em10 base value 150 at the starting 0.9 power multiplier: 135 body damage.
@@ -145,6 +150,7 @@ struct Player {
     int health = kPlayerMaxHealth;
     int ammo = kMagazineSize;
     float reload_seconds = 0.0f;
+    float fire_animation_seconds = 0.0f;
     bool aiming = false;
     bool dead = false;
 };
@@ -449,19 +455,34 @@ void update_player(Player& player, const re4dc::collision::Package& collision,
 
 void update_animation(Player& player, const re4dc::character::Package& character,
                       const Input& input, float delta_seconds) {
-    const std::uint32_t desired_clip =
-        !player.aiming && std::fabs(input.move) > 0.05f &&
-                character.header().clip_count > 1U
-            ? 1U
-            : 0U;
+    std::uint32_t desired_clip = kPlayerIdleClip;
+    bool loop = true;
+    if(player.reload_seconds > 0.0f) {
+        desired_clip = kPlayerReloadClip;
+        loop = false;
+    } else if(player.fire_animation_seconds > 0.0f) {
+        desired_clip = kPlayerFireClip;
+        loop = false;
+        player.fire_animation_seconds = std::max(
+            0.0f, player.fire_animation_seconds - delta_seconds);
+    } else if(player.aiming) {
+        desired_clip = kPlayerAimClip;
+    } else if(std::fabs(input.move) > 0.05f) {
+        desired_clip = kPlayerWalkClip;
+    }
     if(player.animation_clip != desired_clip) {
         player.animation_clip = desired_clip;
         player.animation_frame = 0.0f;
     }
     const auto& clip = character.clips()[player.animation_clip];
     player.animation_frame += clip.frames_per_second * delta_seconds;
-    while(player.animation_frame >= static_cast<float>(clip.frame_count)) {
-        player.animation_frame -= static_cast<float>(clip.frame_count);
+    if(loop) {
+        while(player.animation_frame >= static_cast<float>(clip.frame_count)) {
+            player.animation_frame -= static_cast<float>(clip.frame_count);
+        }
+    } else {
+        player.animation_frame = std::min(
+            player.animation_frame, static_cast<float>(clip.frame_count - 1U));
     }
 }
 
@@ -725,6 +746,7 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
         return;
     }
     --player.ammo;
+    player.fire_animation_seconds = 0.4f;
     const bool hit = shot_hits_enemy(player, enemy);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
@@ -1345,6 +1367,10 @@ int main() {
         static_cast<unsigned long>(ganado.header().vertex_count),
         static_cast<unsigned long>(ganado.header().index_count / 3U),
         static_cast<unsigned long>(ganado.header().frame_count));
+    if(leon.header().clip_count < 5U) {
+        std::printf("re4dc-room: Leon package needs idle/walk/aim/fire/reload\n");
+        return 1;
+    }
     if(ganado.header().clip_count < 5U) {
         std::printf("re4dc-room: Ganado package needs idle/walk/attack/hit/death\n");
         return 1;
