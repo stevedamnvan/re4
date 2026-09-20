@@ -253,11 +253,14 @@ before/after timing and memory, and end in a keep-or-revert decision.
    in which transport is a materially larger share. Enlarging or re-hashing the
    room vertex cache is closed for the same reason: it can save at most 33
    evaluations per frame.
-5. **Native texture/resource layout.** Extend the current package with offline
-   twiddled payloads, explicit layout metadata, and one uploaded handle per deduped
-   payload. Credit this to load time and memory unless a frame trace changes. Then
-   evaluate `pvrtex` VQ, palette, and mip candidates per texture with native upload,
-   previews, moving-scene review, and uncompressed fallbacks. Alpha edges, HUD,
+5. **Native texture/resource layout, now the first R4 deliverable.** Extend the
+   current package with offline twiddled payloads, explicit layout metadata, and
+   one uploaded handle per deduped payload. Credit this to load time and memory
+   unless a frame trace changes. Then evaluate `pvrtex` VQ, palette, and mip
+   candidates per texture with native upload, previews, moving-scene review,
+   and uncompressed fallbacks, choosing the representation per texture from
+   the asset inventory in
+   [R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md). Alpha edges, HUD,
    faces, and nearby architecture receive separate quality decisions.
 6. **Gameplay/source parity in parallel.** Continue bounded source checks for
    collision narrow phase, camera blockers, state/RNG/event behavior, expressions,
@@ -289,10 +292,16 @@ Use mechanisms, not borrowed performance claims:
   SH4ZAM math, fog, lighting, and mipmapped textures. Doom 64 DC demonstrates
   level-time texture caching and 8bpp world textures. Their layouts are study
   cases, not RE4 quality or frame-rate targets.
+- DCA3 (GTA III/VC on KallistiOS) is the residency and streaming reference for
+  R4: offline asset conversion and archive repacking, a Dreamcast CD streaming
+  path under the original streaming system, and a continuously changing
+  working set on the same 16 MB / 8 MB / 2 MB target. Mechanisms only; check
+  the licence before any code reuse and never use its data.
 
 Primary references: [KallistiOS PVR scene path][kos-scene],
 [KallistiOS pvrtex][kos-pvrtex], [SH4ZAM][sh4zam],
-[QuakeSpasm-DC][quakespasm-dc], and [Doom 64 DC][doom64-dc].
+[QuakeSpasm-DC][quakespasm-dc], [Doom 64 DC][doom64-dc], and for R4
+[DCA3][dca3].
 ## Objective and boundaries
 
 Make the same post-s03 cabin encounter responsive and measure its cost on a
@@ -420,7 +429,18 @@ re-plan that stage. Do not multiply isolated speedups into a promised 24x result
 If the intact scene still misses the budget after these passes, present measured
 remaining costs and options; a fidelity concession needs a separate decision.
 
-## Scale after the same-encounter work
+## Scale after the same-encounter work: the R4 workstream
+
+The residency and streaming work is now a named workstream with its own plan,
+[R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md): convert every
+resource offline into its Dreamcast-native representation, keep only the
+active and prefetched working set resident, derive residency from the
+authored GameCube block sets, take DCA3 as the Dreamcast streaming reference,
+and use the PS2 disc only as an oracle for Capcom-authored reductions when the
+GameCube representation cannot meet the budget. Its first deliverables, the
+asset inventory tool and the native texture layout, can run alongside the
+remaining R3 frame work; the residency model and asynchronous reads follow.
+The paragraphs below remain the source-side rules R4 must respect.
 
 Start from authored BLK active/staged/remove sets and `checkBlockMemory`, recomputing
 the largest active set and transition overlap using converted sizes and shared
@@ -458,4 +478,5 @@ No expanded content until the runtime and resource model support it.
 [kos-pvrtex]: https://github.com/KallistiOS/KallistiOS/tree/804b3195ebd1a06a27cc2b3a5eacf7a2429040a3/utils/pvrtex
 [sh4zam]: https://github.com/gyrovorbis/sh4zam
 [quakespasm-dc]: https://github.com/maximqaxd/quakespasm
+[dca3]: https://gitlab.com/skmp/dca3-game
 [doom64-dc]: https://github.com/jnmartin84/doom64-dc

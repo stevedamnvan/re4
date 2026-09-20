@@ -383,10 +383,16 @@ make -C port/dreamcast/room \
    SH-4 kernel dependency contract; retain and compare the reference path.
 3. Benchmark packet aggregation and KOS DMA only after exact list byte/call
    counts exist. Immediate submission already uses store queues.
-4. Add offline native texture layout and shared upload handles, then evaluate
-   VQ/palette/mipmap candidates per texture with previews and moving-scene
-   quality acceptance.
-5. Expand the repeatable route to movement, aim extremes, enemy contact, death,
+4. Open the R4 asset residency and streaming workstream: an asset inventory
+   that compares each GameCube asset with its PS2 counterpart and every
+   Dreamcast candidate representation, then offline native texture layout
+   and shared upload handles, then VQ/palette/mipmap candidates per texture
+   with previews and moving-scene quality acceptance. See
+   [the R4 plan](docs/R4_ASSET_RESIDENCY_PLAN.md).
+5. Derive the residency model from the authored GameCube block sets, replace
+   the embedded ROM disk with asynchronous reads into a staging arena, and
+   prove one room transition with the previous room evicted.
+6. Expand the repeatable route to movement, aim extremes, enemy contact, death,
    and retry; complete human-controller and physical Dreamcast acceptance.
 
 Source collision, camera, state/event, expression, and cloth parity continue as
@@ -399,8 +405,10 @@ ownership ledger remain in [the playable backlog](docs/PLAYABLE_PATH.md). The
 GameCube differences, real-time scenes, SFD movies, and render-to-texture work.
 See also [the r10d asset boundary](docs/R10D_VERTICAL_SLICE.md).
 
-General room streaming, full menu systems, complete audio coverage, story
-events, and campaign progression stay behind that demo gate. Minimal start,
+Full menu systems, complete audio coverage, story events, and campaign
+progression stay behind that demo gate. Room streaming is no longer behind
+it: it is the R4 workstream, planned in
+[the R4 plan](docs/R4_ASSET_RESIDENCY_PLAN.md). Minimal start,
 completion/retry presentation and core gameplay sound are required today.
 
 See [Soulcalibur reuse](docs/SOULCALIBUR_REUSE.md) for the local Flycast lessons
