@@ -4,12 +4,19 @@ This directory contains the new Dreamcast target. It is deliberately separate
 from the byte-matching GameCube build: the upstream build remains the behavior
 and asset reference, while this target is compiled for SH-4 with KallistiOS.
 
-**Current objective (2026-09-19): a convincing, manually playable demo today in
-Flycast; physical Dreamcast next.** The existing build is an untextured gameplay
-prototype. It has not passed visual review or sustained 30 fps acceptance.
-The [demo plan](docs/PLAYABLE_PATH.md) now requires a short textured encounter,
-complete actors and handgun, visible combat feedback, sound, a usable HUD,
-manual testing, and a private launchable package before presentation acceptance.
+**Current objective (2026-09-20): the source-derived r100 encounter with measured
+real-time performance and responsive input, preserving its authored presentation.**
+The [current plan](docs/REALTIME_PATH.md) prioritizes correct profiling, bounded
+room-vertex reuse, original light selection, SAT hierarchy, model/weight-palette
+structure, and hardware measurement. Approximately 30 fps at current fidelity is
+a target whose feasibility remains unproven.
+
+The textured native 640x480 slice at `fed3e91` is frozen as an integration
+reference with source HUD, combat audio, and controller-path traces. Reported
+0.78-0.84-second frames do not establish real-time playability. Physical hardware,
+peak memory, human responsiveness and full source fidelity remain open. The
+[integration record and source ownership ledger](docs/PLAYABLE_PATH.md) retain
+exact artifact identities and remaining adaptations.
 
 ## Current checkpoint
 
@@ -25,7 +32,7 @@ manual testing, and a private launchable package before presentation acceptance.
 - Native smoke ELF: built and booted past frame 300 in an isolated Flycast run
 - RE4 motion/IK slice: upstream game functions compile for SH-4 and pass both
   the synthetic fixture and a private real-data fixture from Leon's `pl00.drs`
-- Walkable r10d prototype: disc SAT floor/wall collision, tank movement, a
+- Historical walkable r10d prototype: disc SAT floor/wall collision, tank movement, a
   shoulder follow camera, reset/exit controls, and a visible route marker run
   together in the native room executable
 - Disc-derived Leon prototype: the original 1,484-vertex body is skinned
@@ -34,7 +41,7 @@ manual testing, and a private launchable package before presentation acceptance.
 - Small combat loop: one disc-derived village Ganado approaches, turns, attacks,
   reacts to aimed shots, and dies; Leon has a reticle, health, six-round ammo,
   timed reload, death/restart, and a defeat-gated room exit
-- Experimental performance profile: coarse offline LOD, a 35 m horizon, and
+- Historical experimental performance profile: coarse offline LOD, a 35 m horizon, and
   triangle rejection reduced one Flycast spawn sample from 117.1 to 29.4 ms.
   A later normal-boot sample was 26.8 ms; the recorded end-of-route sample was
   37.8 ms. The automated loop passes, but these point samples do not establish

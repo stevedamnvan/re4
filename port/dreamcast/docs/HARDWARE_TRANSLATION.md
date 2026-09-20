@@ -6,6 +6,12 @@ Hardware references are manufacturer publications and the pinned KallistiOS
 implementation. Recommendations below are engineering decisions, not measured
 claims that the port already meets its budgets.
 
+For the current r100 work, follow [REALTIME_PATH.md](REALTIME_PATH.md), revised
+2026-09-20. It adds source SAT hierarchy/query recovery, per-model light selection,
+shared skinning palettes, source object/draw/residency ownership, and corrected
+performance/memory acceptance. The r10d priorities below are historical research,
+not the current execution order.
+
 ## What RE4 actually renders
 
 RE4's cinematics lead, Yoshiaki Hirabayashi, describes real-time cutscenes,

@@ -1,4 +1,12 @@
-# A source-accurate 30-second RE4 Dreamcast slice
+# Source-derived r100 integration checkpoint
+
+Current execution order: [REALTIME_PATH.md](REALTIME_PATH.md), revised 2026-09-20
+after auditing `fed3e91` and the original engine. It preserves this build as a
+regression reference, recovers source processing decisions, and targets measured
+real-time performance. The historical low-frame-rate milestone below establishes
+native integration, not real-time playability or exact original-game behavior.
+Its earlier blanket D2-D4 completion claim is corrected below: live responsiveness,
+peak memory, paired source fidelity, and physical hardware acceptance remain open.
 
 Replanned 2026-09-19 around the shortest credible port: **the exact post-s03
 `r100_Sce_look` encounter, today in Flycast first; physical Dreamcast next**.
@@ -33,10 +41,10 @@ controlled.
 | Subsystem | Current classification | Today's boundary |
 |---|---|---|
 | Room and material selection | Original data, converted offline | Main/shared SMD plus BLK-resident FILE_00/01/02; retain intact selected meshes and repair material IDs from ModelPart headers. Opaque source textures use RGB565. Textures carrying source alpha use ARGB4444 and the PVR translucent list with source-alpha/inverse-source-alpha blending, matching the common source `blend_mode == 0` path instead of collapsing soft masks into opaque one-bit cutouts. Source per-part alpha reference is retained as format metadata but the current selected r100 parts use alpha reference zero. |
-| World scale and collision | Behavior-preserving adaptation | SMD OBJ positions receive the exporter's remaining `0.1` scale; raw SAT and game positions receive `0.001`, so both occupy metres. |
+| World scale and collision | Original data with an adapted solver | SMD OBJ positions receive the exporter's remaining `0.1` scale; raw SAT and game positions receive `0.001`, so both occupy metres. The current SAT conversion drops the source block hierarchy and edge references, and the runtime uses reduced collision routines. Source traversal, query-manager distinctions, and contact equivalence remain open under REALTIME_PATH R2a. |
 | Player/enemy placement | Original code/data | Values and yaw come directly from `r100_Sce_look`. |
 | Camera and fog | Original data with Dreamcast projection adaptation | `r100_000.CAM` (`cb47bb28471becf834f6ddfef32826cc48c7cf99f20a1656929d279ef66aa6a5`) area 2 cut 2 supplies the exact normal camera, target, close point, and FOV at the encounter. The global handgun-ready table supplies the equivalent three values while aiming. `CameraQuasiFPS::calcOffset` is preserved as a linear blend across its exact up/mid/down entries, driven by the same pitch value as Leon's weapon motion. The Dreamcast runtime now ports the source center/left/right SAT wall probes and near-plane correction from `CameraQuasiFPS::hitCheck`; character and movable-object camera blockers remain fidelity debt. r100 LIT supplies fog/background values. |
-| Lighting | Original data with Dreamcast shading adaptation | `r100_002.LIT` cut 0 (`a846aab52d2cd39d6d0266059e1f5728644b988be4c8c10531699409c54883a2`) supplies the scenery/enemy ambient colours and nine non-empty cabin lights. The native renderer evaluates their source type, colour, position/direction, radius, and intensity as per-vertex RGB; animated normals are rebuilt from each sampled pose. Exact GX light-list selection and source skinned normals remain fidelity debt. |
+| Lighting | Original data with an approximate selection/shading path | `r100_002.LIT` cut 0 (`a846aab52d2cd39d6d0266059e1f5728644b988be4c8c10531699409c54883a2`) supplies the scenery/enemy ambient colours and nine non-empty cabin lights. The native renderer evaluates their source type, colour, position/direction, radius, and intensity as per-vertex RGB; animated normals are rebuilt from each sampled pose. The original `cLightMgr::setModel2` filters lights per model using masks, volumes, and engine state. Recover and trace those lists before static baking; source skinned normals also remain fidelity debt. |
 | Enemy HP and handgun body damage | Original data | Ganado starts at 500 HP; weapon 1 body damage is 150 x the starting 0.9 multiplier = 135. |
 | Character geometry/motion | Original data, converted offline | Preserve complete source batches, materials, and sampled original motion; Leon now uses the handgun archive's complete aim `0x26`/`0x27`/`0x28` and fire `0x29`/`0x2A`/`0x2B` triplets, starting reload `0x2D`, and `pl00` left-hit `0x4A` and death `0x4C` motions. Baked frames remain a Dreamcast memory/runtime adaptation. Level, locomotion, reload, hit, and death clips keep every fourth authored pose; the four pitch endpoints keep every sixteenth pose to fit main RAM. Every clip includes its true terminal frame, interpolates between poses, and preserves exact source duration. The native renderer blends level and endpoint vertices with the source `cMot3` sign/rate, including gun and hit-capsule markers. FCV kind-1 root translation is retained in each clip, so the exact walk motions drive Leon at 1.7409 m/s and the r100 Ganado at 0.6087 m/s instead of prototype movement constants. |
 | Player and Ganado state machines | Mixed adaptation and temporary approximation | Both actors resolve against the shared source SAT walls. Ganado walk targets now come from r100's exact 66-point RTP graph, 160 links, and 66 x 66 source next-hop table. The native `RouteCkToPos` subset preserves the direct visibility and midpoint-floor tests, the ten nearest visible route-point search, the 0.25-metre point threshold, next-hop selection, and `em10_R1_Walk` turn cap; the SAT line test is a Dreamcast collision adaptation. A handgun shot now starts at the exact source muzzle offset on Leon's animated part 10, follows that part's local -X basis for the source 50-metre line with the original `Rnd` / `fRand1_1` spread algorithm, tests the type-0 Ganado's ten exact animated `YARARE_INFO` capsules, then rejects hits behind intervening wall triangles. Vertical aim preserves `PlWepLockCtrl`'s digital 0.035 step, stick repeat ramp from 1 through 7, 0.8 positive-pitch multiplier, and -1..1 clamp; the blended fire marker drives the same shot ray as the visible gun. Because the reduced demo does not yet consume every random call made by the full game, its RNG sequence remains a documented adaptation even though the generator and boot seed are source values. The starting handgun accepts held fire again at source `PlShotFrameTbl[1][0] - 2`, frame 12, and a fresh empty trigger starts reload; reload refills at source frame 44 and stays locked through the source frame-55 pin event. The r100 type-0 Ganado now comes from `em12.drs` with its source head, gripping hands, and hatchet; acquires its normal hatchet attack at the source 1.7-metre limit; plays motion `0x80`; plays source cue `0x3d` at sequence `0x81` frame 37; evaluates the sequence hit window at source frames 50-72; checks the two exact weapon-space endpoints authored by `em10_R1_AxeAtk` as source 250-unit attack spheres; removes the source 380 life from Leon's 1200; and uses the rank-5 15-frame post-hit wait. Torso hits use the source Dm_Small front-body motion `0x26`, while a lethal standing body hit uses Die_Normal motion `0x67`. Walk and attack translation now follow the actor yaw at the selected source clips' FCV root-motion rates. Leon now uses the five source `YARARE_INFO` damage capsules attached to their exact animated parts, offsets, heights, and radii. Source waist-yaw limits, the broader Ganado decision tree, and the reduced input/state layer remain explicit port debt. |
@@ -65,7 +73,7 @@ At source checkpoint `a3f0b39c48817a12fc17b35344dcd7dd5929cc57`:
 The prior goal completion records a functional prototype only. The convincing
 demo remains open until the visible, interactive, and delivery gates below pass.
 
-## Today's order and stop rules
+## Historical presentation order and evidence limits
 
 These are bounded work passes, not a promise that every unknown will fit today.
 Keep a bootable candidate after each pass. Review the actual rendered output
@@ -76,12 +84,12 @@ testing and packaging; no new renderer features enter that window.
 |---|---|---|
 | D0 - complete | Extract the source-streamed r100 geometry, identify the BLK residency at the encounter, recover material bindings from the BIN ModelPart headers, and correct all coordinate scales. | Native Flycast frame shows Leon, Ganado, collision, camera, and intact textured architecture in one coherent world. |
 | D1 - complete | Lock the exact normal and aiming camera, source placements, source HP/damage, fog, restart behavior, and a bounded 30-second route. Remove any invented exit marker from r100. | Manual build begins at the post-s03 state, supports aim/fire/reload/death/retry, and remains in the encounter after a kill. |
-| D2 - complete in Flycast | Inspect the actual normal, aiming, firing, hit, death, and retry views. Source-cut RGB lighting, near-plane clipping, complete actor attachments, pose-derived smooth actor normals, and soft source alpha blending are now in the native path. Correct remaining material or motion faults before adding features. | Captured native frames and a 30-second moving capture are visibly coherent and use the same executable as the manual demo. |
-| D3 - complete for this slice | Shared SAT wall resolution, wall-occluded shots, exact attack/damage timing, and source weapon, enemy, impact, and player cues are implemented. Room ambience remains later fidelity work. | No visible through-wall shot or movement in the permitted route; each combat action has matching visible and audible feedback. |
-| D4 - complete in Flycast | Freeze and package the private Flycast candidate. Record exact executable/package hashes, controls, memory use, and observed frame rate without turning performance into today's acceptance gate. | Launchable manual demo, death/retry and kill/retry checked, private assets excluded from Git, code/tools/tests/docs pushed and remote SHA verified. |
+| D2 - integration evidence recorded | Native views include lighting, near-plane clipping, actor attachments, rebuilt normals, source HUD and alpha blending. | Captures establish a coherent source-derived image; paired original-game fidelity and responsive moving output remain unaccepted. |
+| D3 - implementation and controller-path trace recorded | Shared SAT wall resolution, wall-occluded shots, source attack/damage timing and combat cues are implemented in the reduced runtime. | State transitions were exercised with a virtual controller. Live human responsiveness, full collision equivalence and measured audiovisual alignment remain open. |
+| D4 - private candidate frozen | Exact ELF, recording and trace hashes, controls and observed frame samples are recorded; assets remain private. | Packaging is complete for the integration reference. Peak memory, frame distributions and physical-console validation remain open. |
 
-The Flycast presentation slice has passed D2-D4. Preserve this frozen visual
-baseline while moving to physical Dreamcast validation; future work must not
+Preserve the frozen Flycast integration evidence as a visual regression
+baseline while moving to measured performance and source fidelity; future work must not
 trade away the source camera, intact nearby geometry, actor completeness, or
 combat feedback merely to improve frame rate.
 
@@ -91,9 +99,10 @@ candidate. Flycast recorded axe contacts at source frame 50 and health
 death pose before the game-over prompt, and a manual B restart back to 1200 HP.
 This is emulator evidence; physical Dreamcast loading and timing remain open.
 
-The 2026-09-20 source-detail pass keeps the selected meshes and lighting model
-intact while removing redundant Dreamcast work: the SH-4 build now uses `-O2`,
-room and actor lighting is evaluated once per unique vertex per frame, room
+The earlier 2026-09-20 source-detail pass at `efad1c5` kept selected meshes and
+lighting while introducing `-O2` and cached vertex processing. The subsequent
+source-HUD change removed the room cache: at `fed3e91` room transforms and lighting
+run per indexed triangle corner. Actors retain unique-vertex preparation. Room
 vertices are submitted in material batches, and a conservative world-space
 AABB/frustum test rejects only complete source groups outside the exact camera.
 The 640x480 Flycast capture emitted 3,396 room and 6,399 actor triangles in its
@@ -122,7 +131,7 @@ its texture package hash is
 Flycast visibly rendered the intact cabin, source actors, handgun, and source
 HUD from the native SH-4 build. One post-kill result frame emitted 7,215 room
 and 6,774 actor triangles in 849,418 us, with 735,466 us spent in submission.
-The fixed 30 Hz trace resets at tick 900; a later sample at tick 2,401 had again
+The fixed-step trace resets at tick 900; a later sample at tick 2,401 had again
 defeated the 500-HP Ganado and reported 66 bounded catch-up overruns. This low
 frame rate is accepted for the 30-second fidelity milestone and remains a later
 optimization target rather than a claim of final Dreamcast performance.
@@ -134,22 +143,37 @@ Its private launch package is
 `C:\Flycast-Evidence\re4-dreamcast\d110-exact-r100-manual-v3`. The exact ELF's
 30-second 640x480 capture includes loopback audio and has SHA-256
 `c8dc6a0825f71b0a21b8b6a783d809987542e01d7ae47805a920ebdb4a6a65ad`.
-The repeatable capture was driven through Flycast's normal Xbox-controller path;
-the game-side autoplay flag was absent, and the packaged build remains directly
-playable with a controller.
+The repeatable capture was driven by a virtual controller through Flycast's normal
+Xbox-controller path; the game-side autoplay flag was absent. The package accepts
+controller input, but sampling once per slow rendered frame does not establish
+responsive manual play or real-time 30 Hz simulation.
 
-Telemetry version 3 records stock-pool headroom after all textures and source
-combat cues load. The frozen candidate retained 1,892,352 bytes between the
-main heap break and reserved kernel stack, with another 205,368 free bytes
-inside the heap arena; PVR VRAM retained 1,488,296 bytes and AICA RAM retained
-1,378,336 bytes. A 39-second controller-path trace, SHA-256
+Telemetry version 3 records a post-load snapshot, not peak headroom. It reports
+1,892,352 bytes (1.80 MiB) between the heap break and reserved kernel stack,
+205,368 free bytes inside the heap arena, and 1,488,296 PVR allocator free bytes
+(1.42 MiB). The AICA query returned 1,378,336 bytes (1.31 MiB); the pinned SDK
+query does not filter allocated blocks, so this is a raw diagnostic value, not
+verified free AICA memory. See REALTIME_PATH for the correction and peak-memory
+requirements. A 39-second controller-path trace, SHA-256
 `1087a8603c97328cfdc2b41e865c4ac372cd4c80190f586cd8a030a5146eeaed`,
 recorded the exact state sequence: kill, magazine `6 -> 0`, reload `0 -> 6`,
 restart, source damage `1200 -> 820 -> 440 -> 60 -> 0`, and restart to 1200.
 Representative complete frames remained 0.78-0.84 seconds; this is disclosed
 low-rate Flycast evidence, not a physical-console timing result.
 
-## Shortest asset and renderer path
+The simulation uses fixed 1/30-second increments with bounded catch-up, samples
+input once per outer loop, and can discard accumulated time. Existing overrun
+counts do not quantify discarded ticks or the initial wall-time clamp. Also,
+`frame_us` describes the preceding outer-loop interval while `submit_us` describes
+the current render; actor preparation is outside that submission timer. These
+samples must not be read as paired CPU/GPU breakdowns or sustained 30 Hz operation.
+
+## Historical asset and renderer path
+
+The current optimization pass follows REALTIME_PATH: retain the source view and
+content, recover source model/light/collision semantics, then measure reuse. The
+earlier deadline fallback suggestions below are not active instructions to lower
+fidelity for the performance milestone.
 
 The source r100 runtime streams five DAT archives. At the post-s03 encounter,
 the BLK table keeps blocks 0, 1, and 2 resident alongside the shared room data.
@@ -193,7 +217,7 @@ Stripification, a general portal/PVS builder, renderer replacement, and global
 fast-math changes are not today's default work. No speedup is assumed before
 the same scene is measured again.
 
-## Presentation acceptance
+## Historical presentation acceptance requirements
 
 All of these are required before calling the demo convincing:
 
@@ -224,7 +248,7 @@ protect HUD composition, compare exact asset/build identities, and inspect
 motion. Keep its dirty checkout read-only. RTX Remix and AI-generated appearance
 are not part of the native Dreamcast presentation path.
 
-## If time runs short today
+## Historical deadline fallback
 
 Reduce the walkable area and encounter duration first: 30-45 seconds in one
 finished combat space is preferable for this brief to a longer unfinished tour.
