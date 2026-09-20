@@ -109,10 +109,23 @@ constexpr float kEnemySpawnYaw = 0.0f;
 constexpr float kFarClipDistance = 35.0f;
 #endif
 constexpr float kEnemyMoveSpeed = 1.9f;
-constexpr float kEnemyAttackRange = 2.4f;
+// em10AxeAtkCk admits the normal hatchet attack at sqrt(2890000) source
+// units. Room and actor coordinates use the port's 0.001 metre scale.
+constexpr float kEnemyAttackAcquireRange = 1.7f;
+// The standard axe attack is motion 0x80 with sequence 0x81. Sequence bit 1
+// drives em10AtkCk from source frames 50 through 72. The source motion is
+// authored at 30 Hz even though the baked package may sample every other pose.
+constexpr float kEnemyAttackHitStartSeconds = 50.0f / 30.0f;
+constexpr float kEnemyAttackHitEndSeconds = 72.0f / 30.0f;
+// Normal starts at adaptive rank 5. A connected axe swing receives the
+// source default 15-frame Atk_wait after motion 0x80 completes.
+constexpr float kEnemyAttackCooldownSeconds = 15.0f / 30.0f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
 constexpr int kMagazineSize = 6;
-constexpr int kPlayerMaxHealth = 100;
+// PlayerLifeReset gives Leon 1200 life. Em10AtkTbl[0] gives the type-0 r100
+// hatchet Ganado 380 damage; rank 5 applies a 1.0 LifeDownSet2 multiplier.
+constexpr int kPlayerMaxHealth = 1200;
+constexpr int kEnemyAttackDamage = 380;
 constexpr std::uint32_t kPlayerIdleClip = 0;
 constexpr std::uint32_t kPlayerWalkClip = 1;
 constexpr std::uint32_t kPlayerAimClip = 2;
@@ -172,13 +185,16 @@ struct Enemy {
     int health = kEnemyMaxHealth;
     std::uint32_t animation_clip = 1;
     float animation_frame = 0.0f;
+    float attack_cooldown_seconds = 0.0f;
     bool attack_landed = false;
+    bool attack_sound_played = false;
 };
 
 struct DemoAudio {
     sfxhnd_t fire_0 = SFXHND_INVALID;
     sfxhnd_t fire_2 = SFXHND_INVALID;
     sfxhnd_t reload_16 = SFXHND_INVALID;
+    sfxhnd_t enemy_swing_3d = SFXHND_INVALID;
     bool initialized = false;
 };
 
@@ -295,32 +311,49 @@ bool load_demo_audio(DemoAudio& audio) {
     constexpr const char* fire_0_path = "/rd/wep02-fire-0.wav";
     constexpr const char* fire_2_path = "/rd/wep02-fire-2.wav";
     constexpr const char* reload_path = "/rd/wep02-reload-16.wav";
+    constexpr const char* enemy_swing_path = "/rd/em12-swing-3d.wav";
     const bool fire_0_exists = file_exists(fire_0_path);
     const bool fire_2_exists = file_exists(fire_2_path);
     const bool reload_exists = file_exists(reload_path);
-    if(!fire_0_exists && !fire_2_exists && !reload_exists) {
-        std::printf("re4dc-room: source weapon audio not packaged\n");
+    const bool enemy_swing_exists = file_exists(enemy_swing_path);
+    if(!fire_0_exists && !fire_2_exists && !reload_exists &&
+       !enemy_swing_exists) {
+        std::printf("re4dc-room: source combat audio not packaged\n");
         return true;
     }
-    if(!fire_0_exists || !fire_2_exists || !reload_exists) {
+    const bool any_weapon_audio = fire_0_exists || fire_2_exists ||
+                                  reload_exists;
+    if(any_weapon_audio &&
+       (!fire_0_exists || !fire_2_exists || !reload_exists)) {
         std::printf("re4dc-room: incomplete source weapon audio package\n");
         return false;
     }
     snd_init();
     audio.initialized = true;
-    audio.fire_0 = snd_sfx_load(fire_0_path);
-    audio.fire_2 = snd_sfx_load(fire_2_path);
-    audio.reload_16 = snd_sfx_load(reload_path);
-    if(audio.fire_0 == SFXHND_INVALID || audio.fire_2 == SFXHND_INVALID ||
-       audio.reload_16 == SFXHND_INVALID) {
-        std::printf("re4dc-room: source weapon audio load failed\n");
+    if(any_weapon_audio) {
+        audio.fire_0 = snd_sfx_load(fire_0_path);
+        audio.fire_2 = snd_sfx_load(fire_2_path);
+        audio.reload_16 = snd_sfx_load(reload_path);
+    }
+    if(enemy_swing_exists) {
+        audio.enemy_swing_3d = snd_sfx_load(enemy_swing_path);
+    }
+    if((any_weapon_audio &&
+        (audio.fire_0 == SFXHND_INVALID ||
+         audio.fire_2 == SFXHND_INVALID ||
+         audio.reload_16 == SFXHND_INVALID)) ||
+       (enemy_swing_exists &&
+        audio.enemy_swing_3d == SFXHND_INVALID)) {
+        std::printf("re4dc-room: source combat audio load failed\n");
         snd_sfx_unload_all();
         snd_shutdown();
         audio = DemoAudio{};
         return false;
     }
-    std::printf(
-        "re4dc-room: source wep02 cues loaded fire=0+2 reload=0x16\n");
+    std::printf("re4dc-room: source combat cues loaded "
+                "fire=%d reload=%d enemy_swing=%d\n",
+                any_weapon_audio ? 1 : 0, reload_exists ? 1 : 0,
+                enemy_swing_exists ? 1 : 0);
     return true;
 }
 
@@ -696,10 +729,14 @@ void advance_enemy_animation(Enemy& enemy,
     }
 }
 
+bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
+                             const re4dc::collision::Vec3& start,
+                             const re4dc::collision::Vec3& end);
+
 void update_enemy(Enemy& enemy, Player& player,
                   const re4dc::character::Package& character,
                   const re4dc::collision::Package& collision,
-                  float delta_seconds) {
+                  const DemoAudio& audio, float delta_seconds) {
     if(enemy.health <= 0) {
         enemy.state = EnemyState::Dead;
     }
@@ -719,20 +756,105 @@ void update_enemy(Enemy& enemy, Player& player,
         return;
     }
 
+    if(enemy.attack_cooldown_seconds > 0.0f) {
+        enemy.attack_cooldown_seconds = std::max(
+            0.0f, enemy.attack_cooldown_seconds - delta_seconds);
+    }
+
     const float dx = player.x - enemy.x;
     const float dz = player.z - enemy.z;
     const float distance = std::sqrt(dx * dx + dz * dz);
     const float target_yaw = std::atan2(dx, dz);
+
+    // Once motion 0x80 starts, the source routine completes it even when the
+    // player moves out of reach. Its SEQ hit flag is evaluated throughout the
+    // authored window, so a late dodge can make the sweep miss.
+    if(enemy.state == EnemyState::Attack) {
+        const auto& clip = character.clips()[enemy.animation_clip];
+        const float previous_attack_seconds = enemy.animation_frame /
+                                              clip.frames_per_second;
+        // Rank 5 initializes Timer to 20. The source pre-decrements it and
+        // turns through the first 19 ticks by at most pi/16 each tick. This
+        // sequence has no Free bit-3 continuation after that timer expires.
+        if(previous_attack_seconds < 19.0f / 30.0f) {
+            const float attack_turn = std::clamp(
+                wrap_angle(target_yaw - enemy.yaw),
+                -0.19634955f, 0.19634955f);
+            enemy.yaw = wrap_angle(enemy.yaw + attack_turn);
+        }
+        advance_enemy_animation(enemy, character, delta_seconds, false);
+        const float attack_seconds = enemy.animation_frame /
+                                     clip.frames_per_second;
+        constexpr float swing_sound_seconds = 37.0f / 30.0f;
+        if(!enemy.attack_sound_played &&
+           previous_attack_seconds < swing_sound_seconds &&
+           attack_seconds >= swing_sound_seconds) {
+            enemy.attack_sound_played = true;
+            if(audio.enemy_swing_3d != SFXHND_INVALID) {
+                snd_sfx_play(audio.enemy_swing_3d, 255, 128);
+            }
+            std::printf("re4dc-room: source axe swing cue frame=37\n");
+        }
+        if(!enemy.attack_landed && !player.dead &&
+           attack_seconds >= kEnemyAttackHitStartSeconds &&
+           attack_seconds <= kEnemyAttackHitEndSeconds) {
+            const float hit_dx = player.x - enemy.x;
+            const float hit_dz = player.z - enemy.z;
+            const float hit_distance = std::sqrt(
+                hit_dx * hit_dx + hit_dz * hit_dz);
+            const float hit_yaw = std::atan2(hit_dx, hit_dz);
+            const bool facing = std::fabs(wrap_angle(hit_yaw - enemy.yaw)) <=
+                                kPi * 0.25f;
+            const re4dc::collision::Vec3 enemy_chest = {
+                enemy.x, enemy.y + 1.5f, enemy.z};
+            const re4dc::collision::Vec3 player_chest = {
+                player.x, player.y + 1.5f, player.z};
+            const bool path_clear = !segment_blocked_by_wall(
+                collision, enemy_chest, player_chest);
+            if(hit_distance <= kEnemyAttackAcquireRange && facing &&
+               path_clear) {
+                enemy.attack_landed = true;
+                player.health = std::max(
+                    0, player.health - kEnemyAttackDamage);
+                std::printf(
+                    "re4dc-room: source axe hit frame=%.1f player_hp=%d\n",
+                    attack_seconds * 30.0f, player.health);
+                if(player.health == 0) {
+                    player.dead = true;
+                }
+            }
+        }
+        if(enemy.animation_frame >=
+           static_cast<float>(clip.frame_count - 1U)) {
+            enemy.state = EnemyState::Chase;
+            enemy.attack_cooldown_seconds = enemy.attack_landed
+                ? kEnemyAttackCooldownSeconds : 0.0f;
+            enemy.attack_landed = false;
+            enemy.attack_sound_played = false;
+            set_enemy_clip(enemy, 1);
+        }
+        return;
+    }
+
     const float turn = std::clamp(wrap_angle(target_yaw - enemy.yaw),
                                   -kEnemyTurnSpeed * delta_seconds,
                                   kEnemyTurnSpeed * delta_seconds);
     enemy.yaw = wrap_angle(enemy.yaw + turn);
-    if(player.dead || distance > kEnemyAttackRange) {
+
+    const re4dc::collision::Vec3 enemy_chest = {
+        enemy.x, enemy.y + 1.5f, enemy.z};
+    const re4dc::collision::Vec3 player_chest = {
+        player.x, player.y + 1.5f, player.z};
+    const bool attack_path_blocked = segment_blocked_by_wall(
+        collision, enemy_chest, player_chest);
+    if(player.dead || distance > kEnemyAttackAcquireRange ||
+       enemy.attack_cooldown_seconds > 0.0f || attack_path_blocked) {
         enemy.state = EnemyState::Chase;
         set_enemy_clip(enemy, 1);
         if(!player.dead && distance > 0.001f) {
             const float step = std::min(kEnemyMoveSpeed * delta_seconds,
-                                        distance - kEnemyAttackRange * 0.85f);
+                                        distance -
+                                            kEnemyAttackAcquireRange * 0.85f);
             const float old_x = enemy.x;
             const float old_z = enemy.z;
             enemy.x += dx / distance * std::max(step, 0.0f);
@@ -754,24 +876,8 @@ void update_enemy(Enemy& enemy, Player& player,
     if(enemy.state != EnemyState::Attack) {
         enemy.state = EnemyState::Attack;
         enemy.attack_landed = false;
+        enemy.attack_sound_played = false;
         set_enemy_clip(enemy, 2);
-    }
-    const auto& clip = character.clips()[enemy.animation_clip];
-    const float previous = enemy.animation_frame;
-    advance_enemy_animation(enemy, character, delta_seconds, false);
-    const float strike_frame = static_cast<float>(clip.frame_count) * 0.52f;
-    if(!enemy.attack_landed && previous < strike_frame &&
-       enemy.animation_frame >= strike_frame) {
-        enemy.attack_landed = true;
-        player.health = std::max(0, player.health - 25);
-        std::printf("re4dc-room: ganado attack player_hp=%d\n", player.health);
-        if(player.health == 0) {
-            player.dead = true;
-        }
-    }
-    if(enemy.animation_frame >= static_cast<float>(clip.frame_count - 1U)) {
-        enemy.animation_frame = 0.0f;
-        enemy.attack_landed = false;
     }
 }
 
@@ -822,9 +928,9 @@ bool segment_intersects_triangle(
     return fraction > 0.001f && fraction < 0.999f;
 }
 
-bool shot_blocked_by_wall(const re4dc::collision::Package& collision,
-                          const re4dc::collision::Vec3& start,
-                          const re4dc::collision::Vec3& end) {
+bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
+                             const re4dc::collision::Vec3& start,
+                             const re4dc::collision::Vec3& end) {
     const auto* vertices = collision.vertices();
     const auto* polygons = collision.polygons();
     const std::uint32_t first_wall =
@@ -860,7 +966,7 @@ bool shot_hits_enemy(const Player& player, const Enemy& enemy,
         player.x, player.y + 1.35f, player.z};
     const re4dc::collision::Vec3 chest = {
         enemy.x, enemy.y + 1.20f, enemy.z};
-    return !shot_blocked_by_wall(collision, muzzle, chest);
+    return !segment_blocked_by_wall(collision, muzzle, chest);
 }
 
 void update_combat(Player& player, Enemy& enemy, const Input& input,
@@ -1704,9 +1810,11 @@ int main() {
 #if defined(RE4DC_SCENE_R100)
         std::printf("re4dc-room: r100 30-second presentation trace enabled\n");
 #else
-        enemy.x = player.x + std::sin(player.yaw) * kEnemyAttackRange * 0.85f;
-        enemy.z = player.z + std::cos(player.yaw) * kEnemyAttackRange * 0.85f;
-        player.health = 25;
+        enemy.x = player.x + std::sin(player.yaw) *
+                   kEnemyAttackAcquireRange * 0.85f;
+        enemy.z = player.z + std::cos(player.yaw) *
+                   kEnemyAttackAcquireRange * 0.85f;
+        player.health = kEnemyAttackDamage;
 #endif
     }
     float initial_floor = player.y;
@@ -1787,7 +1895,7 @@ int main() {
             update_animation(player, leon, input, kSimulationDeltaSeconds);
             update_combat(player, enemy, input, fire_pressed, reload_pressed,
                           kSimulationDeltaSeconds, collision, leon, audio);
-            update_enemy(enemy, player, ganado, collision,
+            update_enemy(enemy, player, ganado, collision, audio,
                          kSimulationDeltaSeconds);
             const float goal_dx = player.x - kGoalX;
             const float goal_dz = player.z - kGoalZ;

@@ -1,4 +1,5 @@
 import importlib.util
+import math
 from pathlib import Path
 import struct
 import unittest
@@ -77,9 +78,26 @@ class CharacterConverterTests(unittest.TestCase):
         )
         self.assertEqual(
             MODULE.parse_rigid_attachment("handgun:wep02.drs:2:1:10"),
-            ("handgun", "wep02.drs", 2, 1, 10),
+            ("handgun", "wep02.drs", 2, 1, 10, (0.0, 0.0, 0.0), 0.0),
+        )
+        self.assertEqual(
+            MODULE.parse_rigid_attachment(
+                "hatchet:em12.drs:616:617:10:-313.85:-21.2:102.21:-1.0402162"
+            ),
+            (
+                "hatchet", "em12.drs", 616, 617, 10,
+                (-313.85, -21.2, 102.21), -1.0402162,
+            ),
         )
         self.assertEqual(MODULE.sampled_frame_indices(7, 2), [0, 2, 4, 6])
+
+    def test_rigid_attachment_applies_source_yaw_then_translation(self):
+        point = MODULE.transform_rigid_point(
+            (100.0, 20.0, 0.0), (10.0, -5.0, 30.0), math.pi * 0.5
+        )
+        self.assertAlmostEqual(point[0], 10.0)
+        self.assertAlmostEqual(point[1], 15.0)
+        self.assertAlmostEqual(point[2], -70.0)
 
     def test_clusters_every_animation_frame_and_removes_degenerate_faces(self):
         positions = [

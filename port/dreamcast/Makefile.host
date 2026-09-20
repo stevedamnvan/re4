@@ -15,13 +15,14 @@ R10D_CLUSTER_SIZE ?= 0
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
 DTK ?= $(REPO_ROOT)/build/tools/dtk
 SOURCE_AUDIO_DIR ?= build/private/source-audio
+SOURCE_ENEMY_AUDIO_DIR ?= build/private/source-enemy-audio
 LEON_CHARACTER ?= build/private/leon.re4chr
 GANADO_CHARACTER ?= build/private/ganado.re4chr
 CHARACTER_CLUSTER_MM ?= 0
 CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado source-weapon-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -73,11 +74,15 @@ character-leon:
 
 character-ganado:
 	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
-		--cache-dir build/private/disc-cache --model-archive em10.drs --model-entry 440 \
-		--clip idle:em10.drs:1 --clip walk:em10.drs:4 \
-		--clip attack:em10.drs:130 --clip hit:em10.drs:42 \
-		--clip death:em10.drs:103 --sample-step 2 \
-		--cluster-mm $(CHARACTER_CLUSTER_MM) \
+		--cache-dir build/private/disc-cache --model-archive em12.drs --model-entry 440 \
+		--attachment head:em12.drs:442:441 \
+		--attachment right-hand:em12.drs:447:441 \
+		--attachment left-hand:em12.drs:452:441 \
+		--rigid-attachment hatchet:em12.drs:616:617:10:-313.85:-21.2:102.21:-1.0402162 \
+		--clip idle:em12.drs:1 --clip walk:em12.drs:4 \
+		--clip attack:em12.drs:128 --clip hit:em12.drs:42 \
+		--clip death:em12.drs:103 --sample-step 2 \
+		--cluster-mm $(CHARACTER_CLUSTER_MM) --quantum-mm 0.125 \
 		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(GANADO_CHARACTER)
 
@@ -88,7 +93,12 @@ source-weapon-audio:
 	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_AUDIO_DIR)/wep02.drs 2 $(SOURCE_AUDIO_DIR)/wep02-cue02.wav
 	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_AUDIO_DIR)/wep02.drs 0x16 $(SOURCE_AUDIO_DIR)/wep02-cue16.wav
 
-demo-r10d: room-r10d texture-r10d character-leon character-ganado source-weapon-audio
+source-enemy-audio:
+	@mkdir -p $(SOURCE_ENEMY_AUDIO_DIR)
+	$(DTK) vfs cp $(RE4_DISC):/files/em/em12.drs $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs 0x3d $(SOURCE_ENEMY_AUDIO_DIR)/em12-cue3d.wav
+
+demo-r10d: room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

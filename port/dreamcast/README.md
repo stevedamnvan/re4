@@ -109,11 +109,10 @@ source-derived actor animation, and the combat loop. Controls are stick/D-pad
 move and turn, right trigger or Y aim, A fire, X reload, B restart, and START
 exit. Defeat the Ganado before the route marker unlocks.
 The generated packages stay ignored. The first broad orbit proof and the
-unoptimized gameplay view miss the frame budget. The default conversion now
-uses an 8 m room cluster and 75 mm per-batch animated-character cluster; pass
-`R10D_CLUSTER_SIZE=0 CHARACTER_CLUSTER_MM=0` to retain full source meshes for
-comparison. The runtime uses a declared 35 m horizon for this bounded route,
-not as a claim about the GameCube draw distance. See
+unoptimized gameplay view miss the frame budget. Full source meshes are the
+default acceptance build; coarse clustering remains an explicit experiment.
+The runtime uses a declared 35 m horizon for this bounded route, not as a
+claim about the GameCube draw distance. See
 [the room SH-4 baseline](docs/ROOM_SH4_BASELINE.md).
 The integrated movement/collision evidence and its remaining P0 limits are in
 [the walkable r10d checkpoint](docs/WALKABLE_R10D_BASELINE.md).
@@ -122,32 +121,34 @@ Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
 The measured LOD experiment, complete-loop replay, and remaining hardware and
 presentation limits are in [the P3 prototype checkpoint](docs/P3_PLAYABLE_BASELINE.md).
 
-The source weapon-audio target privately extracts `wep02.drs` from Disc 1 and
-decodes the GameCube DSP-ADPCM cues used by the starting handgun. The fire
-event plays cues 0 and 2 together exactly as `cObjMauser::moveFire` requests;
-the starting reload uses cue `0x16`. No DRS, encoded sample, or decoded WAV is
-tracked by Git:
+The source audio targets privately extract `wep02.drs` and `em12.drs` from
+Disc 1 and decode their GameCube DSP-ADPCM cues. The handgun fire event plays
+cues 0 and 2 together exactly as `cObjMauser::moveFire` requests; the starting
+reload uses cue `0x16`; and the r100 hatchet swing plays cue `0x3d` on source
+sequence frame 37. No DRS, encoded sample, or decoded WAV is tracked by Git:
 
 ```sh
-make -C port/dreamcast -f Makefile.host source-weapon-audio
+make -C port/dreamcast -f Makefile.host source-weapon-audio source-enemy-audio
 source port/dreamcast/kos-env.sh
 make -C port/dreamcast/room \
   FIRE_SOUND_0=../build/private/source-audio/wep02-cue00.wav \
   FIRE_SOUND_2=../build/private/source-audio/wep02-cue02.wav \
-  RELOAD_SOUND=../build/private/source-audio/wep02-cue16.wav
+  RELOAD_SOUND=../build/private/source-audio/wep02-cue16.wav \
+  ENEMY_SWING_SOUND=../build/private/source-enemy-audio/em12-cue3d.wav
 ```
 
 ## Near-term sequence
 
-1. Capture the current appearance and choose one small r10d encounter area.
-2. Produce a native textured scene, then complete textured Leon, his handgun,
-   and one Ganado with the visible action animations. Review moving output.
-3. Correct enemy wall collision, shot occlusion, camera/clipping, and visible
-   contact feedback; add core sound effects, a legible HUD, and completion/retry.
-4. Measure the entire encounter, test manual play and repeated resets, then
-   package a private Flycast launch folder and short recording for today.
-5. Validate the loading route, performance, memory, audio, and controller on
-   physical Dreamcast afterward.
+1. Keep the 30-second r100 cabin encounter on source camera, placement, room,
+   actor, motion, collision, and sound data.
+2. Replace the remaining direct-pursuit and simplified melee-sweep behavior
+   along that one playable route with source behavior.
+3. Add source hit reactions, impact effects, enemy voice, and room ambience;
+   review moving output after each fidelity change.
+4. Test manual play and repeated resets, then package the private Flycast demo
+   and short recording.
+5. Validate loading, memory, audio, controller, and output on physical
+   Dreamcast afterward.
 
 The authoritative next-task order and acceptance criteria are in
 [the playable backlog](docs/PLAYABLE_PATH.md). The

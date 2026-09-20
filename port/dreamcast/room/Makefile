@@ -11,6 +11,7 @@ AUTOPLAY_FLAG ?=
 FIRE_SOUND_0 ?=
 FIRE_SOUND_2 ?=
 RELOAD_SOUND ?=
+ENEMY_SWING_SOUND ?=
 DEMO_SCENE ?= r10d
 DEMO_RESOLUTION ?= 240p
 KOS_ROMDISK_DIR = ../build/room-romdisk
@@ -56,7 +57,8 @@ prepare-romdisk:
 	rm -f $(KOS_ROMDISK_DIR)/autoplay.flag
 	rm -f $(KOS_ROMDISK_DIR)/wep02-fire-0.wav \
 		$(KOS_ROMDISK_DIR)/wep02-fire-2.wav \
-		$(KOS_ROMDISK_DIR)/wep02-reload-16.wav
+		$(KOS_ROMDISK_DIR)/wep02-reload-16.wav \
+		$(KOS_ROMDISK_DIR)/em12-swing-3d.wav
 	@if [ -n "$(AUTOPLAY_FLAG)" ]; then \
 		test -f "$(AUTOPLAY_FLAG)" || { echo 'missing autoplay flag: $(AUTOPLAY_FLAG)' >&2; exit 1; }; \
 		cp "$(AUTOPLAY_FLAG)" $(KOS_ROMDISK_DIR)/autoplay.flag; \
@@ -70,6 +72,10 @@ prepare-romdisk:
 		cp "$(FIRE_SOUND_0)" $(KOS_ROMDISK_DIR)/wep02-fire-0.wav; \
 		cp "$(FIRE_SOUND_2)" $(KOS_ROMDISK_DIR)/wep02-fire-2.wav; \
 		cp "$(RELOAD_SOUND)" $(KOS_ROMDISK_DIR)/wep02-reload-16.wav; \
+	fi
+	@if [ -n "$(ENEMY_SWING_SOUND)" ]; then \
+		test -f "$(ENEMY_SWING_SOUND)" || { echo 'missing enemy swing cue 0x3d: $(ENEMY_SWING_SOUND)' >&2; exit 1; }; \
+		cp "$(ENEMY_SWING_SOUND)" $(KOS_ROMDISK_DIR)/em12-swing-3d.wav; \
 	fi
 
 romdisk.img: prepare-romdisk

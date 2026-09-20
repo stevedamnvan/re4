@@ -401,16 +401,35 @@ def parse_attachment(specification):
 
 def parse_rigid_attachment(specification):
     fields = specification.split(":")
-    if len(fields) != 5:
+    if len(fields) not in (5, 9):
         raise argparse.ArgumentTypeError(
-            "rigid attachment must be NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY:PARENT_BONE"
+            "rigid attachment must be "
+            "NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY:PARENT_BONE"
+            "[:TX:TY:TZ:YAW]"
         )
-    name, archive_name, model_entry, texture_entry, parent_bone = fields
+    name, archive_name, model_entry, texture_entry, parent_bone = fields[:5]
     if not name or not archive_name:
         raise argparse.ArgumentTypeError("attachment name and archive must not be empty")
+    translation = (0.0, 0.0, 0.0)
+    yaw = 0.0
+    if len(fields) == 9:
+        translation = tuple(float(value) for value in fields[5:8])
+        yaw = float(fields[8])
     return (
         name, archive_name, int(model_entry, 0), int(texture_entry, 0),
-        int(parent_bone, 0),
+        int(parent_bone, 0), translation, yaw,
+    )
+
+
+def transform_rigid_point(point, translation, yaw):
+    """Apply the child cCoord Y rotation and translation before parenting."""
+    x, y, z = point
+    sine = math.sin(yaw)
+    cosine = math.cos(yaw)
+    return (
+        cosine * x + sine * z + translation[0],
+        y + translation[1],
+        -sine * x + cosine * z + translation[2],
     )
 
 
@@ -458,9 +477,13 @@ def convert(args):
 
     archives = {args.model_archive: model_archive}
     component_specs = [
-        ("body", args.model_archive, args.model_entry, texture_entry_index, None)
+        ("body", args.model_archive, args.model_entry, texture_entry_index,
+         None, (0.0, 0.0, 0.0), 0.0)
     ]
-    component_specs.extend((*attachment, None) for attachment in args.attachment)
+    component_specs.extend(
+        (*attachment, None, (0.0, 0.0, 0.0), 0.0)
+        for attachment in args.attachment
+    )
     component_specs.extend(args.rigid_attachment)
     components = []
     component_manifest = []
@@ -475,7 +498,7 @@ def convert(args):
     source_triangle_count = 0
 
     for (component_name, archive_name, model_index, texture_index,
-         parent_bone) in component_specs:
+         parent_bone, rigid_translation, rigid_yaw) in component_specs:
         if archive_name not in archives:
             archives[archive_name] = load_archive(args.source, archive_name, cache_dir)
         component_archive = archives[archive_name]
@@ -537,7 +560,7 @@ def convert(args):
             ))
         components.append((
             component_name, source_positions, palette_indices, weights,
-            draw_sources, parent_bone,
+            draw_sources, parent_bone, rigid_translation, rigid_yaw,
         ))
         source_vertex_count += len(source_positions)
         source_triangle_count += len(component_indices) // 3
@@ -553,6 +576,8 @@ def convert(args):
             "draw_vertices": len(draw_sources),
             "triangles": len(component_indices) // 3,
             "parent_bone": parent_bone,
+            "translation": list(rigid_translation),
+            "yaw": rigid_yaw,
         })
 
     frames = []
@@ -576,7 +601,8 @@ def convert(args):
             pose = player.frame(frame)
             combined_frame = []
             for (_, source_positions, palette_indices, weights,
-                 draw_sources, parent_bone) in components:
+                 draw_sources, parent_bone, rigid_translation,
+                 rigid_yaw) in components:
                 if parent_bone is None:
                     source_frame = skin_frame(
                         pose, rest_world, source_positions, palette_indices,
@@ -584,7 +610,12 @@ def convert(args):
                     )
                 else:
                     source_frame = [
-                        transform_point(pose.mat[parent_bone], position)
+                        transform_point(
+                            pose.mat[parent_bone],
+                            transform_rigid_point(
+                                position, rigid_translation, rigid_yaw
+                            ),
+                        )
                         for position in source_positions
                     ]
                 combined_frame.extend(
