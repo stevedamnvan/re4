@@ -209,6 +209,11 @@ The r100 production room now uses conservative one-metre opaque child cells
 while retaining source-order alpha batches and every source triangle. The
 20.6% matched frame reduction and the rejected finer split are recorded in
 [the R3k source-child cell checkpoint](docs/R3K_SOURCE_CHILD_CELL_CHECKPOINT.md).
+The source handgun character assembly now uses the weapon-specific Leon hands,
+the source-neutral hidden expression overlay, the right-handed Ganado hand pair,
+and source-facing actor culling. The defect evidence and remaining character-system
+boundary are recorded in
+[the R3l source character-assembly checkpoint](docs/R3L_SOURCE_CHARACTER_ASSEMBLY_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 

@@ -106,12 +106,11 @@ character-leon:
 	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
 		--cache-dir build/private/disc-cache --model-archive pl00.drs --model-entry 0 \
 		--attachment costume:pl00.drs:6:1 \
-		--attachment face:pl00.drs:9:1 \
 		--attachment head:pl00.drs:4:3 \
 		--attachment hair:pl00.drs:2:3 \
 		--attachment eyes:pl00.drs:5:3 \
-		--attachment right-hand:pl00.drs:14:13 \
-		--attachment left-hand:pl00.drs:17:13 \
+		--attachment right-hand:wep02.drs:6:pl00.drs:13 \
+		--attachment left-hand:pl00.drs:20:13 \
 		--rigid-attachment handgun:wep02.drs:2:1:10 \
 		--rigid-marker gun-muzzle:10:0:0:0:0:234.5:-24:38.33 \
 		--rigid-marker gun-minus-x:10:0:0:0:0:-265.5:-24:38.33 \
@@ -144,7 +143,7 @@ character-ganado:
 		--cache-dir build/private/disc-cache --model-archive em12.drs --model-entry 440 \
 		--attachment head:em12.drs:442:441 \
 		--attachment right-hand:em12.drs:447:441 \
-		--attachment left-hand:em12.drs:452:441 \
+		--attachment left-hand:em12.drs:449:441 \
 		--rigid-attachment hatchet:em12.drs:616:617:10:-313.85:-21.2:102.21:-1.0402162 \
 		--rigid-marker em-hit0-bottom:4:0:0:0:0:0:0:0 \
 		--rigid-marker em-hit0-top:4:0:0:0:0:0:110:0 \

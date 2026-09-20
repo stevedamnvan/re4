@@ -98,7 +98,13 @@ class CharacterConverterTests(unittest.TestCase):
             MODULE.parse_clip("aim-up:wep02.drs:0x28:0")
         self.assertEqual(
             MODULE.parse_attachment("hair:pl00.drs:2:3"),
-            ("hair", "pl00.drs", 2, 3),
+            ("hair", "pl00.drs", 2, "pl00.drs", 3),
+        )
+        self.assertEqual(
+            MODULE.parse_attachment(
+                "right-hand:wep02.drs:6:pl00.drs:13"
+            ),
+            ("right-hand", "wep02.drs", 6, "pl00.drs", 13),
         )
         self.assertEqual(
             MODULE.parse_rigid_attachment("handgun:wep02.drs:2:1:10"),

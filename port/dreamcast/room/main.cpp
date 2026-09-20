@@ -4122,7 +4122,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                 };
             }
             const std::uint32_t emitted = clip_projected_triangle(
-                source_triangle, submit_vertices + submit_count, kCullBack);
+                source_triangle, submit_vertices + submit_count, kCullFront);
             submit_count += emitted * 3U;
             stats.character_vertex_records += emitted * 3U;
             triangles += emitted;
@@ -5045,7 +5045,7 @@ int main() {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
-    if(leon.header().position_count != 5745U) {
+    if(leon.header().position_count != 5687U) {
         std::printf(
             "re4dc-room: r100 Leon package needs source gun and hit-capsule markers\n");
         return 1;
@@ -5056,9 +5056,9 @@ int main() {
         return 1;
     }
     if(leon.header().version != re4dc::character::kVersion ||
-       leon.header().skinned_position_count != 5731U ||
-       leon.header().source_normal_count != 5860U ||
-       leon.header().normal_matrix_count != 394U ||
+       leon.header().skinned_position_count != 5673U ||
+       leon.header().source_normal_count != 5774U ||
+       leon.header().normal_matrix_count != 393U ||
        ganado.header().version != re4dc::character::kVersion ||
        ganado.header().skinned_position_count != 1667U ||
        ganado.header().source_normal_count != 1818U ||
@@ -5225,10 +5225,10 @@ int main() {
                              texture->width, texture->height,
                              character_textures.pvr_texture(texture_index),
                              PVR_FILTER_BILINEAR);
-            // The existing CPU path accepts negative screen-space area.
-            // Preserve that winding while allowing native source strips to
-            // rely on the PVR's alternating-strip culling.
-            context.gen.culling = PVR_CULLING_CW;
+            // Source Model::CullMode defaults to GX_CULL_FRONT.  The model
+            // conversion preserves GX primitive order, so retain that source
+            // cull direction for both native strips and clipped triangles.
+            context.gen.culling = PVR_CULLING_CCW;
             context.gen.fog_type = PVR_FOG_TABLE;
             context.gen.specular = PVR_SPECULAR_ENABLE;
             if(alpha[batch_index]) {

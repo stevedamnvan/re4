@@ -553,14 +553,23 @@ def parse_clip(specification):
 
 def parse_attachment(specification):
     fields = specification.split(":")
-    if len(fields) != 4:
+    if len(fields) not in (4, 5):
         raise argparse.ArgumentTypeError(
-            "attachment must be NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY"
+            "attachment must be "
+            "NAME:MODEL_ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY or "
+            "NAME:MODEL_ARCHIVE:MODEL_ENTRY:TEXTURE_ARCHIVE:TEXTURE_ENTRY"
         )
-    name, archive_name, model_entry, texture_entry = fields
-    if not name or not archive_name:
+    if len(fields) == 4:
+        name, model_archive, model_entry, texture_entry = fields
+        texture_archive = model_archive
+    else:
+        name, model_archive, model_entry, texture_archive, texture_entry = fields
+    if not name or not model_archive or not texture_archive:
         raise argparse.ArgumentTypeError("attachment name and archive must not be empty")
-    return name, archive_name, int(model_entry, 0), int(texture_entry, 0)
+    return (
+        name, model_archive, int(model_entry, 0), texture_archive,
+        int(texture_entry, 0),
+    )
 
 
 def parse_rigid_attachment(specification):
@@ -690,14 +699,20 @@ def convert(args):
 
     archives = {args.model_archive: model_archive}
     component_specs = [
-        ("body", args.model_archive, args.model_entry, texture_entry_index,
+        ("body", args.model_archive, args.model_entry, args.model_archive,
+         texture_entry_index,
          None, (0.0, 0.0, 0.0), 0.0)
     ]
     component_specs.extend(
         (*attachment, None, (0.0, 0.0, 0.0), 0.0)
         for attachment in args.attachment
     )
-    component_specs.extend(args.rigid_attachment)
+    component_specs.extend(
+        (name, archive_name, model_index, archive_name, texture_index,
+         parent_bone, translation, yaw)
+        for (name, archive_name, model_index, texture_index, parent_bone,
+             translation, yaw) in args.rigid_attachment
+    )
     components = []
     component_manifest = []
     positions = []
@@ -722,7 +737,8 @@ def convert(args):
     normal_matrix_count = 0
     source_triangle_count = 0
 
-    for (component_name, archive_name, model_index, texture_index,
+    for (component_name, archive_name, model_index, texture_archive_name,
+         texture_index,
          parent_bone, rigid_translation, rigid_yaw) in component_specs:
         if archive_name not in archives:
             archives[archive_name] = load_archive(args.source, archive_name, cache_dir)
@@ -754,9 +770,14 @@ def convert(args):
                 f"is outside the base skeleton"
             )
 
-        texture_source_key = (archive_name, texture_index)
+        if texture_archive_name not in archives:
+            archives[texture_archive_name] = load_archive(
+                args.source, texture_archive_name, cache_dir
+            )
+        texture_archive = archives[texture_archive_name]
+        texture_source_key = (texture_archive_name, texture_index)
         if texture_source_key not in texture_sources:
-            texture_entry = component_archive.entry(texture_index)
+            texture_entry = texture_archive.entry(texture_index)
             if texture_entry.tag != "TPL":
                 raise ValueError(
                     f"component {component_name!r} texture entry is not TPL"
@@ -838,6 +859,7 @@ def convert(args):
             "archive": archive_name,
             "model_entry": model_index,
             "model_sha256": hashlib.sha256(component_entry.data).hexdigest(),
+            "texture_archive": texture_archive_name,
             "texture_entry": texture_index,
             "texture_sha256": hashlib.sha256(texture_entry.data).hexdigest(),
             "texture_images": image_count,
