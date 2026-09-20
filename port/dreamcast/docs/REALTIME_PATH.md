@@ -36,6 +36,9 @@ reducing the matched interval by a further 2.3 ms while retaining the old path
 for every batch whose source triangle order would change.
 The guarded room-normal invariant and rejected actor equivalent are recorded in
 [R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md](R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md).
+The source cut's two camera-relative directional room lights are specialized,
+with an exact packed-color comparison and general fallback, in
+[R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md](R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md).
 
 ## Objective and boundaries
 

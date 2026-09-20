@@ -180,6 +180,10 @@ changing source blend order; the additional 2.3 ms reduction is recorded in
 The room-lighting path now validates its authored unit normals once and avoids
 renormalizing them per frame; the packed-color proof and bounded result are in
 [the R3d room-normal checkpoint](docs/R3D_VALIDATED_ROOM_NORMALS_CHECKPOINT.md).
+The two source-selected camera-relative room lights now bypass the general
+nine-light evaluator with an exact packed-color fallback gate; the 22.7 ms
+matched reduction is recorded in
+[the R3e compact room-light checkpoint](docs/R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 

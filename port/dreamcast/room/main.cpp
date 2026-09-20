@@ -2497,6 +2497,7 @@ constexpr std::size_t kSourceLightCount =
     sizeof(kSourceLights) / sizeof(kSourceLights[0]);
 PreparedSourceLight g_prepared_source_lights[kSourceLightCount]{};
 std::uint32_t g_source_dynamic_light_mask = 0U;
+bool g_room_dynamic_light_fast_path = false;
 constexpr std::uint32_t kRoomStaticLightingVertexCapacity = 45000U;
 float g_room_static_lighting[kRoomStaticLightingVertexCapacity * 3U]{};
 std::uint8_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
@@ -2545,6 +2546,10 @@ void prepare_source_lights() {
                 1.0f / std::max(0.0001f, 1.0f - prepared.spot_cutoff);
         }
     }
+    constexpr std::uint32_t kExpectedRoomDynamicLights =
+        (1U << 1U) | (1U << 5U);
+    g_room_dynamic_light_fast_path =
+        g_source_dynamic_light_mask == kExpectedRoomDynamicLights;
 }
 
 void set_source_lighting_camera(const point_t& eye, const point_t& target,
@@ -2654,6 +2659,31 @@ void accumulate_source_lighting(float px, float py, float pz,
         green += light.green * attenuation * diffuse;
         blue += light.blue * attenuation * diffuse;
     }
+}
+
+void accumulate_room_dynamic_lighting(float nx, float ny, float nz,
+                                      float& red, float& green, float& blue,
+                                      std::uint32_t light_selection) {
+    const auto apply_directional = [&](std::size_t index) {
+        if((light_selection & (1U << index)) == 0U) {
+            return;
+        }
+        const SourceLight& light = kSourceLights[index];
+        const PreparedSourceLight& prepared =
+            g_prepared_source_lights[index];
+        const float diffuse = std::max(
+            0.0f, nx * prepared.current_direction_x +
+                      ny * prepared.current_direction_y +
+                      nz * prepared.current_direction_z);
+        red += light.red * light.intensity * diffuse;
+        green += light.green * light.intensity * diffuse;
+        blue += light.blue * light.intensity * diffuse;
+    };
+    // r100 cut 0 has exactly two camera-relative type-5 lights. Retain their
+    // source iteration order while avoiding seven rejected light tests and
+    // the general point/spot setup for every static room vertex.
+    apply_directional(1U);
+    apply_directional(5U);
 }
 
 void evaluate_source_lighting(float px, float py, float pz,
@@ -3138,12 +3168,19 @@ const RenderVertex& cached_room_vertex(
         light_red = source[0];
         light_green = source[1];
         light_blue = source[2];
-        accumulate_source_lighting(
-            input.x, input.y, input.z,
-            input.nx, input.ny, input.nz,
-            light_red, light_green, light_blue,
-            light_selection & g_source_dynamic_light_mask,
-            g_room_normals_are_unit);
+        const std::uint32_t dynamic_selection =
+            light_selection & g_source_dynamic_light_mask;
+        if(g_room_dynamic_light_fast_path && g_room_normals_are_unit) {
+            accumulate_room_dynamic_lighting(
+                input.nx, input.ny, input.nz,
+                light_red, light_green, light_blue, dynamic_selection);
+        } else {
+            accumulate_source_lighting(
+                input.x, input.y, input.z,
+                input.nx, input.ny, input.nz,
+                light_red, light_green, light_blue, dynamic_selection,
+                g_room_normals_are_unit);
+        }
         light_red = std::clamp(light_red, 0.0f, 1.0f);
         light_green = std::clamp(light_green, 0.0f, 1.0f);
         light_blue = std::clamp(light_blue, 0.0f, 1.0f);
