@@ -222,14 +222,23 @@ before/after timing and memory, and end in a keep-or-revert decision.
    (vertex loads, static light loads, `mat_trans_single` register traffic,
    `shade_color`) and the per-strip overhead of the sphere test, whose basis
    and eye globals are reloaded per strip. Actor lighting is 14.189 ms
-   after R3w with 66 memory instructions per normal; the exact remaining
-   restructurings are one normalization per source normal instead of per
-   entry (6,413 entries over 5,774 normals for Leon) and per-position
-   evaluation of the point and spot terms. R4g adds a measured target here:
-   at `-O3` the per-normal loop body is 654 instructions and 166 memory
+   after R3w with 66 memory instructions per normal. R4g gives the target
+   here: at `-O3` the per-normal loop body is 654 instructions and 166 memory
    operations against 297 and 66 at `-O2`, doing identical floating-point work,
    so a loop the optimizer cannot inflate is worth up to 2 ms. The build-policy
-   routes to that saving are closed. `project_character()` is 5.820 ms
+   routes to that saving are closed, and so is caching per-entry inputs.
+   [R4H](R4H_NORMAL_NORMALIZATION_HOIST_CHECKPOINT.md) hoisted normalization to
+   one call per source normal, proved it bit-exact over 15.8 million entries and
+   measured it 0.240 ms *slower*: the transformed normal is reused 1.095 times,
+   and a cache at that reuse factor costs more memory traffic than the 721
+   duplicate normalizations it removes. Per-position reuse of the point and spot
+   terms is the same trade with a worse constant, reuse 1.133 over a payload
+   several times larger and scattered rather than streamed, so it is recorded
+   there rather than built. What remains untouched is the loop-invariant data
+   itself: the `PreparedActorLight` fields are re-read for every light on every
+   entry and the branch on `type` is invariant per light, so splitting the
+   prepared lights into type-specific lists once per actor attacks the memory
+   traffic with no reuse factor to depend on. `project_character()` is 5.820 ms
    at roughly 200 memory instructions per position and the actor packet loop
    in `draw_character()` 11.789 ms; both should be read the same way. Count
    with `tools/sh4_loop_cost.py`, change the data layout, keep the arithmetic
@@ -471,6 +480,11 @@ not the task scheduler:
   compilation context inside `main.cpp`, not from the level, so no split can
   keep it. Attacking the regression now means restructuring the per-normal loop,
   which belongs to queue item 1.
+- R4h: normalization hoisted out of the per-entry loop, built and reverted at
+  0.240 ms slower, with the dual-path comparison bit-exact over 15,786,387
+  entries. It closes per-entry input caching on this loop by measuring the reuse
+  factor, 1.095 for the normal and 1.133 for the position, and adds a reusable
+  512-byte SUBMIT_PROFILE telemetry layout to the capture reader.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison
