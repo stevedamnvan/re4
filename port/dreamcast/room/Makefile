@@ -12,6 +12,9 @@ FIRE_SOUND_0 ?=
 FIRE_SOUND_2 ?=
 RELOAD_SOUND ?=
 ENEMY_SWING_SOUND ?=
+ENEMY_HIT_SOUND ?=
+ENEMY_DAMAGE_VOICE ?=
+ENEMY_DEATH_VOICE ?=
 DEMO_SCENE ?= r10d
 DEMO_RESOLUTION ?= 240p
 KOS_ROMDISK_DIR = ../build/room-romdisk
@@ -71,7 +74,10 @@ prepare-romdisk:
 	rm -f $(KOS_ROMDISK_DIR)/wep02-fire-0.wav \
 		$(KOS_ROMDISK_DIR)/wep02-fire-2.wav \
 		$(KOS_ROMDISK_DIR)/wep02-reload-16.wav \
-		$(KOS_ROMDISK_DIR)/em12-swing-3d.wav
+		$(KOS_ROMDISK_DIR)/em12-swing-3d.wav \
+		$(KOS_ROMDISK_DIR)/em12-body-hit-0c.wav \
+		$(KOS_ROMDISK_DIR)/em12-damage-voice-47.wav \
+		$(KOS_ROMDISK_DIR)/em12-death-voice-16.wav
 	@if [ -n "$(AUTOPLAY_FLAG)" ]; then \
 		test -f "$(AUTOPLAY_FLAG)" || { echo 'missing autoplay flag: $(AUTOPLAY_FLAG)' >&2; exit 1; }; \
 		cp "$(AUTOPLAY_FLAG)" $(KOS_ROMDISK_DIR)/autoplay.flag; \
@@ -89,6 +95,16 @@ prepare-romdisk:
 	@if [ -n "$(ENEMY_SWING_SOUND)" ]; then \
 		test -f "$(ENEMY_SWING_SOUND)" || { echo 'missing enemy swing cue 0x3d: $(ENEMY_SWING_SOUND)' >&2; exit 1; }; \
 		cp "$(ENEMY_SWING_SOUND)" $(KOS_ROMDISK_DIR)/em12-swing-3d.wav; \
+	fi
+	@if [ -n "$(ENEMY_HIT_SOUND)$(ENEMY_DAMAGE_VOICE)$(ENEMY_DEATH_VOICE)" ]; then \
+		test -n "$(ENEMY_HIT_SOUND)" -a -n "$(ENEMY_DAMAGE_VOICE)" -a -n "$(ENEMY_DEATH_VOICE)" || \
+			{ echo 'source enemy reaction audio requires hit 0x0c, damage 0x47, and death 0x16' >&2; exit 1; }; \
+		test -f "$(ENEMY_HIT_SOUND)" || { echo 'missing enemy body-hit cue 0x0c: $(ENEMY_HIT_SOUND)' >&2; exit 1; }; \
+		test -f "$(ENEMY_DAMAGE_VOICE)" || { echo 'missing enemy damage voice 0x47: $(ENEMY_DAMAGE_VOICE)' >&2; exit 1; }; \
+		test -f "$(ENEMY_DEATH_VOICE)" || { echo 'missing enemy death voice 0x16: $(ENEMY_DEATH_VOICE)' >&2; exit 1; }; \
+		cp "$(ENEMY_HIT_SOUND)" $(KOS_ROMDISK_DIR)/em12-body-hit-0c.wav; \
+		cp "$(ENEMY_DAMAGE_VOICE)" $(KOS_ROMDISK_DIR)/em12-damage-voice-47.wav; \
+		cp "$(ENEMY_DEATH_VOICE)" $(KOS_ROMDISK_DIR)/em12-death-voice-16.wav; \
 	fi
 
 romdisk.img: prepare-romdisk

@@ -242,6 +242,7 @@ struct Enemy {
     float attack_cooldown_seconds = 0.0f;
     bool attack_landed = false;
     bool attack_sound_played = false;
+    bool hit_voice_played = false;
 };
 
 struct DemoAudio {
@@ -249,6 +250,9 @@ struct DemoAudio {
     sfxhnd_t fire_2 = SFXHND_INVALID;
     sfxhnd_t reload_16 = SFXHND_INVALID;
     sfxhnd_t enemy_swing_3d = SFXHND_INVALID;
+    sfxhnd_t enemy_body_hit_0c = SFXHND_INVALID;
+    sfxhnd_t enemy_damage_voice_47 = SFXHND_INVALID;
+    sfxhnd_t enemy_death_voice_16 = SFXHND_INVALID;
     bool initialized = false;
 };
 
@@ -368,12 +372,22 @@ bool load_demo_audio(DemoAudio& audio) {
     constexpr const char* fire_2_path = "/rd/wep02-fire-2.wav";
     constexpr const char* reload_path = "/rd/wep02-reload-16.wav";
     constexpr const char* enemy_swing_path = "/rd/em12-swing-3d.wav";
+    constexpr const char* enemy_hit_path = "/rd/em12-body-hit-0c.wav";
+    constexpr const char* enemy_damage_voice_path =
+        "/rd/em12-damage-voice-47.wav";
+    constexpr const char* enemy_death_voice_path =
+        "/rd/em12-death-voice-16.wav";
     const bool fire_0_exists = file_exists(fire_0_path);
     const bool fire_2_exists = file_exists(fire_2_path);
     const bool reload_exists = file_exists(reload_path);
     const bool enemy_swing_exists = file_exists(enemy_swing_path);
+    const bool enemy_hit_exists = file_exists(enemy_hit_path);
+    const bool enemy_damage_voice_exists =
+        file_exists(enemy_damage_voice_path);
+    const bool enemy_death_voice_exists = file_exists(enemy_death_voice_path);
     if(!fire_0_exists && !fire_2_exists && !reload_exists &&
-       !enemy_swing_exists) {
+       !enemy_swing_exists && !enemy_hit_exists &&
+       !enemy_damage_voice_exists && !enemy_death_voice_exists) {
         std::printf("re4dc-room: source combat audio not packaged\n");
         return true;
     }
@@ -382,6 +396,15 @@ bool load_demo_audio(DemoAudio& audio) {
     if(any_weapon_audio &&
        (!fire_0_exists || !fire_2_exists || !reload_exists)) {
         std::printf("re4dc-room: incomplete source weapon audio package\n");
+        return false;
+    }
+    const bool any_enemy_reaction_audio =
+        enemy_hit_exists || enemy_damage_voice_exists ||
+        enemy_death_voice_exists;
+    if(any_enemy_reaction_audio &&
+       (!enemy_hit_exists || !enemy_damage_voice_exists ||
+        !enemy_death_voice_exists)) {
+        std::printf("re4dc-room: incomplete enemy reaction audio package\n");
         return false;
     }
     snd_init();
@@ -394,12 +417,23 @@ bool load_demo_audio(DemoAudio& audio) {
     if(enemy_swing_exists) {
         audio.enemy_swing_3d = snd_sfx_load(enemy_swing_path);
     }
+    if(any_enemy_reaction_audio) {
+        audio.enemy_body_hit_0c = snd_sfx_load(enemy_hit_path);
+        audio.enemy_damage_voice_47 =
+            snd_sfx_load(enemy_damage_voice_path);
+        audio.enemy_death_voice_16 =
+            snd_sfx_load(enemy_death_voice_path);
+    }
     if((any_weapon_audio &&
         (audio.fire_0 == SFXHND_INVALID ||
          audio.fire_2 == SFXHND_INVALID ||
          audio.reload_16 == SFXHND_INVALID)) ||
        (enemy_swing_exists &&
-        audio.enemy_swing_3d == SFXHND_INVALID)) {
+        audio.enemy_swing_3d == SFXHND_INVALID) ||
+       (any_enemy_reaction_audio &&
+        (audio.enemy_body_hit_0c == SFXHND_INVALID ||
+         audio.enemy_damage_voice_47 == SFXHND_INVALID ||
+         audio.enemy_death_voice_16 == SFXHND_INVALID))) {
         std::printf("re4dc-room: source combat audio load failed\n");
         snd_sfx_unload_all();
         snd_shutdown();
@@ -407,12 +441,12 @@ bool load_demo_audio(DemoAudio& audio) {
         return false;
     }
     std::printf("re4dc-room: source combat cues loaded "
-                "fire=%d reload=%d enemy_swing=%d\n",
+                "fire=%d reload=%d enemy_swing=%d reactions=%d\n",
                 any_weapon_audio ? 1 : 0, reload_exists ? 1 : 0,
-                enemy_swing_exists ? 1 : 0);
+                enemy_swing_exists ? 1 : 0,
+                any_enemy_reaction_audio ? 1 : 0);
     return true;
 }
-
 void release_demo_audio(DemoAudio& audio) {
     if(!audio.initialized) {
         return;
@@ -822,8 +856,22 @@ void update_enemy(Enemy& enemy, Player& player,
     }
     if(enemy.state == EnemyState::Hit) {
         set_enemy_clip(enemy, 3);
-        advance_enemy_animation(enemy, character, delta_seconds, false);
         const auto& clip = character.clips()[enemy.animation_clip];
+        const float previous_hit_seconds = enemy.animation_frame /
+                                           clip.frames_per_second;
+        advance_enemy_animation(enemy, character, delta_seconds, false);
+        const float hit_seconds = enemy.animation_frame /
+                                  clip.frames_per_second;
+        constexpr float damage_voice_seconds = 2.0f / 30.0f;
+        if(!enemy.hit_voice_played &&
+           previous_hit_seconds < damage_voice_seconds &&
+           hit_seconds >= damage_voice_seconds) {
+            enemy.hit_voice_played = true;
+            if(audio.enemy_damage_voice_47 != SFXHND_INVALID) {
+                snd_sfx_play(audio.enemy_damage_voice_47, 255, 128);
+            }
+            std::printf("re4dc-room: source Ganado damage voice frame=2\n");
+        }
         if(enemy.animation_frame >= static_cast<float>(clip.frame_count - 1U)) {
             enemy.state = EnemyState::Chase;
             set_enemy_clip(enemy, 1);
@@ -1093,14 +1141,22 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
     const bool hit = shot_hits_enemy(player, enemy, collision);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
+        if(audio.enemy_body_hit_0c != SFXHND_INVALID) {
+            snd_sfx_play(audio.enemy_body_hit_0c, 255, 128);
+        }
         enemy.health = std::max(0, enemy.health - kHandgunBodyDamage);
         if(enemy.health <= 0) {
             enemy.state = EnemyState::Dead;
             set_enemy_clip(enemy, 4);
+            if(audio.enemy_death_voice_16 != SFXHND_INVALID) {
+                snd_sfx_play(audio.enemy_death_voice_16, 255, 128);
+            }
             std::printf("re4dc-room: ganado defeated\n");
         } else {
             enemy.state = EnemyState::Hit;
-            set_enemy_clip(enemy, 3);
+            enemy.animation_clip = 3;
+            enemy.animation_frame = 0.0f;
+            enemy.hit_voice_played = false;
         }
     }
 }

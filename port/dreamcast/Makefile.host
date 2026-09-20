@@ -97,6 +97,9 @@ source-enemy-audio:
 	@mkdir -p $(SOURCE_ENEMY_AUDIO_DIR)
 	$(DTK) vfs cp $(RE4_DISC):/files/em/em12.drs $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs
 	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs 0x3d $(SOURCE_ENEMY_AUDIO_DIR)/em12-cue3d.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs 0x0c $(SOURCE_ENEMY_AUDIO_DIR)/em12-body-hit-0c.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs 0x47 $(SOURCE_ENEMY_AUDIO_DIR)/em12-damage-voice-47.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs 0x16 $(SOURCE_ENEMY_AUDIO_DIR)/em12-death-voice-16.wav
 
 demo-r10d: room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio
 
