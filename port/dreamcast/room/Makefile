@@ -42,9 +42,13 @@ endif
 ifneq ($(DEMO_YAW),)
 CPPFLAGS += -DRE4DC_DEMO_YAW=$(DEMO_YAW)
 endif
+# Diagnostic submission profiling. Not part of any accepted build.
+ifneq ($(SUBMIT_PROFILE),)
+CPPFLAGS += -DRE4DC_SUBMIT_PROFILE
+endif
 KOS_GCCVER_MIN = 12.0.0
 
-.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay FORCE
+.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay r100-autoplay-profile FORCE
 
 all: prepare-romdisk rm-elf $(TARGET)
 
@@ -74,6 +78,9 @@ r100:
 
 r100-autoplay:
 	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag
+
+r100-autoplay-profile:
+	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag SUBMIT_PROFILE=1
 
 include $(KOS_BASE)/Makefile.rules
 

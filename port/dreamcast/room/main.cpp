@@ -118,14 +118,40 @@ struct DemoTelemetry {
     std::uint32_t ganado_lighting_us;
     std::uint32_t leon_light_selection;
     std::uint32_t ganado_light_selection;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    std::uint32_t room_submit_calls;
+    std::uint32_t room_submit_bytes;
+    std::uint32_t room_copy_us;
+    std::uint32_t actor_copy_us;
+    std::uint32_t room_copy_calls;
+    std::uint32_t punchthrough_room_us;
+    std::uint32_t blended_room_us;
+    std::uint32_t timer_probe_ns_x100;
+    std::uint32_t room_distinct_vertices;
+    std::uint32_t room_distinct_selections;
+    std::uint32_t opaque_room_triangles;
+    std::uint32_t punchthrough_room_triangles;
+    std::uint32_t opaque_room_references;
+    std::uint32_t opaque_room_misses;
+    std::uint32_t punchthrough_room_references;
+    std::uint32_t punchthrough_room_misses;
+#endif
 };
 
+#if defined(RE4DC_SUBMIT_PROFILE)
+static_assert(sizeof(DemoTelemetry) == 424U);
+#else
 static_assert(sizeof(DemoTelemetry) == 360U);
+#endif
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    telemetry.version = 11U;
+#else
     telemetry.version = 10U;
+#endif
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
 }
@@ -506,10 +532,62 @@ struct FrameStats {
     std::uint32_t pvr_submit_bytes = 0;
     std::uint32_t leon_light_selection = 0;
     std::uint32_t ganado_light_selection = 0;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    std::uint64_t room_copy_ns = 0;
+    std::uint64_t actor_copy_ns = 0;
+    std::uint64_t punchthrough_room_us = 0;
+    std::uint64_t blended_room_us = 0;
+    std::uint32_t room_submit_calls = 0;
+    std::uint32_t room_submit_bytes = 0;
+    std::uint32_t room_copy_calls = 0;
+    std::uint32_t room_distinct_vertices = 0;
+    std::uint32_t room_distinct_selections = 0;
+    std::uint32_t opaque_room_triangles = 0;
+    std::uint32_t punchthrough_room_triangles = 0;
+    std::uint32_t opaque_room_references = 0;
+    std::uint32_t opaque_room_misses = 0;
+    std::uint32_t punchthrough_room_references = 0;
+    std::uint32_t punchthrough_room_misses = 0;
+#endif
 };
 
+#if defined(RE4DC_SUBMIT_PROFILE)
+// Diagnostic only. R3q separates store-queue transport from packet
+// construction inside the measured room path; it is not production code.
+bool g_submit_phase_room = false;
+
+std::uint32_t measure_timer_probe_ns_x100() {
+    constexpr unsigned kProbeSamples = 4096U;
+    std::uint64_t sink = 0;
+    const std::uint64_t start = timer_ns_gettime64();
+    for(unsigned sample = 0U; sample < kProbeSamples; ++sample) {
+        const std::uint64_t first = timer_ns_gettime64();
+        const std::uint64_t second = timer_ns_gettime64();
+        sink += second - first;
+    }
+    const std::uint64_t end = timer_ns_gettime64();
+    __asm__ volatile("" :: "r"(sink) : "memory");
+    return static_cast<std::uint32_t>(((end - start) * 100U) /
+                                      (kProbeSamples * 2U));
+}
+#endif
+
 void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
+#if defined(RE4DC_SUBMIT_PROFILE)
+    const std::uint64_t copy_start = timer_ns_gettime64();
     pvr_prim(data, byte_count);
+    const std::uint64_t copy_end = timer_ns_gettime64();
+    if(g_submit_phase_room) {
+        stats.room_copy_ns += copy_end - copy_start;
+        ++stats.room_copy_calls;
+        ++stats.room_submit_calls;
+        stats.room_submit_bytes += static_cast<std::uint32_t>(byte_count);
+    } else {
+        stats.actor_copy_ns += copy_end - copy_start;
+    }
+#else
+    pvr_prim(data, byte_count);
+#endif
     ++stats.pvr_submit_calls;
     stats.pvr_submit_bytes += static_cast<std::uint32_t>(byte_count);
 }
@@ -2989,6 +3067,12 @@ pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
 RenderVertex g_room_strip_vertices[kCharacterSubmitVertexCapacity];
 RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
 std::uint32_t g_room_vertex_cache_generation = 0;
+#if defined(RE4DC_SUBMIT_PROFILE)
+// Diagnostic only: how many distinct room vertices a frame actually touches,
+// which bounds what any vertex cache can save.
+constexpr std::uint32_t kRoomDistinctProbeCapacity = 65536U;
+std::uint8_t g_room_distinct_probe[kRoomDistinctProbeCapacity / 8U];
+#endif
 
 constexpr std::uint8_t kCullNone = 0U;
 constexpr std::uint8_t kCullFront = 1U;
@@ -3330,6 +3414,17 @@ const RenderVertex& cached_room_vertex(
     const re4dc::room::Vertex* source, std::uint32_t vertex_index,
     FrameStats& stats, std::uint32_t light_selection) {
     ++stats.room_index_references;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    if(vertex_index < kRoomDistinctProbeCapacity) {
+        std::uint8_t& probe_byte = g_room_distinct_probe[vertex_index >> 3U];
+        const std::uint8_t probe_bit =
+            static_cast<std::uint8_t>(1U << (vertex_index & 7U));
+        if((probe_byte & probe_bit) == 0U) {
+            probe_byte = static_cast<std::uint8_t>(probe_byte | probe_bit);
+            ++stats.room_distinct_vertices;
+        }
+    }
+#endif
     const std::uint32_t slot =
         ((vertex_index * 2654435761U) ^ (light_selection * 2246822519U)) &
         (kRoomVertexCacheCapacity - 1U);
@@ -4852,6 +4947,28 @@ FrameStats render_scene(const re4dc::room::Package& room,
         ++stats.room_light_selection_evaluations;
     }
     stats.groups = visible_room_group_count;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    std::memset(g_room_distinct_probe, 0, sizeof(g_room_distinct_probe));
+    std::uint32_t distinct_selections[16];
+    std::uint32_t distinct_selection_count = 0U;
+    for(std::uint32_t visible_index = 0U;
+        visible_index < visible_room_group_count; ++visible_index) {
+        const std::uint32_t selection =
+            visible_room_groups[visible_index].light_selection;
+        bool known = false;
+        for(std::uint32_t slot = 0U; slot < distinct_selection_count; ++slot) {
+            if(distinct_selections[slot] == selection) {
+                known = true;
+                break;
+            }
+        }
+        if(!known && distinct_selection_count <
+               sizeof(distinct_selections) / sizeof(distinct_selections[0])) {
+            distinct_selections[distinct_selection_count++] = selection;
+        }
+    }
+    stats.room_distinct_selections = distinct_selection_count;
+#endif
     stats.room_visibility_us =
         timer_us_gettime64() - room_visibility_start;
     const std::uint64_t wait_start = timer_us_gettime64();
@@ -4860,6 +4977,9 @@ FrameStats render_scene(const re4dc::room::Package& room,
     stats.wait_us = submit_start - wait_start;
     pvr_scene_begin();
     pvr_list_begin(PVR_LIST_OP_POLY);
+#if defined(RE4DC_SUBMIT_PROFILE)
+    g_submit_phase_room = true;
+#endif
     const std::uint64_t opaque_room_start = timer_us_gettime64();
     for(std::uint32_t visible_index = 0U;
         visible_index < visible_room_group_count; ++visible_index) {
@@ -4914,6 +5034,12 @@ FrameStats render_scene(const re4dc::room::Package& room,
         }
     }
     stats.opaque_room_us = timer_us_gettime64() - opaque_room_start;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    stats.opaque_room_triangles = stats.triangles;
+    stats.opaque_room_references = stats.room_index_references;
+    stats.opaque_room_misses = stats.room_cache_misses;
+    g_submit_phase_room = false;
+#endif
     const std::uint64_t opaque_actor_start = timer_us_gettime64();
     submit_pvr(stats, &untextured_header, sizeof(untextured_header));
     stats.character_triangles = draw_character(
@@ -4940,6 +5066,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
     pvr_list_finish();
 
     const std::uint64_t translucent_room_start = timer_us_gettime64();
+#if defined(RE4DC_SUBMIT_PROFILE)
+    g_submit_phase_room = true;
+    const std::uint64_t punchthrough_room_start = timer_us_gettime64();
+#endif
     pvr_list_begin(PVR_LIST_PT_POLY);
     for(std::uint32_t visible_index = 0U;
         visible_index < visible_room_group_count; ++visible_index) {
@@ -4992,6 +5122,17 @@ FrameStats render_scene(const re4dc::room::Package& room,
         }
     }
     pvr_list_finish();
+#if defined(RE4DC_SUBMIT_PROFILE)
+    stats.punchthrough_room_triangles =
+        stats.triangles - stats.opaque_room_triangles;
+    stats.punchthrough_room_references =
+        stats.room_index_references - stats.opaque_room_references;
+    stats.punchthrough_room_misses =
+        stats.room_cache_misses - stats.opaque_room_misses;
+    stats.punchthrough_room_us =
+        timer_us_gettime64() - punchthrough_room_start;
+    const std::uint64_t blended_room_start = timer_us_gettime64();
+#endif
 
     pvr_list_begin(PVR_LIST_TR_POLY);
     for(std::uint32_t visible_index = 0U;
@@ -5051,6 +5192,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
     }
     stats.translucent_room_us =
         timer_us_gettime64() - translucent_room_start;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    stats.blended_room_us = timer_us_gettime64() - blended_room_start;
+    g_submit_phase_room = false;
+#endif
     const std::uint64_t translucent_actor_hud_start = timer_us_gettime64();
     stats.character_triangles += draw_character(
         leon, leon_projected,
@@ -5599,6 +5744,15 @@ int main() {
     }
     previous_time = timer_us_gettime64();
     simulation_wall_time_us = previous_time - kSimulationStepUs;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    g_re4dc_demo_telemetry.timer_probe_ns_x100 =
+        measure_timer_probe_ns_x100();
+    std::printf("re4dc-room: timer probe %lu.%02lu ns per read\n",
+                (unsigned long)(g_re4dc_demo_telemetry.timer_probe_ns_x100 /
+                                100U),
+                (unsigned long)(g_re4dc_demo_telemetry.timer_probe_ns_x100 %
+                                100U));
+#endif
     g_re4dc_demo_telemetry.flags = 0x10000007U;
     while(true) {
         const std::uint64_t now = timer_us_gettime64();
@@ -6007,6 +6161,34 @@ int main() {
             stats.leon_light_selection;
         g_re4dc_demo_telemetry.ganado_light_selection =
             stats.ganado_light_selection;
+#if defined(RE4DC_SUBMIT_PROFILE)
+        g_re4dc_demo_telemetry.room_submit_calls = stats.room_submit_calls;
+        g_re4dc_demo_telemetry.room_submit_bytes = stats.room_submit_bytes;
+        g_re4dc_demo_telemetry.room_copy_us =
+            saturate_u32(stats.room_copy_ns / 1000U);
+        g_re4dc_demo_telemetry.actor_copy_us =
+            saturate_u32(stats.actor_copy_ns / 1000U);
+        g_re4dc_demo_telemetry.room_copy_calls = stats.room_copy_calls;
+        g_re4dc_demo_telemetry.punchthrough_room_us =
+            saturate_u32(stats.punchthrough_room_us);
+        g_re4dc_demo_telemetry.blended_room_us =
+            saturate_u32(stats.blended_room_us);
+        g_re4dc_demo_telemetry.room_distinct_vertices =
+            stats.room_distinct_vertices;
+        g_re4dc_demo_telemetry.room_distinct_selections =
+            stats.room_distinct_selections;
+        g_re4dc_demo_telemetry.opaque_room_triangles =
+            stats.opaque_room_triangles;
+        g_re4dc_demo_telemetry.punchthrough_room_triangles =
+            stats.punchthrough_room_triangles;
+        g_re4dc_demo_telemetry.opaque_room_references =
+            stats.opaque_room_references;
+        g_re4dc_demo_telemetry.opaque_room_misses = stats.opaque_room_misses;
+        g_re4dc_demo_telemetry.punchthrough_room_references =
+            stats.punchthrough_room_references;
+        g_re4dc_demo_telemetry.punchthrough_room_misses =
+            stats.punchthrough_room_misses;
+#endif
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;
