@@ -16,11 +16,11 @@ controller sampling, source light selection, prepared static room-light terms,
 source SAT hierarchy traversal, source position/normal palette reuse, native
 actor and room strips, ordered-alpha strip protection, packed actor colors,
 validated room normals, compact selected-light evaluators, a bounded room vertex
-cache, conservative one-metre opaque child cells, source-authorized binary
+cache, conservative four-metre opaque child cells, source-authorized binary
 punch-through, one source-ordered visible-room list reused by every material
 pass, combined header/first-payload submissions, separate immutable actor
-normal scratch, and per-strip bounds culling. Do not propose these again as
-unimplemented work.
+normal scratch, per-strip bounds culling, and PVR packets written straight from
+room cache entries. Do not propose these again as unimplemented work.
 
 R3m preserves source-authorized binary alpha while retaining gradient blend.
 R3n reuses visibility, cull state, and room-light selection across material
@@ -37,6 +37,14 @@ and
 vertex cache on vertex identity, removed 21.5% of transform-and-light
 evaluations, and was 1.274 ms slower; it is rejected and removed, see
 [R3S_ROOM_IDENTITY_CACHE_CHECKPOINT.md](R3S_ROOM_IDENTITY_CACHE_CHECKPOINT.md).
+R3t writes room packets straight from cache entries and packs the vertex colour
+once per cache fill, 0.892 ms, and its calibrated profile attributes the room
+pass to per-reference and per-strip overhead, see
+[R3T_ROOM_PACKET_FROM_CACHE_CHECKPOINT.md](R3T_ROOM_PACKET_FROM_CACHE_CHECKPOINT.md).
+R3u re-sweeps the opaque cell size now that strip culling exists and moves the
+production package from one-metre to four-metre cells, 1.878 ms and 405,504
+bytes of main RAM with byte-identical room pixels, see
+[R3U_CELL_SIZE_RESWEEP_CHECKPOINT.md](R3U_CELL_SIZE_RESWEEP_CHECKPOINT.md).
 
 **Projection bias.** KOS `mat_perspective()` leaves `w = 1 - z_view`, so
 `mat_trans_single()` divides screen coordinates by `depth + 1`. Any visibility
@@ -53,42 +61,44 @@ the fast path was 0.822 ms slower at actor-lighting p50. It has been removed.
 ## Current measured budget
 
 Flycast measurements use the pinned 640x480 build and stock Dreamcast memory
-sizes. They are emulator evidence. R3p and R3r are matched over simulation ticks
-165-1194 and include source-timed turn, aim, fire, reload, enemy kill, held result
+sizes. They are emulator evidence. R3p, R3r, R3t and R3u are matched over
+simulation ticks 165-1194 and include source-timed turn, aim, fire, reload, enemy kill, held result
 view, and timed retry. The current autoplay does not cover free movement, aim
 extremes, enemy contact, Leon death, or a human controller; those remain separate
 acceptance gates.
 
-| Matched metric, ticks 165-1194 | R3p corrected normals | R3r accepted |
-|---|---:|---:|
-| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms |
-| `submit_us` p50 | 58.103 ms | 45.901 ms |
-| actor lighting p50 | 18.198 ms | 18.198 ms |
-| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 |
-| transformed and lit vertices | 15,350 | 10,156 |
-| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B |
-| dropped simulation time / overruns | 0 / 0 | 0 / 0 |
+| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u accepted |
+|---|---:|---:|---:|---:|
+| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms |
+| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms |
+| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms |
+| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 |
+| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 |
+| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B |
+| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
 
 R3r draws more room geometry than R3p because the corrected group test restores
-groups that R3p discarded, and is still 12.078 ms faster at p50.
+groups that R3p discarded, and is still 12.078 ms faster at p50. R3u draws the
+same room at four-metre cells: fewer groups to test, fewer references and
+records, the same triangles, and byte-identical room pixels.
 
-The accepted candidate presents at roughly 13-14 distinct frames per second. A
-33.33 ms CPU frame needs another 40.8 ms median reduction and 40.9 ms at p95.
+The accepted candidate presents at roughly 14 distinct frames per second. A
+33.33 ms CPU frame needs another 38.0 ms median reduction and 38.1 ms at p95.
 SH-4 preparation remains the dominant measured cost.
 
-R3r median CPU stages are shown without adding the overlapping `submit_us`
+R3u median CPU stages are shown without adding the overlapping `submit_us`
 aggregate to its children:
 
 | Stage | p50 |
 |---|---:|
-| opaque room transform/light/clip/submit | 29.244 ms |
+| opaque room transform/light/clip/submit | 27.810 ms |
 | actor lighting | 18.198 ms |
 | opaque actor draw | 11.789 ms |
 | actor pose palettes/projection | 5.820 ms |
-| binary plus blended alpha room work | 3.053 ms |
-| room visibility and light selection | 2.089 ms |
+| binary plus blended alpha room work | 3.000 ms |
 | actor normals | 1.831 ms |
 | translucent actors and HUD | 1.760 ms |
+| room visibility and light selection | 0.806 ms |
 
 `submit_us` is 58.103 ms p50 and contains room transform, lighting, clipping,
 packet construction, and immediate TA submission. It is not a transfer-only
@@ -133,6 +143,10 @@ Exact identities:
 - R3p manual ELF: `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
 - R3r autoplay ELF: `f3975be3408b2059d9c9557753d16a736d359a21d2d911e47a0d09a397bef35d`
 - R3r manual ELF: `7137228e6287394cbec9e12c67438bd06282a19d5410f5dd76346bba50c9859c`
+- R3t autoplay ELF: `ec841178108c67a1b607e2b7130091b33478e1abd6b8e55d0bb8b8986cc74c10`
+- R3u production room package: `6b2bbf8f18a254d18abb773e511889798c9df0f5ad7d1337c49ad0104f05ac28`
+- R3u autoplay ELF: `a7d6d00093a640ee61e385b07af4bfc4fc25f98ca751164e1fc50d2d4505ebb9`
+- R3u manual ELF: `ba897fe1e27dd9fd7365597400a7e5feb504f66a088346033c29082cf7fb24d8`
 
 The R3q diagnostic option added preprocessor lines to `room/main.cpp`, so the
 two R3p ELF hashes above reproduce only from the pre-R3q tree. The executable
@@ -142,13 +156,15 @@ is byte-identical and the debug-stripped ELFs are
 and `570c36bdda2e440bc69eca4d573f4e89e0cad316063aa3b386db6eca1e7b042c` for
 manual in both trees.
 
-Evidence is retained in `d202` through `d236` under
+Evidence is retained in `d202` through `d245` under
 `C:\Flycast-Evidence\re4-dreamcast`. Timing evidence for R3p is in `d219`,
 the manual smoke in `d220`, and the qualitative framebuffer check in `d221`.
 The R3q profile captures are `d222`, `d223`, and `d224`. The R3r captures are
 `d225` through `d234`, including the culling audits in `d229` and the paired
 framebuffer comparisons in `d226`, `d231`, and `d233`. The rejected R3s
-identity-cache runs are `d235` and `d236`.
+identity-cache runs are `d235` and `d236`. R3t is `d237` through `d240`,
+including the calibrated profiles in `d239` and `d240`. The R3u sweep is `d241`
+through `d243`, its framebuffer check `d244`, and its manual smoke `d245`.
 Physical Dreamcast timing remains pending.
 
 ## Measured bottleneck queue
@@ -157,31 +173,31 @@ Choose each next experiment from the current trace. Every candidate must boot,
 retain a reference path where appropriate, pass its correctness check, record
 before/after timing and memory, and end in a keep-or-revert decision.
 
-1. **Opaque room per-reference and per-record work.** R3r took the blended list
-   from 17.820 ms to 3.053 ms, leaving the opaque room pass at 29.244 ms as the
-   largest single cost. R3s then showed that transform and lighting are *not*
-   where that time goes: removing 2,179 of the 10,156 per-frame evaluations made
-   the frame slower once one identity lookup per reference was added, so the
-   cache-miss path costs well under 1 us and the R3q figure of 3.1 us per
-   transformed vertex was an attribution, not a measurement. Identity reuse for
-   the room is closed. What scales with the 15,050 references and 14,926 emitted
-   records per frame is the candidate list: the 52-byte gather copy into
-   `g_room_strip_vertices` that exists only to serve the depth test and the
-   fallback path, the 32-byte packet write, `shade_color()` per record rather
-   than per cache entry, the per-vertex depth test, and the batch and group
-   traversal over 362 visible groups. Measure each with a bounded ablation
-   before optimizing, and build packets directly from cache entries where the
-   direct-strip path allows it. Flycast only rewards instruction-volume
-   reductions; it does not model the SH-4 data cache.
-2. **The per-vertex transform and light kernel.** R3q showed room cost is close
-   to a constant 3.1 us per transformed and lit vertex, and that caching cannot
-   reduce the 15,317 distinct vertices a frame touches. After the blended-list
-   work, the remaining room lever is the kernel itself: inspect the SH-4 output of
-   `mat_trans_single` plus the selected-light evaluator, consider batching
-   transforms through the matrix unit, and keep the portable evaluator as the
-   numerical reference with explicit bounds. Reducing the distinct vertex count
-   is a package-level question about the one-metre child cells, which duplicate
-   boundary vertices; it must be measured against the culling those cells buy.
+1. **Opaque room per-strip and per-reference overhead.** The opaque room pass
+   is 27.810 ms after R3u, still the largest single cost. R3s and the R3t
+   calibrated profile settled what it is made of: the transform-and-light miss
+   body is 836 ns and 8.49 ms per frame; cache-hit lookups in the gather loop are
+   809 ns per reference and 12.35 ms; and the strip loop carries 2,242 ns of
+   overhead per strip, 7.58 ms, because the strips average 2.7 triangles. The
+   packet write, store-queue copy, batch traversal and sphere test together are
+   under 4 ms. Identity reuse (R3s) and cache growth (R3q) are closed. The
+   remaining levers, in order: make the strips longer at the converter, since
+   the cell size no longer bounds strip length (R3u showed 4 m and 8 m tie);
+   cut the per-reference hit cost, for example by resolving a strip's cache
+   slots once instead of hashing per reference, or by emitting a batch's
+   vertices in index order so that hits are sequential; and only then the
+   kernel. Measure each with a bounded ablation. Flycast only rewards
+   instruction-volume reductions; it does not model the SH-4 data cache.
+2. **Room partition: cell size is settled, strip length is not.** R3u re-swept
+   2 m, 4 m and 8 m after strip culling existed and took 4 m; 8 m ties it and
+   2 m is 0.5 ms worse. Do not re-sweep cell size without a change to the cull
+   tests. The converter's strip split is the open package-level lever: 12,625
+   strips for 30,895 triangles is 2.4 triangles per strip in the package and
+   2.7 per visible strip. Longer strips reduce the 2,242 ns per-strip term
+   directly and the per-reference term through fewer duplicated boundary
+   vertices, but they must keep the alpha materials unpartitioned and in source
+   order, and any restrip must be verified by the existing ordered-strip
+   certificate.
 
 3. **Actor preparation and lighting.** Add conservative render eligibility before
    pose work. Cache settled death poses and other unchanged inputs using explicit

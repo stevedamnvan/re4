@@ -32,6 +32,9 @@ The Linux checkout is authoritative. Upstream contains distinct `src/Tools` and 
 - Latest measurement pass: R3q, which adds only the compile-gated `SUBMIT_PROFILE` room diagnostic and changes no accepted code; it closes submission transport and room vertex cache growth
 - Latest accepted optimization: R3r, per-strip bounds culling plus the `kProjectionDepthBias` fix for the KOS projection; CPU frame p50 86.217 ms to 74.139 ms while drawing more room geometry. Any new visibility test must measure projected extents at `depth + 1`
 - Latest rejected experiment: R3s room identity cache, 21.5% fewer transform-and-light evaluations but 1.274 ms slower; the opaque room pass is per-reference/per-record bound, not transform bound
+- R3t (accepted): room PVR packets written straight from cache entries, colour packed per cache fill; 74.139 ms to 73.247 ms, framebuffers byte-identical. Its calibrated profile: hit lookup 809 ns per reference, miss body 836 ns, strip-loop overhead 2,242 ns per strip
+- R3u (accepted): production room package moved from one-metre to four-metre opaque cells after strip culling made coarser cells win; 73.247 ms to 71.369 ms, +405,504 B free RAM, no room pixel changed. 8 m ties 4 m; do not re-sweep cell size without changing the cull tests. `R100_PRODUCTION_CELL_SIZE` and both package defaults are now 4
+- Next target: the opaque room pass at 27.810 ms, whose cost is per-strip and per-reference overhead; the converter strip split (2.4 triangles per strip) is the open lever
 - Expected state after the handover commit and push: clean local tree with local HEAD equal to `origin/dreamcast-port`
 
 Read these first:

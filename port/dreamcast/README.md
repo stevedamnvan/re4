@@ -102,7 +102,21 @@ byte-identical to R3p at three matched ticks. The strip table costs 262,144 byte
 of static main RAM. Details and limits are in
 [the R3r strip-cull checkpoint](docs/R3R_STRIP_CULL_CHECKPOINT.md).
 
-The opaque room pass, now 29.244 ms, is the largest remaining cost, followed by
+R3t writes room PVR packets straight from the room vertex cache entries in the
+direct-strip path and packs each vertex colour once per cache fill instead of
+once per emitted record, with an eviction check that falls back to the
+re-lookup path and has never fired. CPU frame p50 falls from 74.139 to
+73.247 ms with byte-identical framebuffers at matched ticks; its calibrated
+profile of the remaining room cost is in
+[the R3t packet-from-cache checkpoint](docs/R3T_ROOM_PACKET_FROM_CACHE_CHECKPOINT.md).
+R3u then re-swept the opaque child-cell size, which R3k had chosen before strip
+culling existed, and moved the production package from one-metre to four-metre
+cells: CPU frame p50 73.247 to 71.369 ms, p95 73.378 to 71.463 ms, 405,504 bytes
+more free main RAM, the same triangles, and no room pixel changed at three
+matched ticks. The sweep, the tie with 8 m, and the manual smoke are in
+[the R3u cell-size re-sweep checkpoint](docs/R3U_CELL_SIZE_RESWEEP_CHECKPOINT.md).
+
+The opaque room pass, now 27.810 ms, is the largest remaining cost, followed by
 actor lighting at 18.198 ms with Leon's 13.960 ms median inside it. R3s keyed
 the room vertex cache on vertex identity, cut transform-and-light evaluations by
 21.5%, and was 1.274 ms slower, so that pass is dominated by per-reference and
@@ -284,10 +298,11 @@ gain and matched performance result are in
 The recovered memory also permits a measured 2,048-entry room vertex cache;
 larger candidates were rejected after reaching the same reuse ceiling in
 [the R3j cache-bound checkpoint](docs/R3J_ROOM_VERTEX_CACHE_BOUND_CHECKPOINT.md).
-The r100 production room now uses conservative one-metre opaque child cells
-while retaining source-order alpha batches and every source triangle. The
-20.6% matched frame reduction and the rejected finer split are recorded in
-[the R3k source-child cell checkpoint](docs/R3K_SOURCE_CHILD_CELL_CHECKPOINT.md).
+The r100 production room uses conservative opaque child cells while retaining
+source-order alpha batches and every source triangle. R3k introduced the
+partition at one metre, a 20.6% matched frame reduction recorded in
+[the R3k source-child cell checkpoint](docs/R3K_SOURCE_CHILD_CELL_CHECKPOINT.md);
+R3u re-swept it after per-strip culling and moved production to four metres.
 The source handgun character assembly now uses the weapon-specific Leon hands,
 the source-neutral hidden expression overlay, the right-handed Ganado hand pair,
 and source-facing actor culling. The defect evidence and remaining character-system
