@@ -421,6 +421,24 @@ def parse_rigid_attachment(specification):
     )
 
 
+def parse_rigid_marker(specification):
+    fields = specification.split(":")
+    if len(fields) != 9:
+        raise argparse.ArgumentTypeError(
+            "rigid marker must be NAME:PARENT_BONE:TX:TY:TZ:YAW:PX:PY:PZ"
+        )
+    name = fields[0]
+    if not name or len(name.encode("ascii", "strict")) > 31:
+        raise argparse.ArgumentTypeError("marker name must be 1-31 ASCII bytes")
+    return (
+        name,
+        int(fields[1], 0),
+        tuple(float(value) for value in fields[2:5]),
+        float(fields[5]),
+        tuple(float(value) for value in fields[6:9]),
+    )
+
+
 def transform_rigid_point(point, translation, yaw):
     """Apply the child cCoord Y rotation and translation before parenting."""
     x, y, z = point
@@ -499,6 +517,12 @@ def convert(args):
         args.texture_entry if args.texture_entry is not None else args.model_entry + 1
     )
     rest_world = rest_world_positions(model)
+    for name, parent_bone, _, _, _ in args.rigid_marker:
+        if not 0 <= parent_bone < model.n_parts:
+            raise ValueError(
+                f"marker {name!r} parent bone {parent_bone} is outside "
+                f"the base skeleton"
+            )
 
     archives = {args.model_archive: model_archive}
     component_specs = [
@@ -606,6 +630,7 @@ def convert(args):
         })
 
     frames = []
+    marker_frames = []
     clips = []
     source_manifest = []
     for name, archive_name, entry_index in args.clip:
@@ -647,6 +672,14 @@ def convert(args):
                     source_frame[index] for index in draw_sources
                 )
             frames.append(combined_frame)
+            marker_frames.append([
+                transform_point(
+                    pose.mat[parent_bone],
+                    transform_rigid_point(point, translation, yaw),
+                )
+                for (_, parent_bone, translation, yaw, point)
+                in args.rigid_marker
+            ])
         root_speed = root_forward_speed_mps(motion, args.fps)
         sampled_fps = sampled_frames_per_second(
             frame_indices, motion.max_frame, args.fps
@@ -669,6 +702,13 @@ def convert(args):
     positions, texcoords, indices, batches, frames = cluster_animated_geometry(
         positions, texcoords, indices, batches, frames, args.cluster_mm
     )
+    # Markers are unindexed animation points used by native gameplay checks.
+    # Append them after clustering so mesh reduction can never merge or remove
+    # a source-authored weapon sweep point.
+    positions.extend((0.0, 0.0, 0.0) for _ in args.rigid_marker)
+    texcoords.extend((0.0, 0.0) for _ in args.rigid_marker)
+    for frame, markers in zip(frames, marker_frames):
+        frame.extend(markers)
     frame_data, maximum_error, bounds_min, bounds_max = quantise_frames(
         frames, args.quantum_mm
     )
@@ -744,6 +784,17 @@ def convert(args):
             "parts": model.n_parts,
         },
         "components": component_manifest,
+        "markers": [
+            {
+                "name": name,
+                "parent_bone": parent_bone,
+                "translation": list(translation),
+                "yaw": yaw,
+                "point": list(point),
+            }
+            for name, parent_bone, translation, yaw, point
+            in args.rigid_marker
+        ],
         "texture": {
             "sources": texture_metadata["tpl_sources"],
             "package": texture_output.name,
@@ -784,6 +835,10 @@ def main():
         default=[],
         help="NAME:ARCHIVE:MODEL_ENTRY:TEXTURE_ENTRY:PARENT_BONE (repeatable)",
     )
+    parser.add_argument(
+        "--rigid-marker", action="append", type=parse_rigid_marker, default=[],
+        help="NAME:PARENT_BONE:TX:TY:TZ:YAW:PX:PY:PZ (repeatable)",
+    )
     parser.add_argument("--clip", action="append", type=parse_clip, required=True,
                         help="NAME:ARCHIVE:ENTRY (repeatable)")
     parser.add_argument("--fps", type=float, default=30.0)
@@ -808,6 +863,8 @@ def main():
         )
     if args.texture_max_dimension is not None and args.texture_max_dimension < 8:
         parser.error("texture max dimension must be at least 8")
+    if any(not 0 <= marker[1] < 256 for marker in args.rigid_marker):
+        parser.error("marker parent bone must be in 0..255")
     convert(args)
 
 

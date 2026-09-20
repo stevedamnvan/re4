@@ -175,6 +175,8 @@ constexpr float kEnemyAttackHitEndSeconds = 72.0f / 30.0f;
 // source default 15-frame Atk_wait after motion 0x80 completes.
 constexpr float kEnemyAttackCooldownSeconds = 15.0f / 30.0f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
+constexpr std::uint32_t kAxeSweepMarkerCount = 3;
+constexpr float kAxeSweepRadius = 0.250f;
 constexpr int kMagazineSize = 6;
 // PlayerLifeReset gives Leon 1200 life. Em10AtkTbl[0] gives the type-0 r100
 // hatchet Ganado 380 damage; rank 5 applies a 1.0 LifeDownSet2 multiplier.
@@ -901,6 +903,110 @@ bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
                              const re4dc::collision::Vec3& start,
                              const re4dc::collision::Vec3& end);
 
+re4dc::collision::Vec3 sample_character_point(
+    const re4dc::character::Package& character, std::uint32_t clip_index,
+    float animation_frame, std::uint32_t vertex_index) {
+    const auto& clip = character.clips()[clip_index];
+    const float frame = std::clamp(
+        animation_frame, 0.0f, static_cast<float>(clip.frame_count - 1U));
+    const std::uint32_t local_frame = static_cast<std::uint32_t>(frame);
+    const std::uint32_t next_frame =
+        std::min(local_frame + 1U, clip.frame_count - 1U);
+    const float blend = frame - static_cast<float>(local_frame);
+    const auto* current = character.frame_positions(
+        clip.first_frame + local_frame) + vertex_index * 3U;
+    const auto* next = character.frame_positions(
+        clip.first_frame + next_frame) + vertex_index * 3U;
+    const float scale = character.header().position_quantum_m;
+    return {
+        (static_cast<float>(current[0]) +
+         (static_cast<float>(next[0]) - static_cast<float>(current[0])) *
+             blend) * scale,
+        (static_cast<float>(current[1]) +
+         (static_cast<float>(next[1]) - static_cast<float>(current[1])) *
+             blend) * scale,
+        (static_cast<float>(current[2]) +
+         (static_cast<float>(next[2]) - static_cast<float>(current[2])) *
+             blend) * scale,
+    };
+}
+
+re4dc::collision::Vec3 actor_point_to_world(
+    const re4dc::collision::Vec3& point, const Enemy& enemy) {
+    const float sine = std::sin(enemy.yaw);
+    const float cosine = std::cos(enemy.yaw);
+    return {
+        enemy.x + point.x * cosine + point.z * sine,
+        enemy.y + point.y,
+        enemy.z - point.x * sine + point.z * cosine,
+    };
+}
+
+float point_segment_distance_squared(const re4dc::collision::Vec3& point,
+                                     const re4dc::collision::Vec3& start,
+                                     const re4dc::collision::Vec3& end) {
+    const float sx = end.x - start.x;
+    const float sy = end.y - start.y;
+    const float sz = end.z - start.z;
+    const float length_squared = sx * sx + sy * sy + sz * sz;
+    const float projection = length_squared > 0.000001f
+        ? std::clamp(((point.x - start.x) * sx +
+                      (point.y - start.y) * sy +
+                      (point.z - start.z) * sz) / length_squared,
+                     0.0f, 1.0f)
+        : 0.0f;
+    const float dx = point.x - (start.x + sx * projection);
+    const float dy = point.y - (start.y + sy * projection);
+    const float dz = point.z - (start.z + sz * projection);
+    return dx * dx + dy * dy + dz * dz;
+}
+
+bool source_axe_sweep_hits_player(
+    const Enemy& enemy, const Player& player,
+    const re4dc::character::Package& character) {
+    if(character.header().vertex_count < kAxeSweepMarkerCount) {
+        return false;
+    }
+    const std::uint32_t first_marker =
+        character.header().vertex_count - kAxeSweepMarkerCount;
+    const auto base = actor_point_to_world(
+        sample_character_point(character, enemy.animation_clip,
+                               enemy.animation_frame, first_marker),
+        enemy);
+    const auto low = actor_point_to_world(
+        sample_character_point(character, enemy.animation_clip,
+                               enemy.animation_frame, first_marker + 1U),
+        enemy);
+    const auto high = actor_point_to_world(
+        sample_character_point(character, enemy.animation_clip,
+                               enemy.animation_frame, first_marker + 2U),
+        enemy);
+    struct PlayerSphere {
+        float y;
+        float radius;
+    };
+    // The source tests the swept 250-unit weapon sphere against Leon's
+    // per-part damage spheres. These three bounds cover the same lower body,
+    // torso, and head bands in the bounded r100 encounter.
+    constexpr PlayerSphere player_spheres[] = {
+        {0.68f, 0.34f},
+        {1.18f, 0.38f},
+        {1.62f, 0.25f},
+    };
+    for(const auto& sphere : player_spheres) {
+        const re4dc::collision::Vec3 center = {
+            player.x, player.y + sphere.y, player.z};
+        const float radius = kAxeSweepRadius + sphere.radius;
+        if(point_segment_distance_squared(center, base, low) <=
+               radius * radius ||
+           point_segment_distance_squared(center, base, high) <=
+               radius * radius) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void update_enemy(Enemy& enemy, Player& player,
                   const re4dc::character::Package& character,
                   const re4dc::collision::Package& collision,
@@ -986,20 +1092,13 @@ void update_enemy(Enemy& enemy, Player& player,
         if(!enemy.attack_landed && !player.dead &&
            attack_seconds >= kEnemyAttackHitStartSeconds &&
            attack_seconds <= kEnemyAttackHitEndSeconds) {
-            const float hit_dx = player.x - enemy.x;
-            const float hit_dz = player.z - enemy.z;
-            const float hit_distance = std::sqrt(
-                hit_dx * hit_dx + hit_dz * hit_dz);
-            const float hit_yaw = std::atan2(hit_dx, hit_dz);
-            const bool facing = std::fabs(wrap_angle(hit_yaw - enemy.yaw)) <=
-                                kPi * 0.25f;
             const re4dc::collision::Vec3 enemy_chest = {
                 enemy.x, enemy.y + 1.5f, enemy.z};
             const re4dc::collision::Vec3 player_chest = {
                 player.x, player.y + 1.5f, player.z};
             const bool path_clear = !segment_blocked_by_wall(
                 collision, enemy_chest, player_chest);
-            if(hit_distance <= kEnemyAttackAcquireRange && facing &&
+            if(source_axe_sweep_hits_player(enemy, player, character) &&
                path_clear) {
                 enemy.attack_landed = true;
                 player.health = std::max(
@@ -2079,6 +2178,13 @@ int main() {
         std::printf("re4dc-room: Ganado package needs idle/walk/attack/hit/death\n");
         return 1;
     }
+#if defined(RE4DC_SCENE_R100)
+    if(ganado.header().vertex_count != 2315U) {
+        std::printf(
+            "re4dc-room: r100 Ganado package needs three source axe sweep markers\n");
+        return 1;
+    }
+#endif
 
 #if defined(RE4DC_480P)
     vid_set_mode(DM_640x480, PM_RGB565);

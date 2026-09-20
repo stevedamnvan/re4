@@ -154,8 +154,9 @@ make -C port/dreamcast/room \
 
 1. Keep the 30-second r100 cabin encounter on source camera, placement, room,
    actor, motion, collision, and sound data.
-2. Replace the remaining direct-pursuit and simplified melee-sweep behavior
-   along that one playable route with source behavior.
+2. Replace the remaining direct-pursuit behavior and approximate Leon damage
+   spheres along that one playable route. The axe now uses the source weapon
+   matrix sweep points and 250-unit attack radius.
 3. Add the remaining source impact effects and room ambience; review moving
    output after each fidelity change. Leon and the Ganado now use their source
    hit/death motions and voice cues on the bounded encounter path.

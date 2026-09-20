@@ -84,6 +84,9 @@ character-ganado:
 		--attachment right-hand:em12.drs:447:441 \
 		--attachment left-hand:em12.drs:452:441 \
 		--rigid-attachment hatchet:em12.drs:616:617:10:-313.85:-21.2:102.21:-1.0402162 \
+		--rigid-marker axe-base:10:-313.85:-21.2:102.21:-1.0402162:0:0:-1000 \
+		--rigid-marker axe-low:10:-313.85:-21.2:102.21:-1.0402162:0:0:-200 \
+		--rigid-marker axe-high:10:-313.85:-21.2:102.21:-1.0402162:0:0:50 \
 		--clip idle:em12.drs:1 --clip walk:em12.drs:4 \
 		--clip attack:em12.drs:128 --clip hit:em12.drs:38 \
 		--clip death:em12.drs:103 --sample-step 2 \

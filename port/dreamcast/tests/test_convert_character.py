@@ -90,6 +90,15 @@ class CharacterConverterTests(unittest.TestCase):
                 (-313.85, -21.2, 102.21), -1.0402162,
             ),
         )
+        self.assertEqual(
+            MODULE.parse_rigid_marker(
+                "axe-tip:10:-313.85:-21.2:102.21:-1.0402162:0:0:50"
+            ),
+            (
+                "axe-tip", 10, (-313.85, -21.2, 102.21), -1.0402162,
+                (0.0, 0.0, 50.0),
+            ),
+        )
         self.assertEqual(MODULE.sampled_frame_indices(7, 2), [0, 2, 4, 6])
         self.assertEqual(MODULE.sampled_frame_indices(8, 3), [0, 3, 6, 7])
         self.assertAlmostEqual(
