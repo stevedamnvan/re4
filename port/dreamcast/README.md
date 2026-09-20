@@ -166,6 +166,8 @@ The source collision broad-phase recovery is measured in
 [the R2a SAT hierarchy checkpoint](docs/R2A_SAT_HIERARCHY_CHECKPOINT.md). The
 source-selected fixed room-light contribution is prepared once and measured in
 [the R1c static room-lighting checkpoint](docs/R1C_STATIC_ROOM_LIGHTING_CHECKPOINT.md).
+The manual controller is now sampled independently of long render frames in
+[the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
 The source audio targets privately extract `wep02.drs`, `em12.drs`, and
 `pl00.drs` from
@@ -202,8 +204,9 @@ make -C port/dreamcast/room \
 3. Complete source SAT primitive/query parity on top of the recovered hierarchy,
    then preserve source position/normal/weight-palette identities instead of
    designing replacement collision or animation systems.
-4. Service input independently of the render interval, then test manual combat,
-   reload, death, and repeated resets without discarded simulation time.
+4. Complete human-controller combat, reload, death, disconnect, and repeated
+   reset acceptance on the independent input service; its short-edge and
+   autoplay tests are complete in Flycast.
 5. Package the private Flycast demo and validate loading, timing, memory, audio,
    controller, and output on physical Dreamcast.
 

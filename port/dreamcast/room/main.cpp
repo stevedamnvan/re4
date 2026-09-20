@@ -101,14 +101,17 @@ struct DemoTelemetry {
     std::uint32_t collision_queries;
     std::uint32_t collision_block_tests;
     std::uint32_t collision_polygon_candidates;
+    std::uint32_t input_queue_drops;
+    std::uint32_t input_queue_depth;
+    std::uint32_t input_edges_delivered;
 };
 
-static_assert(sizeof(DemoTelemetry) == 292U);
+static_assert(sizeof(DemoTelemetry) == 304U);
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
-    telemetry.version = 5U;
+    telemetry.version = 6U;
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
 }
@@ -389,6 +392,48 @@ struct Input {
     bool exit = false;
 };
 
+struct TickInput {
+    Input input{};
+    bool fire_pressed = false;
+    bool reload_pressed = false;
+    bool restart_pressed = false;
+    bool exit_pressed = false;
+};
+
+struct TimedInput {
+    std::uint64_t timestamp_us = 0U;
+    Input input{};
+};
+
+constexpr std::uint32_t kInputQueueCapacity = 128U;
+
+struct InputService {
+    mutex_t mutex{};
+    TimedInput queue[kInputQueueCapacity]{};
+    std::uint32_t head = 0U;
+    std::uint32_t count = 0U;
+    Input producer_state{};
+    Input consumer_state{};
+    bool producer_valid = false;
+    bool running = false;
+    kthread_t* thread = nullptr;
+    std::uint64_t samples = 0U;
+    std::uint64_t last_sample_us = 0U;
+    std::uint64_t sample_gap_us = 0U;
+    std::uint64_t sample_gap_us_max = 0U;
+    std::uint64_t queue_drops = 0U;
+    std::uint64_t edges_delivered = 0U;
+};
+
+struct InputServiceSnapshot {
+    std::uint64_t samples = 0U;
+    std::uint64_t sample_gap_us = 0U;
+    std::uint64_t sample_gap_us_max = 0U;
+    std::uint64_t queue_drops = 0U;
+    std::uint64_t edges_delivered = 0U;
+    std::uint32_t queue_depth = 0U;
+};
+
 enum class AutoplayPhase : std::uint8_t {
     WaitForDeath,
     Restart,
@@ -509,6 +554,148 @@ Input read_input() {
     input.restart = (state->buttons & CONT_B) != 0;
     input.exit = (state->buttons & CONT_START) != 0;
     return input;
+}
+
+bool input_equal(const Input& left, const Input& right) {
+    return left.move == right.move && left.turn == right.turn &&
+           left.aim_pitch_stick == right.aim_pitch_stick &&
+           left.aim_pitch_dpad == right.aim_pitch_dpad &&
+           left.aim == right.aim && left.fire == right.fire &&
+           left.reload == right.reload && left.restart == right.restart &&
+           left.exit == right.exit;
+}
+
+void input_service_record(InputService& service, const Input& input,
+                          std::uint64_t timestamp_us) {
+    mutex_lock(&service.mutex);
+    ++service.samples;
+    if(service.last_sample_us != 0U) {
+        service.sample_gap_us = timestamp_us - service.last_sample_us;
+        service.sample_gap_us_max = std::max(
+            service.sample_gap_us_max, service.sample_gap_us);
+    }
+    service.last_sample_us = timestamp_us;
+    if(!service.producer_valid ||
+       !input_equal(input, service.producer_state)) {
+        if(service.count == kInputQueueCapacity) {
+            service.head = (service.head + 1U) % kInputQueueCapacity;
+            --service.count;
+            ++service.queue_drops;
+        }
+        const std::uint32_t tail =
+            (service.head + service.count) % kInputQueueCapacity;
+        service.queue[tail] = {timestamp_us, input};
+        ++service.count;
+        service.producer_state = input;
+        service.producer_valid = true;
+    }
+    mutex_unlock(&service.mutex);
+}
+
+void* input_service_thread(void* parameter) {
+    auto& service = *static_cast<InputService*>(parameter);
+    while(true) {
+        mutex_lock(&service.mutex);
+        const bool running = service.running;
+        mutex_unlock(&service.mutex);
+        if(!running) {
+            break;
+        }
+        input_service_record(service, read_input(), timer_us_gettime64());
+        thd_sleep(4U);
+    }
+    return nullptr;
+}
+
+bool start_input_service(InputService& service) {
+    if(mutex_init(&service.mutex, MUTEX_TYPE_NORMAL) != 0) {
+        return false;
+    }
+    service.running = true;
+    input_service_record(service, read_input(), timer_us_gettime64());
+    service.thread = thd_create(false, input_service_thread, &service);
+    if(service.thread == nullptr) {
+        service.running = false;
+        mutex_destroy(&service.mutex);
+        return false;
+    }
+    return true;
+}
+
+void stop_input_service(InputService& service) {
+    if(service.thread == nullptr) {
+        return;
+    }
+    mutex_lock(&service.mutex);
+    service.running = false;
+    mutex_unlock(&service.mutex);
+    thd_join(service.thread, nullptr);
+    service.thread = nullptr;
+    mutex_destroy(&service.mutex);
+}
+
+TickInput consume_input_until(InputService& service,
+                              std::uint64_t timestamp_us) {
+    TickInput result{};
+    Input fire_input{};
+    bool have_fire_input = false;
+    mutex_lock(&service.mutex);
+    while(service.count != 0U &&
+          service.queue[service.head].timestamp_us <= timestamp_us) {
+        const Input next = service.queue[service.head].input;
+        service.head = (service.head + 1U) % kInputQueueCapacity;
+        --service.count;
+        if(next.fire && !service.consumer_state.fire &&
+           !result.fire_pressed) {
+            result.fire_pressed = true;
+            fire_input = next;
+            have_fire_input = true;
+        }
+        result.reload_pressed |=
+            next.reload && !service.consumer_state.reload;
+        result.restart_pressed |=
+            next.restart && !service.consumer_state.restart;
+        result.exit_pressed |= next.exit && !service.consumer_state.exit;
+        service.consumer_state = next;
+    }
+    result.input = service.consumer_state;
+    if(have_fire_input) {
+        result.input.aim = fire_input.aim;
+        result.input.aim_pitch_stick = fire_input.aim_pitch_stick;
+        result.input.aim_pitch_dpad = fire_input.aim_pitch_dpad;
+        result.input.fire = true;
+    }
+    service.edges_delivered +=
+        static_cast<std::uint64_t>(result.fire_pressed) +
+        static_cast<std::uint64_t>(result.reload_pressed) +
+        static_cast<std::uint64_t>(result.restart_pressed) +
+        static_cast<std::uint64_t>(result.exit_pressed);
+    mutex_unlock(&service.mutex);
+    return result;
+}
+
+void discard_input_until(InputService& service, std::uint64_t timestamp_us) {
+    mutex_lock(&service.mutex);
+    while(service.count != 0U &&
+          service.queue[service.head].timestamp_us <= timestamp_us) {
+        service.consumer_state = service.queue[service.head].input;
+        service.head = (service.head + 1U) % kInputQueueCapacity;
+        --service.count;
+    }
+    mutex_unlock(&service.mutex);
+}
+
+InputServiceSnapshot input_service_snapshot(InputService& service) {
+    InputServiceSnapshot snapshot{};
+    mutex_lock(&service.mutex);
+    snapshot.samples = service.samples;
+    snapshot.sample_gap_us = service.sample_gap_us;
+    snapshot.sample_gap_us_max = service.sample_gap_us_max;
+    snapshot.queue_drops = service.queue_drops;
+    snapshot.edges_delivered = service.edges_delivered;
+    snapshot.queue_depth = service.count;
+    mutex_unlock(&service.mutex);
+    return snapshot;
 }
 
 bool file_exists(const char* path) {
@@ -4273,10 +4460,12 @@ int main() {
     std::uint64_t simulation_debt_us_max = simulation_accumulator_us;
     std::uint64_t input_samples = 0;
     std::uint64_t input_sample_gap_us_max = 0;
-    std::uint64_t previous_time = timer_us_gettime64();
+    std::uint64_t previous_time = 0U;
+    std::uint64_t simulation_wall_time_us = 0U;
     bool fire_was_down = false;
     bool reload_was_down = false;
     bool restart_was_down = false;
+    InputService input_service{};
     if(leon.header().vertex_count > kLeonVertexCapacity ||
        ganado.header().vertex_count > kGanadoVertexCapacity) {
         std::printf("re4dc-room: actor transform capacity exceeded\n");
@@ -4314,6 +4503,11 @@ int main() {
     if(!load_demo_audio(audio)) {
         return 1;
     }
+    if(!autoplay.enabled && !start_input_service(input_service)) {
+        std::printf("re4dc-room: input service start failed\n");
+        release_demo_audio(audio);
+        return 1;
+    }
     g_re4dc_demo_telemetry.aica_free_after_audio = snd_mem_available();
     const struct mallinfo heap_info = mallinfo();
     g_re4dc_demo_telemetry.heap_arena_bytes =
@@ -4340,6 +4534,8 @@ int main() {
     if(autoplay.enabled) {
         std::printf("re4dc-room: deterministic autoplay enabled\n");
     }
+    previous_time = timer_us_gettime64();
+    simulation_wall_time_us = previous_time - kSimulationStepUs;
     g_re4dc_demo_telemetry.flags = 0x10000007U;
     while(true) {
         const std::uint64_t now = timer_us_gettime64();
@@ -4356,44 +4552,59 @@ int main() {
         simulation_accumulator_us += accepted_interval;
         simulation_clamped_us += clamped_interval;
         simulation_dropped_us += clamped_interval;
+        if(clamped_interval != 0U) {
+            simulation_wall_time_us += clamped_interval;
+            if(!autoplay.enabled) {
+                discard_input_until(input_service, simulation_wall_time_us);
+            }
+        }
         simulation_debt_us_max =
             std::max(simulation_debt_us_max, simulation_accumulator_us);
         const std::uint64_t simulation_tick_begin = simulation_tick;
-        const std::uint64_t input_start = timer_us_gettime64();
-        Input manual_input{};
+        std::uint64_t input_us = 0U;
         std::uint64_t input_sample_gap_us = 0;
-        if(!autoplay.enabled) {
-            manual_input = read_input();
-            ++input_samples;
-            input_sample_gap_us = outer_interval_us;
-            input_sample_gap_us_max =
-                std::max(input_sample_gap_us_max, input_sample_gap_us);
-        }
-        const std::uint64_t input_us = timer_us_gettime64() - input_start;
         const std::uint64_t simulation_start = timer_us_gettime64();
         bool exit_requested = false;
         unsigned catchup_ticks = 0;
         while(simulation_accumulator_us >= kSimulationStepUs &&
               catchup_ticks < kMaxSimulationCatchupTicks) {
-            const Input input = autoplay.enabled
-                                    ? autoplay_input(
-                                          autoplay, player, enemy,
-                                          kSimulationDeltaSeconds)
-                                    : manual_input;
-            if(input.exit) {
+            const std::uint64_t tick_input_time_us =
+                simulation_wall_time_us + kSimulationStepUs;
+            Input input{};
+            bool fire_pressed = false;
+            bool reload_pressed = false;
+            bool restart_pressed = false;
+            bool exit_pressed = false;
+            if(autoplay.enabled) {
+                input = autoplay_input(autoplay, player, enemy,
+                                       kSimulationDeltaSeconds);
+                fire_pressed = input.fire && !fire_was_down;
+                reload_pressed = input.reload && !reload_was_down;
+                restart_pressed = input.restart && !restart_was_down;
+                exit_pressed = input.exit;
+                fire_was_down = input.fire;
+                reload_was_down = input.reload;
+                restart_was_down = input.restart;
+            } else {
+                const std::uint64_t input_start = timer_us_gettime64();
+                const TickInput tick_input = consume_input_until(
+                    input_service, tick_input_time_us);
+                input_us += timer_us_gettime64() - input_start;
+                input = tick_input.input;
+                fire_pressed = tick_input.fire_pressed;
+                reload_pressed = tick_input.reload_pressed;
+                restart_pressed = tick_input.restart_pressed;
+                exit_pressed = tick_input.exit_pressed;
+            }
+            if(exit_pressed) {
                 exit_requested = true;
                 break;
             }
-            const bool fire_pressed = input.fire && !fire_was_down;
-            const bool reload_pressed = input.reload && !reload_was_down;
-            if(input.restart && !restart_was_down) {
+            if(restart_pressed) {
                 reset_encounter(player, enemy);
                 std::printf("re4dc-room: encounter restarted tick=%llu\n",
                             static_cast<unsigned long long>(simulation_tick));
             }
-            fire_was_down = input.fire;
-            reload_was_down = input.reload;
-            restart_was_down = input.restart;
             update_player(player, collision, input, player_move_speed,
                           kSimulationDeltaSeconds);
             update_animation(player, leon, input, kSimulationDeltaSeconds);
@@ -4420,6 +4631,7 @@ int main() {
                 reset_encounter(player, enemy);
             }
             simulation_accumulator_us -= kSimulationStepUs;
+            simulation_wall_time_us = tick_input_time_us;
             ++simulation_tick;
             ++catchup_ticks;
         }
@@ -4436,6 +4648,10 @@ int main() {
             simulation_catchup_dropped_us += catchup_dropped_us;
             simulation_dropped_us += catchup_dropped_us;
             simulation_accumulator_us %= kSimulationStepUs;
+            simulation_wall_time_us += catchup_dropped_us;
+            if(!autoplay.enabled) {
+                discard_input_until(input_service, simulation_wall_time_us);
+            }
             ++simulation_overruns;
             if(simulation_overruns == 1U || simulation_overruns % 120U == 0U) {
                 std::printf(
@@ -4443,6 +4659,13 @@ int main() {
                     static_cast<unsigned long long>(simulation_tick),
                     static_cast<unsigned long>(simulation_overruns));
             }
+        }
+        InputServiceSnapshot input_snapshot{};
+        if(!autoplay.enabled) {
+            input_snapshot = input_service_snapshot(input_service);
+            input_samples = input_snapshot.samples;
+            input_sample_gap_us = input_snapshot.sample_gap_us;
+            input_sample_gap_us_max = input_snapshot.sample_gap_us_max;
         }
         const std::uint64_t simulation_us =
             timer_us_gettime64() - simulation_start;
@@ -4686,6 +4909,12 @@ int main() {
             g_collision_runtime_stats.block_tests;
         g_re4dc_demo_telemetry.collision_polygon_candidates =
             g_collision_runtime_stats.polygon_candidates;
+        g_re4dc_demo_telemetry.input_queue_drops =
+            saturate_u32(input_snapshot.queue_drops);
+        g_re4dc_demo_telemetry.input_queue_depth =
+            input_snapshot.queue_depth;
+        g_re4dc_demo_telemetry.input_edges_delivered =
+            saturate_u32(input_snapshot.edges_delivered);
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;
@@ -4724,6 +4953,9 @@ int main() {
                 static_cast<unsigned long>(stats.room_near_crossings),
                 static_cast<unsigned long>(simulation_overruns));
         }
+    }
+    if(!autoplay.enabled) {
+        stop_input_service(input_service);
     }
     delete[] ganado_headers;
     delete[] leon_headers;

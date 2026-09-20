@@ -19,6 +19,9 @@ narrow-phase/query-trace parity remains open. R1c now prepares the fixed
 world-space part of source-selected room lighting once while retaining the
 camera-relative lights, with the measured result in
 [R1C_STATIC_ROOM_LIGHTING_CHECKPOINT.md](R1C_STATIC_ROOM_LIGHTING_CHECKPOINT.md).
+The target-side timestamped controller service and short-edge test are recorded
+in [R0_INPUT_SERVICE_CHECKPOINT.md](R0_INPUT_SERVICE_CHECKPOINT.md); source
+sampling semantics, human-controller coverage, and hardware timing remain open.
 
 ## Objective and boundaries
 
@@ -148,7 +151,7 @@ an optimization commit.
 
 | Order | Bounded work | Required exit evidence |
 |---|---|---|
-| R0 | Freeze references; instrument target and matched original-game workload; correct input/debt and memory accounting; establish hardware route | Frame-associated trace, source-object/light/query inventory, CPU/PVR/presentation separation, complete debt counters; hardware result or explicitly pending status |
+| R0 | Freeze references; instrument target and matched original-game workload; correct input/debt and memory accounting; establish hardware route | **In progress:** target telemetry, debt accounting, independent input sampling, and a 50 ms edge test are implemented; matched source traces, human coverage, presentation attribution, and hardware results remain open |
 | R1a | Bounded unique room-vertex cache and trivial clip classification | Same draw/state output, reduced transform/light counts, measured stage cost, fixed scratch ceiling |
 | R1b | Recover source object identity and per-model light selection; prepare constants; only then cache/bake static contributions | **In progress:** target package/runtime implemented and measured; selected light IDs/order and changed image still need the matched source trace |
 | R1c | Reuse selected fixed room-light contributions while retaining view-relative lights | **Target-side complete:** prior packed vertex colors matched at the checked camera; original-game image/light trace and hardware timing remain open |
