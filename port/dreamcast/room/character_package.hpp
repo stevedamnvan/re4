@@ -8,13 +8,15 @@
 namespace re4dc::character {
 
 inline constexpr char kMagic[4] = {'R', '4', 'C', 'H'};
-inline constexpr std::uint32_t kVersion = 3;
+inline constexpr std::uint32_t kVersion = 4;
 
 struct Header {
     char magic[4];
     std::uint32_t version;
     std::uint32_t header_size;
-    std::uint32_t vertex_count;
+    std::uint32_t position_count;
+    std::uint32_t draw_vertex_count;
+    std::uint32_t normal_count;
     std::uint32_t index_count;
     std::uint32_t batch_count;
     std::uint32_t clip_count;
@@ -26,7 +28,8 @@ struct Header {
     std::uint32_t primitive_offset;
     std::uint32_t primitive_index_offset;
     std::uint32_t clip_offset;
-    std::uint32_t uv_offset;
+    std::uint32_t draw_vertex_offset;
+    std::uint32_t normal_position_offset;
     std::uint32_t frame_offset;
     float position_quantum_m;
 };
@@ -57,16 +60,18 @@ struct Clip {
     float root_forward_speed_mps;
 };
 
-struct Uv {
+struct DrawVertex {
+    std::uint16_t position;
+    std::uint16_t normal;
     float u;
     float v;
 };
 
-static_assert(sizeof(Header) == 72);
+static_assert(sizeof(Header) == 84);
 static_assert(sizeof(Batch) == 24);
 static_assert(sizeof(Primitive) == 16);
 static_assert(sizeof(Clip) == 32);
-static_assert(sizeof(Uv) == 8);
+static_assert(sizeof(DrawVertex) == 12);
 
 class Package {
 public:
@@ -84,7 +89,8 @@ public:
     const Primitive* primitives() const;
     const std::uint16_t* primitive_indices() const;
     const Clip* clips() const;
-    const Uv* uvs() const;
+    const DrawVertex* draw_vertices() const;
+    const std::uint16_t* normal_positions() const;
     const std::int16_t* frame_positions(std::uint32_t frame) const;
     const char* error() const { return error_; }
 

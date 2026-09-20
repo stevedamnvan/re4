@@ -166,6 +166,10 @@ The source collision broad-phase recovery is measured in
 [the R2a SAT hierarchy checkpoint](docs/R2A_SAT_HIERARCHY_CHECKPOINT.md). The
 source-selected fixed room-light contribution is prepared once and measured in
 [the R1c static room-lighting checkpoint](docs/R1C_STATIC_ROOM_LIGHTING_CHECKPOINT.md).
+Character package version 4 now separates sampled source positions, authored
+normal identities, and UV draw corners; its fidelity, memory, and Flycast timing
+results are recorded in
+[the R2b source attribute-identity checkpoint](docs/R2B_SOURCE_ATTRIBUTE_IDENTITIES_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
@@ -201,9 +205,10 @@ make -C port/dreamcast/room \
    reuses the current source-derived fixed contribution without reducing visible
    assets; R0, R1a, and the target-side R1b/R1c implementations are complete,
    while source-trace acceptance remains open.
-3. Complete source SAT primitive/query parity on top of the recovered hierarchy,
-   then preserve source position/normal/weight-palette identities instead of
-   designing replacement collision or animation systems.
+3. Complete source SAT primitive/query parity on top of the recovered hierarchy.
+   Character package version 4 now preserves separate position, normal, and
+   draw-corner identities; next retain the source normal values and weight
+   palettes instead of designing a replacement animation system.
 4. Complete human-controller combat, reload, death, disconnect, and repeated
    reset acceptance on the independent input service; its short-edge and
    autoplay tests are complete in Flycast.

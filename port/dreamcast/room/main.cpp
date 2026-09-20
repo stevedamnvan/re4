@@ -1697,12 +1697,12 @@ bool source_axe_sweep_hits_player(
     const Enemy& enemy, const Player& player,
     const re4dc::character::Package& enemy_character,
     const re4dc::character::Package& player_character) {
-    if(enemy_character.header().vertex_count < kAxeSweepMarkerCount ||
-       player_character.header().vertex_count < kPlayerHitMarkerCount) {
+    if(enemy_character.header().position_count < kAxeSweepMarkerCount ||
+       player_character.header().position_count < kPlayerHitMarkerCount) {
         return false;
     }
     const std::uint32_t first_axe_marker =
-        enemy_character.header().vertex_count - kAxeSweepMarkerCount;
+        enemy_character.header().position_count - kAxeSweepMarkerCount;
     // em10_R1_AxeAtk checks the two authored weapon endpoints as 250-unit
     // spheres. Its base point chooses the nearest/facing damage part, but does
     // not enlarge the hit volume, so it is intentionally not tested here.
@@ -1715,7 +1715,7 @@ bool source_axe_sweep_hits_player(
                                enemy.animation_frame, first_axe_marker + 2U),
         enemy);
     const std::uint32_t first_player_marker =
-        player_character.header().vertex_count - kPlayerHitMarkerCount;
+        player_character.header().position_count - kPlayerHitMarkerCount;
     for(std::uint32_t capsule = 0; capsule < kPlayerHitCapsuleCount;
         ++capsule) {
         const auto bottom = actor_point_to_world(
@@ -2291,14 +2291,14 @@ bool shot_hits_enemy(const Player& player, const Enemy& enemy,
                      const re4dc::character::Package& player_character,
                      const re4dc::character::Package& enemy_character) {
     if(enemy.state == EnemyState::Dead ||
-       player_character.header().vertex_count <
+       player_character.header().position_count <
            kPlayerFireMarkerCount + kPlayerHitMarkerCount ||
-       enemy_character.header().vertex_count <
+       enemy_character.header().position_count <
            kEnemyHitMarkerCount + kAxeSweepMarkerCount) {
         return false;
     }
     const std::uint32_t first_player_fire_marker =
-        player_character.header().vertex_count - kPlayerHitMarkerCount -
+        player_character.header().position_count - kPlayerHitMarkerCount -
         kPlayerFireMarkerCount;
     const auto fire_blend = player_pitch_blend(
         kPlayerFireLevelClip, player.aim_pitch);
@@ -2334,7 +2334,7 @@ bool shot_hits_enemy(const Player& player, const Enemy& enemy,
         muzzle.z + minus_x.z * kHandgunRayLength + plus_y.z * spread_y +
             plus_z.z * spread_z};
     const auto direction = subtract(end, muzzle);
-    const std::uint32_t first_marker = enemy_character.header().vertex_count -
+    const std::uint32_t first_marker = enemy_character.header().position_count -
         kAxeSweepMarkerCount - kEnemyHitMarkerCount;
     float nearest = 2.0f;
     for(std::uint32_t capsule = 0; capsule < kEnemyHitCapsuleCount;
@@ -3239,7 +3239,8 @@ void project_character(const re4dc::character::Package& character,
     const float scale = character.header().position_quantum_m;
     const float sine = std::sin(actor_yaw);
     const float cosine = std::cos(actor_yaw);
-    for(std::uint32_t index = 0; index < character.header().vertex_count; ++index) {
+    for(std::uint32_t index = 0;
+        index < character.header().position_count; ++index) {
         float local_x =
             (static_cast<float>(source[index * 3U]) +
              (static_cast<float>(next_source[index * 3U]) -
@@ -3288,17 +3289,18 @@ void project_character(const re4dc::character::Package& character,
 void build_character_normals(const re4dc::character::Package& character,
                              const ProjectedVertex* projected,
                              float* normals) {
-    const std::uint32_t vertex_count = character.header().vertex_count;
-    std::fill(normals, normals + vertex_count * 3U, 0.0f);
+    const std::uint32_t normal_count = character.header().normal_count;
+    std::fill(normals, normals + normal_count * 3U, 0.0f);
     const auto* indices = character.indices();
+    const auto* draw_vertices = character.draw_vertices();
     for(std::uint32_t index = 0; index < character.header().index_count;
         index += 3U) {
-        const std::uint16_t i0 = indices[index];
-        const std::uint16_t i1 = indices[index + 1U];
-        const std::uint16_t i2 = indices[index + 2U];
-        const ProjectedVertex& p0 = projected[i0];
-        const ProjectedVertex& p1 = projected[i1];
-        const ProjectedVertex& p2 = projected[i2];
+        const auto& v0 = draw_vertices[indices[index]];
+        const auto& v1 = draw_vertices[indices[index + 1U]];
+        const auto& v2 = draw_vertices[indices[index + 2U]];
+        const ProjectedVertex& p0 = projected[v0.position];
+        const ProjectedVertex& p1 = projected[v1.position];
+        const ProjectedVertex& p2 = projected[v2.position];
         const float edge1_x = p1.world_x - p0.world_x;
         const float edge1_y = p1.world_y - p0.world_y;
         const float edge1_z = p1.world_z - p0.world_z;
@@ -3308,15 +3310,15 @@ void build_character_normals(const re4dc::character::Package& character,
         const float nx = edge1_y * edge2_z - edge1_z * edge2_y;
         const float ny = edge1_z * edge2_x - edge1_x * edge2_z;
         const float nz = edge1_x * edge2_y - edge1_y * edge2_x;
-        for(const std::uint16_t vertex : {i0, i1, i2}) {
-            normals[vertex * 3U] += nx;
-            normals[vertex * 3U + 1U] += ny;
-            normals[vertex * 3U + 2U] += nz;
+        for(const std::uint16_t normal : {v0.normal, v1.normal, v2.normal}) {
+            normals[normal * 3U] += nx;
+            normals[normal * 3U + 1U] += ny;
+            normals[normal * 3U + 2U] += nz;
         }
     }
-    for(std::uint32_t vertex = 0; vertex < vertex_count; ++vertex) {
-        normalize_vector(normals[vertex * 3U], normals[vertex * 3U + 1U],
-                         normals[vertex * 3U + 2U]);
+    for(std::uint32_t normal = 0; normal < normal_count; ++normal) {
+        normalize_vector(normals[normal * 3U], normals[normal * 3U + 1U],
+                         normals[normal * 3U + 2U]);
     }
 }
 
@@ -3324,14 +3326,15 @@ void build_character_lighting(const re4dc::character::Package& character,
                               const ProjectedVertex* projected,
                               const float* normals, float* lighting,
                               std::uint32_t light_selection) {
-    for(std::uint32_t vertex = 0; vertex < character.header().vertex_count;
-        ++vertex) {
-        const ProjectedVertex& position = projected[vertex];
+    const auto* normal_positions = character.normal_positions();
+    for(std::uint32_t normal = 0; normal < character.header().normal_count;
+        ++normal) {
+        const ProjectedVertex& position = projected[normal_positions[normal]];
         evaluate_source_lighting(
             position.world_x, position.world_y, position.world_z,
-            normals[vertex * 3U], normals[vertex * 3U + 1U],
-            normals[vertex * 3U + 2U], true, lighting[vertex * 3U],
-            lighting[vertex * 3U + 1U], lighting[vertex * 3U + 2U],
+            normals[normal * 3U], normals[normal * 3U + 1U],
+            normals[normal * 3U + 2U], true, lighting[normal * 3U],
+            lighting[normal * 3U + 1U], lighting[normal * 3U + 2U],
             light_selection);
     }
 }
@@ -3350,7 +3353,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
     const auto* indices = character.indices();
     const auto* primitives = character.primitives();
     const auto* primitive_indices = character.primitive_indices();
-    const auto* uvs = character.uvs();
+    const auto* draw_vertices = character.draw_vertices();
     std::uint32_t triangles = 0;
     for(std::uint32_t batch_index = 0;
         batch_index < character.header().batch_count; ++batch_index) {
@@ -3379,20 +3382,20 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             };
             RenderVertex source_triangle[3]{};
             for(unsigned corner = 0; corner < 3; ++corner) {
+                const auto& draw = draw_vertices[source_indices[corner]];
 #if defined(RE4DC_SCENE_R100)
-                const std::uint32_t vertex = source_indices[corner];
-                const float light_red = lighting[vertex * 3U];
-                const float light_green = lighting[vertex * 3U + 1U];
-                const float light_blue = lighting[vertex * 3U + 2U];
+                const float light_red = lighting[draw.normal * 3U];
+                const float light_green = lighting[draw.normal * 3U + 1U];
+                const float light_blue = lighting[draw.normal * 3U + 2U];
 #else
                 float light_red = 1.0f;
                 float light_green = 1.0f;
                 float light_blue = 1.0f;
 #endif
                 source_triangle[corner] = {
-                    .position = projected[source_indices[corner]],
-                    .u = uvs[source_indices[corner]].u,
-                    .v = uvs[source_indices[corner]].v,
+                    .position = projected[draw.position],
+                    .u = draw.u,
+                    .v = draw.v,
                     .light_red = light_red,
                     .light_green = light_green,
                     .light_blue = light_blue,
@@ -3422,7 +3425,8 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                 direct_strip && local < primitive.vertex_count; ++local) {
                 const std::uint16_t vertex =
                     primitive_indices[primitive.first_vertex + local];
-                const float depth = projected[vertex].depth;
+                const float depth =
+                    projected[draw_vertices[vertex].position].depth;
                 if(depth < kNearClipDistance || depth > kFarClipDistance) {
                     direct_strip = false;
                 }
@@ -3442,10 +3446,11 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                 ++local) {
                 const std::uint16_t vertex =
                     primitive_indices[primitive.first_vertex + local];
+                const auto& draw = draw_vertices[vertex];
 #if defined(RE4DC_SCENE_R100)
-                const float light_red = lighting[vertex * 3U];
-                const float light_green = lighting[vertex * 3U + 1U];
-                const float light_blue = lighting[vertex * 3U + 2U];
+                const float light_red = lighting[draw.normal * 3U];
+                const float light_green = lighting[draw.normal * 3U + 1U];
+                const float light_blue = lighting[draw.normal * 3U + 2U];
 #else
                 const float light_red = 1.0f;
                 const float light_green = 1.0f;
@@ -3455,11 +3460,11 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                     .flags = local + 1U == primitive.vertex_count
                                  ? PVR_CMD_VERTEX_EOL
                                  : PVR_CMD_VERTEX,
-                    .x = projected[vertex].x,
-                    .y = projected[vertex].y,
-                    .z = projected[vertex].z,
-                    .u = uvs[vertex].u,
-                    .v = uvs[vertex].v,
+                    .x = projected[draw.position].x,
+                    .y = projected[draw.position].y,
+                    .z = projected[draw.position].z,
+                    .u = draw.u,
+                    .v = draw.v,
                     .argb = shade_color(light_red, light_green, light_blue),
                     .oargb = 0,
                 };
@@ -4237,7 +4242,8 @@ int main() {
     g_re4dc_demo_telemetry.flags = 0x10000002U;
     std::printf(
         "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
-        "hierarchy=%lu/%lu leon=%lu/%lu/%lu ganado=%lu/%lu/%lu "
+        "hierarchy=%lu/%lu leon=%lu/%lu/%lu/%lu/%lu "
+        "ganado=%lu/%lu/%lu/%lu/%lu "
         "source_groups=%s\n",
         static_cast<unsigned long>(room.header().vertex_count),
         static_cast<unsigned long>(room.header().index_count / 3U),
@@ -4249,10 +4255,14 @@ int main() {
             ? collision.hierarchy()->block_count : 0U),
         static_cast<unsigned long>(collision.has_hierarchy()
             ? collision.hierarchy()->block_index_count : 0U),
-        static_cast<unsigned long>(leon.header().vertex_count),
+        static_cast<unsigned long>(leon.header().position_count),
+        static_cast<unsigned long>(leon.header().draw_vertex_count),
+        static_cast<unsigned long>(leon.header().normal_count),
         static_cast<unsigned long>(leon.header().index_count / 3U),
         static_cast<unsigned long>(leon.header().frame_count),
-        static_cast<unsigned long>(ganado.header().vertex_count),
+        static_cast<unsigned long>(ganado.header().position_count),
+        static_cast<unsigned long>(ganado.header().draw_vertex_count),
+        static_cast<unsigned long>(ganado.header().normal_count),
         static_cast<unsigned long>(ganado.header().index_count / 3U),
         static_cast<unsigned long>(ganado.header().frame_count),
         room.source_groups() != nullptr ? "yes" : "no");
@@ -4267,12 +4277,12 @@ int main() {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
-    if(leon.header().vertex_count != 7034U) {
+    if(leon.header().position_count != 5745U) {
         std::printf(
             "re4dc-room: r100 Leon package needs source gun and hit-capsule markers\n");
         return 1;
     }
-    if(ganado.header().vertex_count != 2335U) {
+    if(ganado.header().position_count != 1690U) {
         std::printf(
             "re4dc-room: r100 Ganado package needs source hit capsules and axe markers\n");
         return 1;
@@ -4544,8 +4554,10 @@ int main() {
     bool reload_was_down = false;
     bool restart_was_down = false;
     InputService input_service{};
-    if(leon.header().vertex_count > kLeonVertexCapacity ||
-       ganado.header().vertex_count > kGanadoVertexCapacity) {
+    if(leon.header().position_count > kLeonVertexCapacity ||
+       leon.header().normal_count > kLeonVertexCapacity ||
+       ganado.header().position_count > kGanadoVertexCapacity ||
+       ganado.header().normal_count > kGanadoVertexCapacity) {
         std::printf("re4dc-room: actor transform capacity exceeded\n");
         return 1;
     }

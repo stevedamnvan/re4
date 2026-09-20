@@ -34,7 +34,9 @@ class CharacterConverterTests(unittest.TestCase):
         data[0x28] = 1
         struct.pack_into(">H", data, 0x2A, 1)
         struct.pack_into(">I", data, 0x30, 0x60)
+        struct.pack_into(">I", data, 0x34, 0x120)
         struct.pack_into(">H", data, 0x38, 4)
+        struct.pack_into(">H", data, 0x3A, 4)
         vertices = ((2, 4, 6, 0), (4, 4, 6, 0), (4, 6, 6, 0), (2, 6, 6, 0))
         for index, vertex in enumerate(vertices):
             struct.pack_into(">4h", data, 0x60 + index * 8, *vertex)
@@ -49,13 +51,15 @@ class CharacterConverterTests(unittest.TestCase):
             struct.pack_into(">2h", data, 0x100 + index * 4,
                              index * 64, index * 32)
 
-        (positions, palette, weights, draw_sources, texcoords, indices, batches,
-         bindings, primitive_indices, primitives,
+        (positions, palette, weights, draw_sources, draw_normals, normal_count,
+         texcoords, indices, batches, bindings, primitive_indices, primitives,
          batch_primitive_ranges) = MODULE.parse_geometry(data)
         self.assertEqual(positions[0], (1.0, 2.0, 3.0))
         self.assertEqual(palette, [0, 0, 0, 0])
         self.assertEqual(weights, [((0,), (100,))])
         self.assertEqual(draw_sources, [0, 1, 2, 3])
+        self.assertEqual(draw_normals, [0, 1, 2, 3])
+        self.assertEqual(normal_count, 4)
         self.assertEqual(texcoords[3], (0.75, 0.375))
         self.assertEqual(indices, [0, 1, 2, 0, 2, 3])
         self.assertEqual(batches, [(0, 6, 3, 0)])

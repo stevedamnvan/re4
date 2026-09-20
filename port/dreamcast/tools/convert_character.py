@@ -25,12 +25,13 @@ import convert_tpl  # noqa: E402
 
 
 MAGIC = b"R4CH"
-VERSION = 3
-HEADER = struct.Struct("<4s16If")
+VERSION = 4
+HEADER = struct.Struct("<4s19If")
 BATCH = struct.Struct("<6I")
 PRIMITIVE = struct.Struct("<IIHHB3x")
 CLIP = struct.Struct("<16sIIff")
-UV = struct.Struct("<2f")
+DRAW_VERTEX = struct.Struct("<HH2f")
+NORMAL_POSITION = struct.Struct("<H")
 
 
 def align(value, alignment=4):
@@ -77,8 +78,10 @@ def parse_geometry(data):
     flags = be_u32(data, 0x20)
     shift = data[0x28]
     vertex_offset = be_u32(data, 0x30)
+    normal_offset = be_u32(data, 0x34)
     texcoord_offset = be_u32(data, 0x10)
     vertex_count = be_u16(data, 0x38)
+    normal_count = be_u16(data, 0x3A)
     part_offset = be_u32(data, 0x1C)
     part_count = be_u16(data, 0x1A)
     weight_offset = be_u32(data, 0x14)
@@ -88,6 +91,10 @@ def parse_geometry(data):
         raise ValueError("extended model weights are not supported by the lean converter")
     if weight_count == 0:
         raise ValueError("model has no skinning palette")
+    normal_stride = 4 if flags & 0x20000000 else 8
+    if (normal_count == 0 or normal_offset == 0 or
+            normal_offset + normal_count * normal_stride > len(data)):
+        raise ValueError("model normal array exceeds entry")
 
     scale = 1.0 / float(1 << shift)
     positions = []
@@ -112,6 +119,7 @@ def parse_geometry(data):
 
     record_size = 8 if flags & 0x80000000 else 6
     draw_sources = []
+    draw_normals = []
     texcoords = []
     draw_vertex_map = {}
     indices = []
@@ -152,15 +160,20 @@ def parse_geometry(data):
             for vertex in range(count):
                 record = stream + vertex * record_size
                 position_index = be_u16(data, record)
+                normal_index = be_u16(data, record + 2)
                 texcoord_index = be_u16(data, record + record_size - 2)
                 if position_index >= vertex_count:
                     raise ValueError(
                         "GX primitive references a vertex outside the source array"
                     )
+                if normal_index >= normal_count:
+                    raise ValueError(
+                        "GX primitive references a normal outside the source array"
+                    )
                 texcoord = texcoord_offset + texcoord_index * 4
                 if texcoord_offset == 0 or texcoord + 4 > len(data):
                     raise ValueError("GX primitive references a texture coordinate outside the source array")
-                key = (position_index, texcoord_index)
+                key = (position_index, normal_index, texcoord_index)
                 if key not in draw_vertex_map:
                     if flags & 0x80000000:
                         raw_u, raw_v = struct.unpack_from(">2h", data, texcoord)
@@ -170,6 +183,7 @@ def parse_geometry(data):
                         uv = (raw_u / 32768.0, raw_v / 32768.0)
                     draw_vertex_map[key] = len(draw_sources)
                     draw_sources.append(position_index)
+                    draw_normals.append(normal_index)
                     texcoords.append(uv)
                 primitive.append(draw_vertex_map[key])
             if primitive and max(primitive) >= len(draw_sources):
@@ -198,7 +212,8 @@ def parse_geometry(data):
             )
         cursor = stream_end
     return (
-        positions, palette_indices, weights, draw_sources, texcoords,
+        positions, palette_indices, weights, draw_sources, draw_normals,
+        normal_count, texcoords,
         indices, batches, texture_bindings, primitive_indices, primitives,
         batch_primitive_ranges,
     )
@@ -559,6 +574,10 @@ def convert(args):
     components = []
     component_manifest = []
     positions = []
+    draw_position_indices = []
+    draw_normal_indices = []
+    normal_positions = []
+    normal_key_map = {}
     texcoords = []
     indices = []
     batches = []
@@ -569,6 +588,7 @@ def convert(args):
     texture_images = []
     texture_sources = {}
     source_vertex_count = 0
+    source_normal_count = 0
     source_triangle_count = 0
 
     for (component_name, archive_name, model_index, texture_index,
@@ -584,7 +604,8 @@ def convert(args):
         geometry = parse_geometry(component_entry.data)
         (
             source_positions, palette_indices, weights, draw_sources,
-            component_uvs, component_indices, component_batches,
+            draw_normals, component_normal_count, component_uvs,
+            component_indices, component_batches,
             component_bindings, component_primitive_indices,
             component_primitives, component_batch_primitive_ranges,
         ) = geometry
@@ -616,15 +637,25 @@ def convert(args):
             )
         image_base, texture_entry, image_count = texture_sources[texture_source_key]
 
-        vertex_base = len(positions)
+        position_base = len(positions)
+        draw_vertex_base = len(draw_position_indices)
+        normal_source_base = source_normal_count
         index_base = len(indices)
         primitive_index_base = len(primitive_indices)
         primitive_base = len(primitives)
-        positions.extend(source_positions[index] for index in draw_sources)
+        positions.extend(source_positions)
+        for source_position, source_normal in zip(draw_sources, draw_normals):
+            position_index = position_base + source_position
+            normal_key = (position_index, normal_source_base + source_normal)
+            if normal_key not in normal_key_map:
+                normal_key_map[normal_key] = len(normal_positions)
+                normal_positions.append(position_index)
+            draw_position_indices.append(position_index)
+            draw_normal_indices.append(normal_key_map[normal_key])
         texcoords.extend(component_uvs)
-        indices.extend(vertex_base + index for index in component_indices)
+        indices.extend(draw_vertex_base + index for index in component_indices)
         primitive_indices.extend(
-            vertex_base + index for index in component_primitive_indices
+            draw_vertex_base + index for index in component_primitive_indices
         )
         primitives.extend((
             primitive_index_base + first_vertex,
@@ -654,9 +685,10 @@ def convert(args):
             ))
         components.append((
             component_name, source_positions, palette_indices, weights,
-            draw_sources, parent_bone, rigid_translation, rigid_yaw,
+            parent_bone, rigid_translation, rigid_yaw,
         ))
         source_vertex_count += len(source_positions)
+        source_normal_count += component_normal_count
         source_triangle_count += len(component_indices) // 3
         component_manifest.append({
             "name": component_name,
@@ -667,6 +699,7 @@ def convert(args):
             "texture_sha256": hashlib.sha256(texture_entry.data).hexdigest(),
             "texture_images": image_count,
             "vertices": len(source_positions),
+            "normals": component_normal_count,
             "draw_vertices": len(draw_sources),
             "triangles": len(component_indices) // 3,
             "parent_bone": parent_bone,
@@ -697,7 +730,7 @@ def convert(args):
             pose = player.frame(frame)
             combined_frame = []
             for (_, source_positions, palette_indices, weights,
-                 draw_sources, parent_bone, rigid_translation,
+                 parent_bone, rigid_translation,
                  rigid_yaw) in components:
                 if parent_bone is None:
                     source_frame = skin_frame(
@@ -714,9 +747,7 @@ def convert(args):
                         )
                         for position in source_positions
                     ]
-                combined_frame.extend(
-                    source_frame[index] for index in draw_sources
-                )
+                combined_frame.extend(source_frame)
             frames.append(combined_frame)
             marker_frames.append([
                 transform_point(
@@ -745,14 +776,23 @@ def convert(args):
             "sha256": hashlib.sha256(entry.data).hexdigest(),
         })
 
-    uv_split_vertex_count = len(positions)
-    positions, texcoords, indices, batches, frames = cluster_animated_geometry(
-        positions, texcoords, indices, batches, frames, args.cluster_mm
-    )
+    uv_split_vertex_count = len(draw_position_indices)
     if args.cluster_mm > 0.0:
+        expanded_positions = [positions[index] for index in draw_position_indices]
+        expanded_frames = [
+            [frame[index] for index in draw_position_indices]
+            for frame in frames
+        ]
+        positions, texcoords, indices, batches, frames = cluster_animated_geometry(
+            expanded_positions, texcoords, indices, batches, expanded_frames,
+            args.cluster_mm
+        )
+        draw_position_indices = list(range(len(positions)))
+        draw_normal_indices = list(range(len(positions)))
+        normal_positions = list(range(len(positions)))
         # Position clustering can remove degenerate triangles and changes draw
         # vertex identities, so the source GX streams are no longer valid.
-        # Keep the v3 package readable and select the triangle fallback.
+        # Keep the v4 package readable and select the triangle fallback.
         primitive_indices = []
         primitives = []
         batch_primitive_ranges = [(0, 0) for _ in batches]
@@ -760,12 +800,16 @@ def convert(args):
     # Append them after clustering so mesh reduction can never merge or remove
     # a source-authored weapon sweep point.
     positions.extend((0.0, 0.0, 0.0) for _ in args.rigid_marker)
-    texcoords.extend((0.0, 0.0) for _ in args.rigid_marker)
     for frame, markers in zip(frames, marker_frames):
         frame.extend(markers)
     frame_data, maximum_error, bounds_min, bounds_max = quantise_frames(
         frames, args.quantum_mm
     )
+    if max((len(positions), len(texcoords), len(normal_positions)),
+           default=0) > 0xFFFF:
+        raise ValueError(
+            "character position/normal/draw counts exceed uint16 package indices"
+        )
     header_size = HEADER.size
     index_offset = align(header_size)
     batch_offset = align(index_offset + len(indices) * 2)
@@ -774,14 +818,21 @@ def convert(args):
         primitive_offset + len(primitives) * PRIMITIVE.size
     )
     clip_offset = align(primitive_index_offset + len(primitive_indices) * 2)
-    uv_offset = align(clip_offset + len(clips) * CLIP.size)
-    frame_offset = align(uv_offset + len(texcoords) * UV.size)
+    draw_vertex_offset = align(clip_offset + len(clips) * CLIP.size)
+    normal_position_offset = align(
+        draw_vertex_offset + len(texcoords) * DRAW_VERTEX.size
+    )
+    frame_offset = align(
+        normal_position_offset + len(normal_positions) * NORMAL_POSITION.size
+    )
     blob = bytearray(frame_offset + len(frame_data))
     HEADER.pack_into(
-        blob, 0, MAGIC, VERSION, header_size, len(positions), len(indices),
-        len(batches), len(clips), len(frames), len(primitives),
+        blob, 0, MAGIC, VERSION, header_size, len(positions), len(texcoords),
+        len(normal_positions), len(indices), len(batches), len(clips),
+        len(frames), len(primitives),
         len(primitive_indices), index_offset, batch_offset, primitive_offset,
-        primitive_index_offset, clip_offset, uv_offset, frame_offset,
+        primitive_index_offset, clip_offset, draw_vertex_offset,
+        normal_position_offset, frame_offset,
         args.quantum_mm * 0.001,
     )
     struct.pack_into(f"<{len(indices)}H", blob, index_offset, *indices)
@@ -805,8 +856,17 @@ def convert(args):
         CLIP.pack_into(blob, clip_offset + index * CLIP.size,
                        encoded.ljust(16, b"\0"), first_frame, frame_count, fps,
                        root_speed)
-    for index, uv in enumerate(texcoords):
-        UV.pack_into(blob, uv_offset + index * UV.size, *uv)
+    for index, (position, normal, uv) in enumerate(zip(
+            draw_position_indices, draw_normal_indices, texcoords)):
+        DRAW_VERTEX.pack_into(
+            blob, draw_vertex_offset + index * DRAW_VERTEX.size,
+            position, normal, *uv,
+        )
+    for index, position in enumerate(normal_positions):
+        NORMAL_POSITION.pack_into(
+            blob, normal_position_offset + index * NORMAL_POSITION.size,
+            position,
+        )
     blob[frame_offset:] = frame_data
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -846,7 +906,7 @@ def convert(args):
         encoding="utf-8",
     )
     manifest = {
-        "format": "re4dc-character-v3",
+        "format": "re4dc-character-v4",
         "output": str(output.resolve()),
         "bytes": len(blob),
         "sha256": hashlib.sha256(blob).hexdigest(),
@@ -874,7 +934,10 @@ def convert(args):
             "package_sha256": hashlib.sha256(texture_package).hexdigest(),
             "bytes": len(texture_package),
         },
-        "vertices": len(positions),
+        "positions": len(positions),
+        "draw_vertices": len(texcoords),
+        "normal_work_items": len(normal_positions),
+        "vertices": len(texcoords),
         "uv_split_vertices": uv_split_vertex_count,
         "triangles": len(indices) // 3,
         "batches": len(batches),
@@ -882,6 +945,7 @@ def convert(args):
         "source_primitive_vertices": len(primitive_indices),
         "cluster_mm": args.cluster_mm,
         "cluster_source_vertices": source_vertex_count,
+        "cluster_source_normals": source_normal_count,
         "cluster_source_triangles": source_triangle_count,
         "frames": len(frames),
         "sample_step": args.sample_step,

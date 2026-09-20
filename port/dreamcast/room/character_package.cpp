@@ -42,7 +42,8 @@ bool Package::open(const char* path) {
         close();
         return false;
     }
-    if(header_->vertex_count == 0 || header_->index_count % 3U != 0 ||
+    if(header_->position_count == 0 || header_->draw_vertex_count == 0 ||
+       header_->normal_count == 0 || header_->index_count % 3U != 0 ||
        header_->clip_count == 0 || header_->frame_count == 0 ||
        !(header_->position_quantum_m > 0.0f)) {
         error_ = "invalid package counts or position quantum";
@@ -51,7 +52,7 @@ bool Package::open(const char* path) {
     }
     const std::uint64_t frame_bytes =
         static_cast<std::uint64_t>(header_->frame_count) *
-        header_->vertex_count * 3U * sizeof(std::int16_t);
+        header_->position_count * 3U * sizeof(std::int16_t);
     if(!range_valid(header_->index_offset,
                     static_cast<std::uint64_t>(header_->index_count) * sizeof(std::uint16_t)) ||
        !range_valid(header_->batch_offset,
@@ -62,8 +63,10 @@ bool Package::open(const char* path) {
                     static_cast<std::uint64_t>(header_->primitive_index_count) * sizeof(std::uint16_t)) ||
        !range_valid(header_->clip_offset,
                     static_cast<std::uint64_t>(header_->clip_count) * sizeof(Clip)) ||
-       !range_valid(header_->uv_offset,
-                    static_cast<std::uint64_t>(header_->vertex_count) * sizeof(Uv)) ||
+       !range_valid(header_->draw_vertex_offset,
+                    static_cast<std::uint64_t>(header_->draw_vertex_count) * sizeof(DrawVertex)) ||
+       !range_valid(header_->normal_position_offset,
+                    static_cast<std::uint64_t>(header_->normal_count) * sizeof(std::uint16_t)) ||
        !range_valid(header_->frame_offset, frame_bytes)) {
         error_ = "record range exceeds package";
         close();
@@ -71,7 +74,7 @@ bool Package::open(const char* path) {
     }
     const auto* package_indices = indices();
     for(std::uint32_t index = 0; index < header_->index_count; ++index) {
-        if(package_indices[index] >= header_->vertex_count) {
+        if(package_indices[index] >= header_->draw_vertex_count) {
             error_ = "index exceeds vertex count";
             close();
             return false;
@@ -115,7 +118,7 @@ bool Package::open(const char* path) {
         }
         for(std::uint32_t vertex = primitive.first_vertex;
             vertex < primitive.first_vertex + primitive.vertex_count; ++vertex) {
-            if(package_primitive_indices[vertex] >= header_->vertex_count) {
+            if(package_primitive_indices[vertex] >= header_->draw_vertex_count) {
                 error_ = "source primitive index exceeds vertex count";
                 close();
                 return false;
@@ -129,6 +132,23 @@ bool Package::open(const char* path) {
            static_cast<std::uint64_t>(clip.first_frame) + clip.frame_count >
                header_->frame_count) {
             error_ = "clip range exceeds frame count";
+            close();
+            return false;
+        }
+    }
+    const auto* package_draw_vertices = draw_vertices();
+    for(std::uint32_t index = 0; index < header_->draw_vertex_count; ++index) {
+        if(package_draw_vertices[index].position >= header_->position_count ||
+           package_draw_vertices[index].normal >= header_->normal_count) {
+            error_ = "draw vertex exceeds position or normal count";
+            close();
+            return false;
+        }
+    }
+    const auto* package_normal_positions = normal_positions();
+    for(std::uint32_t index = 0; index < header_->normal_count; ++index) {
+        if(package_normal_positions[index] >= header_->position_count) {
+            error_ = "normal position exceeds position count";
             close();
             return false;
         }
@@ -168,8 +188,14 @@ const Clip* Package::clips() const {
     return reinterpret_cast<const Clip*>(data_ + header_->clip_offset);
 }
 
-const Uv* Package::uvs() const {
-    return reinterpret_cast<const Uv*>(data_ + header_->uv_offset);
+const DrawVertex* Package::draw_vertices() const {
+    return reinterpret_cast<const DrawVertex*>(
+        data_ + header_->draw_vertex_offset);
+}
+
+const std::uint16_t* Package::normal_positions() const {
+    return reinterpret_cast<const std::uint16_t*>(
+        data_ + header_->normal_position_offset);
 }
 
 const std::int16_t* Package::frame_positions(std::uint32_t frame) const {
@@ -177,7 +203,7 @@ const std::int16_t* Package::frame_positions(std::uint32_t frame) const {
         return nullptr;
     }
     const std::size_t stride =
-        static_cast<std::size_t>(header_->vertex_count) * 3U;
+        static_cast<std::size_t>(header_->position_count) * 3U;
     return reinterpret_cast<const std::int16_t*>(data_ + header_->frame_offset) +
            frame * stride;
 }
