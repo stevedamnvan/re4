@@ -397,25 +397,63 @@ def parse_obj(path: pathlib.Path) -> dict[str, object]:
     }
 
 
-def spatial_partition(parsed: dict[str, object], cell_size: float) -> None:
+def spatial_partition(
+    parsed: dict[str, object], cell_size: float,
+    source_groups: dict[str, SourceGroupData] | None = None,
+    unpartitioned_materials: set[str] | None = None,
+) -> dict[str, SourceGroupData] | None:
     if cell_size <= 0.0:
-        return
+        return source_groups
     vertices = parsed["vertices"]
     source_batches = parsed["batches"]
-    cells: dict[tuple[int, int], dict[str, BatchData]] = {}
+    preserve_sources = source_groups is not None
+    unpartitioned_materials = unpartitioned_materials or set()
+    source_order = {
+        name: index for index, name in enumerate(parsed["group_order"])
+    }
+    cells: dict[tuple[object, ...], dict[str, BatchData]] = {}
     groups: dict[str, GroupData] = {}
+    cell_sources: dict[str, SourceGroupData] = {}
+    unpartitioned: dict[str, list[BatchData]] = {}
 
     for source_batch in source_batches:
+        preserve_batch = (
+            preserve_sources and
+            source_batch.material in unpartitioned_materials
+        )
+        if preserve_batch:
+            ordinal = source_order[source_batch.group]
+            name = f"source_{ordinal:03d}_unpartitioned"
+            if name not in groups:
+                groups[name] = GroupData(name)
+                cell_sources[name] = source_groups[source_batch.group]
+                unpartitioned[source_batch.group] = []
+            batch = BatchData(
+                name, source_batch.material, list(source_batch.indices)
+            )
+            unpartitioned[source_batch.group].append(batch)
+            for vertex_index in source_batch.indices:
+                groups[name].include(vertices[vertex_index][:3])
+            continue
         for start in range(0, len(source_batch.indices), 3):
             triangle = source_batch.indices[start : start + 3]
             positions = [vertices[index][:3] for index in triangle]
             center_x = sum(position[0] for position in positions) / 3.0
             center_z = sum(position[2] for position in positions) / 3.0
-            key = (math.floor(center_x / cell_size), math.floor(center_z / cell_size))
-            name = f"cell_{key[0]}_{key[1]}"
+            cell_x = math.floor(center_x / cell_size)
+            cell_z = math.floor(center_z / cell_size)
+            key = ((source_batch.group, cell_x, cell_z) if preserve_sources
+                   else (cell_x, cell_z))
+            if preserve_sources:
+                ordinal = source_order[source_batch.group]
+                name = f"source_{ordinal:03d}_cell_{cell_x}_{cell_z}"
+            else:
+                name = f"cell_{cell_x}_{cell_z}"
             if key not in cells:
                 cells[key] = {}
                 groups[name] = GroupData(name)
+                if source_groups is not None:
+                    cell_sources[name] = source_groups[source_batch.group]
             if source_batch.material not in cells[key]:
                 cells[key][source_batch.material] = BatchData(
                     name, source_batch.material
@@ -427,20 +465,50 @@ def spatial_partition(parsed: dict[str, object], cell_size: float) -> None:
 
     batches: list[BatchData] = []
     group_order: list[str] = []
-    for key in sorted(cells):
-        name = f"cell_{key[0]}_{key[1]}"
-        group = groups[name]
-        group_order.append(name)
-        for material in parsed["materials"]:
-            if material in cells[key]:
+    def order_key(key: tuple[object, ...]) -> tuple[int, int, int]:
+        if preserve_sources:
+            return source_order[key[0]], key[1], key[2]
+        return 0, key[0], key[1]
+
+    ordered_keys = sorted(cells, key=order_key)
+    if preserve_sources:
+        ordered_keys_by_source = {
+            name: [key for key in ordered_keys if key[0] == name]
+            for name in parsed["group_order"]
+        }
+        source_sequence = parsed["group_order"]
+    else:
+        ordered_keys_by_source = {None: ordered_keys}
+        source_sequence = [None]
+    for source_name in source_sequence:
+        for key in ordered_keys_by_source[source_name]:
+            if preserve_sources:
+                ordinal = source_order[key[0]]
+                name = f"source_{ordinal:03d}_cell_{key[1]}_{key[2]}"
+            else:
+                name = f"cell_{key[0]}_{key[1]}"
+            group = groups[name]
+            group_order.append(name)
+            for material in parsed["materials"]:
+                if material in cells[key]:
+                    group.batch_indices.append(len(batches))
+                    batches.append(cells[key][material])
+        if preserve_sources and source_name in unpartitioned:
+            ordinal = source_order[source_name]
+            name = f"source_{ordinal:03d}_unpartitioned"
+            group = groups[name]
+            group_order.append(name)
+            for batch in unpartitioned[source_name]:
                 group.batch_indices.append(len(batches))
-                batches.append(cells[key][material])
+                batches.append(batch)
 
     parsed["source_groups"] = len(parsed["group_order"])
     parsed["groups"] = groups
     parsed["group_order"] = group_order
     parsed["batches"] = batches
     parsed["cell_size"] = cell_size
+    parsed["source_child_groups"] = len(group_order)
+    return cell_sources if source_groups is not None else None
 
 
 def cluster_geometry(parsed: dict[str, object], cluster_size: float) -> None:
@@ -672,6 +740,10 @@ def main(argv: list[str] | None = None) -> int:
         help="partition static triangles into X/Z cells of this size",
     )
     parser.add_argument(
+        "--unpartitioned-material", action="append", default=[],
+        help="material kept in source-group order while other batches use cells",
+    )
+    parser.add_argument(
         "--cluster-size",
         type=float,
         default=0.0,
@@ -686,8 +758,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.smd and args.smx is None:
         raise ValueError("--smd requires --smx")
     parsed = parse_obj(args.input)
-    if args.smx is not None and args.cell_size > 0.0:
-        raise ValueError("source group metadata is incompatible with spatial cells")
     if args.source_scale != 1.0:
         parsed["vertices"] = [
             (vertex[0] * args.source_scale,
@@ -699,8 +769,6 @@ def main(argv: list[str] | None = None) -> int:
         for group in parsed["groups"].values():
             group.bounds_min = [value * args.source_scale for value in group.bounds_min]
             group.bounds_max = [value * args.source_scale for value in group.bounds_max]
-    spatial_partition(parsed, args.cell_size)
-    cluster_geometry(parsed, args.cluster_size)
     source_groups = None
     if args.smx is not None:
         source_groups = source_groups_for_names(
@@ -711,6 +779,11 @@ def main(argv: list[str] | None = None) -> int:
                 source_groups, parse_smd_roots(args.smd), args.common_smd,
                 args.source_unit_scale,
             )
+    source_groups = spatial_partition(
+        parsed, args.cell_size, source_groups,
+        set(args.unpartitioned_material),
+    )
+    cluster_geometry(parsed, args.cluster_size)
     package, metadata = build_package(parsed, source_groups)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)
@@ -734,7 +807,11 @@ def main(argv: list[str] | None = None) -> int:
             "source_faces": parsed["source_faces"],
             "source_scale": args.source_scale,
             "source_groups": parsed.get("source_groups", len(parsed["group_order"])),
+            "source_child_groups": parsed.get(
+                "source_child_groups", len(parsed["group_order"])
+            ),
             "cell_size": parsed.get("cell_size", 0.0),
+            "unpartitioned_materials": sorted(args.unpartitioned_material),
             "cluster_size": parsed.get("cluster_size", 0.0),
             "cluster_source_vertices": parsed.get(
                 "cluster_source_vertices", len(parsed["vertices"])

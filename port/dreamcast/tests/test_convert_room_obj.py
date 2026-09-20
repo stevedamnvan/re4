@@ -162,6 +162,37 @@ class ConvertRoomObjTests(unittest.TestCase):
             self.assertEqual(parsed["source_groups"], 2)
             self.assertEqual(parsed["cell_size"], 1.0)
 
+    def test_spatial_partition_retains_source_group_metadata(self):
+        source_text = OBJ.replace("g floor", "g FILE_01#SMX_007#").replace(
+            "g marker", "g FILE_01#SMX_008#"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / "room.obj"
+            source.write_text(source_text, encoding="utf-8")
+            parsed = ROOM.parse_obj(source)
+            source_groups = {
+                name: ROOM.SourceGroupData(
+                    1 << index, 7 + index, index, 3, 2, index
+                )
+                for index, name in enumerate(parsed["group_order"])
+            }
+            result = ROOM.spatial_partition(
+                parsed, 1.0, source_groups, {"red"}
+            )
+            self.assertEqual(
+                sum(len(batch.indices) for batch in parsed["batches"]), 9
+            )
+            self.assertEqual(len(result), len(parsed["group_order"]))
+            self.assertEqual(
+                {record.source_id for record in result.values()}, {7, 8}
+            )
+            self.assertEqual(parsed["source_groups"], 2)
+            self.assertEqual(parsed["source_child_groups"], len(result))
+            self.assertTrue(any(
+                name.endswith("_unpartitioned")
+                for name in parsed["group_order"]
+            ))
+
     def test_vertex_cluster_lod_drops_degenerate_triangle(self):
         source_text = """\
 v 0 0 0
