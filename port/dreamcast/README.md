@@ -112,7 +112,9 @@ view-relative parallel lights; animated actor normals are rebuilt from each
 sampled pose before lighting. Source textures with alpha are preserved as
 ARGB4444 and drawn through the PVR translucent list using the source default
 alpha blend, so the cabin's soft shadow and cutout masks do not become opaque
-black geometry. The character converter also retains the FCV
+black geometry. The r100 camera uses the room CAM file's area-2 camera, target,
+close point, and FOV plus the original three-ray SAT wall correction; aiming
+uses the matching global handgun-ready offsets. The character converter also retains the FCV
 kind-1 root-motion rate used by the original `MotionMove`, so the selected Leon
 and Ganado walk clips drive world movement at their authored speeds. Controls are
 stick/D-pad move and turn, right trigger or Y aim, stick/D-pad vertical while

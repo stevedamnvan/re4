@@ -52,6 +52,8 @@ volatile DemoTelemetry g_re4dc_demo_telemetry = {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
+// GameCube ZNEAR is 100 source units; room coordinates are metres here.
+constexpr float kNearClipDistance = 0.1f;
 #if defined(RE4DC_480P)
 constexpr float kScreenWidth = 640.0f;
 constexpr float kScreenHeight = 480.0f;
@@ -1455,12 +1457,13 @@ float dot(const re4dc::collision::Vec3& a,
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-bool segment_intersects_triangle(
+bool segment_triangle_hit_fraction(
     const re4dc::collision::Vec3& start,
     const re4dc::collision::Vec3& end,
     const re4dc::collision::Vec3& a,
     const re4dc::collision::Vec3& b,
-    const re4dc::collision::Vec3& c) {
+    const re4dc::collision::Vec3& c,
+    float& hit_fraction) {
     constexpr float epsilon = 0.00001f;
     const auto direction = subtract(end, start);
     const auto edge1 = subtract(b, a);
@@ -1481,8 +1484,19 @@ bool segment_intersects_triangle(
     if(v < 0.0f || u + v > 1.0f) {
         return false;
     }
-    const float fraction = dot(edge2, q) * inverse;
-    return fraction > 0.001f && fraction < 0.999f;
+    hit_fraction = dot(edge2, q) * inverse;
+    return hit_fraction > 0.001f && hit_fraction < 0.999f;
+}
+
+bool segment_intersects_triangle(
+    const re4dc::collision::Vec3& start,
+    const re4dc::collision::Vec3& end,
+    const re4dc::collision::Vec3& a,
+    const re4dc::collision::Vec3& b,
+    const re4dc::collision::Vec3& c) {
+    float hit_fraction = 0.0f;
+    return segment_triangle_hit_fraction(start, end, a, b, c,
+                                         hit_fraction);
 }
 
 bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
@@ -1502,6 +1516,180 @@ bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
         }
     }
     return false;
+}
+
+bool source_camera_wall_hit(
+    const re4dc::collision::Package& collision,
+    const re4dc::collision::Vec3& start,
+    const re4dc::collision::Vec3& end,
+    re4dc::collision::Vec3& hit) {
+    const auto* vertices = collision.vertices();
+    const auto* polygons = collision.polygons();
+    const std::uint32_t first_wall =
+        collision.header().floor_count + collision.header().slope_count;
+    float nearest_fraction = 1.0f;
+    bool found = false;
+    for(std::uint32_t index = first_wall;
+        index < collision.header().polygon_count; ++index) {
+        const auto& polygon = polygons[index];
+        float fraction = 0.0f;
+        if(segment_triangle_hit_fraction(
+               start, end, vertices[polygon.vertex[0]],
+               vertices[polygon.vertex[1]], vertices[polygon.vertex[2]],
+               fraction) && fraction < nearest_fraction) {
+            nearest_fraction = fraction;
+            found = true;
+        }
+    }
+    if(found) {
+        hit = {
+            start.x + (end.x - start.x) * nearest_fraction,
+            start.y + (end.y - start.y) * nearest_fraction,
+            start.z + (end.z - start.z) * nearest_fraction};
+    }
+    return found;
+}
+
+re4dc::collision::Vec3 add(const re4dc::collision::Vec3& a,
+                           const re4dc::collision::Vec3& b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+re4dc::collision::Vec3 scale(const re4dc::collision::Vec3& value,
+                             float amount) {
+    return {value.x * amount, value.y * amount, value.z * amount};
+}
+
+float length(const re4dc::collision::Vec3& value) {
+    return std::sqrt(dot(value, value));
+}
+
+re4dc::collision::Vec3 normalized(
+    const re4dc::collision::Vec3& value) {
+    const float magnitude = length(value);
+    if(magnitude <= 0.000001f) {
+        return {0.0f, 0.0f, 0.0f};
+    }
+    return scale(value, 1.0f / magnitude);
+}
+
+re4dc::collision::Vec3 player_offset_to_world(
+    const Player& player, const re4dc::collision::Vec3& local) {
+    const float forward_x = std::sin(player.yaw);
+    const float forward_z = std::cos(player.yaw);
+    const float right_x = std::cos(player.yaw);
+    const float right_z = -std::sin(player.yaw);
+    return {
+        player.x + local.x * right_x + local.z * forward_x,
+        player.y + local.y,
+        player.z + local.x * right_z + local.z * forward_z};
+}
+
+re4dc::collision::Vec3 world_to_player_offset(
+    const Player& player, const re4dc::collision::Vec3& world) {
+    const float dx = world.x - player.x;
+    const float dy = world.y - player.y;
+    const float dz = world.z - player.z;
+    const float forward_x = std::sin(player.yaw);
+    const float forward_z = std::cos(player.yaw);
+    const float right_x = std::cos(player.yaw);
+    const float right_z = -std::sin(player.yaw);
+    return {dx * right_x + dz * right_z, dy,
+            dx * forward_x + dz * forward_z};
+}
+
+// Dreamcast adaptation of CameraQuasiFPS::hitCheck for the source SAT walls.
+// The three rays preserve the authored close point and camera-frustum edge
+// probes. Character/object camera blockers remain outside this 30-second slice.
+re4dc::collision::Vec3 correct_source_camera_walls(
+    const re4dc::collision::Package& collision, const Player& player,
+    const re4dc::collision::Vec3& camera,
+    const re4dc::collision::Vec3& close,
+    const re4dc::collision::Vec3& target, float fovy_degrees) {
+    const re4dc::collision::Vec3 up = {0.0f, 1.0f, 0.0f};
+    const float near_width = kNearClipDistance *
+        std::tan(fovy_degrees * kPi / 360.0f) * (4.0f / 3.0f);
+    const auto close_side = scale(
+        normalized(cross(subtract(close, target), up)), near_width);
+    const auto camera_side = scale(
+        normalized(cross(subtract(camera, target), up)), near_width);
+    const auto side_difference = subtract(close_side, camera_side);
+    const auto near_offset = scale(normalized(subtract(close, camera)),
+                                   kNearClipDistance);
+
+    const auto close_world = player_offset_to_world(player, close);
+    const auto camera_world = player_offset_to_world(player, camera);
+    re4dc::collision::Vec3 hits[3]{};
+    bool collided[3] = {false, false, false};
+    re4dc::collision::Vec3 hit_world{};
+
+    collided[0] = source_camera_wall_hit(
+        collision, close_world, camera_world, hit_world);
+    if(collided[0]) {
+        hits[0] = world_to_player_offset(player, hit_world);
+    }
+
+    auto edge_start = player_offset_to_world(
+        player, subtract(close, close_side));
+    auto edge_end = player_offset_to_world(
+        player, subtract(camera, camera_side));
+    collided[1] = source_camera_wall_hit(
+        collision, edge_start, edge_end, hit_world);
+    if(collided[1]) {
+        const float ray_length = length(subtract(edge_start, edge_end));
+        const float distance_from_end = length(subtract(hit_world, edge_end));
+        const float ratio = ray_length > 0.000001f
+                                ? distance_from_end / ray_length
+                                : 0.0f;
+        const auto correction = add(
+            scale(side_difference, ratio), camera_side);
+        hits[1] = add(add(world_to_player_offset(player, hit_world),
+                          correction), near_offset);
+    }
+
+    edge_start = player_offset_to_world(player, add(close, close_side));
+    edge_end = player_offset_to_world(player, add(camera, camera_side));
+    collided[2] = source_camera_wall_hit(
+        collision, edge_start, edge_end, hit_world);
+    if(collided[2]) {
+        const float ray_length = length(subtract(edge_start, edge_end));
+        const float distance_from_end = length(subtract(hit_world, edge_end));
+        const float ratio = ray_length > 0.000001f
+                                ? distance_from_end / ray_length
+                                : 0.0f;
+        const auto correction = add(
+            scale(side_difference, ratio), camera_side);
+        hits[2] = add(subtract(world_to_player_offset(player, hit_world),
+                               correction), near_offset);
+    }
+
+    re4dc::collision::Vec3 corrected = camera;
+    float nearest_distance = length(subtract(camera, close));
+    bool any_collision = false;
+    for(unsigned index = 0; index < 3U; ++index) {
+        if(!collided[index]) {
+            continue;
+        }
+        any_collision = true;
+        const float distance = length(subtract(hits[index], close));
+        if(distance < nearest_distance) {
+            nearest_distance = distance;
+            corrected = hits[index];
+        }
+    }
+    if(!any_collision) {
+        const auto left_edge = player_offset_to_world(
+            player, subtract(camera, camera_side));
+        const auto right_edge = player_offset_to_world(
+            player, add(camera, camera_side));
+        if(source_camera_wall_hit(collision, camera_world, left_edge,
+                                  hit_world) ||
+           source_camera_wall_hit(collision, camera_world, right_edge,
+                                  hit_world)) {
+            corrected = add(camera, near_offset);
+        }
+    }
+    return corrected;
 }
 
 bool segment_sphere_first_hit(
@@ -1955,7 +2143,6 @@ bool group_visible(const re4dc::room::Group& group) {
 #endif
 }
 
-constexpr float kNearClipDistance = 0.1f;
 constexpr std::uint32_t kCharacterSubmitVertexCapacity = 3072U;
 
 float camera_depth(float reciprocal_depth) {
@@ -3038,10 +3225,6 @@ int main() {
         g_re4dc_demo_telemetry.player_yaw = player.yaw;
         g_re4dc_demo_telemetry.enemy_x = enemy.x;
         g_re4dc_demo_telemetry.enemy_z = enemy.z;
-        const float fx = std::sin(player.yaw);
-        const float fz = std::cos(player.yaw);
-        const float rx = std::cos(player.yaw);
-        const float rz = -std::sin(player.yaw);
         const bool shoulder_view = player.aiming && !player.dead;
         point_t eye{};
         point_t target{};
@@ -3051,10 +3234,13 @@ int main() {
             // g_readyOfs[0][0] entries using exactly the weapon pitch that
             // drives pl_handgun's cMot3 motion blend.
             constexpr float camera_mid[3] = {-0.530f, 1.765f, -0.590f};
+            constexpr float close_mid[3] = {-0.260f, 1.630f, -0.130f};
             constexpr float target_mid[3] = {-0.065f, 1.340f, 1.480f};
             constexpr float camera_positive[3] = {-0.527f, 0.600f, -0.680f};
+            constexpr float close_positive[3] = {-0.265f, 1.280f, -0.350f};
             constexpr float target_positive[3] = {-0.220f, 4.080f, 1.100f};
             constexpr float camera_negative[3] = {-0.393f, 2.058f, -0.005f};
+            constexpr float close_negative[3] = {-0.250f, 1.860f, -0.065f};
             constexpr float target_negative[3] = {-0.179f, 0.365f, 0.943f};
             const float pitch_amount = std::fabs(player.aim_pitch);
             const float* camera_extreme = player.aim_pitch >= 0.0f
@@ -3063,26 +3249,37 @@ int main() {
             const float* target_extreme = player.aim_pitch >= 0.0f
                 ? target_positive
                 : target_negative;
+            const float* close_extreme = player.aim_pitch >= 0.0f
+                ? close_positive
+                : close_negative;
             const float camera_x = camera_mid[0] +
                 (camera_extreme[0] - camera_mid[0]) * pitch_amount;
             const float camera_y = camera_mid[1] +
                 (camera_extreme[1] - camera_mid[1]) * pitch_amount;
             const float camera_z = camera_mid[2] +
                 (camera_extreme[2] - camera_mid[2]) * pitch_amount;
+            const re4dc::collision::Vec3 close = {
+                close_mid[0] + (close_extreme[0] - close_mid[0]) * pitch_amount,
+                close_mid[1] + (close_extreme[1] - close_mid[1]) * pitch_amount,
+                close_mid[2] + (close_extreme[2] - close_mid[2]) * pitch_amount};
             const float target_x = target_mid[0] +
                 (target_extreme[0] - target_mid[0]) * pitch_amount;
             const float target_y = target_mid[1] +
                 (target_extreme[1] - target_mid[1]) * pitch_amount;
             const float target_z = target_mid[2] +
                 (target_extreme[2] - target_mid[2]) * pitch_amount;
-            eye = {
-                player.x + camera_x * rx + camera_z * fx,
-                player.y + camera_y,
-                player.z + camera_x * rz + camera_z * fz, 1.0f};
-            target = {
-                player.x + target_x * rx + target_z * fx,
-                player.y + target_y,
-                player.z + target_x * rz + target_z * fz, 1.0f};
+            const re4dc::collision::Vec3 camera =
+                {camera_x, camera_y, camera_z};
+            const re4dc::collision::Vec3 target_offset =
+                {target_x, target_y, target_z};
+            const auto corrected_camera = correct_source_camera_walls(
+                collision, player, camera, close, target_offset, 45.0f);
+            const auto eye_world = player_offset_to_world(
+                player, corrected_camera);
+            const auto target_world = player_offset_to_world(
+                player, target_offset);
+            eye = {eye_world.x, eye_world.y, eye_world.z, 1.0f};
+            target = {target_world.x, target_world.y, target_world.z, 1.0f};
             half_fov = 45.0f * kPi / 360.0f;
         } else {
 #if defined(RE4DC_SCENE_R100)
@@ -3095,16 +3292,28 @@ int main() {
             constexpr float target_x = 0.0f;
             constexpr float target_y = 1.340f;
             constexpr float target_z = 1.480f;
-            eye = {
-                player.x + camera_x * rx + camera_z * fx,
-                player.y + camera_y,
-                player.z + camera_x * rz + camera_z * fz, 1.0f};
-            target = {
-                player.x + target_x * rx + target_z * fx,
-                player.y + target_y,
-                player.z + target_x * rz + target_z * fz, 1.0f};
+            // Entries 19 of the same cut are the source close points used by
+            // CameraQuasiFPS::hitCheck, not an extra visible target.
+            constexpr re4dc::collision::Vec3 close =
+                {0.0f, 1.800f, -0.090f};
+            const re4dc::collision::Vec3 camera =
+                {camera_x, camera_y, camera_z};
+            const re4dc::collision::Vec3 target_offset =
+                {target_x, target_y, target_z};
+            const auto corrected_camera = correct_source_camera_walls(
+                collision, player, camera, close, target_offset, 50.0f);
+            const auto eye_world = player_offset_to_world(
+                player, corrected_camera);
+            const auto target_world = player_offset_to_world(
+                player, target_offset);
+            eye = {eye_world.x, eye_world.y, eye_world.z, 1.0f};
+            target = {target_world.x, target_world.y, target_world.z, 1.0f};
             half_fov = 50.0f * kPi / 360.0f;
 #else
+            const float fx = std::sin(player.yaw);
+            const float fz = std::cos(player.yaw);
+            const float rx = std::cos(player.yaw);
+            const float rz = -std::sin(player.yaw);
             constexpr float camera_distance = 4.75f;
             constexpr float camera_lateral = 0.85f;
             eye = {
