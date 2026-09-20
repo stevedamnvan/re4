@@ -27,6 +27,11 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 struct DemoTelemetry {
     std::uint32_t magic;
     std::uint32_t version;
+    std::uint32_t byte_size;
+    // Odd while the runtime is publishing a snapshot, even when complete.
+    // Readers must accept a snapshot only when two sequence reads match and
+    // both are even.
+    std::uint32_t sequence;
     std::uint32_t frame;
     std::uint32_t autoplay_phase;
     std::uint32_t flags;
@@ -54,14 +59,59 @@ struct DemoTelemetry {
     std::uint32_t heap_used_bytes;
     std::uint32_t heap_free_bytes;
     std::uint32_t main_ram_free_bytes;
+    std::uint32_t simulation_tick_begin;
+    std::uint32_t simulation_ticks_run;
+    std::uint32_t simulation_dropped_ticks;
+    std::uint32_t simulation_dropped_us;
+    std::uint32_t simulation_clamped_us;
+    std::uint32_t simulation_catchup_dropped_us;
+    std::uint32_t simulation_debt_us;
+    std::uint32_t simulation_debt_us_max;
+    std::uint32_t outer_interval_us;
+    std::uint32_t input_samples;
+    std::uint32_t input_sample_gap_us;
+    std::uint32_t input_sample_gap_us_max;
+    std::uint32_t input_us;
+    std::uint32_t simulation_us;
+    std::uint32_t camera_us;
+    std::uint32_t render_total_us;
+    std::uint32_t actor_pose_us;
+    std::uint32_t actor_normals_us;
+    std::uint32_t actor_lighting_us;
+    std::uint32_t pvr_wait_us;
+    std::uint32_t opaque_room_us;
+    std::uint32_t opaque_actor_us;
+    std::uint32_t translucent_room_us;
+    std::uint32_t translucent_actor_hud_us;
+    std::uint32_t scene_finish_us;
+    std::uint32_t pvr_sample_frame_count;
+    std::uint32_t pvr_sample_vblank_count;
+    std::uint32_t pvr_sample_last_present_ns;
+    std::uint32_t pvr_sample_last_registration_ns;
+    std::uint32_t pvr_sample_last_render_ns;
+    std::uint32_t pvr_sample_vertex_bytes;
+    std::uint32_t pvr_sample_vertex_bytes_max;
+    std::uint32_t room_index_references;
+    std::uint32_t room_cache_hits;
+    std::uint32_t room_cache_misses;
+    std::uint32_t room_light_evaluations;
+    std::uint32_t room_near_trivial_accepts;
+    std::uint32_t room_near_trivial_rejects;
+    std::uint32_t room_near_crossings;
 };
 
+static_assert(sizeof(DemoTelemetry) == 280U);
+
+constexpr DemoTelemetry initial_demo_telemetry() {
+    DemoTelemetry telemetry{};
+    telemetry.magic = 0x52453444U;
+    telemetry.version = 4U;
+    telemetry.byte_size = sizeof(DemoTelemetry);
+    return telemetry;
+}
+
 extern "C" {
-volatile DemoTelemetry g_re4dc_demo_telemetry = {
-    0x52453444U, 3U, 0U, 0U, 0U, 0, 0, 0, 0U, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
-    0U,
-};
+volatile DemoTelemetry g_re4dc_demo_telemetry = initial_demo_telemetry();
 }
 
 namespace {
@@ -360,7 +410,27 @@ struct FrameStats {
     std::uint64_t wait_us = 0;
     std::uint64_t submit_us = 0;
     std::uint64_t finish_us = 0;
+    std::uint64_t total_us = 0;
+    std::uint64_t actor_pose_us = 0;
+    std::uint64_t actor_normals_us = 0;
+    std::uint64_t actor_lighting_us = 0;
+    std::uint64_t opaque_room_us = 0;
+    std::uint64_t opaque_actor_us = 0;
+    std::uint64_t translucent_room_us = 0;
+    std::uint64_t translucent_actor_hud_us = 0;
+    std::uint32_t room_index_references = 0;
+    std::uint32_t room_cache_hits = 0;
+    std::uint32_t room_cache_misses = 0;
+    std::uint32_t room_light_evaluations = 0;
+    std::uint32_t room_near_trivial_accepts = 0;
+    std::uint32_t room_near_trivial_rejects = 0;
+    std::uint32_t room_near_crossings = 0;
 };
+
+std::uint32_t saturate_u32(std::uint64_t value) {
+    return static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(value, 0xffffffffU));
+}
 
 struct ProjectedVertex {
     float x;
@@ -2005,6 +2075,22 @@ SourceLightingBasis g_source_lighting_basis;
 point_t g_source_camera_eye{};
 float g_source_half_fov_tangent = 1.0f;
 
+struct PreparedSourceLight {
+    float direction_x = 0.0f;
+    float direction_y = 1.0f;
+    float direction_z = 0.0f;
+    float current_direction_x = 0.0f;
+    float current_direction_y = 1.0f;
+    float current_direction_z = 0.0f;
+    float quadratic_attenuation = 0.0f;
+    float spot_cutoff = -1.0f;
+    float spot_scale = 1.0f;
+};
+
+constexpr std::size_t kSourceLightCount =
+    sizeof(kSourceLights) / sizeof(kSourceLights[0]);
+PreparedSourceLight g_prepared_source_lights[kSourceLightCount]{};
+
 void normalize_vector(float& x, float& y, float& z) {
     const float length = std::sqrt(x * x + y * y + z * z);
     if(length <= 0.000001f) {
@@ -2016,6 +2102,34 @@ void normalize_vector(float& x, float& y, float& z) {
     x /= length;
     y /= length;
     z /= length;
+}
+
+void prepare_source_lights() {
+    for(std::size_t index = 0; index < kSourceLightCount; ++index) {
+        const SourceLight& light = kSourceLights[index];
+        PreparedSourceLight& prepared = g_prepared_source_lights[index];
+        prepared.direction_x = light.nx;
+        prepared.direction_y = light.ny;
+        prepared.direction_z = light.nz;
+        if(light.type == 3U || light.type == 5U) {
+            normalize_vector(prepared.direction_x, prepared.direction_y,
+                             prepared.direction_z);
+        }
+        prepared.current_direction_x = prepared.direction_x;
+        prepared.current_direction_y = prepared.direction_y;
+        prepared.current_direction_z = prepared.direction_z;
+        if(light.type != 1U && light.type != 5U && light.radius > 0.0f) {
+            prepared.quadratic_attenuation =
+                (light.intensity - 0.1f) /
+                (0.1f * light.radius * light.radius);
+        }
+        if(light.type == 3U) {
+            prepared.spot_cutoff =
+                std::cos(light.cutoff_degrees * kPi / 180.0f);
+            prepared.spot_scale =
+                1.0f / std::max(0.0001f, 1.0f - prepared.spot_cutoff);
+        }
+    }
 }
 
 void set_source_lighting_camera(const point_t& eye, const point_t& target,
@@ -2035,6 +2149,31 @@ void set_source_lighting_camera(const point_t& eye, const point_t& target,
     g_source_lighting_basis = {rx, ry, rz, ux, uy, uz, fx, fy, fz};
     g_source_camera_eye = eye;
     g_source_half_fov_tangent = std::tan(half_fov);
+    for(std::size_t index = 0; index < kSourceLightCount; ++index) {
+        const SourceLight& light = kSourceLights[index];
+        if(light.type != 5U || !light.view_space) {
+            continue;
+        }
+        PreparedSourceLight& prepared = g_prepared_source_lights[index];
+        const float view_x = prepared.direction_x;
+        const float view_y = prepared.direction_y;
+        const float view_z = prepared.direction_z;
+        prepared.current_direction_x =
+            g_source_lighting_basis.right_x * view_x +
+            g_source_lighting_basis.up_x * view_y +
+            g_source_lighting_basis.forward_x * view_z;
+        prepared.current_direction_y =
+            g_source_lighting_basis.right_y * view_x +
+            g_source_lighting_basis.up_y * view_y +
+            g_source_lighting_basis.forward_y * view_z;
+        prepared.current_direction_z =
+            g_source_lighting_basis.right_z * view_x +
+            g_source_lighting_basis.up_z * view_y +
+            g_source_lighting_basis.forward_z * view_z;
+        normalize_vector(prepared.current_direction_x,
+                         prepared.current_direction_y,
+                         prepared.current_direction_z);
+    }
 }
 
 void evaluate_source_lighting(float px, float py, float pz,
@@ -2045,31 +2184,18 @@ void evaluate_source_lighting(float px, float py, float pz,
     red = actor ? kSourceActorAmbientRed : kSourceRoomAmbientRed;
     green = actor ? kSourceActorAmbientGreen : kSourceRoomAmbientGreen;
     blue = actor ? kSourceActorAmbientBlue : kSourceRoomAmbientBlue;
-    for(const SourceLight& light : kSourceLights) {
+    for(std::size_t index = 0; index < kSourceLightCount; ++index) {
+        const SourceLight& light = kSourceLights[index];
+        const PreparedSourceLight& prepared =
+            g_prepared_source_lights[index];
         float lx = 0.0f;
         float ly = 0.0f;
         float lz = 0.0f;
         float attenuation = light.intensity;
         if(light.type == 5U) {
-            lx = light.nx;
-            ly = light.ny;
-            lz = light.nz;
-            normalize_vector(lx, ly, lz);
-            if(light.view_space) {
-                const float view_x = lx;
-                const float view_y = ly;
-                const float view_z = lz;
-                lx = g_source_lighting_basis.right_x * view_x +
-                     g_source_lighting_basis.up_x * view_y +
-                     g_source_lighting_basis.forward_x * view_z;
-                ly = g_source_lighting_basis.right_y * view_x +
-                     g_source_lighting_basis.up_y * view_y +
-                     g_source_lighting_basis.forward_y * view_z;
-                lz = g_source_lighting_basis.right_z * view_x +
-                     g_source_lighting_basis.up_z * view_y +
-                     g_source_lighting_basis.forward_z * view_z;
-                normalize_vector(lx, ly, lz);
-            }
+            lx = prepared.current_direction_x;
+            ly = prepared.current_direction_y;
+            lz = prepared.current_direction_z;
         } else {
             lx = light.x - px;
             ly = light.y - py;
@@ -2088,26 +2214,21 @@ void evaluate_source_lighting(float px, float py, float pz,
                                   : light.intensity;
             } else {
                 // lightSetQuadratic reaches 0.1 brightness at Radius.
-                const float k2 = light.radius > 0.0f
-                                     ? (light.intensity - 0.1f) /
-                                           (0.1f * light.radius * light.radius)
-                                     : 0.0f;
                 attenuation = light.intensity /
-                              std::max(1.0f, 1.0f + k2 * distance * distance);
+                              std::max(1.0f, 1.0f +
+                                                prepared.quadratic_attenuation *
+                                                    distance * distance);
             }
             if(light.type == 3U) {
-                float sx = light.nx;
-                float sy = light.ny;
-                float sz = light.nz;
-                normalize_vector(sx, sy, sz);
-                const float cone_cosine = sx * -lx + sy * -ly + sz * -lz;
-                const float cutoff = std::cos(light.cutoff_degrees *
-                                              kPi / 180.0f);
-                if(cone_cosine <= cutoff) {
+                const float cone_cosine =
+                    prepared.direction_x * -lx +
+                    prepared.direction_y * -ly +
+                    prepared.direction_z * -lz;
+                if(cone_cosine <= prepared.spot_cutoff) {
                     continue;
                 }
-                attenuation *= (cone_cosine - cutoff) /
-                               std::max(0.0001f, 1.0f - cutoff);
+                attenuation *= (cone_cosine - prepared.spot_cutoff) *
+                               prepared.spot_scale;
             }
         }
         const float diffuse = std::max(0.0f, nx * lx + ny * ly + nz * lz);
@@ -2205,6 +2326,15 @@ bool group_visible(const re4dc::room::Group& group) {
 constexpr std::uint32_t kCharacterSubmitVertexCapacity = 768U;
 constexpr std::uint32_t kLeonVertexCapacity = 8192U;
 constexpr std::uint32_t kGanadoVertexCapacity = 4096U;
+constexpr std::uint32_t kRoomVertexCacheCapacity = 1024U;
+static_assert((kRoomVertexCacheCapacity & (kRoomVertexCacheCapacity - 1U)) == 0U);
+
+struct RoomVertexCacheEntry {
+    std::uint32_t generation = 0;
+    std::uint32_t source_index = 0;
+    RenderVertex vertex{};
+};
+
 ProjectedVertex g_leon_projected[kLeonVertexCapacity];
 ProjectedVertex g_ganado_projected[kGanadoVertexCapacity];
 #if defined(RE4DC_SCENE_R100)
@@ -2212,6 +2342,8 @@ float g_leon_lighting[kLeonVertexCapacity * 3U];
 float g_ganado_lighting[kGanadoVertexCapacity * 3U];
 #endif
 pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
+RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
+std::uint32_t g_room_vertex_cache_generation = 0;
 
 float camera_depth(float reciprocal_depth) {
     if(!std::isfinite(reciprocal_depth) ||
@@ -2250,27 +2382,53 @@ RenderVertex interpolate_vertex(const RenderVertex& a, const RenderVertex& b,
 }
 
 std::uint32_t clip_projected_triangle(const RenderVertex* source,
-                                      pvr_vertex_t* output,
-                                      bool cull_backface) {
+                                       pvr_vertex_t* output,
+                                       bool cull_backface,
+                                       FrameStats* stats = nullptr) {
     RenderVertex clipped[4]{};
     unsigned clipped_count = 0;
-    RenderVertex previous = source[2];
-    bool previous_inside = previous.position.depth >= kNearClipDistance;
+    unsigned inside_count = 0;
     for(unsigned corner = 0; corner < 3; ++corner) {
-        const RenderVertex current = source[corner];
-        const bool current_inside =
-            current.position.depth >= kNearClipDistance;
-        if(current_inside != previous_inside) {
-            const float t = (kNearClipDistance - previous.position.depth) /
-                            (current.position.depth - previous.position.depth);
-            clipped[clipped_count++] =
-                interpolate_vertex(previous, current, t);
+        inside_count +=
+            source[corner].position.depth >= kNearClipDistance ? 1U : 0U;
+    }
+    if(inside_count == 3U) {
+        if(stats != nullptr) {
+            ++stats->room_near_trivial_accepts;
         }
-        if(current_inside) {
-            clipped[clipped_count++] = current;
+        clipped[0] = source[0];
+        clipped[1] = source[1];
+        clipped[2] = source[2];
+        clipped_count = 3U;
+    } else if(inside_count == 0U) {
+        if(stats != nullptr) {
+            ++stats->room_near_trivial_rejects;
         }
-        previous = current;
-        previous_inside = current_inside;
+        return 0;
+    } else {
+        if(stats != nullptr) {
+            ++stats->room_near_crossings;
+        }
+        RenderVertex previous = source[2];
+        bool previous_inside =
+            previous.position.depth >= kNearClipDistance;
+        for(unsigned corner = 0; corner < 3; ++corner) {
+            const RenderVertex current = source[corner];
+            const bool current_inside =
+                current.position.depth >= kNearClipDistance;
+            if(current_inside != previous_inside) {
+                const float t =
+                    (kNearClipDistance - previous.position.depth) /
+                    (current.position.depth - previous.position.depth);
+                clipped[clipped_count++] =
+                    interpolate_vertex(previous, current, t);
+            }
+            if(current_inside) {
+                clipped[clipped_count++] = current;
+            }
+            previous = current;
+            previous_inside = current_inside;
+        }
     }
     if(clipped_count < 3) {
         return 0;
@@ -2326,50 +2484,72 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
     return triangle_count;
 }
 
-std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
-                                 const std::uint32_t* indices,
-                                 pvr_vertex_t* output,
-                                 FrameStats& stats) {
-    RenderVertex triangle[3]{};
-    for(unsigned corner = 0; corner < 3; ++corner) {
-        const std::uint32_t vertex_index = indices[corner];
-        const re4dc::room::Vertex& input = source[vertex_index];
-        float x = input.x;
-        float y = input.y;
-        float z = input.z;
-        mat_trans_single(x, y, z);
-        ++stats.transformed_vertices;
-        float light_red = 0.0f;
-        float light_green = 0.0f;
-        float light_blue = 0.0f;
-#if defined(RE4DC_SCENE_R100)
-        evaluate_source_lighting(input.x, input.y, input.z,
-                                 input.nx, input.ny, input.nz, false,
-                                 light_red, light_green, light_blue);
-#else
-        light_red = light_green = light_blue = std::clamp(
-            0.76f + 0.08f * input.nx + 0.12f * input.ny +
-                0.04f * input.nz,
-            0.58f, 1.0f);
-#endif
-        triangle[corner] = {
-            .position = {
-                x,
-                y,
-                z,
-                input.x,
-                input.y,
-                input.z,
-                camera_depth(z),
-            },
-            .u = input.u,
-            .v = input.v,
-            .light_red = light_red,
-            .light_green = light_green,
-            .light_blue = light_blue,
-            .offset_color = 0,
-        };
+const RenderVertex& cached_room_vertex(
+    const re4dc::room::Vertex* source, std::uint32_t vertex_index,
+    FrameStats& stats) {
+    ++stats.room_index_references;
+    const std::uint32_t slot =
+        (vertex_index * 2654435761U) &
+        (kRoomVertexCacheCapacity - 1U);
+    RoomVertexCacheEntry& entry = g_room_vertex_cache[slot];
+    if(entry.generation == g_room_vertex_cache_generation &&
+       entry.source_index == vertex_index) {
+        ++stats.room_cache_hits;
+        return entry.vertex;
     }
+
+    ++stats.room_cache_misses;
+    ++stats.transformed_vertices;
+    const re4dc::room::Vertex& input = source[vertex_index];
+    float x = input.x;
+    float y = input.y;
+    float z = input.z;
+    mat_trans_single(x, y, z);
+    float light_red = 0.0f;
+    float light_green = 0.0f;
+    float light_blue = 0.0f;
+#if defined(RE4DC_SCENE_R100)
+    evaluate_source_lighting(input.x, input.y, input.z,
+                             input.nx, input.ny, input.nz, false,
+                             light_red, light_green, light_blue);
+    ++stats.room_light_evaluations;
+#else
+    light_red = light_green = light_blue = std::clamp(
+        0.76f + 0.08f * input.nx + 0.12f * input.ny +
+            0.04f * input.nz,
+        0.58f, 1.0f);
+#endif
+    entry.generation = g_room_vertex_cache_generation;
+    entry.source_index = vertex_index;
+    entry.vertex = {
+        .position = {
+            x,
+            y,
+            z,
+            input.x,
+            input.y,
+            input.z,
+            camera_depth(z),
+        },
+        .u = input.u,
+        .v = input.v,
+        .light_red = light_red,
+        .light_green = light_green,
+        .light_blue = light_blue,
+        .offset_color = 0,
+    };
+    return entry.vertex;
+}
+
+std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
+                                  const std::uint32_t* indices,
+                                  pvr_vertex_t* output,
+                                  FrameStats& stats) {
+    const RenderVertex triangle[3] = {
+        cached_room_vertex(source, indices[0], stats),
+        cached_room_vertex(source, indices[1], stats),
+        cached_room_vertex(source, indices[2], stats),
+    };
 #if defined(RE4DC_SCENE_R100)
     // The third-party SMD export does not retain the source per-object cull
     // state. Keep both faces for this source slice until that flag is carried
@@ -2378,7 +2558,7 @@ std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
 #else
     constexpr bool cull_backface = true;
 #endif
-    return clip_projected_triangle(triangle, output, cull_backface);
+    return clip_projected_triangle(triangle, output, cull_backface, &stats);
 }
 
 void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
@@ -3100,12 +3280,21 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #endif
                         pvr_vertex_t* character_submit_vertices) {
     FrameStats stats{};
+    ++g_room_vertex_cache_generation;
+    if(g_room_vertex_cache_generation == 0U) {
+        for(RoomVertexCacheEntry& entry : g_room_vertex_cache) {
+            entry.generation = 0U;
+        }
+        ++g_room_vertex_cache_generation;
+    }
+    const std::uint64_t render_start = timer_us_gettime64();
     const auto* groups = room.groups();
     const auto* batches = room.batches();
     const auto* vertices = room.vertices();
     const auto* indices = room.indices();
     const auto player_blend = player_pitch_blend(
         player.animation_clip, player.aim_pitch);
+    const std::uint64_t actor_pose_start = timer_us_gettime64();
     project_character(
         leon, player.x, player.y, player.z, player.yaw, player_blend.base_clip,
         player.animation_frame,
@@ -3117,13 +3306,18 @@ FrameStats render_scene(const re4dc::room::Package& room,
         ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
         enemy.animation_frame, enemy.state == EnemyState::Chase,
         enemy.animation_clip, 0.0f, ganado_projected);
+    stats.actor_pose_us = timer_us_gettime64() - actor_pose_start;
 #if defined(RE4DC_SCENE_R100)
+    const std::uint64_t actor_normals_start = timer_us_gettime64();
     build_character_normals(leon, leon_projected, leon_lighting);
     build_character_normals(ganado, ganado_projected, ganado_lighting);
+    stats.actor_normals_us = timer_us_gettime64() - actor_normals_start;
+    const std::uint64_t actor_lighting_start = timer_us_gettime64();
     build_character_lighting(
         leon, leon_projected, leon_lighting, leon_lighting);
     build_character_lighting(
         ganado, ganado_projected, ganado_lighting, ganado_lighting);
+    stats.actor_lighting_us = timer_us_gettime64() - actor_lighting_start;
 #endif
     const std::uint64_t wait_start = timer_us_gettime64();
     pvr_wait_ready();
@@ -3131,6 +3325,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
     stats.wait_us = submit_start - wait_start;
     pvr_scene_begin();
     pvr_list_begin(PVR_LIST_OP_POLY);
+    const std::uint64_t opaque_room_start = timer_us_gettime64();
     for(std::uint32_t group_index = 0; group_index < room.header().group_count;
         ++group_index) {
         const auto& group = groups[group_index];
@@ -3168,6 +3363,8 @@ FrameStats render_scene(const re4dc::room::Package& room,
             flush();
         }
     }
+    stats.opaque_room_us = timer_us_gettime64() - opaque_room_start;
+    const std::uint64_t opaque_actor_start = timer_us_gettime64();
     pvr_prim(&untextured_header, sizeof(untextured_header));
     stats.character_triangles = draw_character(
         leon, leon_projected,
@@ -3189,9 +3386,11 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #if !defined(RE4DC_SCENE_R100)
     draw_hud(player);
 #endif
+    stats.opaque_actor_us = timer_us_gettime64() - opaque_actor_start;
     pvr_list_finish();
 
     pvr_list_begin(PVR_LIST_TR_POLY);
+    const std::uint64_t translucent_room_start = timer_us_gettime64();
     for(std::uint32_t group_index = 0; group_index < room.header().group_count;
         ++group_index) {
         const auto& group = groups[group_index];
@@ -3228,6 +3427,9 @@ FrameStats render_scene(const re4dc::room::Package& room,
             flush();
         }
     }
+    stats.translucent_room_us =
+        timer_us_gettime64() - translucent_room_start;
+    const std::uint64_t translucent_actor_hud_start = timer_us_gettime64();
     stats.character_triangles += draw_character(
         leon, leon_projected,
 #if defined(RE4DC_SCENE_R100)
@@ -3245,11 +3447,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #if defined(RE4DC_SCENE_R100)
     draw_source_hud(source_hud, source_hud_headers, player);
 #endif
+    stats.translucent_actor_hud_us =
+        timer_us_gettime64() - translucent_actor_hud_start;
     pvr_list_finish();
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
     pvr_scene_finish();
     stats.finish_us = timer_us_gettime64() - finish_start;
+    stats.total_us = timer_us_gettime64() - render_start;
     return stats;
 }
 
@@ -3609,6 +3814,12 @@ int main() {
     std::uint64_t simulation_tick = 0;
     std::uint64_t simulation_accumulator_us = kSimulationStepUs;
     std::uint32_t simulation_overruns = 0;
+    std::uint64_t simulation_dropped_us = 0;
+    std::uint64_t simulation_clamped_us = 0;
+    std::uint64_t simulation_catchup_dropped_us = 0;
+    std::uint64_t simulation_debt_us_max = simulation_accumulator_us;
+    std::uint64_t input_samples = 0;
+    std::uint64_t input_sample_gap_us_max = 0;
     std::uint64_t previous_time = timer_us_gettime64();
     bool fire_was_down = false;
     bool reload_was_down = false;
@@ -3618,6 +3829,9 @@ int main() {
         std::printf("re4dc-room: actor transform capacity exceeded\n");
         return 1;
     }
+#if defined(RE4DC_SCENE_R100)
+    prepare_source_lights();
+#endif
     g_re4dc_demo_telemetry.flags = 0x10000006U;
     DemoAudio audio;
     if(!load_demo_audio(audio)) {
@@ -3652,11 +3866,33 @@ int main() {
     g_re4dc_demo_telemetry.flags = 0x10000007U;
     while(true) {
         const std::uint64_t now = timer_us_gettime64();
-        const std::uint64_t frame_us = now - previous_time;
+        const std::uint64_t current_work_start = now;
+        const std::uint64_t outer_interval_us = now - previous_time;
         previous_time = now;
-        simulation_accumulator_us += std::min<std::uint64_t>(
-            frame_us, kSimulationStepUs * (kMaxSimulationCatchupTicks + 1U));
-        const Input manual_input = autoplay.enabled ? Input{} : read_input();
+        const std::uint64_t maximum_accepted_interval =
+            kSimulationStepUs * (kMaxSimulationCatchupTicks + 1U);
+        const std::uint64_t accepted_interval = std::min<std::uint64_t>(
+            outer_interval_us, maximum_accepted_interval);
+        const std::uint64_t clamped_interval =
+            outer_interval_us - accepted_interval;
+        simulation_accumulator_us += accepted_interval;
+        simulation_clamped_us += clamped_interval;
+        simulation_dropped_us += clamped_interval;
+        simulation_debt_us_max =
+            std::max(simulation_debt_us_max, simulation_accumulator_us);
+        const std::uint64_t simulation_tick_begin = simulation_tick;
+        const std::uint64_t input_start = timer_us_gettime64();
+        Input manual_input{};
+        std::uint64_t input_sample_gap_us = 0;
+        if(!autoplay.enabled) {
+            manual_input = read_input();
+            ++input_samples;
+            input_sample_gap_us = outer_interval_us;
+            input_sample_gap_us_max =
+                std::max(input_sample_gap_us_max, input_sample_gap_us);
+        }
+        const std::uint64_t input_us = timer_us_gettime64() - input_start;
+        const std::uint64_t simulation_start = timer_us_gettime64();
         bool exit_requested = false;
         unsigned catchup_ticks = 0;
         while(simulation_accumulator_us >= kSimulationStepUs &&
@@ -3716,6 +3952,11 @@ int main() {
             break;
         }
         if(simulation_accumulator_us >= kSimulationStepUs) {
+            const std::uint64_t catchup_dropped_us =
+                simulation_accumulator_us -
+                simulation_accumulator_us % kSimulationStepUs;
+            simulation_catchup_dropped_us += catchup_dropped_us;
+            simulation_dropped_us += catchup_dropped_us;
             simulation_accumulator_us %= kSimulationStepUs;
             ++simulation_overruns;
             if(simulation_overruns == 1U || simulation_overruns % 120U == 0U) {
@@ -3725,24 +3966,12 @@ int main() {
                     static_cast<unsigned long>(simulation_overruns));
             }
         }
-        g_re4dc_demo_telemetry.frame = frame;
-        g_re4dc_demo_telemetry.autoplay_phase =
-            static_cast<std::uint32_t>(autoplay.phase);
-        g_re4dc_demo_telemetry.flags =
-            (autoplay.enabled ? 1U : 0U) |
-            (autoplay.observed_death ? 2U : 0U) |
-            (autoplay.observed_reload ? 4U : 0U) |
-            (enemy.state == EnemyState::Dead ? 8U : 0U) |
-            (player.dead ? 16U : 0U);
-        g_re4dc_demo_telemetry.player_health = player.health;
-        g_re4dc_demo_telemetry.ammo = player.ammo;
-        g_re4dc_demo_telemetry.enemy_health = enemy.health;
-        g_re4dc_demo_telemetry.loops = player.completed_loops;
-        g_re4dc_demo_telemetry.player_x = player.x;
-        g_re4dc_demo_telemetry.player_z = player.z;
-        g_re4dc_demo_telemetry.player_yaw = player.yaw;
-        g_re4dc_demo_telemetry.enemy_x = enemy.x;
-        g_re4dc_demo_telemetry.enemy_z = enemy.z;
+        const std::uint64_t simulation_us =
+            timer_us_gettime64() - simulation_start;
+        const std::uint64_t simulation_ticks_run =
+            simulation_tick - simulation_tick_begin;
+        const std::uint64_t render_snapshot_tick = simulation_tick;
+        const std::uint64_t camera_start = timer_us_gettime64();
         const bool shoulder_view = player.aiming && !player.dead;
         point_t eye{};
         point_t target{};
@@ -3852,6 +4081,7 @@ int main() {
                         1.0f / std::tan(half_fov), kNearClipDistance,
                         kFarClipDistance);
         mat_lookat(&eye, &target, &up);
+        const std::uint64_t camera_us = timer_us_gettime64() - camera_start;
         const FrameStats stats = render_scene(
             room, leon, ganado, player, enemy, untextured_header,
             material_headers, material_alpha.get(), leon_headers,
@@ -3864,25 +4094,125 @@ int main() {
             g_leon_lighting, g_ganado_lighting,
 #endif
             g_character_submit_vertices);
+        pvr_stats_t pvr_stats{};
+        const bool have_pvr_stats = pvr_get_stats(&pvr_stats) == 0;
+        const std::uint64_t current_work_us =
+            timer_us_gettime64() - current_work_start;
+        std::uint32_t publish_sequence = g_re4dc_demo_telemetry.sequence;
+        if(publish_sequence & 1U) {
+            ++publish_sequence;
+        }
+        g_re4dc_demo_telemetry.sequence = publish_sequence + 1U;
+        __asm__ volatile("" ::: "memory");
+        g_re4dc_demo_telemetry.frame = frame;
+        g_re4dc_demo_telemetry.autoplay_phase =
+            static_cast<std::uint32_t>(autoplay.phase);
+        g_re4dc_demo_telemetry.flags =
+            (autoplay.enabled ? 1U : 0U) |
+            (autoplay.observed_death ? 2U : 0U) |
+            (autoplay.observed_reload ? 4U : 0U) |
+            (enemy.state == EnemyState::Dead ? 8U : 0U) |
+            (player.dead ? 16U : 0U);
+        g_re4dc_demo_telemetry.player_health = player.health;
+        g_re4dc_demo_telemetry.ammo = player.ammo;
+        g_re4dc_demo_telemetry.enemy_health = enemy.health;
+        g_re4dc_demo_telemetry.loops = player.completed_loops;
+        g_re4dc_demo_telemetry.player_x = player.x;
+        g_re4dc_demo_telemetry.player_z = player.z;
+        g_re4dc_demo_telemetry.player_yaw = player.yaw;
+        g_re4dc_demo_telemetry.enemy_x = enemy.x;
+        g_re4dc_demo_telemetry.enemy_z = enemy.z;
         g_re4dc_demo_telemetry.visible_groups = stats.groups;
         g_re4dc_demo_telemetry.transformed_vertices =
             stats.transformed_vertices;
         g_re4dc_demo_telemetry.room_triangles = stats.triangles;
         g_re4dc_demo_telemetry.actor_triangles = stats.character_triangles;
-        g_re4dc_demo_telemetry.frame_us = static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(frame_us, 0xffffffffU));
-        g_re4dc_demo_telemetry.submit_us = static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(stats.submit_us, 0xffffffffU));
+        g_re4dc_demo_telemetry.frame_us = saturate_u32(current_work_us);
+        g_re4dc_demo_telemetry.submit_us = saturate_u32(stats.submit_us);
         g_re4dc_demo_telemetry.simulation_tick =
-            static_cast<std::uint32_t>(simulation_tick);
+            saturate_u32(render_snapshot_tick);
         g_re4dc_demo_telemetry.simulation_overruns = simulation_overruns;
+        g_re4dc_demo_telemetry.simulation_tick_begin =
+            saturate_u32(simulation_tick_begin);
+        g_re4dc_demo_telemetry.simulation_ticks_run =
+            saturate_u32(simulation_ticks_run);
+        g_re4dc_demo_telemetry.simulation_dropped_ticks =
+            saturate_u32(simulation_dropped_us / kSimulationStepUs);
+        g_re4dc_demo_telemetry.simulation_dropped_us =
+            saturate_u32(simulation_dropped_us);
+        g_re4dc_demo_telemetry.simulation_clamped_us =
+            saturate_u32(simulation_clamped_us);
+        g_re4dc_demo_telemetry.simulation_catchup_dropped_us =
+            saturate_u32(simulation_catchup_dropped_us);
+        g_re4dc_demo_telemetry.simulation_debt_us =
+            saturate_u32(simulation_accumulator_us);
+        g_re4dc_demo_telemetry.simulation_debt_us_max =
+            saturate_u32(simulation_debt_us_max);
+        g_re4dc_demo_telemetry.outer_interval_us =
+            saturate_u32(outer_interval_us);
+        g_re4dc_demo_telemetry.input_samples = saturate_u32(input_samples);
+        g_re4dc_demo_telemetry.input_sample_gap_us =
+            saturate_u32(input_sample_gap_us);
+        g_re4dc_demo_telemetry.input_sample_gap_us_max =
+            saturate_u32(input_sample_gap_us_max);
+        g_re4dc_demo_telemetry.input_us = saturate_u32(input_us);
+        g_re4dc_demo_telemetry.simulation_us = saturate_u32(simulation_us);
+        g_re4dc_demo_telemetry.camera_us = saturate_u32(camera_us);
+        g_re4dc_demo_telemetry.render_total_us = saturate_u32(stats.total_us);
+        g_re4dc_demo_telemetry.actor_pose_us =
+            saturate_u32(stats.actor_pose_us);
+        g_re4dc_demo_telemetry.actor_normals_us =
+            saturate_u32(stats.actor_normals_us);
+        g_re4dc_demo_telemetry.actor_lighting_us =
+            saturate_u32(stats.actor_lighting_us);
+        g_re4dc_demo_telemetry.pvr_wait_us = saturate_u32(stats.wait_us);
+        g_re4dc_demo_telemetry.opaque_room_us =
+            saturate_u32(stats.opaque_room_us);
+        g_re4dc_demo_telemetry.opaque_actor_us =
+            saturate_u32(stats.opaque_actor_us);
+        g_re4dc_demo_telemetry.translucent_room_us =
+            saturate_u32(stats.translucent_room_us);
+        g_re4dc_demo_telemetry.translucent_actor_hud_us =
+            saturate_u32(stats.translucent_actor_hud_us);
+        g_re4dc_demo_telemetry.scene_finish_us =
+            saturate_u32(stats.finish_us);
+        g_re4dc_demo_telemetry.pvr_sample_frame_count =
+            have_pvr_stats ? static_cast<std::uint32_t>(pvr_stats.frame_count) : 0U;
+        g_re4dc_demo_telemetry.pvr_sample_vblank_count =
+            have_pvr_stats ? static_cast<std::uint32_t>(pvr_stats.vbl_count) : 0U;
+        g_re4dc_demo_telemetry.pvr_sample_last_present_ns =
+            have_pvr_stats ? saturate_u32(pvr_stats.frame_last_time) : 0U;
+        g_re4dc_demo_telemetry.pvr_sample_last_registration_ns =
+            have_pvr_stats ? saturate_u32(pvr_stats.reg_last_time) : 0U;
+        g_re4dc_demo_telemetry.pvr_sample_last_render_ns =
+            have_pvr_stats ? saturate_u32(pvr_stats.rnd_last_time) : 0U;
+        g_re4dc_demo_telemetry.pvr_sample_vertex_bytes =
+            have_pvr_stats ? saturate_u32(pvr_stats.vtx_buffer_used) : 0U;
+        g_re4dc_demo_telemetry.pvr_sample_vertex_bytes_max =
+            have_pvr_stats ? saturate_u32(pvr_stats.vtx_buffer_used_max) : 0U;
+        g_re4dc_demo_telemetry.room_index_references =
+            stats.room_index_references;
+        g_re4dc_demo_telemetry.room_cache_hits = stats.room_cache_hits;
+        g_re4dc_demo_telemetry.room_cache_misses = stats.room_cache_misses;
+        g_re4dc_demo_telemetry.room_light_evaluations =
+            stats.room_light_evaluations;
+        g_re4dc_demo_telemetry.room_near_trivial_accepts =
+            stats.room_near_trivial_accepts;
+        g_re4dc_demo_telemetry.room_near_trivial_rejects =
+            stats.room_near_trivial_rejects;
+        g_re4dc_demo_telemetry.room_near_crossings =
+            stats.room_near_crossings;
+        __asm__ volatile("" ::: "memory");
+        g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;
         if(frame % 120U == 0U) {
             std::printf(
                 "re4dc-room: frame=%lu pos=%.2f,%.2f,%.2f groups=%lu vertices=%lu "
                 "triangles=%lu actors_triangles=%lu wall_hits=%lu loops=%lu "
-                "hp=%d ammo=%d enemy_hp=%d state=%u frame_us=%llu wait_us=%llu "
-                "submit_us=%llu finish_us=%llu sim_tick=%llu overruns=%lu\n",
+                "hp=%d ammo=%d enemy_hp=%d state=%u work_us=%llu render_us=%llu "
+                "wait_us=%llu submit_us=%llu finish_us=%llu sim_tick=%llu "
+                "sim_ticks=%llu dropped_us=%llu debt_us=%llu input_gap_us=%llu "
+                "cache=%lu/%lu/%lu near=%lu/%lu/%lu overruns=%lu\n",
                 static_cast<unsigned long>(frame), player.x, player.y, player.z,
                 static_cast<unsigned long>(stats.groups),
                 static_cast<unsigned long>(stats.transformed_vertices),
@@ -3892,11 +4222,22 @@ int main() {
                 static_cast<unsigned long>(player.completed_loops),
                 player.health, player.ammo, enemy.health,
                 static_cast<unsigned>(enemy.state),
-                static_cast<unsigned long long>(frame_us),
+                static_cast<unsigned long long>(current_work_us),
+                static_cast<unsigned long long>(stats.total_us),
                 static_cast<unsigned long long>(stats.wait_us),
                 static_cast<unsigned long long>(stats.submit_us),
                 static_cast<unsigned long long>(stats.finish_us),
                 static_cast<unsigned long long>(simulation_tick),
+                static_cast<unsigned long long>(simulation_ticks_run),
+                static_cast<unsigned long long>(simulation_dropped_us),
+                static_cast<unsigned long long>(simulation_accumulator_us),
+                static_cast<unsigned long long>(input_sample_gap_us),
+                static_cast<unsigned long>(stats.room_index_references),
+                static_cast<unsigned long>(stats.room_cache_hits),
+                static_cast<unsigned long>(stats.room_cache_misses),
+                static_cast<unsigned long>(stats.room_near_trivial_accepts),
+                static_cast<unsigned long>(stats.room_near_trivial_rejects),
+                static_cast<unsigned long>(stats.room_near_crossings),
                 static_cast<unsigned long>(simulation_overruns));
         }
     }

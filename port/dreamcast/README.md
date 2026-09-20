@@ -159,6 +159,8 @@ The source mappings, deliberate behavior bounds, controls, and full-loop
 Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
 The measured LOD experiment, complete-loop replay, and remaining hardware and
 presentation limits are in [the P3 prototype checkpoint](docs/P3_PLAYABLE_BASELINE.md).
+The current measured optimization result is in
+[the r100 R1a performance checkpoint](docs/R1A_PERFORMANCE_CHECKPOINT.md).
 
 The source audio targets privately extract `wep02.drs`, `em12.drs`, and
 `pl00.drs` from
@@ -187,25 +189,19 @@ make -C port/dreamcast/room \
 
 1. Keep the 30-second r100 cabin encounter on source camera, placement, room,
    actor, motion, collision, and sound data.
-2. Replace the remaining direct-pursuit behavior along that one playable
-   route. The axe now uses the source weapon matrix endpoints and 250-unit
-   attack radius against Leon's five exact animated source damage capsules.
-3. Add the remaining source impact effects and room ambience; review moving
-   output after each fidelity change. Vertical gun aiming now uses the source
-   `0x26`/`0x27`/`0x28` aim and `0x29`/`0x2A`/`0x2B` fire triplets, source
-   `PlWepLockCtrl` pitch rate, and matching three-entry `g_readyOfs` camera
-   blend. The handgun shot starts at the source animated hand/muzzle transform, uses the source
-   50-metre direction and spread generator, and tests the Ganado's ten exact
-   animated damage capsules. Held fire repeats at the source starting-handgun
-   frame-12 ready point. Leon and the Ganado use their source hit/death motions
-   and voice cues on the bounded encounter path.
-4. Test manual play and repeated resets, then package the private Flycast demo
-   and short recording.
-5. Validate loading, memory, audio, controller, and output on physical
-   Dreamcast afterward.
+2. Recover source object identity and ordered per-model light selection before
+   baking lighting or reducing visible assets. R0 telemetry and the first R1a
+   room-work pass are complete.
+3. Preserve the source SAT hierarchy and source position/normal/weight-palette
+   identities instead of designing replacement collision or animation systems.
+4. Service input independently of the render interval, then test manual combat,
+   reload, death, and repeated resets without discarded simulation time.
+5. Package the private Flycast demo and validate loading, timing, memory, audio,
+   controller, and output on physical Dreamcast.
 
-The authoritative next-task order and acceptance criteria are in
-[the playable backlog](docs/PLAYABLE_PATH.md). The
+The authoritative real-time task order and acceptance criteria are in
+[the real-time path](docs/REALTIME_PATH.md). The presentation history and
+ownership ledger remain in [the playable backlog](docs/PLAYABLE_PATH.md). The
 [hardware/source assessment](docs/HARDWARE_TRANSLATION.md) documents the
 GameCube differences, real-time scenes, SFD movies, and render-to-texture work.
 See also [the r10d asset boundary](docs/R10D_VERTICAL_SLICE.md).

@@ -6,6 +6,10 @@ execution order. [PLAYABLE_PATH.md](PLAYABLE_PATH.md)
 retains the presentation milestone, source ownership ledger, and historical
 evidence. Keep the native SH-4/KallistiOS target and direct PVR renderer.
 
+R0 telemetry and the first R1a renderer pass are now implemented and measured in
+[R1A_PERFORMANCE_CHECKPOINT.md](R1A_PERFORMANCE_CHECKPOINT.md). The source object
+and selected-light trace required to close R1b remains pending.
+
 ## Objective and boundaries
 
 Make the same post-s03 cabin encounter responsive and measure its cost on a
