@@ -225,7 +225,11 @@ before/after timing and memory, and end in a keep-or-revert decision.
    after R3w with 66 memory instructions per normal; the exact remaining
    restructurings are one normalization per source normal instead of per
    entry (6,413 entries over 5,774 normals for Leon) and per-position
-   evaluation of the point and spot terms. `project_character()` is 5.820 ms
+   evaluation of the point and spot terms. R4g adds a measured target here:
+   at `-O3` the per-normal loop body is 654 instructions and 166 memory
+   operations against 297 and 66 at `-O2`, doing identical floating-point work,
+   so a loop the optimizer cannot inflate is worth up to 2 ms. The build-policy
+   routes to that saving are closed. `project_character()` is 5.820 ms
    at roughly 200 memory instructions per position and the actor packet loop
    in `draw_character()` 11.789 ms; both should be read the same way. Count
    with `tools/sh4_loop_cost.py`, change the data layout, keep the arithmetic
@@ -273,16 +277,20 @@ before/after timing and memory, and end in a keep-or-revert decision.
    has seven translation units and one of them holds nearly all the frame work.
    The measurement overturned that: actor lighting is 2.018 ms *slower* at
    `-O3`, so splitting the prepared-light evaluators into their own unit at
-   `-O2` is worth up to 2 ms. That follow-up was attempted in
-   [R4F_BUILD_POLICY_REFINEMENT_CHECKPOINT.md](R4F_BUILD_POLICY_REFINEMENT_CHECKPOINT.md)
-   and has **not** succeeded: a per-function `optimize("O2")` attribute makes
-   the stage 2.968 ms *worse* by blocking inlining, and seven `-O3` sub-flag
-   arms leave actor lighting at 16,207 us to the microsecond, so the cause is
-   not any individual pass. One flag did pay, `-fno-predictive-commoning`, worth
-   0.386 ms elsewhere, and is adopted. Before attempting the translation-unit
-   split, read the generated SH-4 for the kernel at both levels: it costs far
-   less than the refactor and says whether the hypothesis holds.
-   `-ffast-math` and friends remain out of scope and unneeded.
+   `-O2` looked worth up to 2 ms. **It is not, and this line of work is
+   closed.** Three routes were measured and all failed:
+   [R4F](R4F_BUILD_POLICY_REFINEMENT_CHECKPOINT.md) rejected a per-function
+   `optimize("O2")` attribute, which makes the stage 2.968 ms *worse* by
+   blocking inlining, and seven `-O3` sub-flag arms, which leave actor lighting
+   at 16,207 us to the microsecond;
+   [R4G](R4G_ACTOR_LIGHTING_UNIT_CHECKPOINT.md) built the translation-unit split
+   itself and measured it 0.160 ms slower, then explained why. Compiled in its
+   own unit the kernel is 708 instructions at `-O2` and 704 at `-O3`, against
+   560 inside `main.cpp` at `-O2`: the advantage was never the optimization
+   level, it was the interprocedural context `main.cpp` provides, and any split
+   that holds its own optimization level must also cut that context off.
+   One flag did pay, `-fno-predictive-commoning`, worth 0.386 ms elsewhere, and
+   is adopted. `-ffast-math` and friends remain out of scope and unneeded.
 4. **Submission transport: closed by R3q.** The KOS `pvr_prim` store-queue path
    costs 1.331 ms for the room and 2.580 ms in total. Bounded KOS DMA buffers
    cannot recover more than that even if they made the copy free, and they would
@@ -458,6 +466,11 @@ not the task scheduler:
   optimization attribute and seven sub-flag arms all failed, and those routes
   are closed. Also establishes that a stream digest covers polygon headers, so
   a digest baseline must come from the same texture-allocation regime.
+- R4g: the actor-lighting translation unit, built and reverted at 0.160 ms
+  slower. Its value is the explanation: the kernel's `-O2` advantage comes from
+  compilation context inside `main.cpp`, not from the level, so no split can
+  keep it. Attacking the regression now means restructuring the per-normal loop,
+  which belongs to queue item 1.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison
