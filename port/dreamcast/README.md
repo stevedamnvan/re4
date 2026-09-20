@@ -131,6 +131,10 @@ make -C port/dreamcast/room DEMO_SCENE=r100 \
   ROUTE_PACKAGE=../build/private/r100.re4rtp
 ```
 
+The `r100` presentation build defaults to native 640x480 Dreamcast VGA output;
+the older `r10d` engineering fixture remains 320x240. Pass
+`DEMO_RESOLUTION=240p` or `DEMO_RESOLUTION=480p` to override either profile.
+
 The converted package preserves all 66 source waypoints, 160 links, and the
 complete next-hop table. The native enemy walk path follows the decompiled
 `RouteCkToPos` selection rules over those data while reusing the port's SAT
