@@ -50,7 +50,8 @@ class CharacterConverterTests(unittest.TestCase):
                              index * 64, index * 32)
 
         (positions, palette, weights, draw_sources, texcoords, indices, batches,
-         bindings) = MODULE.parse_geometry(data)
+         bindings, primitive_indices, primitives,
+         batch_primitive_ranges) = MODULE.parse_geometry(data)
         self.assertEqual(positions[0], (1.0, 2.0, 3.0))
         self.assertEqual(palette, [0, 0, 0, 0])
         self.assertEqual(weights, [((0,), (100,))])
@@ -58,6 +59,9 @@ class CharacterConverterTests(unittest.TestCase):
         self.assertEqual(texcoords[3], (0.75, 0.375))
         self.assertEqual(indices, [0, 1, 2, 0, 2, 3])
         self.assertEqual(batches, [(0, 6, 3, 0)])
+        self.assertEqual(primitive_indices, [0, 1, 2, 3])
+        self.assertEqual(primitives, [(0, 0, 4, 6, 0x80)])
+        self.assertEqual(batch_primitive_ranges, [(0, 1)])
         self.assertEqual(bindings[0].name, "PART_000")
         self.assertEqual(bindings[0].color_image, 3)
 

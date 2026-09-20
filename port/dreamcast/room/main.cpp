@@ -104,14 +104,17 @@ struct DemoTelemetry {
     std::uint32_t input_queue_drops;
     std::uint32_t input_queue_depth;
     std::uint32_t input_edges_delivered;
+    std::uint32_t actor_vertex_records;
+    std::uint32_t actor_direct_strips;
+    std::uint32_t actor_strip_fallbacks;
 };
 
-static_assert(sizeof(DemoTelemetry) == 304U);
+static_assert(sizeof(DemoTelemetry) == 316U);
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
-    telemetry.version = 6U;
+    telemetry.version = 7U;
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
 }
@@ -478,6 +481,9 @@ struct FrameStats {
     std::uint32_t room_near_trivial_accepts = 0;
     std::uint32_t room_near_trivial_rejects = 0;
     std::uint32_t room_near_crossings = 0;
+    std::uint32_t character_vertex_records = 0;
+    std::uint32_t character_direct_strips = 0;
+    std::uint32_t character_strip_fallbacks = 0;
 };
 
 std::uint32_t saturate_u32(std::uint64_t value) {
@@ -3339,8 +3345,11 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                              const pvr_poly_hdr_t* material_headers,
                              const bool* material_alpha, bool alpha_pass,
                              pvr_vertex_t* submit_vertices,
-                             std::uint32_t submit_capacity) {
+                             std::uint32_t submit_capacity,
+                             FrameStats& stats) {
     const auto* indices = character.indices();
+    const auto* primitives = character.primitives();
+    const auto* primitive_indices = character.primitive_indices();
     const auto* uvs = character.uvs();
     std::uint32_t triangles = 0;
     for(std::uint32_t batch_index = 0;
@@ -3358,8 +3367,10 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             pvr_prim(submit_vertices, sizeof(pvr_vertex_t) * submit_count);
             submit_count = 0;
         };
-        const std::uint32_t end = batch.first_index + batch.index_count;
-        for(std::uint32_t index = batch.first_index; index < end; index += 3U) {
+        const auto submit_triangle_range = [&](std::uint32_t first,
+                                               std::uint32_t count) {
+          const std::uint32_t end = first + count;
+          for(std::uint32_t index = first; index < end; index += 3U) {
             if(submit_count + 6U > submit_capacity) {
                 flush();
             }
@@ -3391,7 +3402,71 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             const std::uint32_t emitted = clip_projected_triangle(
                 source_triangle, submit_vertices + submit_count, kCullBack);
             submit_count += emitted * 3U;
+            stats.character_vertex_records += emitted * 3U;
             triangles += emitted;
+          }
+        };
+        if(batch.primitive_count == 0U) {
+            submit_triangle_range(batch.first_index, batch.index_count);
+            flush();
+            continue;
+        }
+        const std::uint32_t primitive_end =
+            batch.first_primitive + batch.primitive_count;
+        for(std::uint32_t primitive_index = batch.first_primitive;
+            primitive_index < primitive_end; ++primitive_index) {
+            const auto& primitive = primitives[primitive_index];
+            bool direct_strip = primitive.opcode == 0x98U &&
+                                primitive.vertex_count <= submit_capacity;
+            for(std::uint32_t local = 0;
+                direct_strip && local < primitive.vertex_count; ++local) {
+                const std::uint16_t vertex =
+                    primitive_indices[primitive.first_vertex + local];
+                const float depth = projected[vertex].depth;
+                if(depth < kNearClipDistance || depth > kFarClipDistance) {
+                    direct_strip = false;
+                }
+            }
+            if(!direct_strip) {
+                if(primitive.opcode == 0x98U) {
+                    ++stats.character_strip_fallbacks;
+                }
+                submit_triangle_range(
+                    primitive.first_index, primitive.index_count);
+                continue;
+            }
+            if(submit_count + primitive.vertex_count > submit_capacity) {
+                flush();
+            }
+            for(std::uint32_t local = 0; local < primitive.vertex_count;
+                ++local) {
+                const std::uint16_t vertex =
+                    primitive_indices[primitive.first_vertex + local];
+#if defined(RE4DC_SCENE_R100)
+                const float light_red = lighting[vertex * 3U];
+                const float light_green = lighting[vertex * 3U + 1U];
+                const float light_blue = lighting[vertex * 3U + 2U];
+#else
+                const float light_red = 1.0f;
+                const float light_green = 1.0f;
+                const float light_blue = 1.0f;
+#endif
+                submit_vertices[submit_count++] = {
+                    .flags = local + 1U == primitive.vertex_count
+                                 ? PVR_CMD_VERTEX_EOL
+                                 : PVR_CMD_VERTEX,
+                    .x = projected[vertex].x,
+                    .y = projected[vertex].y,
+                    .z = projected[vertex].z,
+                    .u = uvs[vertex].u,
+                    .v = uvs[vertex].v,
+                    .argb = shade_color(light_red, light_green, light_blue),
+                    .oargb = 0,
+                };
+            }
+            stats.character_vertex_records += primitive.vertex_count;
+            ++stats.character_direct_strips;
+            triangles += primitive.index_count / 3U;
         }
         flush();
     }
@@ -3996,14 +4071,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
         leon_lighting,
 #endif
         leon_headers, leon_alpha, false,
-        character_submit_vertices, kCharacterSubmitVertexCapacity);
+        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
     stats.character_triangles += draw_character(
         ganado, ganado_projected,
 #if defined(RE4DC_SCENE_R100)
         ganado_lighting,
 #endif
         ganado_headers, ganado_alpha, false,
-        character_submit_vertices, kCharacterSubmitVertexCapacity);
+        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
 #if !defined(RE4DC_SCENE_R100)
     draw_goal(enemy.state == EnemyState::Dead);
 #endif
@@ -4070,14 +4145,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
         leon_lighting,
 #endif
         leon_headers, leon_alpha, true,
-        character_submit_vertices, kCharacterSubmitVertexCapacity);
+        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
     stats.character_triangles += draw_character(
         ganado, ganado_projected,
 #if defined(RE4DC_SCENE_R100)
         ganado_lighting,
 #endif
         ganado_headers, ganado_alpha, true,
-        character_submit_vertices, kCharacterSubmitVertexCapacity);
+        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
 #if defined(RE4DC_SCENE_R100)
     draw_source_hud(source_hud, source_hud_headers, player);
 #endif
@@ -4347,7 +4422,10 @@ int main() {
                              texture->width, texture->height,
                              character_textures.pvr_texture(texture_index),
                              PVR_FILTER_BILINEAR);
-            context.gen.culling = PVR_CULLING_NONE;
+            // The existing CPU path accepts negative screen-space area.
+            // Preserve that winding while allowing native source strips to
+            // rely on the PVR's alternating-strip culling.
+            context.gen.culling = PVR_CULLING_CW;
             context.gen.fog_type = PVR_FOG_TABLE;
             context.gen.specular = PVR_SPECULAR_ENABLE;
             if(alpha[batch_index]) {
@@ -4915,6 +4993,12 @@ int main() {
             input_snapshot.queue_depth;
         g_re4dc_demo_telemetry.input_edges_delivered =
             saturate_u32(input_snapshot.edges_delivered);
+        g_re4dc_demo_telemetry.actor_vertex_records =
+            stats.character_vertex_records;
+        g_re4dc_demo_telemetry.actor_direct_strips =
+            stats.character_direct_strips;
+        g_re4dc_demo_telemetry.actor_strip_fallbacks =
+            stats.character_strip_fallbacks;
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
         ++frame;

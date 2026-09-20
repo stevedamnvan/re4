@@ -157,7 +157,7 @@ an optimization commit.
 | R1c | Reuse selected fixed room-light contributions while retaining view-relative lights | **Target-side complete:** prior packed vertex colors matched at the checked camera; original-game image/light trace and hardware timing remain open |
 | R2a | Export source SAT blocks/edges and adapt source traversal/filtering/primitives | **In progress:** hierarchy/edges/traversal are implemented and measured; source primitive, attribute, manager, and matched query-result parity remain open |
 | R2b | Retain source attribute/weight-palette structure; source eligibility before preparation; benchmark skinning | Selected clip, normal, attachment and event parity; separate position/normal/corner counts and measured target cost |
-| R3 | Native draw templates from source cull/material state; child clusters; clipping/packet improvements | Same authored draw meaning; no missing surfaces, alpha/order regressions, clipping failures, or TA buffer overflow |
+| R3 | Native draw templates from source cull/material state; child clusters; clipping/packet improvements | **In progress:** source actor strips are retained and measured through a native PVR path; source material state, room packets, matched image tests, clipping stress, and TA limits remain open |
 | R4 | Qualify the unchanged encounter against the stock hardware frame budget | Live presentation/input/audio distributions and peak memory meet the acceptance section below |
 | R5 | Explicit residency and source-runtime integration before expanding content | Bounded loading/restart/transition peaks; original behavior coverage grows instead of a second gameplay implementation |
 

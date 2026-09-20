@@ -25,9 +25,10 @@ import convert_tpl  # noqa: E402
 
 
 MAGIC = b"R4CH"
-VERSION = 2
-HEADER = struct.Struct("<4s12If")
-BATCH = struct.Struct("<4I")
+VERSION = 3
+HEADER = struct.Struct("<4s16If")
+BATCH = struct.Struct("<6I")
+PRIMITIVE = struct.Struct("<IIHHB3x")
 CLIP = struct.Struct("<16sIIff")
 UV = struct.Struct("<2f")
 
@@ -115,6 +116,9 @@ def parse_geometry(data):
     draw_vertex_map = {}
     indices = []
     batches = []
+    primitive_indices = []
+    primitives = []
+    batch_primitive_ranges = []
     texture_bindings = []
     cursor = part_offset
     for part_index in range(part_count):
@@ -129,6 +133,7 @@ def parse_geometry(data):
         if stream_end > len(data):
             raise ValueError("model part stream exceeds entry")
         first_index = len(indices)
+        first_primitive = len(primitives)
         while stream < stream_end:
             opcode = data[stream]
             stream += 1
@@ -169,12 +174,23 @@ def parse_geometry(data):
                 primitive.append(draw_vertex_map[key])
             if primitive and max(primitive) >= len(draw_sources):
                 raise ValueError("GX primitive references a vertex outside the source array")
+            primitive_first_index = len(indices)
             for triangle in triangulate(opcode, primitive):
                 indices.extend(triangle)
+            primitive_index_count = len(indices) - primitive_first_index
+            primitive_first_vertex = len(primitive_indices)
+            primitive_indices.extend(primitive)
+            primitives.append((
+                primitive_first_vertex, primitive_first_index, count,
+                primitive_index_count, opcode,
+            ))
             stream += byte_count
         count = len(indices) - first_index
         if count:
             batches.append((first_index, count, material, part_index))
+            batch_primitive_ranges.append(
+                (first_primitive, len(primitives) - first_primitive)
+            )
             texture_bindings.append(
                 convert_tpl.MaterialBinding(
                     f"PART_{part_index:03d}", material, alpha_texture
@@ -183,7 +199,8 @@ def parse_geometry(data):
         cursor = stream_end
     return (
         positions, palette_indices, weights, draw_sources, texcoords,
-        indices, batches, texture_bindings,
+        indices, batches, texture_bindings, primitive_indices, primitives,
+        batch_primitive_ranges,
     )
 
 
@@ -545,6 +562,9 @@ def convert(args):
     texcoords = []
     indices = []
     batches = []
+    primitive_indices = []
+    primitives = []
+    batch_primitive_ranges = []
     texture_bindings = []
     texture_images = []
     texture_sources = {}
@@ -565,7 +585,8 @@ def convert(args):
         (
             source_positions, palette_indices, weights, draw_sources,
             component_uvs, component_indices, component_batches,
-            component_bindings,
+            component_bindings, component_primitive_indices,
+            component_primitives, component_batch_primitive_ranges,
         ) = geometry
         referenced_bones = [bone for ids, _ in weights for bone in ids]
         if (parent_bone is None and referenced_bones and
@@ -597,14 +618,33 @@ def convert(args):
 
         vertex_base = len(positions)
         index_base = len(indices)
+        primitive_index_base = len(primitive_indices)
+        primitive_base = len(primitives)
         positions.extend(source_positions[index] for index in draw_sources)
         texcoords.extend(component_uvs)
         indices.extend(vertex_base + index for index in component_indices)
-        for batch, binding in zip(component_batches, component_bindings):
+        primitive_indices.extend(
+            vertex_base + index for index in component_primitive_indices
+        )
+        primitives.extend((
+            primitive_index_base + first_vertex,
+            index_base + first_index,
+            vertex_count,
+            index_count,
+            opcode,
+        ) for (first_vertex, first_index, vertex_count, index_count, opcode)
+                          in component_primitives)
+        for batch, binding, primitive_range in zip(
+                component_batches, component_bindings,
+                component_batch_primitive_ranges):
             first_index, index_count, material, _ = batch
+            first_primitive, primitive_count = primitive_range
             global_part = len(texture_bindings)
             batches.append((
                 index_base + first_index, index_count, material, global_part
+            ))
+            batch_primitive_ranges.append((
+                primitive_base + first_primitive, primitive_count
             ))
             texture_bindings.append(convert_tpl.MaterialBinding(
                 f"PART_{global_part:03d}",
@@ -709,6 +749,13 @@ def convert(args):
     positions, texcoords, indices, batches, frames = cluster_animated_geometry(
         positions, texcoords, indices, batches, frames, args.cluster_mm
     )
+    if args.cluster_mm > 0.0:
+        # Position clustering can remove degenerate triangles and changes draw
+        # vertex identities, so the source GX streams are no longer valid.
+        # Keep the v3 package readable and select the triangle fallback.
+        primitive_indices = []
+        primitives = []
+        batch_primitive_ranges = [(0, 0) for _ in batches]
     # Markers are unindexed animation points used by native gameplay checks.
     # Append them after clustering so mesh reduction can never merge or remove
     # a source-authored weapon sweep point.
@@ -722,18 +769,37 @@ def convert(args):
     header_size = HEADER.size
     index_offset = align(header_size)
     batch_offset = align(index_offset + len(indices) * 2)
-    clip_offset = align(batch_offset + len(batches) * BATCH.size)
+    primitive_offset = align(batch_offset + len(batches) * BATCH.size)
+    primitive_index_offset = align(
+        primitive_offset + len(primitives) * PRIMITIVE.size
+    )
+    clip_offset = align(primitive_index_offset + len(primitive_indices) * 2)
     uv_offset = align(clip_offset + len(clips) * CLIP.size)
     frame_offset = align(uv_offset + len(texcoords) * UV.size)
     blob = bytearray(frame_offset + len(frame_data))
     HEADER.pack_into(
         blob, 0, MAGIC, VERSION, header_size, len(positions), len(indices),
-        len(batches), len(clips), len(frames), index_offset, batch_offset,
-        clip_offset, uv_offset, frame_offset, args.quantum_mm * 0.001,
+        len(batches), len(clips), len(frames), len(primitives),
+        len(primitive_indices), index_offset, batch_offset, primitive_offset,
+        primitive_index_offset, clip_offset, uv_offset, frame_offset,
+        args.quantum_mm * 0.001,
     )
     struct.pack_into(f"<{len(indices)}H", blob, index_offset, *indices)
-    for index, batch in enumerate(batches):
-        BATCH.pack_into(blob, batch_offset + index * BATCH.size, *batch)
+    for index, (batch, primitive_range) in enumerate(
+            zip(batches, batch_primitive_ranges)):
+        BATCH.pack_into(
+            blob, batch_offset + index * BATCH.size,
+            *batch, *primitive_range,
+        )
+    for index, primitive in enumerate(primitives):
+        PRIMITIVE.pack_into(
+            blob, primitive_offset + index * PRIMITIVE.size, *primitive
+        )
+    if primitive_indices:
+        struct.pack_into(
+            f"<{len(primitive_indices)}H", blob, primitive_index_offset,
+            *primitive_indices,
+        )
     for index, (name, first_frame, frame_count, fps, root_speed) in enumerate(clips):
         encoded = name.encode("ascii") + b"\0"
         CLIP.pack_into(blob, clip_offset + index * CLIP.size,
@@ -780,7 +846,7 @@ def convert(args):
         encoding="utf-8",
     )
     manifest = {
-        "format": "re4dc-character-v2",
+        "format": "re4dc-character-v3",
         "output": str(output.resolve()),
         "bytes": len(blob),
         "sha256": hashlib.sha256(blob).hexdigest(),
@@ -812,6 +878,8 @@ def convert(args):
         "uv_split_vertices": uv_split_vertex_count,
         "triangles": len(indices) // 3,
         "batches": len(batches),
+        "source_primitives": len(primitives),
+        "source_primitive_vertices": len(primitive_indices),
         "cluster_mm": args.cluster_mm,
         "cluster_source_vertices": source_vertex_count,
         "cluster_source_triangles": source_triangle_count,

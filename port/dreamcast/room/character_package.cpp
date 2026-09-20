@@ -56,6 +56,10 @@ bool Package::open(const char* path) {
                     static_cast<std::uint64_t>(header_->index_count) * sizeof(std::uint16_t)) ||
        !range_valid(header_->batch_offset,
                     static_cast<std::uint64_t>(header_->batch_count) * sizeof(Batch)) ||
+       !range_valid(header_->primitive_offset,
+                    static_cast<std::uint64_t>(header_->primitive_count) * sizeof(Primitive)) ||
+       !range_valid(header_->primitive_index_offset,
+                    static_cast<std::uint64_t>(header_->primitive_index_count) * sizeof(std::uint16_t)) ||
        !range_valid(header_->clip_offset,
                     static_cast<std::uint64_t>(header_->clip_count) * sizeof(Clip)) ||
        !range_valid(header_->uv_offset,
@@ -78,10 +82,44 @@ bool Package::open(const char* path) {
         const Batch& batch = package_batches[index];
         if(batch.index_count == 0 || batch.index_count % 3U != 0 ||
            static_cast<std::uint64_t>(batch.first_index) + batch.index_count >
-               header_->index_count) {
+               header_->index_count ||
+           static_cast<std::uint64_t>(batch.first_primitive) +
+                   batch.primitive_count > header_->primitive_count) {
             error_ = "batch range exceeds index count";
             close();
             return false;
+        }
+    }
+    if((header_->primitive_count == 0U) !=
+       (header_->primitive_index_count == 0U)) {
+        error_ = "partial source primitive stream";
+        close();
+        return false;
+    }
+    const auto* package_primitives = primitives();
+    const auto* package_primitive_indices = primitive_indices();
+    for(std::uint32_t index = 0; index < header_->primitive_count; ++index) {
+        const Primitive& primitive = package_primitives[index];
+        const bool supported = primitive.opcode == 0x80U ||
+                               primitive.opcode == 0x90U ||
+                               primitive.opcode == 0x98U;
+        if(!supported || primitive.vertex_count < 3U ||
+           primitive.index_count == 0U || primitive.index_count % 3U != 0U ||
+           static_cast<std::uint64_t>(primitive.first_vertex) +
+                   primitive.vertex_count > header_->primitive_index_count ||
+           static_cast<std::uint64_t>(primitive.first_index) +
+                   primitive.index_count > header_->index_count) {
+            error_ = "invalid source primitive range";
+            close();
+            return false;
+        }
+        for(std::uint32_t vertex = primitive.first_vertex;
+            vertex < primitive.first_vertex + primitive.vertex_count; ++vertex) {
+            if(package_primitive_indices[vertex] >= header_->vertex_count) {
+                error_ = "source primitive index exceeds vertex count";
+                close();
+                return false;
+            }
         }
     }
     const auto* package_clips = clips();
@@ -115,6 +153,15 @@ const std::uint16_t* Package::indices() const {
 
 const Batch* Package::batches() const {
     return reinterpret_cast<const Batch*>(data_ + header_->batch_offset);
+}
+
+const Primitive* Package::primitives() const {
+    return reinterpret_cast<const Primitive*>(data_ + header_->primitive_offset);
+}
+
+const std::uint16_t* Package::primitive_indices() const {
+    return reinterpret_cast<const std::uint16_t*>(
+        data_ + header_->primitive_index_offset);
 }
 
 const Clip* Package::clips() const {
