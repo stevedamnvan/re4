@@ -40,12 +40,14 @@ struct DemoTelemetry {
     std::uint32_t actor_triangles;
     std::uint32_t frame_us;
     std::uint32_t submit_us;
+    std::uint32_t simulation_tick;
+    std::uint32_t simulation_overruns;
 };
 
 extern "C" {
 volatile DemoTelemetry g_re4dc_demo_telemetry = {
-    0x52453444U, 1U, 0U, 0U, 0U, 0, 0, 0, 0U, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 0U, 0U, 0U, 0U, 0U, 0U,
+    0x52453444U, 2U, 0U, 0U, 0U, 0, 0, 0, 0U, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
 };
 }
 
@@ -230,7 +232,10 @@ constexpr int kEnemyMaxHealth = 3;
 constexpr int kHandgunBodyDamage = 1;
 #endif
 constexpr std::uint64_t kSimulationStepUs = 33333U;
-constexpr unsigned kMaxSimulationCatchupTicks = 3U;
+// The presentation build deliberately favors source-detail over frame rate.
+// Keep the 30 Hz source simulation current through a sub-2-fps render while
+// retaining a finite catch-up bound for pathological stalls.
+constexpr unsigned kMaxSimulationCatchupTicks = 24U;
 constexpr float kSimulationDeltaSeconds = 1.0f / 30.0f;
 // cObjMauser::moveReload refills the starting handgun at motion frame 44 and
 // ejects its stripper clip at frame 55. Keep the action locked through that
@@ -836,24 +841,14 @@ Input autoplay_input(Autoplay& autoplay, const Player& player,
                                             enemy.z - player.z);
         input.turn = std::clamp(wrap_angle(target_yaw - player.yaw) * 2.0f,
                                 -1.0f, 1.0f);
-        input.fire = tick == 6U || tick == 16U || tick == 26U ||
-                     tick == 36U || tick == 52U;
-        if(tick >= 7U && tick < 14U) {
-            input.aim_pitch_dpad = 1;
-        } else if(tick >= 18U && tick < 25U) {
-            input.aim_pitch_dpad = -1;
-        }
+        input.fire = tick == 6U || tick == 20U || tick == 34U ||
+                     tick == 48U || tick == 62U;
     } else if(tick >= 150U && tick < 360U) {
-        // Hold the source handgun-ready camera for a readable result shot,
-        // briefly exercising both authored camera/motion blend directions.
+        // Hold the source level handgun-ready camera for a readable result
+        // shot. Pitch coverage belongs in the technical replay, not footage.
         input.aim = true;
-        if(tick < 168U) {
-            input.aim_pitch_dpad = 1;
-        } else if(tick >= 225U && tick < 243U) {
-            input.aim_pitch_dpad = -1;
-        }
     }
-    if(tick == 60U) {
+    if(tick == 76U) {
         input.reload = true;
     }
     return input;
@@ -1994,6 +1989,8 @@ struct SourceLightingBasis {
 };
 
 SourceLightingBasis g_source_lighting_basis;
+point_t g_source_camera_eye{};
+float g_source_half_fov_tangent = 1.0f;
 
 void normalize_vector(float& x, float& y, float& z) {
     const float length = std::sqrt(x * x + y * y + z * z);
@@ -2008,7 +2005,8 @@ void normalize_vector(float& x, float& y, float& z) {
     z /= length;
 }
 
-void set_source_lighting_camera(const point_t& eye, const point_t& target) {
+void set_source_lighting_camera(const point_t& eye, const point_t& target,
+                                float half_fov) {
     float fx = target.x - eye.x;
     float fy = target.y - eye.y;
     float fz = target.z - eye.z;
@@ -2022,6 +2020,8 @@ void set_source_lighting_camera(const point_t& eye, const point_t& target) {
     float uz = rx * fy - ry * fx;
     normalize_vector(ux, uy, uz);
     g_source_lighting_basis = {rx, ry, rz, ux, uy, uz, fx, fy, fz};
+    g_source_camera_eye = eye;
+    g_source_half_fov_tangent = std::tan(half_fov);
 }
 
 void evaluate_source_lighting(float px, float py, float pz,
@@ -2110,13 +2110,59 @@ void evaluate_source_lighting(float px, float py, float pz,
 
 bool group_visible(const re4dc::room::Group& group) {
 #if defined(RE4DC_SCENE_R100)
-    // The source gameplay shot is the acceptance reference. Until the SMD
-    // object's own visibility volumes are carried into RE4DCRM, keep every
-    // source group eligible and let the exact per-triangle frustum reject it.
-    // The cell AABB projection can reject thin distant forest cells even when
-    // their triangles cross this camera frustum.
-    (void)group;
-    return true;
+    // Reject complete source groups in world/view space before transforming
+    // their triangles. Projected AABB corners are not conservative when a long
+    // wall crosses the frustum without placing a corner inside it, so use the
+    // AABB support radius along the exact camera axes instead.
+    const float center_x = (group.bounds_min[0] + group.bounds_max[0]) * 0.5f;
+    const float center_y = (group.bounds_min[1] + group.bounds_max[1]) * 0.5f;
+    const float center_z = (group.bounds_min[2] + group.bounds_max[2]) * 0.5f;
+    const float extent_x = (group.bounds_max[0] - group.bounds_min[0]) * 0.5f;
+    const float extent_y = (group.bounds_max[1] - group.bounds_min[1]) * 0.5f;
+    const float extent_z = (group.bounds_max[2] - group.bounds_min[2]) * 0.5f;
+    const float relative_x = center_x - g_source_camera_eye.x;
+    const float relative_y = center_y - g_source_camera_eye.y;
+    const float relative_z = center_z - g_source_camera_eye.z;
+    const auto projected_center = [&](float axis_x, float axis_y,
+                                      float axis_z) {
+        return relative_x * axis_x + relative_y * axis_y +
+               relative_z * axis_z;
+    };
+    const auto support_radius = [&](float axis_x, float axis_y,
+                                    float axis_z) {
+        return extent_x * std::fabs(axis_x) +
+               extent_y * std::fabs(axis_y) +
+               extent_z * std::fabs(axis_z);
+    };
+    const float view_x = projected_center(
+        g_source_lighting_basis.right_x, g_source_lighting_basis.right_y,
+        g_source_lighting_basis.right_z);
+    const float view_y = projected_center(
+        g_source_lighting_basis.up_x, g_source_lighting_basis.up_y,
+        g_source_lighting_basis.up_z);
+    const float view_z = projected_center(
+        g_source_lighting_basis.forward_x, g_source_lighting_basis.forward_y,
+        g_source_lighting_basis.forward_z);
+    const float radius_x = support_radius(
+        g_source_lighting_basis.right_x, g_source_lighting_basis.right_y,
+        g_source_lighting_basis.right_z);
+    const float radius_y = support_radius(
+        g_source_lighting_basis.up_x, g_source_lighting_basis.up_y,
+        g_source_lighting_basis.up_z);
+    const float radius_z = support_radius(
+        g_source_lighting_basis.forward_x, g_source_lighting_basis.forward_y,
+        g_source_lighting_basis.forward_z);
+    if(view_z + radius_z < kNearClipDistance ||
+       view_z - radius_z > kFarClipDistance) {
+        return false;
+    }
+    const float far_depth = std::max(view_z + radius_z, kNearClipDistance);
+    const float half_height = far_depth * g_source_half_fov_tangent;
+    const float half_width = half_height * (4.0f / 3.0f);
+    return view_x - radius_x <= half_width &&
+           view_x + radius_x >= -half_width &&
+           view_y - radius_y <= half_height &&
+           view_y + radius_y >= -half_height;
 #else
     bool behind = true;
     bool beyond_far = true;
@@ -2262,6 +2308,7 @@ std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
                                  const std::uint32_t* indices,
                                  pvr_vertex_t* output,
                                  ProjectedVertex* projected,
+                                 float* lighting,
                                  std::uint32_t* transformed_at,
                                  std::uint32_t frame_token,
                                  FrameStats& stats) {
@@ -2276,29 +2323,32 @@ std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
             mat_trans_single(x, y, z);
             projected[vertex_index] = {
                 x, y, z, input.x, input.y, input.z, camera_depth(z)};
+            float light_red = 0.0f;
+            float light_green = 0.0f;
+            float light_blue = 0.0f;
+#if defined(RE4DC_SCENE_R100)
+            evaluate_source_lighting(input.x, input.y, input.z,
+                                     input.nx, input.ny, input.nz, false,
+                                     light_red, light_green, light_blue);
+#else
+            light_red = light_green = light_blue = std::clamp(
+                0.76f + 0.08f * input.nx + 0.12f * input.ny +
+                    0.04f * input.nz,
+                0.58f, 1.0f);
+#endif
+            lighting[vertex_index * 3U] = light_red;
+            lighting[vertex_index * 3U + 1U] = light_green;
+            lighting[vertex_index * 3U + 2U] = light_blue;
             transformed_at[vertex_index] = frame_token;
             ++stats.transformed_vertices;
         }
-        float light_red = 0.0f;
-        float light_green = 0.0f;
-        float light_blue = 0.0f;
-#if defined(RE4DC_SCENE_R100)
-        evaluate_source_lighting(input.x, input.y, input.z,
-                                 input.nx, input.ny, input.nz, false,
-                                 light_red, light_green, light_blue);
-#else
-        light_red = light_green = light_blue = std::clamp(
-            0.76f + 0.08f * input.nx + 0.12f * input.ny +
-                0.04f * input.nz,
-            0.58f, 1.0f);
-#endif
         triangle[corner] = {
             .position = projected[vertex_index],
             .u = input.u,
             .v = input.v,
-            .light_red = light_red,
-            .light_green = light_green,
-            .light_blue = light_blue,
+            .light_red = lighting[vertex_index * 3U],
+            .light_green = lighting[vertex_index * 3U + 1U],
+            .light_blue = lighting[vertex_index * 3U + 2U],
             .offset_color = 0,
         };
     }
@@ -2460,12 +2510,26 @@ void build_character_normals(const re4dc::character::Package& character,
                          normals[vertex * 3U + 2U]);
     }
 }
+
+void build_character_lighting(const re4dc::character::Package& character,
+                              const ProjectedVertex* projected,
+                              const float* normals, float* lighting) {
+    for(std::uint32_t vertex = 0; vertex < character.header().vertex_count;
+        ++vertex) {
+        const ProjectedVertex& position = projected[vertex];
+        evaluate_source_lighting(
+            position.world_x, position.world_y, position.world_z,
+            normals[vertex * 3U], normals[vertex * 3U + 1U],
+            normals[vertex * 3U + 2U], true, lighting[vertex * 3U],
+            lighting[vertex * 3U + 1U], lighting[vertex * 3U + 2U]);
+    }
+}
 #endif
 
 std::uint32_t draw_character(const re4dc::character::Package& character,
                              const ProjectedVertex* projected,
 #if defined(RE4DC_SCENE_R100)
-                             const float* normals,
+                             const float* lighting,
 #endif
                              const pvr_poly_hdr_t* material_headers,
                              const bool* material_alpha, bool alpha_pass,
@@ -2499,18 +2563,15 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             };
             RenderVertex source_triangle[3]{};
             for(unsigned corner = 0; corner < 3; ++corner) {
+#if defined(RE4DC_SCENE_R100)
+                const std::uint32_t vertex = source_indices[corner];
+                const float light_red = lighting[vertex * 3U];
+                const float light_green = lighting[vertex * 3U + 1U];
+                const float light_blue = lighting[vertex * 3U + 2U];
+#else
                 float light_red = 1.0f;
                 float light_green = 1.0f;
                 float light_blue = 1.0f;
-#if defined(RE4DC_SCENE_R100)
-                const ProjectedVertex& position =
-                    projected[source_indices[corner]];
-                evaluate_source_lighting(
-                    position.world_x, position.world_y, position.world_z,
-                    normals[source_indices[corner] * 3U],
-                    normals[source_indices[corner] * 3U + 1U],
-                    normals[source_indices[corner] * 3U + 2U], true,
-                    light_red, light_green, light_blue);
 #endif
                 source_triangle[corner] = {
                     .position = projected[source_indices[corner]],
@@ -2666,11 +2727,13 @@ FrameStats render_scene(const re4dc::room::Package& room,
                          const bool* leon_alpha,
                          const pvr_poly_hdr_t* ganado_headers,
                          const bool* ganado_alpha,
-                        ProjectedVertex* projected, std::uint32_t* transformed_at,
+                        ProjectedVertex* projected, float* room_lighting,
+                        std::uint32_t* transformed_at,
                         ProjectedVertex* leon_projected,
                         ProjectedVertex* ganado_projected,
 #if defined(RE4DC_SCENE_R100)
                         float* leon_normals, float* ganado_normals,
+                        float* leon_lighting, float* ganado_lighting,
 #endif
                         pvr_vertex_t* character_submit_vertices,
                         std::uint32_t frame_token) {
@@ -2695,6 +2758,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #if defined(RE4DC_SCENE_R100)
     build_character_normals(leon, leon_projected, leon_normals);
     build_character_normals(ganado, ganado_projected, ganado_normals);
+    build_character_lighting(
+        leon, leon_projected, leon_normals, leon_lighting);
+    build_character_lighting(
+        ganado, ganado_projected, ganado_normals, ganado_lighting);
 #endif
     const std::uint64_t wait_start = timer_us_gettime64();
     pvr_wait_ready();
@@ -2716,32 +2783,42 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 continue;
             }
             pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
+            std::uint32_t submit_count = 0;
+            const auto flush = [&]() {
+                if(submit_count == 0U) {
+                    return;
+                }
+                pvr_prim(character_submit_vertices,
+                         sizeof(pvr_vertex_t) * submit_count);
+                submit_count = 0;
+            };
             const std::uint32_t end = batch.first_index + batch.index_count;
             for(std::uint32_t index = batch.first_index; index < end; index += 3) {
-                pvr_vertex_t triangle[6]{};
-                const std::uint32_t emitted = transform_triangle(
-                    vertices, indices + index, triangle, projected,
-                    transformed_at, frame_token, stats);
-                for(std::uint32_t clipped = 0; clipped < emitted; ++clipped) {
-                    pvr_prim(triangle + clipped * 3U,
-                             sizeof(pvr_vertex_t) * 3U);
+                if(submit_count + 6U > kCharacterSubmitVertexCapacity) {
+                    flush();
                 }
+                const std::uint32_t emitted = transform_triangle(
+                    vertices, indices + index,
+                    character_submit_vertices + submit_count, projected,
+                    room_lighting, transformed_at, frame_token, stats);
+                submit_count += emitted * 3U;
                 stats.triangles += emitted;
             }
+            flush();
         }
     }
     pvr_prim(&untextured_header, sizeof(untextured_header));
     stats.character_triangles = draw_character(
         leon, leon_projected,
 #if defined(RE4DC_SCENE_R100)
-        leon_normals,
+        leon_lighting,
 #endif
         leon_headers, leon_alpha, false,
         character_submit_vertices, kCharacterSubmitVertexCapacity);
     stats.character_triangles += draw_character(
         ganado, ganado_projected,
 #if defined(RE4DC_SCENE_R100)
-        ganado_normals,
+        ganado_lighting,
 #endif
         ganado_headers, ganado_alpha, false,
         character_submit_vertices, kCharacterSubmitVertexCapacity);
@@ -2765,31 +2842,41 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 continue;
             }
             pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
+            std::uint32_t submit_count = 0;
+            const auto flush = [&]() {
+                if(submit_count == 0U) {
+                    return;
+                }
+                pvr_prim(character_submit_vertices,
+                         sizeof(pvr_vertex_t) * submit_count);
+                submit_count = 0;
+            };
             const std::uint32_t end = batch.first_index + batch.index_count;
             for(std::uint32_t index = batch.first_index; index < end; index += 3) {
-                pvr_vertex_t triangle[6]{};
-                const std::uint32_t emitted = transform_triangle(
-                    vertices, indices + index, triangle, projected,
-                    transformed_at, frame_token, stats);
-                for(std::uint32_t clipped = 0; clipped < emitted; ++clipped) {
-                    pvr_prim(triangle + clipped * 3U,
-                             sizeof(pvr_vertex_t) * 3U);
+                if(submit_count + 6U > kCharacterSubmitVertexCapacity) {
+                    flush();
                 }
+                const std::uint32_t emitted = transform_triangle(
+                    vertices, indices + index,
+                    character_submit_vertices + submit_count, projected,
+                    room_lighting, transformed_at, frame_token, stats);
+                submit_count += emitted * 3U;
                 stats.triangles += emitted;
             }
+            flush();
         }
     }
     stats.character_triangles += draw_character(
         leon, leon_projected,
 #if defined(RE4DC_SCENE_R100)
-        leon_normals,
+        leon_lighting,
 #endif
         leon_headers, leon_alpha, true,
         character_submit_vertices, kCharacterSubmitVertexCapacity);
     stats.character_triangles += draw_character(
         ganado, ganado_projected,
 #if defined(RE4DC_SCENE_R100)
-        ganado_normals,
+        ganado_lighting,
 #endif
         ganado_headers, ganado_alpha, true,
         character_submit_vertices, kCharacterSubmitVertexCapacity);
@@ -3094,6 +3181,8 @@ int main() {
     bool restart_was_down = false;
     std::unique_ptr<ProjectedVertex[]> projected(
         new(std::nothrow) ProjectedVertex[room.header().vertex_count]);
+    std::unique_ptr<float[]> room_lighting(
+        new(std::nothrow) float[room.header().vertex_count * 3U]);
     std::unique_ptr<std::uint32_t[]> transformed_at(
         new(std::nothrow) std::uint32_t[room.header().vertex_count]());
     std::unique_ptr<ProjectedVertex[]> leon_projected(
@@ -3105,13 +3194,19 @@ int main() {
         new(std::nothrow) float[leon.header().vertex_count * 3U]);
     std::unique_ptr<float[]> ganado_normals(
         new(std::nothrow) float[ganado.header().vertex_count * 3U]);
+    std::unique_ptr<float[]> leon_lighting(
+        new(std::nothrow) float[leon.header().vertex_count * 3U]);
+    std::unique_ptr<float[]> ganado_lighting(
+        new(std::nothrow) float[ganado.header().vertex_count * 3U]);
 #endif
     std::unique_ptr<pvr_vertex_t[]> character_submit_vertices(
         new(std::nothrow) pvr_vertex_t[kCharacterSubmitVertexCapacity]);
-    if(projected == nullptr || transformed_at == nullptr ||
+    if(projected == nullptr || room_lighting == nullptr ||
+       transformed_at == nullptr ||
        leon_projected == nullptr || ganado_projected == nullptr ||
 #if defined(RE4DC_SCENE_R100)
        leon_normals == nullptr || ganado_normals == nullptr ||
+       leon_lighting == nullptr || ganado_lighting == nullptr ||
 #endif
        character_submit_vertices == nullptr) {
         std::printf("re4dc-room: transform cache allocation failed\n");
@@ -3327,7 +3422,7 @@ int main() {
 #endif
         }
 #if defined(RE4DC_SCENE_R100)
-        set_source_lighting_camera(eye, target);
+        set_source_lighting_camera(eye, target, half_fov);
 #endif
         mat_identity();
         mat_perspective(kScreenWidth * 0.5f, kScreenHeight * 0.5f,
@@ -3338,9 +3433,11 @@ int main() {
             room, leon, ganado, player, enemy, untextured_header,
             material_headers, material_alpha.get(), leon_headers,
             leon_alpha.get(), ganado_headers, ganado_alpha.get(), projected.get(),
-            transformed_at.get(), leon_projected.get(), ganado_projected.get(),
+            room_lighting.get(), transformed_at.get(), leon_projected.get(),
+            ganado_projected.get(),
 #if defined(RE4DC_SCENE_R100)
-            leon_normals.get(), ganado_normals.get(),
+            leon_normals.get(), ganado_normals.get(), leon_lighting.get(),
+            ganado_lighting.get(),
 #endif
             character_submit_vertices.get(), frame + 1U);
         g_re4dc_demo_telemetry.visible_groups = stats.groups;
@@ -3352,6 +3449,9 @@ int main() {
             std::min<std::uint64_t>(frame_us, 0xffffffffU));
         g_re4dc_demo_telemetry.submit_us = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(stats.submit_us, 0xffffffffU));
+        g_re4dc_demo_telemetry.simulation_tick =
+            static_cast<std::uint32_t>(simulation_tick);
+        g_re4dc_demo_telemetry.simulation_overruns = simulation_overruns;
         ++frame;
         if(frame % 120U == 0U) {
             std::printf(

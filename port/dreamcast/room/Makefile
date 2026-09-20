@@ -29,7 +29,7 @@ BUILD_CONFIG = .build-config
 
 romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
 
-CPPFLAGS += -std=c++20 -Wall -Wextra -Werror -I../include
+CPPFLAGS += -std=c++20 -O2 -Wall -Wextra -Werror -I../include
 ifeq ($(DEMO_SCENE),r100)
 CPPFLAGS += -DRE4DC_SCENE_R100
 endif

@@ -91,6 +91,20 @@ candidate. Flycast recorded axe contacts at source frame 50 and health
 death pose before the game-over prompt, and a manual B restart back to 1200 HP.
 This is emulator evidence; physical Dreamcast loading and timing remain open.
 
+The 2026-09-20 source-detail pass keeps the selected meshes and lighting model
+intact while removing redundant Dreamcast work: the SH-4 build now uses `-O2`,
+room and actor lighting is evaluated once per unique vertex per frame, room
+vertices are submitted in material batches, and a conservative world-space
+AABB/frustum test rejects only complete source groups outside the exact camera.
+The 640x480 Flycast capture emitted 3,396 room and 6,399 actor triangles in its
+measured result frame. It presented 52 distinct frames during a 29.8-second
+desktop capture (1.71 fps); one representative native frame took 554,687 us,
+including 446,629 us in transform/lighting/submission. The fixed 30 Hz source
+simulation reported zero dropped catch-up events and the trace defeated the
+500-HP Ganado. This is a large improvement over the 0.13-fps unoptimized path,
+but remains intentionally low-frame-rate emulator evidence rather than physical
+Dreamcast performance acceptance.
+
 ## Shortest asset and renderer path
 
 The source r100 runtime streams five DAT archives. At the post-s03 encounter,
