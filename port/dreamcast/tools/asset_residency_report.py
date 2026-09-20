@@ -22,6 +22,13 @@ Usage:
   asset_residency_report.py --tpl R100.TPL.TPL --mtl R100.allparts.mtl \\
       --package build/private/r100-entry-source.re4tex [--max-dimension 256] \\
       [--ps2-manifest ps2.json] [--format markdown] [--json out.json]
+
+The GameCube assets are private and are not in every workspace. Without
+`--tpl` and `--mtl` the tool reports the built package on its own -- the size,
+format and payload layout of every descriptor, and what the package costs in
+texture memory once shared payloads are counted once:
+
+  asset_residency_report.py --package build/room-romdisk/r10d.re4tex
 """
 
 from __future__ import annotations
@@ -57,6 +64,23 @@ GX_FORMAT_NAMES = {
 }
 
 DC_FORMAT_NAMES = {0: "rgb565", 1: "argb1555", 2: "argb4444"}
+# How the payload is laid out. Version 1 of the package had no such field and
+# was always linear; version 2 records it so the runtime can copy a payload
+# into texture memory without interpreting it. The authority for both layouts
+# is `room/texture_package.hpp`.
+DC_PAYLOAD_NAMES = {0: "linear", 1: "twiddled", 2: "vq"}
+DC_PAYLOAD_LINEAR = 0
+DC_FLAG_ALPHA = 1 << 0
+DC_FLAG_BINARY_ALPHA = 1 << 1
+
+PACKAGE_MAGIC = b"RE4DCTX\0"
+PACKAGE_HEADER = struct.Struct("<8s10I")
+# Keyed by the stride the header declares, which is what tells the two record
+# layouts apart on disk.
+PACKAGE_TEXTURE = {
+    88: struct.Struct("<64s6I"),   # v1: material, w, h, format, offset, size, flags
+    96: struct.Struct("<64s8I"),   # v2: ... + payload, reserved_0
+}
 
 
 def bytes_16bpp(width: int, height: int) -> int:
@@ -80,35 +104,103 @@ def power_of_two(value: int) -> bool:
     return value > 0 and (value & (value - 1)) == 0
 
 
-def read_package(path: pathlib.Path) -> dict[str, dict]:
-    """Return the built package's per-material record, keyed by material name."""
+def read_package(path) -> dict:
+    """Read a built Dreamcast texture package.
+
+    Both shipped record layouts are accepted and told apart by the stride the
+    header declares: 96 bytes for the current version 2 record, which carries
+    the payload layout, and 88 bytes for the version 1 record, which predates
+    that field and was always linear.
+
+    The result carries `descriptors` in file order as well as the `textures`
+    map keyed by material name. Descriptors that were packed from the same
+    source image share one payload, so the two differ in length whenever a
+    package reuses an image, and the byte totals below are reported both ways:
+    `descriptor_bytes` prices every descriptor as if it owned its payload,
+    `unique_payload_bytes` prices what the runtime actually uploads.
+    """
+    path = pathlib.Path(path)
     data = path.read_bytes()
-    header = struct.unpack_from("<8s10I", data, 0)
-    magic = header[0]
-    if magic != b"RE4DCTX\0":
+    if len(data) < PACKAGE_HEADER.size:
+        raise ValueError(f"{path.name} is too short to hold a package header")
+    header = PACKAGE_HEADER.unpack_from(data, 0)
+    if header[0] != PACKAGE_MAGIC:
         raise ValueError(f"{path.name} is not a Dreamcast texture package")
     (version, header_size, texture_stride, texture_count, texture_offset,
      data_offset, data_size, payload_crc32, source_image_count,
      flags) = header[1:]
-    if texture_stride != 88:
-        raise ValueError(f"unexpected texture stride {texture_stride}")
-    textures = {}
+    if version not in (1, 2):
+        raise ValueError(
+            f"{path.name} is package version {version}, which this tool "
+            "does not read")
+    record_struct = PACKAGE_TEXTURE.get(texture_stride)
+    if record_struct is None:
+        raise ValueError(
+            f"{path.name} declares texture stride {texture_stride}; expected "
+            "96 (version 2) or 88 (version 1)")
+    if texture_offset + texture_count * texture_stride > len(data):
+        raise ValueError(
+            f"{path.name} declares {texture_count} textures that run past the "
+            f"end of the {len(data)} byte file")
+
+    textures: dict[str, dict] = {}
+    descriptors: list[dict] = []
+    payload_owner: dict[tuple[int, int], str] = {}
     for index in range(texture_count):
-        record = struct.unpack_from(
-            "<64s6I", data, texture_offset + index * texture_stride)
-        name = record[0].split(b"\0")[0].decode("ascii")
-        textures[name] = {
+        record = record_struct.unpack_from(
+            data, texture_offset + index * texture_stride)
+        name = record[0].split(b"\0")[0].decode("ascii", "replace")
+        # Version 1 records stop at `flags`; their payload was always linear.
+        payload = record[7] if len(record) > 7 else DC_PAYLOAD_LINEAR
+        texture_flags = record[6]
+        payload_key = (record[4], record[5])
+        entry = {
+            "index": index,
+            "material": name,
             "width": record[1],
             "height": record[2],
             "format": DC_FORMAT_NAMES.get(record[3], f"format{record[3]}"),
+            "data_offset": record[4],
             "bytes": record[5],
+            "flags": texture_flags,
+            "has_alpha": bool(texture_flags & DC_FLAG_ALPHA),
+            "binary_alpha": bool(texture_flags & DC_FLAG_BINARY_ALPHA),
+            "payload": DC_PAYLOAD_NAMES.get(payload, f"payload{payload}"),
+            "payload_id": payload,
+            # True when an earlier descriptor already owns this payload, which
+            # is how the converter deduplicates repeated source images.
+            "shares_payload_with": payload_owner.get(payload_key),
         }
+        payload_owner.setdefault(payload_key, name)
+        descriptors.append(entry)
+        textures[name] = entry
+
+    unique_payloads = {
+        (entry["data_offset"], entry["bytes"]): entry["bytes"]
+        for entry in descriptors
+    }
+    payload_counts: dict[str, int] = {}
+    for entry in descriptors:
+        payload_counts[entry["payload"]] = payload_counts.get(
+            entry["payload"], 0) + 1
     return {
+        "path": str(path),
+        "name": path.name,
         "version": version,
+        "header_size": header_size,
+        "texture_stride": texture_stride,
         "texture_count": texture_count,
+        "data_offset": data_offset,
         "data_size": data_size,
+        "payload_crc32": payload_crc32,
         "source_image_count": source_image_count,
+        "flags": flags,
+        "descriptors": descriptors,
         "textures": textures,
+        "unique_payloads": len(unique_payloads),
+        "descriptor_bytes": sum(entry["bytes"] for entry in descriptors),
+        "unique_payload_bytes": sum(unique_payloads.values()),
+        "payload_counts": payload_counts,
     }
 
 
@@ -249,7 +341,9 @@ def build_rows(tpl_path, mtl_path, package_path, limit, ps2, spend_vq=False):
             "width": width,
             "height": height,
             "current_format": current["format"],
+            "current_payload": current["payload"],
             "current_bytes": current["bytes"],
+            "shares_payload_with": current["shares_payload_with"],
             "was_reduced": (gc_width, gc_height) != (width, height),
             "reduction_matches_limit": expected == (width, height),
             "gc_16bpp_bytes": bytes_16bpp(gc_width, gc_height),
@@ -341,9 +435,9 @@ def emit_markdown(rows, package, budget, out) -> None:
     for row in rows:
         gc = "%dx%d %s" % (row["gc_width"], row["gc_height"], row["gc_format"])
         ps2 = row["ps2"] or "no PS2 source"
-        cur = "%dx%d %s %d B" % (
+        cur = "%dx%d %s %s %d B" % (
             row["width"], row["height"], row["current_format"],
-            row["current_bytes"])
+            row["current_payload"], row["current_bytes"])
         if row["candidate"] == "gc_vq":
             candidate = "%dx%d VQ" % (row["gc_width"], row["gc_height"])
         elif row["candidate"] == "vq":
@@ -369,16 +463,17 @@ def emit_markdown(rows, package, budget, out) -> None:
 
 
 def emit_table(rows, package, budget, out) -> None:
-    header = ("%-20s %-16s %-18s %-10s %10s %10s %10s %8s  %s" % (
+    header = ("%-20s %-16s %-27s %-10s %10s %10s %10s %8s  %s" % (
         "material", "gc", "current", "candidate", "current B",
         "cand B", "gc vq B", "colours", "reason"))
     print(header, file=out)
     print("-" * len(header), file=out)
     for row in rows:
-        print("%-20s %-16s %-18s %-10s %10d %10d %10d %8d  %s" % (
+        print("%-20s %-16s %-27s %-10s %10d %10d %10d %8d  %s" % (
             row["material"],
             "%dx%d %s" % (row["gc_width"], row["gc_height"], row["gc_format"]),
-            "%dx%d %s" % (row["width"], row["height"], row["current_format"]),
+            "%dx%d %s %s" % (row["width"], row["height"],
+                             row["current_format"], row["current_payload"]),
             row["candidate"],
             row["current_bytes"], row["candidate_bytes"], row["gc_vq_bytes"],
             row["distinct_rgba"], row["reason"]), file=out)
@@ -401,10 +496,66 @@ def emit_table(rows, package, budget, out) -> None:
         "fits" if budget["fits"] else "DOES NOT FIT"), file=out)
 
 
+def emit_package(package, out) -> None:
+    """Report the package on its own, without the GameCube comparison.
+
+    The private GameCube TPL and MTL are not always present in a workspace,
+    but the built package always is, so what can be said from the package
+    alone is said here: the size, format and payload layout of every
+    descriptor, and what the payload sharing costs in texture memory."""
+    header = ("%-28s %-11s %-10s %-10s %10s  %s" % (
+        "material", "size", "format", "payload", "bytes", "note"))
+    print(header, file=out)
+    print("-" * len(header), file=out)
+    for entry in package["descriptors"]:
+        notes = []
+        if entry["shares_payload_with"] is not None:
+            notes.append("shares payload with %s"
+                         % entry["shares_payload_with"])
+        if entry["binary_alpha"]:
+            notes.append("binary alpha")
+        elif entry["has_alpha"]:
+            notes.append("alpha")
+        if not (power_of_two(entry["width"]) and power_of_two(entry["height"])):
+            notes.append("not a power of two")
+        print("%-28s %-11s %-10s %-10s %10d  %s" % (
+            entry["material"],
+            "%dx%d" % (entry["width"], entry["height"]),
+            entry["format"], entry["payload"], entry["bytes"],
+            ", ".join(notes)), file=out)
+
+    shared = sum(
+        1 for entry in package["descriptors"]
+        if entry["shares_payload_with"] is not None)
+    payloads = ", ".join(
+        "%s %d" % (name, count)
+        for name, count in sorted(package["payload_counts"].items()))
+    print(file=out)
+    print("package                       %s (version %d, %d B records)" % (
+        package["name"], package["version"], package["texture_stride"]),
+        file=out)
+    print("descriptors                   %d" % package["texture_count"],
+          file=out)
+    print("payload layouts               %s" % payloads, file=out)
+    print("unique payloads               %d (%s an earlier payload)" % (
+        package["unique_payloads"],
+        "1 descriptor reuses" if shared == 1
+        else "%d descriptors reuse" % shared), file=out)
+    print("bytes per descriptor          %10d B" % package["descriptor_bytes"],
+          file=out)
+    print("bytes per unique payload      %10d B  (what the runtime uploads)"
+          % package["unique_payload_bytes"], file=out)
+    print("payload region                %10d B  (crc32 %08x)" % (
+        package["data_size"], package["payload_crc32"]), file=out)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tpl", type=pathlib.Path, required=True)
-    parser.add_argument("--mtl", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--tpl", type=pathlib.Path,
+        help="the private GameCube TPL; without it, and without --mtl, the "
+             "tool reports the package alone")
+    parser.add_argument("--mtl", type=pathlib.Path)
     parser.add_argument("--package", type=pathlib.Path, required=True)
     parser.add_argument(
         "--max-dimension", type=int,
@@ -421,6 +572,28 @@ def main(argv=None) -> int:
         "--format", choices=("table", "markdown"), default="table")
     parser.add_argument("--json", type=pathlib.Path, help="write the full record")
     args = parser.parse_args(argv)
+
+    if (args.tpl is None) != (args.mtl is None):
+        parser.error("--tpl and --mtl are given together or not at all")
+
+    if args.tpl is None:
+        package = read_package(args.package)
+        emit_package(package, sys.stdout)
+        if args.json is not None:
+            args.json.write_text(json.dumps({
+                "package": args.package.name,
+                "tpl": None,
+                "mtl": None,
+                "textures": package["descriptors"],
+                "summary": {
+                    key: package[key] for key in (
+                        "version", "texture_stride", "texture_count",
+                        "unique_payloads", "descriptor_bytes",
+                        "unique_payload_bytes", "data_size",
+                        "source_image_count", "payload_counts")
+                },
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return 0
 
     ps2 = {}
     if args.ps2_manifest is not None:
