@@ -15,6 +15,7 @@ ENEMY_SWING_SOUND ?=
 DEMO_SCENE ?= r10d
 DEMO_RESOLUTION ?= 240p
 KOS_ROMDISK_DIR = ../build/room-romdisk
+BUILD_CONFIG = .build-config
 
 romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
 
@@ -30,13 +31,25 @@ CPPFLAGS += -DRE4DC_DEMO_YAW=$(DEMO_YAW)
 endif
 KOS_GCCVER_MIN = 12.0.0
 
-.PHONY: all clean rm-elf run prepare-romdisk
+.PHONY: all clean rm-elf run prepare-romdisk FORCE
 
 all: prepare-romdisk rm-elf $(TARGET)
 
 include $(KOS_BASE)/Makefile.rules
 
 ifeq ($(call KOS_GCCVER_MIN_CHECK,$(KOS_GCCVER_MIN)),1)
+
+FORCE:
+
+$(BUILD_CONFIG): FORCE
+	@printf '%s\n' '$(CPPFLAGS)' > $(BUILD_CONFIG).tmp
+	@if ! cmp -s $(BUILD_CONFIG).tmp $(BUILD_CONFIG); then \
+		mv $(BUILD_CONFIG).tmp $(BUILD_CONFIG); \
+	else \
+		rm -f $(BUILD_CONFIG).tmp; \
+	fi
+
+main.o room_package.o collision_package.o character_package.o texture_package.o: $(BUILD_CONFIG)
 
 prepare-romdisk:
 	@test -f $(ROOM_PACKAGE) || { echo 'missing private room package: $(ROOM_PACKAGE)' >&2; exit 1; }
@@ -81,7 +94,7 @@ prepare-romdisk:
 romdisk.img: prepare-romdisk
 
 clean: rm-elf
-	-rm -f $(OBJS) romdisk.img
+	-rm -f $(OBJS) romdisk.img $(BUILD_CONFIG) $(BUILD_CONFIG).tmp
 	-rm -rf $(KOS_ROMDISK_DIR)
 
 rm-elf:
