@@ -118,6 +118,14 @@ struct DemoTelemetry {
     std::uint32_t ganado_lighting_us;
     std::uint32_t leon_light_selection;
     std::uint32_t ganado_light_selection;
+    std::uint32_t room_strips_culled;
+    std::uint32_t room_strip_culled_vertices;
+#if defined(RE4DC_CULL_AUDIT)
+    std::uint32_t cull_audit_on_screen_strips;
+    std::uint32_t cull_audit_on_screen_vertices;
+    std::uint32_t cull_audit_worst_x;
+    std::uint32_t cull_audit_worst_y;
+#endif
 #if defined(RE4DC_SUBMIT_PROFILE)
     std::uint32_t room_submit_calls;
     std::uint32_t room_submit_bytes;
@@ -139,18 +147,22 @@ struct DemoTelemetry {
 };
 
 #if defined(RE4DC_SUBMIT_PROFILE)
-static_assert(sizeof(DemoTelemetry) == 424U);
+static_assert(sizeof(DemoTelemetry) == 432U);
+#elif defined(RE4DC_CULL_AUDIT)
+static_assert(sizeof(DemoTelemetry) == 384U);
 #else
-static_assert(sizeof(DemoTelemetry) == 360U);
+static_assert(sizeof(DemoTelemetry) == 368U);
 #endif
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
 #if defined(RE4DC_SUBMIT_PROFILE)
-    telemetry.version = 11U;
+    telemetry.version = 12U;
+#elif defined(RE4DC_CULL_AUDIT)
+    telemetry.version = 13U;
 #else
-    telemetry.version = 10U;
+    telemetry.version = 11U;
 #endif
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
@@ -165,6 +177,10 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 // GameCube ZNEAR is 100 source units; room coordinates are metres here.
 constexpr float kNearClipDistance = 0.1f;
+// KOS mat_perspective builds w = 1 - z_view, so mat_trans_single divides screen
+// coordinates by (depth + 1). Visibility tests that compare a view-space extent
+// against the projected half-width must measure it at depth + 1, not depth.
+constexpr float kProjectionDepthBias = 1.0f;
 #if defined(RE4DC_480P)
 constexpr float kScreenWidth = 640.0f;
 constexpr float kScreenHeight = 480.0f;
@@ -532,6 +548,14 @@ struct FrameStats {
     std::uint32_t pvr_submit_bytes = 0;
     std::uint32_t leon_light_selection = 0;
     std::uint32_t ganado_light_selection = 0;
+    std::uint32_t room_strips_culled = 0;
+    std::uint32_t room_strip_culled_vertices = 0;
+#if defined(RE4DC_CULL_AUDIT)
+    std::uint32_t cull_audit_on_screen_strips = 0;
+    std::uint32_t cull_audit_on_screen_vertices = 0;
+    std::uint32_t cull_audit_worst_x = 0;
+    std::uint32_t cull_audit_worst_y = 0;
+#endif
 #if defined(RE4DC_SUBMIT_PROFILE)
     std::uint64_t room_copy_ns = 0;
     std::uint64_t actor_copy_ns = 0;
@@ -3002,7 +3026,11 @@ bool group_visible(const re4dc::room::Group& group) {
         return false;
     }
     const float far_depth = std::max(view_z + radius_z, kNearClipDistance);
-    const float half_height = far_depth * g_source_half_fov_tangent;
+    // Same KOS projection bias as primitive_visible(): screen coordinates
+    // divide by (depth + 1), so the projected half-extents are measured at
+    // far_depth + 1. Without it this test rejects groups that are on screen.
+    const float half_height =
+        (far_depth + kProjectionDepthBias) * g_source_half_fov_tangent;
     const float half_width = half_height * (4.0f / 3.0f);
     return view_x - radius_x <= half_width &&
            view_x + radius_x >= -half_width &&
@@ -3067,6 +3095,18 @@ pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
 RenderVertex g_room_strip_vertices[kCharacterSubmitVertexCapacity];
 RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
 std::uint32_t g_room_vertex_cache_generation = 0;
+// R3r: one bounding sphere per native strip. The accepted r100 package has
+// 15,066 strips; the capacity is the bound for that package.
+constexpr std::uint32_t kRoomPrimitiveBoundsCapacity = 16384U;
+struct RoomPrimitiveBounds {
+    float center_x;
+    float center_y;
+    float center_z;
+    float radius;
+};
+static_assert(sizeof(RoomPrimitiveBounds) == 16U);
+RoomPrimitiveBounds g_room_primitive_bounds[kRoomPrimitiveBoundsCapacity];
+bool g_room_primitive_bounds_ready = false;
 #if defined(RE4DC_SUBMIT_PROFILE)
 // Diagnostic only: how many distinct room vertices a frame actually touches,
 // which bounds what any vertex cache can save.
@@ -3301,6 +3341,129 @@ RenderVertex interpolate_vertex(const RenderVertex& a, const RenderVertex& b,
     result.position.y = y;
     result.position.z = z;
     return result;
+}
+
+#if defined(RE4DC_CULL_AUDIT)
+std::uint32_t g_cull_audit_reason = 0U;
+float g_cull_audit_x_ratio = 0.0f;
+float g_cull_audit_y_ratio = 0.0f;
+#endif
+
+bool primitive_visible(std::uint32_t primitive_index) {
+#if defined(RE4DC_SCENE_R100)
+    // Same conservative view-space support test as group_visible(), applied to
+    // one strip. Rejecting a whole strip before any vertex work removes
+    // transform and lighting without reordering the triangles that remain, so
+    // the R3c source blend order is preserved by construction.
+    const RoomPrimitiveBounds& bounds = g_room_primitive_bounds[primitive_index];
+    const float relative_x = bounds.center_x - g_source_camera_eye.x;
+    const float relative_y = bounds.center_y - g_source_camera_eye.y;
+    const float relative_z = bounds.center_z - g_source_camera_eye.z;
+    const float radius = bounds.radius;
+    const float view_x =
+        relative_x * g_source_lighting_basis.right_x +
+        relative_y * g_source_lighting_basis.right_y +
+        relative_z * g_source_lighting_basis.right_z;
+    const float view_y =
+        relative_x * g_source_lighting_basis.up_x +
+        relative_y * g_source_lighting_basis.up_y +
+        relative_z * g_source_lighting_basis.up_z;
+    const float view_z =
+        relative_x * g_source_lighting_basis.forward_x +
+        relative_y * g_source_lighting_basis.forward_y +
+        relative_z * g_source_lighting_basis.forward_z;
+    // The renderer has no far rejection: strips past kFarClipDistance fall out
+    // of the direct path but the triangle clipper only tests the near plane, so
+    // that geometry is still drawn. Culling on a far plane here would remove it.
+    if(view_z + radius < kNearClipDistance) {
+#if defined(RE4DC_CULL_AUDIT)
+        g_cull_audit_reason = 1U;
+#endif
+        return false;
+    }
+    const float far_depth = std::max(view_z + radius, kNearClipDistance);
+    // KOS mat_perspective leaves w = 1 - z_view, so a view-space point at depth
+    // d divides by (d + 1), not d. The screen half-extents are therefore
+    // (d + 1) * tan(fovy/2) vertically and 4/3 of that horizontally. Dropping
+    // the +1 makes the test far too tight for near geometry.
+    const float half_height =
+        (far_depth + kProjectionDepthBias) * g_source_half_fov_tangent;
+    const float half_width = half_height * (4.0f / 3.0f);
+#if defined(RE4DC_CULL_AUDIT)
+    g_cull_audit_x_ratio =
+        half_width > 0.0f ? (std::fabs(view_x) - radius) / half_width : 0.0f;
+    g_cull_audit_y_ratio =
+        half_height > 0.0f ? (std::fabs(view_y) - radius) / half_height : 0.0f;
+    if(view_x - radius > half_width) {
+        g_cull_audit_reason = 2U;
+        return false;
+    }
+    if(view_x + radius < -half_width) {
+        g_cull_audit_reason = 3U;
+        return false;
+    }
+    if(view_y - radius > half_height) {
+        g_cull_audit_reason = 4U;
+        return false;
+    }
+    if(view_y + radius < -half_height) {
+        g_cull_audit_reason = 5U;
+        return false;
+    }
+    return true;
+#else
+    return view_x - radius <= half_width && view_x + radius >= -half_width &&
+           view_y - radius <= half_height && view_y + radius >= -half_height;
+#endif
+#else
+    (void)primitive_index;
+    return true;
+#endif
+}
+
+bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
+    const auto& header = room.header();
+    if(header.primitive_count > kRoomPrimitiveBoundsCapacity) {
+        return false;
+    }
+    const auto* primitives = room.primitives();
+    const auto* primitive_indices = room.primitive_indices();
+    const auto* vertices = room.vertices();
+    if(primitives == nullptr || primitive_indices == nullptr ||
+       vertices == nullptr) {
+        return false;
+    }
+    for(std::uint32_t primitive_index = 0U;
+        primitive_index < header.primitive_count; ++primitive_index) {
+        const auto& primitive = primitives[primitive_index];
+        float minimum[3] = {0.0f, 0.0f, 0.0f};
+        float maximum[3] = {0.0f, 0.0f, 0.0f};
+        for(std::uint32_t local = 0U; local < primitive.vertex_count; ++local) {
+            const std::uint32_t vertex_index =
+                primitive_indices[primitive.first_vertex + local];
+            const auto& vertex = vertices[vertex_index];
+            const float position[3] = {vertex.x, vertex.y, vertex.z};
+            for(unsigned axis = 0U; axis < 3U; ++axis) {
+                if(local == 0U || position[axis] < minimum[axis]) {
+                    minimum[axis] = position[axis];
+                }
+                if(local == 0U || position[axis] > maximum[axis]) {
+                    maximum[axis] = position[axis];
+                }
+            }
+        }
+        RoomPrimitiveBounds& bounds = g_room_primitive_bounds[primitive_index];
+        bounds.center_x = (minimum[0] + maximum[0]) * 0.5f;
+        bounds.center_y = (minimum[1] + maximum[1]) * 0.5f;
+        bounds.center_z = (minimum[2] + maximum[2]) * 0.5f;
+        const float extent_x = (maximum[0] - minimum[0]) * 0.5f;
+        const float extent_y = (maximum[1] - minimum[1]) * 0.5f;
+        const float extent_z = (maximum[2] - minimum[2]) * 0.5f;
+        bounds.radius = std::sqrt(extent_x * extent_x + extent_y * extent_y +
+                                  extent_z * extent_z);
+    }
+    g_room_primitive_bounds_ready = true;
+    return true;
 }
 
 std::uint32_t clip_projected_triangle(const RenderVertex* source,
@@ -3556,6 +3719,55 @@ void submit_room_strips(const re4dc::room::Package& room,
     for(std::uint32_t primitive_index = batch.first_primitive;
         primitive_index < primitive_end; ++primitive_index) {
         const auto& primitive = primitives[primitive_index];
+        if(g_room_primitive_bounds_ready && !primitive_visible(primitive_index)) {
+            ++stats.room_strips_culled;
+            stats.room_strip_culled_vertices += primitive.vertex_count;
+#if defined(RE4DC_CULL_AUDIT)
+            // Diagnostic: project the rejected strip anyway. A strip can only
+            // be dropped safely when every vertex is in front of the near plane
+            // and the projected bounding box misses the screen entirely; a
+            // large triangle can cover pixels with all three vertices outside,
+            // so testing vertices alone is not sufficient.
+            std::uint32_t front_count = 0U;
+            float min_x = 0.0f;
+            float max_x = 0.0f;
+            float min_y = 0.0f;
+            float max_y = 0.0f;
+            for(std::uint32_t audit = 0U; audit < primitive.vertex_count;
+                ++audit) {
+                const auto& vertex =
+                    source[primitive_indices[primitive.first_vertex + audit]];
+                float ax = vertex.x;
+                float ay = vertex.y;
+                float az = vertex.z;
+                mat_trans_single(ax, ay, az);
+                if(camera_depth(az) < kNearClipDistance) {
+                    continue;
+                }
+                if(front_count == 0U) {
+                    min_x = max_x = ax;
+                    min_y = max_y = ay;
+                } else {
+                    min_x = std::min(min_x, ax);
+                    max_x = std::max(max_x, ax);
+                    min_y = std::min(min_y, ay);
+                    max_y = std::max(max_y, ay);
+                }
+                ++front_count;
+            }
+            if(front_count != 0U && front_count != primitive.vertex_count) {
+                ++stats.cull_audit_on_screen_strips;
+                ++stats.cull_audit_worst_x;
+            } else if(front_count == primitive.vertex_count &&
+                      max_x >= 0.0f && min_x <= kScreenWidth &&
+                      max_y >= 0.0f && min_y <= kScreenHeight) {
+                ++stats.cull_audit_on_screen_strips;
+                ++stats.cull_audit_worst_y;
+                stats.cull_audit_on_screen_vertices += primitive.vertex_count;
+            }
+#endif
+            continue;
+        }
         bool direct_strip = primitive.vertex_count <= submit_capacity;
         if(direct_strip) {
             for(std::uint32_t local = 0U; local < primitive.vertex_count;
@@ -5685,6 +5897,10 @@ int main() {
         std::printf("re4dc-room: room static-light preparation failed\n");
         return 1;
     }
+    if(!prepare_room_primitive_bounds(room)) {
+        std::printf("re4dc-room: room strip bounds unavailable; "
+                    "strip culling disabled\n");
+    }
     std::uint32_t room_light_links = 0U;
     if(room.source_groups() != nullptr) {
         for(std::uint32_t group = 0; group < room.header().group_count;
@@ -6161,6 +6377,17 @@ int main() {
             stats.leon_light_selection;
         g_re4dc_demo_telemetry.ganado_light_selection =
             stats.ganado_light_selection;
+        g_re4dc_demo_telemetry.room_strips_culled = stats.room_strips_culled;
+        g_re4dc_demo_telemetry.room_strip_culled_vertices =
+            stats.room_strip_culled_vertices;
+#if defined(RE4DC_CULL_AUDIT)
+        g_re4dc_demo_telemetry.cull_audit_on_screen_strips =
+            stats.cull_audit_on_screen_strips;
+        g_re4dc_demo_telemetry.cull_audit_on_screen_vertices =
+            stats.cull_audit_on_screen_vertices;
+        g_re4dc_demo_telemetry.cull_audit_worst_x = stats.cull_audit_worst_x;
+        g_re4dc_demo_telemetry.cull_audit_worst_y = stats.cull_audit_worst_y;
+#endif
 #if defined(RE4DC_SUBMIT_PROFILE)
         g_re4dc_demo_telemetry.room_submit_calls = stats.room_submit_calls;
         g_re4dc_demo_telemetry.room_submit_bytes = stats.room_submit_bytes;

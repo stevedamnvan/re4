@@ -46,9 +46,13 @@ endif
 ifneq ($(SUBMIT_PROFILE),)
 CPPFLAGS += -DRE4DC_SUBMIT_PROFILE
 endif
+# Diagnostic strip-culling audit. Not part of any accepted build.
+ifneq ($(CULL_AUDIT),)
+CPPFLAGS += -DRE4DC_CULL_AUDIT
+endif
 KOS_GCCVER_MIN = 12.0.0
 
-.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay r100-autoplay-profile FORCE
+.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit FORCE
 
 all: prepare-romdisk rm-elf $(TARGET)
 
@@ -81,6 +85,9 @@ r100-autoplay:
 
 r100-autoplay-profile:
 	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag SUBMIT_PROFILE=1
+
+r100-autoplay-cull-audit:
+	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag CULL_AUDIT=1
 
 include $(KOS_BASE)/Makefile.rules
 
