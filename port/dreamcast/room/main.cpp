@@ -6432,11 +6432,14 @@ int main() {
     g_re4dc_demo_telemetry.pvr_free_after_textures =
         static_cast<std::uint32_t>(pvr_mem_available());
     std::printf(
-        "re4dc-room: textures=%lu+%lu+%lu bytes=%lu pvr_free_before=%lu "
-        "pvr_free_after=%lu\n",
+        "re4dc-room: textures=%lu+%lu+%lu shared=%lu bytes=%lu "
+        "pvr_free_before=%lu pvr_free_after=%lu\n",
         static_cast<unsigned long>(textures.header().texture_count),
         static_cast<unsigned long>(leon_textures.header().texture_count),
         static_cast<unsigned long>(ganado_textures.header().texture_count),
+        static_cast<unsigned long>(textures.shared_textures() +
+                                   leon_textures.shared_textures() +
+                                   ganado_textures.shared_textures()),
         static_cast<unsigned long>(textures.vram_bytes() +
                                    leon_textures.vram_bytes() +
                                    ganado_textures.vram_bytes()),

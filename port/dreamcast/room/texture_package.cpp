@@ -105,13 +105,40 @@ bool Package::upload() {
         error_ = "texture pointer allocation failed";
         return false;
     }
+    owns_texture_ = new(std::nothrow) bool[header_->texture_count]{};
+    if(owns_texture_ == nullptr) {
+        error_ = "texture ownership allocation failed";
+        return false;
+    }
     for(std::uint32_t index = 0; index < header_->texture_count; ++index) {
         const Texture& texture = textures()[index];
+
+        // R4e: several materials routinely bind the same payload. The
+        // converter already stores it once, so two descriptors carry the same
+        // data_offset, and the payload at a given offset is by construction
+        // the same bytes. Upload it once and let the later descriptors point
+        // at the same texture memory.
+        bool shared = false;
+        for(std::uint32_t earlier = 0; earlier < index; ++earlier) {
+            const Texture& candidate = textures()[earlier];
+            if(candidate.data_offset == texture.data_offset &&
+               candidate.data_size == texture.data_size) {
+                pvr_textures_[index] = pvr_textures_[earlier];
+                shared = true;
+                ++shared_textures_;
+                break;
+            }
+        }
+        if(shared) {
+            continue;
+        }
+
         pvr_textures_[index] = pvr_mem_malloc(texture.data_size);
         if(pvr_textures_[index] == nullptr) {
             error_ = "PVR texture allocation failed";
             return false;
         }
+        owns_texture_[index] = true;
         if(texture.payload == kPayloadLinear) {
             // Legacy layout: the PVR cannot consume it, so it is reordered
             // here during upload.
@@ -132,15 +159,22 @@ void Package::close() {
     if(pvr_textures_ != nullptr) {
         if(header_ != nullptr) {
             for(std::uint32_t index = 0; index < header_->texture_count; ++index) {
-                if(pvr_textures_[index] != nullptr) {
+                // Borrowed pointers are aliases of an owner's allocation;
+                // freeing one would be a double free.
+                const bool owned =
+                    owns_texture_ != nullptr && owns_texture_[index];
+                if(owned && pvr_textures_[index] != nullptr) {
                     pvr_mem_free(pvr_textures_[index]);
                 }
             }
         }
         delete[] pvr_textures_;
     }
+    delete[] owns_texture_;
+    owns_texture_ = nullptr;
     pvr_textures_ = nullptr;
     vram_bytes_ = 0;
+    shared_textures_ = 0;
     if(file_ != FILEHND_INVALID) {
         fs_close(file_);
     }

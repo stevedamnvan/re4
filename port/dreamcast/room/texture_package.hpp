@@ -68,6 +68,9 @@ public:
     pvr_ptr_t pvr_texture(std::uint32_t index) const;
     const char* error() const { return error_; }
     std::size_t vram_bytes() const { return vram_bytes_; }
+    // Descriptors that reused another descriptor's allocation instead of
+    // uploading a second copy of the same payload.
+    std::uint32_t shared_textures() const { return shared_textures_; }
 
 private:
     bool range_valid(std::uint32_t offset, std::uint32_t size) const;
@@ -77,7 +80,12 @@ private:
     std::size_t size_ = 0;
     const Header* header_ = nullptr;
     pvr_ptr_t* pvr_textures_ = nullptr;
+    // One flag per descriptor: true when this descriptor allocated the
+    // texture memory it points at, false when it borrowed an earlier
+    // descriptor's. Only an owner may free.
+    bool* owns_texture_ = nullptr;
     std::size_t vram_bytes_ = 0;
+    std::uint32_t shared_textures_ = 0;
     const char* error_ = "not opened";
 };
 

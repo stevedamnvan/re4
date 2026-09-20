@@ -214,10 +214,22 @@ what the correct result is.
    twiddled payloads offline, and the runtime copies them raw instead of
    reordering every texel during `pvr_txr_load_ex()`. Texture upload fell from
    1,022,663 us to 16,945 us with the frame, VRAM, main RAM and framebuffers
-   unchanged. Still open, and now the next R4 implementation: one shared
-   allocation per content identity, then the VQ payloads themselves.
+   unchanged. Sharing then landed in
+   [R4E_TEXTURE_SHARING_CHECKPOINT.md](R4E_TEXTURE_SHARING_CHECKPOINT.md):
+   one PVR allocation per distinct payload rather than one per descriptor,
+   recovering 1,509,728 bytes, 36.7% of texture memory, with the framebuffers
+   byte-identical. Leon's package was 84% redundant and the Ganado's 73%; the
+   room and HUD packages had no duplicates. Cross-package sharing was measured
+   and is worth nothing today: the four packages hold 93 payloads with 93
+   distinct content hashes.
 
-   Sharing is the part DCA3 does and RE4DC does not. Its native texture reader
+   Still open: the VQ payloads themselves, and promoting the sharing key from
+   an in-package offset to a validated content identity with reference counting
+   once packages load and unload independently.
+
+   The sharing description below is retained because the residency work still
+   needs its cross-package form; what landed in R4e is the in-package case.
+   Its native texture reader
    consults a raster cache, takes a reference and skips a duplicate payload
    instead of uploading it again, and frees the allocation only after the last
    reference; dictionary lifetime is tracked separately from payload lifetime.

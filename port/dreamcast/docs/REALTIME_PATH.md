@@ -21,8 +21,9 @@ punch-through, one source-ordered visible-room list reused by every material
 pass, combined header/first-payload submissions, separate immutable actor
 normal scratch, per-strip bounds culling, PVR packets written straight from
 room cache entries, batch-local room vertex slots, prepared per-actor light
-lists, offline-twiddled texture payloads, and one-pass actor strip assembly.
-Do not propose these again as unimplemented work.
+lists, offline-twiddled texture payloads, one-pass actor strip assembly, and
+one PVR allocation per distinct texture payload. Do not propose these again as
+unimplemented work.
 
 R3m preserves source-authorized binary alpha while retaining gradient blend.
 R3n reuses visibility, cull state, and room-light selection across material
@@ -441,6 +442,9 @@ not the task scheduler:
   proved byte-identical across 508 ticks, 7,396 more bytes of text and one page
   less free main RAM. Actor lighting regressed 2.018 ms under it, which is the
   measured case for a per-file optimization policy.
+- R4e: one PVR allocation per distinct texture payload instead of one per
+  descriptor, the DCA3 audit's B1. 1,509,728 bytes of texture memory recovered,
+  36.7% of the total, with the frame and the framebuffers unchanged.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison
