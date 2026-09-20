@@ -10,6 +10,8 @@ R10D_SAT_SOURCE ?= $(REPO_ROOT)/orig/G4BE08/rooms/r10d/r10d/r10d_001.SAT
 R10D_ROOM ?= build/private/r10d.re4room
 R10D_SAT ?= build/private/r10d.re4sat
 R10D_TEXTURE ?= build/private/r10d.re4tex
+R100_RTP_SOURCE ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_017.RTP
+R100_RTP ?= build/private/r100.re4rtp
 R10D_CELL_SIZE ?= 20
 R10D_CLUSTER_SIZE ?= 0
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
@@ -24,7 +26,7 @@ CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_SAMPLE_STEP ?= 4
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d route-r100 texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -52,6 +54,9 @@ room-r10d:
 	$(PYTHON) tools/convert_room_obj.py --cell-size $(R10D_CELL_SIZE) \
 		--cluster-size $(R10D_CLUSTER_SIZE) $(R10D_OBJ) $(R10D_ROOM)
 	$(PYTHON) tools/convert_sat.py $(R10D_SAT_SOURCE) $(R10D_SAT)
+
+route-r100:
+	$(PYTHON) tools/convert_rtp.py $(R100_RTP_SOURCE) $(R100_RTP)
 
 texture-r10d:
 	$(PYTHON) tools/convert_tpl.py $(R10D_TPL) $(R10D_MTL) $(R10D_TEXTURE)

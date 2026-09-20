@@ -14,6 +14,7 @@
 #include "character_package.hpp"
 #include "collision_package.hpp"
 #include "room_package.hpp"
+#include "route_package.hpp"
 #include "texture_package.hpp"
 
 KOS_INIT_FLAGS(INIT_DEFAULT);
@@ -927,6 +928,131 @@ bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
                              const re4dc::collision::Vec3& start,
                              const re4dc::collision::Vec3& end);
 
+bool source_route_midpoint_has_floor(
+    const re4dc::collision::Package& collision,
+    const re4dc::collision::Vec3& position) {
+    const auto* vertices = collision.vertices();
+    const auto* polygons = collision.polygons();
+    const std::uint32_t count =
+        collision.header().floor_count + collision.header().slope_count;
+    float highest = -1.0e9f;
+    for(std::uint32_t index = 0; index < count; ++index) {
+        const auto& polygon = polygons[index];
+        float candidate = 0.0f;
+        if(!projected_floor_height(vertices[polygon.vertex[0]],
+                                   vertices[polygon.vertex[1]],
+                                   vertices[polygon.vertex[2]],
+                                   position.x, position.z, candidate) ||
+           candidate > position.y + 0.6f ||
+           candidate < position.y - 100.0f) {
+            continue;
+        }
+        highest = std::max(highest, candidate);
+    }
+    return highest > position.y - 2.0f;
+}
+
+int nearest_visible_route_point(
+    const re4dc::route::Package& route,
+    const re4dc::collision::Package& collision,
+    const re4dc::collision::Vec3& position) {
+    constexpr std::uint32_t kSourceNearCandidateCount = 10U;
+    float distances[kSourceNearCandidateCount];
+    int indices[kSourceNearCandidateCount];
+    const std::uint32_t candidate_count = std::min(
+        route.header().point_count, kSourceNearCandidateCount);
+    for(std::uint32_t index = 0; index < candidate_count; ++index) {
+        distances[index] = 1.0e16f;
+        indices[index] = -1;
+    }
+    for(std::uint32_t point_index = 0;
+        point_index < route.header().point_count; ++point_index) {
+        const auto& point = route.points()[point_index];
+        const float dx = position.x - point.x;
+        const float dy = position.y - point.y;
+        const float dz = position.z - point.z;
+        const float distance = dx * dx + dy * dy + dz * dz;
+        std::uint32_t insert = candidate_count;
+        while(insert > 0U && distance <= distances[insert - 1U]) {
+            --insert;
+        }
+        if(insert < candidate_count) {
+            for(std::uint32_t move = candidate_count - 1U; move > insert;
+                --move) {
+                distances[move] = distances[move - 1U];
+                indices[move] = indices[move - 1U];
+            }
+            distances[insert] = distance;
+            indices[insert] = static_cast<int>(point_index);
+        }
+    }
+    re4dc::collision::Vec3 raised = position;
+    raised.y += 0.5f;
+    for(std::uint32_t index = 0; index < candidate_count; ++index) {
+        const int point_index = indices[index];
+        if(point_index < 0) {
+            continue;
+        }
+        const auto& point = route.points()[point_index];
+        const re4dc::collision::Vec3 route_position = {
+            point.x, point.y, point.z};
+        if(!segment_blocked_by_wall(collision, raised, route_position)) {
+            return point_index;
+        }
+    }
+    return -1;
+}
+
+re4dc::collision::Vec3 source_route_target(
+    const Enemy& enemy, const Player& player,
+    const re4dc::route::Package& route,
+    const re4dc::collision::Package& collision) {
+    re4dc::collision::Vec3 enemy_raised = {
+        enemy.x, enemy.y + 0.5f, enemy.z};
+    re4dc::collision::Vec3 player_raised = {
+        player.x, player.y + 0.5f, player.z};
+    if(!segment_blocked_by_wall(collision, enemy_raised, player_raised)) {
+        const re4dc::collision::Vec3 midpoint = {
+            (enemy_raised.x + player_raised.x) * 0.5f,
+            (enemy_raised.y + player_raised.y) * 0.5f,
+            (enemy_raised.z + player_raised.z) * 0.5f};
+        if(source_route_midpoint_has_floor(collision, midpoint)) {
+            return {player.x, player.y, player.z};
+        }
+    }
+
+    const re4dc::collision::Vec3 enemy_position = {
+        enemy.x, enemy.y, enemy.z};
+    const int current = nearest_visible_route_point(
+        route, collision, enemy_position);
+    // RouteCkToPos raises the target 500 source units before asking for its
+    // nearest visible RTP point.
+    const int destination = nearest_visible_route_point(
+        route, collision, player_raised);
+    if(current < 0 || destination < 0) {
+        return {player.x, player.y, player.z};
+    }
+    const int next = route.next(static_cast<std::uint32_t>(current),
+                                static_cast<std::uint32_t>(destination));
+    if(next < 0) {
+        return {player.x, player.y, player.z};
+    }
+    int selected = current;
+    const auto& current_point = route.points()[current];
+    const float point_dx = enemy.x - current_point.x;
+    const float point_dz = enemy.z - current_point.z;
+    const auto& next_point = route.points()[next];
+    const re4dc::collision::Vec3 next_position = {
+        next_point.x, next_point.y, next_point.z};
+    if(point_dx * point_dx + point_dz * point_dz < 0.0625f ||
+       (next != current &&
+        !segment_blocked_by_wall(collision, enemy_raised, next_position))) {
+        selected = next;
+    }
+    const auto& point = route.points()[selected];
+    return {point.x, point.y, point.z};
+}
+
 re4dc::collision::Vec3 sample_character_point(
     const re4dc::character::Package& character, std::uint32_t clip_index,
     float animation_frame, std::uint32_t vertex_index) {
@@ -1037,6 +1163,7 @@ void update_enemy(Enemy& enemy, Player& player,
                   const re4dc::character::Package& character,
                   const re4dc::character::Package& player_character,
                   const re4dc::collision::Package& collision,
+                  const re4dc::route::Package* route,
                   const DemoAudio& audio, float delta_seconds) {
     if(enemy.health <= 0) {
         enemy.state = EnemyState::Dead;
@@ -1080,6 +1207,11 @@ void update_enemy(Enemy& enemy, Player& player,
     const float dz = player.z - enemy.z;
     const float distance = std::sqrt(dx * dx + dz * dz);
     const float target_yaw = std::atan2(dx, dz);
+    const re4dc::collision::Vec3 go_position = route != nullptr
+        ? source_route_target(enemy, player, *route, collision)
+        : re4dc::collision::Vec3{player.x, player.y, player.z};
+    const float go_yaw = std::atan2(go_position.x - enemy.x,
+                                    go_position.z - enemy.z);
     const float source_walk_speed =
         std::fabs(character.clips()[1].root_forward_speed_mps) > 0.0001f
             ? std::fabs(character.clips()[1].root_forward_speed_mps)
@@ -1168,7 +1300,7 @@ void update_enemy(Enemy& enemy, Player& player,
 
     // em10_R1_Walk feeds 30% of the route angle into Muku2 and caps the
     // result at 0.15707964 radians per source tick.
-    const float turn = std::clamp(wrap_angle(target_yaw - enemy.yaw) * 0.3f,
+    const float turn = std::clamp(wrap_angle(go_yaw - enemy.yaw) * 0.3f,
                                   -kEnemyTurnSpeed * delta_seconds,
                                   kEnemyTurnSpeed * delta_seconds);
     enemy.yaw = wrap_angle(enemy.yaw + turn);
@@ -2326,6 +2458,18 @@ int main() {
         std::printf("re4dc-room: collision load failed: %s\n", collision.error());
         return 1;
     }
+    re4dc::route::Package route;
+    const re4dc::route::Package* route_ptr = nullptr;
+#if defined(RE4DC_SCENE_R100)
+    if(!route.open("/rd/route.re4rtp")) {
+        std::printf("re4dc-room: r100 route load failed: %s\n", route.error());
+        return 1;
+    }
+    route_ptr = &route;
+    std::printf("re4dc-room: source RTP points=%lu links=%lu\n",
+                static_cast<unsigned long>(route.header().point_count),
+                static_cast<unsigned long>(route.header().link_count));
+#endif
     re4dc::character::Package leon;
     if(!leon.open("/rd/leon.re4chr")) {
         std::printf("re4dc-room: Leon load failed: %s\n", leon.error());
@@ -2663,7 +2807,7 @@ int main() {
             update_combat(player, enemy, input, fire_pressed, reload_pressed,
                           kSimulationDeltaSeconds, collision, leon, ganado,
                           audio);
-            update_enemy(enemy, player, ganado, leon, collision, audio,
+            update_enemy(enemy, player, ganado, leon, collision, route_ptr, audio,
                          kSimulationDeltaSeconds);
             const float goal_dx = player.x - kGoalX;
             const float goal_dz = player.z - kGoalZ;

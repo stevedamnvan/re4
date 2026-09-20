@@ -114,6 +114,22 @@ kind-1 root-motion rate used by the original `MotionMove`, so the selected Leon
 and Ganado walk clips drive world movement at their authored speeds. Controls are stick/D-pad
 move and turn, right trigger or Y aim, A fire, X reload, B restart, and START
 exit. Defeat the Ganado before the route marker unlocks.
+
+For the r100 build, convert the private room route graph and pass it to the
+native build:
+
+```sh
+make -C port/dreamcast -f Makefile.host route-r100
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/room DEMO_SCENE=r100 \
+  ROUTE_PACKAGE=../build/private/r100.re4rtp
+```
+
+The converted package preserves all 66 source waypoints, 160 links, and the
+complete next-hop table. The native enemy walk path follows the decompiled
+`RouteCkToPos` selection rules over those data while reusing the port's SAT
+line and floor queries.
+
 The generated packages stay ignored. The first broad orbit proof and the
 unoptimized gameplay view miss the frame budget. Full source meshes are the
 default acceptance build; coarse clustering remains an explicit experiment.

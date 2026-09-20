@@ -1,5 +1,5 @@
 TARGET = re4dc-room-viewer.elf
-OBJS = main.o room_package.o collision_package.o character_package.o texture_package.o romdisk.o
+OBJS = main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o romdisk.o
 ROOM_PACKAGE ?= ../build/private/r10d.re4room
 COLLISION_PACKAGE ?= ../build/private/r10d.re4sat
 CHARACTER_PACKAGE ?= ../build/private/leon.re4chr
@@ -7,6 +7,7 @@ ENEMY_PACKAGE ?= ../build/private/ganado.re4chr
 CHARACTER_TEXTURE_PACKAGE ?= ../build/private/leon.re4tex
 ENEMY_TEXTURE_PACKAGE ?= ../build/private/ganado.re4tex
 TEXTURE_PACKAGE ?= ../build/private/r10d.re4tex
+ROUTE_PACKAGE ?=
 AUTOPLAY_FLAG ?=
 FIRE_SOUND_0 ?=
 FIRE_SOUND_2 ?=
@@ -56,7 +57,7 @@ $(BUILD_CONFIG): FORCE
 		rm -f $(BUILD_CONFIG).tmp; \
 	fi
 
-main.o room_package.o collision_package.o character_package.o texture_package.o: $(BUILD_CONFIG)
+main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o: $(BUILD_CONFIG)
 
 prepare-romdisk:
 	@test -f $(ROOM_PACKAGE) || { echo 'missing private room package: $(ROOM_PACKAGE)' >&2; exit 1; }
@@ -74,6 +75,11 @@ prepare-romdisk:
 	cp $(CHARACTER_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4tex
 	cp $(ENEMY_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4tex
 	cp $(TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4tex
+	rm -f $(KOS_ROMDISK_DIR)/route.re4rtp
+	@if [ -n "$(ROUTE_PACKAGE)" ]; then \
+		test -f "$(ROUTE_PACKAGE)" || { echo 'missing private route package: $(ROUTE_PACKAGE)' >&2; exit 1; }; \
+		cp "$(ROUTE_PACKAGE)" $(KOS_ROMDISK_DIR)/route.re4rtp; \
+	fi
 	rm -f $(KOS_ROMDISK_DIR)/autoplay.flag
 	rm -f $(KOS_ROMDISK_DIR)/wep02-fire-0.wav \
 		$(KOS_ROMDISK_DIR)/wep02-fire-2.wav \
