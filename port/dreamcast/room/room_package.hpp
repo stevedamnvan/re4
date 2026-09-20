@@ -11,6 +11,7 @@ inline constexpr char kMagic[8] = {'R', 'E', '4', 'D', 'C', 'R', 'M', '\0'};
 inline constexpr std::uint32_t kVersion = 2;
 inline constexpr std::uint32_t kFlagSourceGroupMetadata = 1U << 0U;
 inline constexpr std::uint32_t kSourceGroupHasLightVolume = 1U << 0U;
+inline constexpr std::uint32_t kBatchStripOrderPreserved = 1U << 0U;
 
 struct Header {
     char magic[8];

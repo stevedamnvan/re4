@@ -31,6 +31,7 @@ PRIMITIVE = struct.Struct("<IHH")  # first vertex, vertex count, triangle count
 SOURCE_GROUP = struct.Struct("<I4BII15f")
 FLAG_SOURCE_GROUP_METADATA = 1 << 0
 SOURCE_GROUP_HAS_LIGHT_VOLUME = 1 << 0
+BATCH_STRIP_ORDER_PRESERVED = 1 << 0
 SOURCE_GROUP_NAME = re.compile(r"#SMX_(\d+)#")
 SOURCE_OBJECT_NAME = re.compile(
     r"^([^#]+)#SMD_(\d+)#SMX_(\d+)#.*#BIN_(\d+)#(CommonBIN#)?$"
@@ -629,6 +630,30 @@ def stripify_triangles(indices: list[int]) -> list[list[int]]:
     return strips
 
 
+def strip_triangle_order_preserved(
+    indices: list[int], strips: list[list[int]]
+) -> bool:
+    """Return whether strips reproduce the source triangle order and winding."""
+    def canonical(triangle: tuple[int, int, int]) -> tuple[int, int, int]:
+        a, b, c = triangle
+        return min((a, b, c), (b, c, a), (c, a, b))
+
+    source = [
+        canonical(tuple(indices[index:index + 3]))
+        for index in range(0, len(indices), 3)
+    ]
+    rebuilt = []
+    for strip in strips:
+        for index in range(2, len(strip)):
+            triangle = (
+                (strip[index - 1], strip[index - 2], strip[index])
+                if index & 1
+                else (strip[index - 2], strip[index - 1], strip[index])
+            )
+            rebuilt.append(canonical(triangle))
+    return rebuilt == source
+
+
 def build_package(
     parsed: dict[str, object],
     source_groups: dict[str, SourceGroupData] | None = None,
@@ -647,6 +672,8 @@ def build_package(
     primitive_index_blob = bytearray()
     source_group_blob = bytearray()
     ordered_batch_count = 0
+    ordered_strip_batches = 0
+    ordered_strip_triangles = 0
     all_min = [math.inf, math.inf, math.inf]
     all_max = [-math.inf, -math.inf, -math.inf]
 
@@ -658,8 +685,15 @@ def build_package(
             first_index = len(index_blob) // INDEX.size
             for index in batch.indices:
                 index_blob.extend(INDEX.pack(index))
+            strips = stripify_triangles(batch.indices)
+            order_preserved = strip_triangle_order_preserved(
+                batch.indices, strips
+            )
+            if order_preserved:
+                ordered_strip_batches += 1
+                ordered_strip_triangles += len(batch.indices) // 3
             first_primitive = len(primitive_blob) // PRIMITIVE.size
-            for strip in stripify_triangles(batch.indices):
+            for strip in strips:
                 first_vertex = len(primitive_index_blob) // INDEX.size
                 for vertex in strip:
                     primitive_index_blob.extend(INDEX.pack(vertex))
@@ -672,7 +706,7 @@ def build_package(
                     first_index,
                     len(batch.indices),
                     group_index,
-                    0,
+                    BATCH_STRIP_ORDER_PRESERVED if order_preserved else 0,
                     first_primitive,
                     len(primitive_blob) // PRIMITIVE.size - first_primitive,
                 )
@@ -762,6 +796,8 @@ def build_package(
         "batches": ordered_batch_count,
         "strips": len(primitive_blob) // PRIMITIVE.size,
         "strip_vertices": len(primitive_index_blob) // INDEX.size,
+        "ordered_strip_batches": ordered_strip_batches,
+        "ordered_strip_triangles": ordered_strip_triangles,
         "bounds": {"min": all_min, "max": all_max},
         "payload_crc32": f"{payload_crc32:08x}",
     }

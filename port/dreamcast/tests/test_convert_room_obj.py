@@ -55,6 +55,8 @@ class ConvertRoomObjTests(unittest.TestCase):
             self.assertEqual(manifest["triangles"], 3)
             self.assertEqual(manifest["strips"], 2)
             self.assertEqual(manifest["strip_vertices"], 7)
+            self.assertEqual(manifest["ordered_strip_batches"], 2)
+            self.assertEqual(manifest["ordered_strip_triangles"], 3)
             self.assertEqual(
                 manifest["bounds"],
                 {"min": [0.0, 0.0, 0.0], "max": [2.0, 0.0, 2.0]},
@@ -167,6 +169,14 @@ class ConvertRoomObjTests(unittest.TestCase):
     def test_stripifies_connected_triangles_without_changing_winding(self):
         strips = ROOM.stripify_triangles([0, 1, 2, 2, 1, 3, 2, 3, 4])
         self.assertEqual(strips, [[0, 1, 2, 3, 4]])
+        self.assertTrue(ROOM.strip_triangle_order_preserved(
+            [0, 1, 2, 2, 1, 3, 2, 3, 4], strips
+        ))
+
+    def test_detects_strip_reordering_across_a_source_batch(self):
+        indices = [0, 1, 2, 10, 11, 12, 2, 1, 3]
+        strips = ROOM.stripify_triangles(indices)
+        self.assertFalse(ROOM.strip_triangle_order_preserved(indices, strips))
 
     def test_spatial_partition_retains_source_group_metadata(self):
         source_text = OBJ.replace("g floor", "g FILE_01#SMX_007#").replace(

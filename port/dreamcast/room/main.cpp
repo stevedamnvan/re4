@@ -4240,7 +4240,21 @@ FrameStats render_scene(const re4dc::room::Package& room,
             if(!material_alpha[batch.material]) {
                 continue;
             }
-            pvr_prim(&material_headers[batch.material], sizeof(pvr_poly_hdr_t));
+            if(cull_mode == kCullAll) {
+                continue;
+            }
+            if(batch.primitive_count != 0U &&
+               (batch.flags & re4dc::room::kBatchStripOrderPreserved) != 0U) {
+                pvr_prim(&room_strip_headers[batch.material * 3U + cull_mode],
+                         sizeof(pvr_poly_hdr_t));
+                submit_room_strips(
+                    room, batch, character_submit_vertices,
+                    kCharacterSubmitVertexCapacity, stats, cull_mode,
+                    light_selection);
+                continue;
+            }
+            pvr_prim(&material_headers[batch.material],
+                     sizeof(pvr_poly_hdr_t));
             std::uint32_t submit_count = 0;
             const auto flush = [&]() {
                 if(submit_count == 0U) {

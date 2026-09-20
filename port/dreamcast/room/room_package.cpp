@@ -118,6 +118,7 @@ bool Package::open(const char* path) {
     for(std::uint32_t index = 0; index < header_->batch_count; ++index) {
         const auto& batch = package_batches[index];
         if(batch.index_count == 0U || batch.index_count % 3U != 0U ||
+           (batch.flags & ~kBatchStripOrderPreserved) != 0U ||
            static_cast<std::uint64_t>(batch.first_index) +
                    batch.index_count > header_->index_count ||
            static_cast<std::uint64_t>(batch.first_primitive) +

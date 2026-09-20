@@ -174,6 +174,9 @@ The opaque room path now consumes offline winding-preserving strips while
 retaining the original triangle stream for transparency and clipping fallback;
 its representation, matched image check, and 23.8 ms render reduction are in
 [the R3b native room-strip checkpoint](docs/R3B_NATIVE_ROOM_STRIPS_CHECKPOINT.md).
+Order-certified translucent batches now use the same native path without
+changing source blend order; the additional 2.3 ms reduction is recorded in
+[the R3c ordered alpha-strip checkpoint](docs/R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 

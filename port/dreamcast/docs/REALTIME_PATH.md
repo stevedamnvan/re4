@@ -30,6 +30,10 @@ The first native room-strip pass is implemented and measured in
 preserves the original triangle stream and matched static room pixels while
 reducing the median Flycast render interval by 23.8 ms. The measured result is
 about 6.4 fps, so the real-time and physical-hardware gates remain open.
+Order-certified translucent batches are added in
+[R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md](R3C_ORDERED_ALPHA_STRIPS_CHECKPOINT.md),
+reducing the matched interval by a further 2.3 ms while retaining the old path
+for every batch whose source triangle order would change.
 
 ## Objective and boundaries
 
