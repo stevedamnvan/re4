@@ -177,6 +177,13 @@ constexpr float kEnemyAttackCooldownSeconds = 15.0f / 30.0f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
 constexpr std::uint32_t kAxeSweepMarkerCount = 3;
 constexpr float kAxeSweepRadius = 0.250f;
+// cPlayer::init1 registers five YARARE_INFO capsules on source parts
+// 2, 3, 5, 0x13, and 0x17. The converter appends bottom/top markers for
+// each capsule after Leon's indexed render vertices.
+constexpr std::uint32_t kPlayerHitCapsuleCount = 5;
+constexpr std::uint32_t kPlayerHitMarkerCount = kPlayerHitCapsuleCount * 2U;
+constexpr float kPlayerHitCapsuleRadii[kPlayerHitCapsuleCount] = {
+    0.200f, 0.210f, 0.120f, 0.170f, 0.170f};
 constexpr int kMagazineSize = 6;
 // PlayerLifeReset gives Leon 1200 life. Em10AtkTbl[0] gives the type-0 r100
 // hatchet Ganado 380 damage; rank 5 applies a 1.0 LifeDownSet2 multiplier.
@@ -931,14 +938,15 @@ re4dc::collision::Vec3 sample_character_point(
     };
 }
 
+template <typename Actor>
 re4dc::collision::Vec3 actor_point_to_world(
-    const re4dc::collision::Vec3& point, const Enemy& enemy) {
-    const float sine = std::sin(enemy.yaw);
-    const float cosine = std::cos(enemy.yaw);
+    const re4dc::collision::Vec3& point, const Actor& actor) {
+    const float sine = std::sin(actor.yaw);
+    const float cosine = std::cos(actor.yaw);
     return {
-        enemy.x + point.x * cosine + point.z * sine,
-        enemy.y + point.y,
-        enemy.z - point.x * sine + point.z * cosine,
+        actor.x + point.x * cosine + point.z * sine,
+        actor.y + point.y,
+        actor.z - point.x * sine + point.z * cosine,
     };
 }
 
@@ -963,43 +971,44 @@ float point_segment_distance_squared(const re4dc::collision::Vec3& point,
 
 bool source_axe_sweep_hits_player(
     const Enemy& enemy, const Player& player,
-    const re4dc::character::Package& character) {
-    if(character.header().vertex_count < kAxeSweepMarkerCount) {
+    const re4dc::character::Package& enemy_character,
+    const re4dc::character::Package& player_character) {
+    if(enemy_character.header().vertex_count < kAxeSweepMarkerCount ||
+       player_character.header().vertex_count < kPlayerHitMarkerCount) {
         return false;
     }
-    const std::uint32_t first_marker =
-        character.header().vertex_count - kAxeSweepMarkerCount;
-    const auto base = actor_point_to_world(
-        sample_character_point(character, enemy.animation_clip,
-                               enemy.animation_frame, first_marker),
-        enemy);
+    const std::uint32_t first_axe_marker =
+        enemy_character.header().vertex_count - kAxeSweepMarkerCount;
+    // em10_R1_AxeAtk checks the two authored weapon endpoints as 250-unit
+    // spheres. Its base point chooses the nearest/facing damage part, but does
+    // not enlarge the hit volume, so it is intentionally not tested here.
     const auto low = actor_point_to_world(
-        sample_character_point(character, enemy.animation_clip,
-                               enemy.animation_frame, first_marker + 1U),
+        sample_character_point(enemy_character, enemy.animation_clip,
+                               enemy.animation_frame, first_axe_marker + 1U),
         enemy);
     const auto high = actor_point_to_world(
-        sample_character_point(character, enemy.animation_clip,
-                               enemy.animation_frame, first_marker + 2U),
+        sample_character_point(enemy_character, enemy.animation_clip,
+                               enemy.animation_frame, first_axe_marker + 2U),
         enemy);
-    struct PlayerSphere {
-        float y;
-        float radius;
-    };
-    // The source tests the swept 250-unit weapon sphere against Leon's
-    // per-part damage spheres. These three bounds cover the same lower body,
-    // torso, and head bands in the bounded r100 encounter.
-    constexpr PlayerSphere player_spheres[] = {
-        {0.68f, 0.34f},
-        {1.18f, 0.38f},
-        {1.62f, 0.25f},
-    };
-    for(const auto& sphere : player_spheres) {
-        const re4dc::collision::Vec3 center = {
-            player.x, player.y + sphere.y, player.z};
-        const float radius = kAxeSweepRadius + sphere.radius;
-        if(point_segment_distance_squared(center, base, low) <=
+    const std::uint32_t first_player_marker =
+        player_character.header().vertex_count - kPlayerHitMarkerCount;
+    for(std::uint32_t capsule = 0; capsule < kPlayerHitCapsuleCount;
+        ++capsule) {
+        const auto bottom = actor_point_to_world(
+            sample_character_point(
+                player_character, player.animation_clip,
+                player.animation_frame, first_player_marker + capsule * 2U),
+            player);
+        const auto top = actor_point_to_world(
+            sample_character_point(
+                player_character, player.animation_clip, player.animation_frame,
+                first_player_marker + capsule * 2U + 1U),
+            player);
+        const float radius =
+            kAxeSweepRadius + kPlayerHitCapsuleRadii[capsule];
+        if(point_segment_distance_squared(low, bottom, top) <=
                radius * radius ||
-           point_segment_distance_squared(center, base, high) <=
+           point_segment_distance_squared(high, bottom, top) <=
                radius * radius) {
             return true;
         }
@@ -1009,6 +1018,7 @@ bool source_axe_sweep_hits_player(
 
 void update_enemy(Enemy& enemy, Player& player,
                   const re4dc::character::Package& character,
+                  const re4dc::character::Package& player_character,
                   const re4dc::collision::Package& collision,
                   const DemoAudio& audio, float delta_seconds) {
     if(enemy.health <= 0) {
@@ -1098,7 +1108,8 @@ void update_enemy(Enemy& enemy, Player& player,
                 player.x, player.y + 1.5f, player.z};
             const bool path_clear = !segment_blocked_by_wall(
                 collision, enemy_chest, player_chest);
-            if(source_axe_sweep_hits_player(enemy, player, character) &&
+            if(source_axe_sweep_hits_player(
+                   enemy, player, character, player_character) &&
                path_clear) {
                 enemy.attack_landed = true;
                 player.health = std::max(
@@ -2179,6 +2190,11 @@ int main() {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
+    if(leon.header().vertex_count != 7030U) {
+        std::printf(
+            "re4dc-room: r100 Leon package needs ten source hit-capsule markers\n");
+        return 1;
+    }
     if(ganado.header().vertex_count != 2315U) {
         std::printf(
             "re4dc-room: r100 Ganado package needs three source axe sweep markers\n");
@@ -2458,7 +2474,7 @@ int main() {
             update_animation(player, leon, input, kSimulationDeltaSeconds);
             update_combat(player, enemy, input, fire_pressed, reload_pressed,
                           kSimulationDeltaSeconds, collision, leon, audio);
-            update_enemy(enemy, player, ganado, collision, audio,
+            update_enemy(enemy, player, ganado, leon, collision, audio,
                          kSimulationDeltaSeconds);
             const float goal_dx = player.x - kGoalX;
             const float goal_dz = player.z - kGoalZ;

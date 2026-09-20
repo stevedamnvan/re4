@@ -99,6 +99,15 @@ class CharacterConverterTests(unittest.TestCase):
                 (0.0, 0.0, 50.0),
             ),
         )
+        self.assertEqual(
+            MODULE.parse_rigid_marker(
+                "pl-hit3-bottom:18:0:0:0:0:-20:-300:0"
+            ),
+            (
+                "pl-hit3-bottom", 18, (0.0, 0.0, 0.0), 0.0,
+                (-20.0, -300.0, 0.0),
+            ),
+        )
         self.assertEqual(MODULE.sampled_frame_indices(7, 2), [0, 2, 4, 6])
         self.assertEqual(MODULE.sampled_frame_indices(8, 3), [0, 3, 6, 7])
         self.assertAlmostEqual(

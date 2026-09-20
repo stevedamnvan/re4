@@ -69,6 +69,16 @@ character-leon:
 		--attachment right-hand:pl00.drs:14:13 \
 		--attachment left-hand:pl00.drs:17:13 \
 		--rigid-attachment handgun:wep02.drs:2:1:10 \
+		--rigid-marker pl-hit0-bottom:1:0:0:0:0:0:-30:0 \
+		--rigid-marker pl-hit0-top:1:0:0:0:0:0:70:0 \
+		--rigid-marker pl-hit1-bottom:2:0:0:0:0:0:0:0 \
+		--rigid-marker pl-hit1-top:2:0:0:0:0:0:130:0 \
+		--rigid-marker pl-hit2-bottom:4:0:0:0:0:0:0:0 \
+		--rigid-marker pl-hit2-top:4:0:0:0:0:0:80:0 \
+		--rigid-marker pl-hit3-bottom:18:0:0:0:0:-20:-300:0 \
+		--rigid-marker pl-hit3-top:18:0:0:0:0:-20:0:0 \
+		--rigid-marker pl-hit4-bottom:22:0:0:0:0:20:-300:0 \
+		--rigid-marker pl-hit4-top:22:0:0:0:0:20:0:0 \
 		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 \
 		--clip aim:wep02.drs:39 --clip fire:wep02.drs:42 \
 		--clip reload:wep02.drs:45 --clip hit-left:pl00.drs:70 \
