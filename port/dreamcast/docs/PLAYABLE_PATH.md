@@ -40,7 +40,7 @@ controlled.
 | Enemy HP and handgun body damage | Original data | Ganado starts at 500 HP; weapon 1 body damage is 150 x the starting 0.9 multiplier = 135. |
 | Character geometry/motion | Original data, converted offline | Preserve complete source batches, materials, and sampled original motion; Leon now uses the handgun archive's complete aim `0x26`/`0x27`/`0x28` and fire `0x29`/`0x2A`/`0x2B` triplets, starting reload `0x2D`, and `pl00` left-hit `0x4A` and death `0x4C` motions. Baked frames remain a Dreamcast memory/runtime adaptation. Level, locomotion, reload, hit, and death clips keep every fourth authored pose; the four pitch endpoints keep every sixteenth pose to fit main RAM. Every clip includes its true terminal frame, interpolates between poses, and preserves exact source duration. The native renderer blends level and endpoint vertices with the source `cMot3` sign/rate, including gun and hit-capsule markers. FCV kind-1 root translation is retained in each clip, so the exact walk motions drive Leon at 1.7409 m/s and the r100 Ganado at 0.6087 m/s instead of prototype movement constants. |
 | Player and Ganado state machines | Mixed adaptation and temporary approximation | Both actors resolve against the shared source SAT walls. Ganado walk targets now come from r100's exact 66-point RTP graph, 160 links, and 66 x 66 source next-hop table. The native `RouteCkToPos` subset preserves the direct visibility and midpoint-floor tests, the ten nearest visible route-point search, the 0.25-metre point threshold, next-hop selection, and `em10_R1_Walk` turn cap; the SAT line test is a Dreamcast collision adaptation. A handgun shot now starts at the exact source muzzle offset on Leon's animated part 10, follows that part's local -X basis for the source 50-metre line with the original `Rnd` / `fRand1_1` spread algorithm, tests the type-0 Ganado's ten exact animated `YARARE_INFO` capsules, then rejects hits behind intervening wall triangles. Vertical aim preserves `PlWepLockCtrl`'s digital 0.035 step, stick repeat ramp from 1 through 7, 0.8 positive-pitch multiplier, and -1..1 clamp; the blended fire marker drives the same shot ray as the visible gun. Because the reduced demo does not yet consume every random call made by the full game, its RNG sequence remains a documented adaptation even though the generator and boot seed are source values. The starting handgun accepts held fire again at source `PlShotFrameTbl[1][0] - 2`, frame 12, and a fresh empty trigger starts reload; reload refills at source frame 44 and stays locked through the source frame-55 pin event. The r100 type-0 Ganado now comes from `em12.drs` with its source head, gripping hands, and hatchet; acquires its normal hatchet attack at the source 1.7-metre limit; plays motion `0x80`; plays source cue `0x3d` at sequence `0x81` frame 37; evaluates the sequence hit window at source frames 50-72; checks the two exact weapon-space endpoints authored by `em10_R1_AxeAtk` as source 250-unit attack spheres; removes the source 380 life from Leon's 1200; and uses the rank-5 15-frame post-hit wait. Torso hits use the source Dm_Small front-body motion `0x26`, while a lethal standing body hit uses Die_Normal motion `0x67`. Walk and attack translation now follow the actor yaw at the selected source clips' FCV root-motion rates. Leon now uses the five source `YARARE_INFO` damage capsules attached to their exact animated parts, offsets, heights, and radii. Source waist-yaw limits, the broader Ganado decision tree, and the reduced input/state layer remain explicit port debt. |
-| HUD and sound | Mixed source conversion and temporary presentation layer | HUD is native and readable. The GameCube archives' original DSP-ADPCM cues are converted offline: `cObjMauser::moveFire` cues 0 and 2 play together, the starting reload uses cue `0x16`, and the normal hatchet swing uses `em12` cue `0x3d`. A torso hit plays source body-impact cue `0x0c`; a surviving type-0 male villager plays damage voice `0x47` after the source two-frame delay; Die_Normal starts death voice `0x16`. Leon's surviving normal damage path uses `pl00` hurt cues 9-11, and the lethal path uses death cue 13. The game-over prompt waits until the source death motion reaches its terminal frame. Room ambience remains open. |
+| HUD and sound | Original data with Dreamcast presentation adaptation | `convert_core_hud.py` reads the original `core.das` frame, life, and bullet `IdData2` tables plus their cockpit texture block. The r100 runtime now draws their 640x480 hierarchy, colours, masks, life rotations, and handgun digits from 25 converted source rasters; the former hand-drawn meter is not used in this slice. The source game-over raster/transition and room ambience remain open. The GameCube archives' original DSP-ADPCM cues are converted offline: `cObjMauser::moveFire` cues 0 and 2 play together, the starting reload uses cue `0x16`, and the normal hatchet swing uses `em12` cue `0x3d`. A torso hit plays source body-impact cue `0x0c`; a surviving type-0 male villager plays damage voice `0x47` after the source two-frame delay; Die_Normal starts death voice `0x16`. Leon's surviving normal damage path uses `pl00` hurt cues 9-11, and the lethal path uses death cue 13. |
 
 ## Why the previous finish line was insufficient
 
@@ -104,6 +104,28 @@ simulation reported zero dropped catch-up events and the trace defeated the
 500-HP Ganado. This is a large improvement over the 0.13-fps unoptimized path,
 but remains intentionally low-frame-rate emulator evidence rather than physical
 Dreamcast performance acceptance.
+
+The subsequent source-HUD checkpoint corrected the private build recipe to use
+the same metre-space assets as the decompiled placements and camera:
+`r100-encounter-source-meters.re4room`
+(`88b9de4c83187b67cb9a7e14f0aa41eea4afb4a7d1c864472c9126932f1669b0`)
+and `r100-meters.re4sat`
+(`ebb286360896217ce739001720eade0ebef15cc57be33f91ab65213df34438e4`).
+The similarly named unscaled entry package is ten times too large for this
+runtime coordinate system and produced no visible architecture. The new
+`make r100` and `make r100-autoplay` targets pin the correct private inputs.
+The converted HUD layout hash is
+`c46d0151a5eb9ef8bd2604a79597f1fb2f2caeede8689bab5e8fc6306fd0659b`;
+its texture package hash is
+`5c57b9903c9e932fa89ed498e57d2844137d2e86146d98d38efb7738be52ca99`.
+
+Flycast visibly rendered the intact cabin, source actors, handgun, and source
+HUD from the native SH-4 build. One post-kill result frame emitted 7,215 room
+and 6,774 actor triangles in 849,418 us, with 735,466 us spent in submission.
+The fixed 30 Hz trace resets at tick 900; a later sample at tick 2,401 had again
+defeated the 500-HP Ganado and reported 66 bounded catch-up overruns. This low
+frame rate is accepted for the 30-second fidelity milestone and remains a later
+optimization target rather than a claim of final Dreamcast performance.
 
 ## Shortest asset and renderer path
 

@@ -21,9 +21,17 @@ from dataclasses import dataclass
 
 TPL_MAGIC = 0x0020AF30
 GX_TF_I4 = 0
+GX_TF_I8 = 1
+GX_TF_IA4 = 2
 GX_TF_IA8 = 3
 GX_TF_RGBA8 = 6
+GX_TF_C4 = 8
+GX_TF_C8 = 9
 GX_TF_CMPR = 14
+
+GX_TL_IA8 = 0
+GX_TL_RGB565 = 1
+GX_TL_RGB5A3 = 2
 
 MAGIC = b"RE4DCTX\0"
 VERSION = 1
@@ -42,6 +50,8 @@ class TplImage:
     height: int
     format: int
     data: bytes
+    palette_format: int | None = None
+    palette_data: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -58,8 +68,10 @@ def _u32be(data: bytes, offset: int) -> int:
 
 
 def _expected_image_size(width: int, height: int, image_format: int) -> int:
-    if image_format in (GX_TF_I4, GX_TF_CMPR):
+    if image_format in (GX_TF_I4, GX_TF_C4, GX_TF_CMPR):
         return ((width + 7) // 8) * ((height + 7) // 8) * 32
+    if image_format in (GX_TF_I8, GX_TF_IA4, GX_TF_C8):
+        return ((width + 7) // 8) * ((height + 3) // 4) * 32
     if image_format == GX_TF_IA8:
         return ((width + 3) // 4) * ((height + 3) // 4) * 32
     if image_format == GX_TF_RGBA8:
@@ -78,7 +90,9 @@ def parse_tpl(data: bytes) -> list[TplImage]:
 
     images: list[TplImage] = []
     for image_index in range(image_count):
-        texture_header = _u32be(data, descriptor_offset + image_index * 8)
+        descriptor = descriptor_offset + image_index * 8
+        texture_header = _u32be(data, descriptor)
+        palette_header = _u32be(data, descriptor + 4)
         if texture_header == 0 or texture_header + 12 > len(data):
             raise ValueError(f"image {image_index} has an invalid texture header")
         height, width, image_format, data_offset = struct.unpack_from(
@@ -89,7 +103,22 @@ def parse_tpl(data: bytes) -> list[TplImage]:
         size = _expected_image_size(width, height, image_format)
         if data_offset + size > len(data):
             raise ValueError(f"image {image_index} data is outside the file")
-        images.append(TplImage(width, height, image_format, data[data_offset:data_offset + size]))
+        palette_format = None
+        palette_data = None
+        if image_format in (GX_TF_C4, GX_TF_C8):
+            if palette_header == 0 or palette_header + 12 > len(data):
+                raise ValueError(f"image {image_index} has no palette header")
+            palette_entries, _, _, palette_format, palette_offset = struct.unpack_from(
+                ">HBBII", data, palette_header
+            )
+            palette_size = palette_entries * 2
+            if palette_entries == 0 or palette_offset + palette_size > len(data):
+                raise ValueError(f"image {image_index} palette is outside the file")
+            palette_data = data[palette_offset:palette_offset + palette_size]
+        images.append(TplImage(
+            width, height, image_format, data[data_offset:data_offset + size],
+            palette_format, palette_data,
+        ))
     return images
 
 
@@ -173,6 +202,44 @@ def decode_i4(image: TplImage) -> list[tuple[int, int, int, int]]:
     return pixels
 
 
+def decode_i8(image: TplImage) -> list[tuple[int, int, int, int]]:
+    pixels = [(0, 0, 0, 255)] * (image.width * image.height)
+    offset = 0
+    for tile_y in range(0, image.height, 4):
+        for tile_x in range(0, image.width, 8):
+            for row in range(4):
+                y = tile_y + row
+                for column in range(8):
+                    intensity = image.data[offset]
+                    offset += 1
+                    x = tile_x + column
+                    if x < image.width and y < image.height:
+                        pixels[y * image.width + x] = (
+                            intensity, intensity, intensity, 255
+                        )
+    return pixels
+
+
+def decode_ia4(image: TplImage) -> list[tuple[int, int, int, int]]:
+    pixels = [(0, 0, 0, 0)] * (image.width * image.height)
+    offset = 0
+    for tile_y in range(0, image.height, 4):
+        for tile_x in range(0, image.width, 8):
+            for row in range(4):
+                y = tile_y + row
+                for column in range(8):
+                    value = image.data[offset]
+                    offset += 1
+                    x = tile_x + column
+                    if x < image.width and y < image.height:
+                        alpha = (value >> 4) * 17
+                        intensity = (value & 15) * 17
+                        pixels[y * image.width + x] = (
+                            intensity, intensity, intensity, alpha
+                        )
+    return pixels
+
+
 def decode_ia8(image: TplImage) -> list[tuple[int, int, int, int]]:
     pixels = [(0, 0, 0, 0)] * (image.width * image.height)
     offset = 0
@@ -214,15 +281,83 @@ def decode_rgba8(image: TplImage) -> list[tuple[int, int, int, int]]:
     return pixels
 
 
+def _decode_palette_entry(
+    value: int, palette_format: int
+) -> tuple[int, int, int, int]:
+    if palette_format == GX_TL_IA8:
+        alpha = value >> 8
+        intensity = value & 0xFF
+        return (intensity, intensity, intensity, alpha)
+    if palette_format == GX_TL_RGB565:
+        return (*_expand_565(value), 255)
+    if palette_format == GX_TL_RGB5A3:
+        if value & 0x8000:
+            red = (value >> 10) & 31
+            green = (value >> 5) & 31
+            blue = value & 31
+            return (
+                (red << 3) | (red >> 2),
+                (green << 3) | (green >> 2),
+                (blue << 3) | (blue >> 2),
+                255,
+            )
+        alpha = (value >> 12) & 7
+        red = (value >> 8) & 15
+        green = (value >> 4) & 15
+        blue = value & 15
+        return (red * 17, green * 17, blue * 17,
+                (alpha << 5) | (alpha << 2) | (alpha >> 1))
+    raise ValueError(f"unsupported TPL palette format 0x{palette_format:x}")
+
+
+def decode_indexed(image: TplImage) -> list[tuple[int, int, int, int]]:
+    if image.palette_format is None or image.palette_data is None:
+        raise ValueError("indexed TPL image has no palette")
+    palette = [
+        _decode_palette_entry(value, image.palette_format)
+        for value, in struct.iter_unpack(">H", image.palette_data)
+    ]
+    pixels = [(0, 0, 0, 0)] * (image.width * image.height)
+    offset = 0
+    tile_width = 8
+    tile_height = 8 if image.format == GX_TF_C4 else 4
+    for tile_y in range(0, image.height, tile_height):
+        for tile_x in range(0, image.width, tile_width):
+            for row in range(tile_height):
+                y = tile_y + row
+                if image.format == GX_TF_C4:
+                    for pair in range(4):
+                        value = image.data[offset]
+                        offset += 1
+                        for within, index in enumerate((value >> 4, value & 15)):
+                            x = tile_x + pair * 2 + within
+                            if x < image.width and y < image.height:
+                                pixels[y * image.width + x] = palette[index]
+                else:
+                    for column in range(8):
+                        index = image.data[offset]
+                        offset += 1
+                        x = tile_x + column
+                        if x < image.width and y < image.height:
+                            pixels[y * image.width + x] = palette[index]
+    return pixels
+
+
 def decode_image(image: TplImage) -> list[tuple[int, int, int, int]]:
     if image.format == GX_TF_CMPR:
         return decode_cmpr(image)
     if image.format == GX_TF_I4:
         return decode_i4(image)
+    if image.format == GX_TF_I8:
+        return decode_i8(image)
+    if image.format == GX_TF_IA4:
+        return decode_ia4(image)
     if image.format == GX_TF_IA8:
         return decode_ia8(image)
     if image.format == GX_TF_RGBA8:
         return decode_rgba8(image)
+    if image.format in (GX_TF_C4, GX_TF_C8):
+        return decode_indexed(image)
     raise ValueError(f"unsupported TPL image format 0x{image.format:x}")
 
 

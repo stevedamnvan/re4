@@ -1,5 +1,5 @@
 TARGET = re4dc-room-viewer.elf
-OBJS = main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o romdisk.o
+OBJS = main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o source_hud_package.o romdisk.o
 ROOM_PACKAGE ?= ../build/private/r10d.re4room
 COLLISION_PACKAGE ?= ../build/private/r10d.re4sat
 CHARACTER_PACKAGE ?= ../build/private/leon.re4chr
@@ -7,6 +7,8 @@ ENEMY_PACKAGE ?= ../build/private/ganado.re4chr
 CHARACTER_TEXTURE_PACKAGE ?= ../build/private/leon.re4tex
 ENEMY_TEXTURE_PACKAGE ?= ../build/private/ganado.re4tex
 TEXTURE_PACKAGE ?= ../build/private/r10d.re4tex
+HUD_PACKAGE ?= ../build/private/source-hud.re4hud
+HUD_TEXTURE_PACKAGE ?= ../build/private/source-hud.re4tex
 ROUTE_PACKAGE ?=
 AUTOPLAY_FLAG ?=
 FIRE_SOUND_0 ?=
@@ -41,9 +43,36 @@ CPPFLAGS += -DRE4DC_DEMO_YAW=$(DEMO_YAW)
 endif
 KOS_GCCVER_MIN = 12.0.0
 
-.PHONY: all clean rm-elf run prepare-romdisk FORCE
+.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay FORCE
 
 all: prepare-romdisk rm-elf $(TARGET)
+
+r100:
+	$(MAKE) all DEMO_SCENE=r100 \
+		ROOM_PACKAGE=../build/private/r100-encounter-source-meters.re4room \
+		COLLISION_PACKAGE=../build/private/r100-meters.re4sat \
+		CHARACTER_PACKAGE=../build/private/leon-source-r100-gunhitcaps-pitch.re4chr \
+		ENEMY_PACKAGE=../build/private/ganado-source-r100-hitcaps.re4chr \
+		CHARACTER_TEXTURE_PACKAGE=../build/private/leon-source-r100-gunhitcaps-pitch.re4tex \
+		ENEMY_TEXTURE_PACKAGE=../build/private/ganado-source-r100-hitcaps.re4tex \
+		TEXTURE_PACKAGE=../build/private/r100-entry-source.re4tex \
+		HUD_PACKAGE=../build/private/source-hud.re4hud \
+		HUD_TEXTURE_PACKAGE=../build/private/source-hud.re4tex \
+		ROUTE_PACKAGE=../build/private/r100.re4rtp \
+		FIRE_SOUND_0=../build/private/source-audio/wep02-cue00.wav \
+		FIRE_SOUND_2=../build/private/source-audio/wep02-cue02.wav \
+		RELOAD_SOUND=../build/private/source-audio/wep02-cue16.wav \
+		ENEMY_SWING_SOUND=../build/private/source-enemy-audio/em12-cue3d.wav \
+		ENEMY_HIT_SOUND=../build/private/source-enemy-audio/em12-body-hit-0c.wav \
+		ENEMY_DAMAGE_VOICE=../build/private/source-enemy-audio/em12-damage-voice-47.wav \
+		ENEMY_DEATH_VOICE=../build/private/source-enemy-audio/em12-death-voice-16.wav \
+		PLAYER_DAMAGE_VOICE_9=../build/private/source-player-audio/pl00-cue09.wav \
+		PLAYER_DAMAGE_VOICE_10=../build/private/source-player-audio/pl00-cue10.wav \
+		PLAYER_DAMAGE_VOICE_11=../build/private/source-player-audio/pl00-cue11.wav \
+		PLAYER_DEATH_VOICE_13=../build/private/source-player-audio/pl00-cue13.wav
+
+r100-autoplay:
+	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag
 
 include $(KOS_BASE)/Makefile.rules
 
@@ -59,7 +88,7 @@ $(BUILD_CONFIG): FORCE
 		rm -f $(BUILD_CONFIG).tmp; \
 	fi
 
-main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o: $(BUILD_CONFIG)
+main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o source_hud_package.o: $(BUILD_CONFIG)
 
 prepare-romdisk:
 	@test -f $(ROOM_PACKAGE) || { echo 'missing private room package: $(ROOM_PACKAGE)' >&2; exit 1; }
@@ -77,6 +106,14 @@ prepare-romdisk:
 	cp $(CHARACTER_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4tex
 	cp $(ENEMY_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4tex
 	cp $(TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4tex
+	rm -f $(KOS_ROMDISK_DIR)/source-hud.re4hud \
+		$(KOS_ROMDISK_DIR)/source-hud.re4tex
+ifeq ($(DEMO_SCENE),r100)
+	@test -f $(HUD_PACKAGE) || { echo 'missing private source HUD package: $(HUD_PACKAGE)' >&2; exit 1; }
+	@test -f $(HUD_TEXTURE_PACKAGE) || { echo 'missing private source HUD textures: $(HUD_TEXTURE_PACKAGE)' >&2; exit 1; }
+	cp $(HUD_PACKAGE) $(KOS_ROMDISK_DIR)/source-hud.re4hud
+	cp $(HUD_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/source-hud.re4tex
+endif
 	rm -f $(KOS_ROMDISK_DIR)/route.re4rtp
 	@if [ -n "$(ROUTE_PACKAGE)" ]; then \
 		test -f "$(ROUTE_PACKAGE)" || { echo 'missing private route package: $(ROUTE_PACKAGE)' >&2; exit 1; }; \

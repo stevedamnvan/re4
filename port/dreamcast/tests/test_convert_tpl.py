@@ -55,6 +55,26 @@ class ConvertTplTests(unittest.TestCase):
         pixels = TPL.decode_ia8(image)
         self.assertEqual(pixels[0], (0x40, 0x40, 0x40, 0x80))
 
+    def test_i8_and_ia4_blocks_decode_gamecube_tiles(self):
+        i8 = TPL.TplImage(8, 4, TPL.GX_TF_I8, bytes([0x41]) + bytes(31))
+        self.assertEqual(TPL.decode_i8(i8)[0], (0x41, 0x41, 0x41, 255))
+        ia4 = TPL.TplImage(8, 4, TPL.GX_TF_IA4, bytes([0xA3]) + bytes(31))
+        self.assertEqual(TPL.decode_ia4(ia4)[0], (0x33, 0x33, 0x33, 0xAA))
+
+    def test_c4_and_c8_use_rgb5a3_palette(self):
+        palette = struct.pack(">HH", 0xFFFF, 0x7123)
+        c4 = TPL.TplImage(
+            8, 8, TPL.GX_TF_C4, bytes([0x10]) + bytes(31),
+            TPL.GX_TL_RGB5A3, palette,
+        )
+        self.assertEqual(TPL.decode_indexed(c4)[0], (0x11, 0x22, 0x33, 255))
+        self.assertEqual(TPL.decode_indexed(c4)[1], (255, 255, 255, 255))
+        c8 = TPL.TplImage(
+            8, 4, TPL.GX_TF_C8, bytes([1]) + bytes(31),
+            TPL.GX_TL_RGB5A3, palette,
+        )
+        self.assertEqual(TPL.decode_indexed(c8)[0], (0x11, 0x22, 0x33, 255))
+
     def test_rgba8_block_decodes_split_ar_and_gb_planes(self):
         block = bytearray(64)
         block[0:2] = bytes((0x80, 0x40))

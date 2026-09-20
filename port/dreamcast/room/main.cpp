@@ -15,6 +15,7 @@
 #include "collision_package.hpp"
 #include "room_package.hpp"
 #include "route_package.hpp"
+#include "source_hud_package.hpp"
 #include "texture_package.hpp"
 
 KOS_INIT_FLAGS(INIT_DEFAULT);
@@ -2189,7 +2190,16 @@ bool group_visible(const re4dc::room::Group& group) {
 #endif
 }
 
-constexpr std::uint32_t kCharacterSubmitVertexCapacity = 3072U;
+constexpr std::uint32_t kCharacterSubmitVertexCapacity = 768U;
+constexpr std::uint32_t kLeonVertexCapacity = 8192U;
+constexpr std::uint32_t kGanadoVertexCapacity = 4096U;
+ProjectedVertex g_leon_projected[kLeonVertexCapacity];
+ProjectedVertex g_ganado_projected[kGanadoVertexCapacity];
+#if defined(RE4DC_SCENE_R100)
+float g_leon_lighting[kLeonVertexCapacity * 3U];
+float g_ganado_lighting[kGanadoVertexCapacity * 3U];
+#endif
+pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
 
 float camera_depth(float reciprocal_depth) {
     if(!std::isfinite(reciprocal_depth) ||
@@ -2307,48 +2317,44 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
 std::uint32_t transform_triangle(const re4dc::room::Vertex* source,
                                  const std::uint32_t* indices,
                                  pvr_vertex_t* output,
-                                 ProjectedVertex* projected,
-                                 float* lighting,
-                                 std::uint32_t* transformed_at,
-                                 std::uint32_t frame_token,
                                  FrameStats& stats) {
     RenderVertex triangle[3]{};
     for(unsigned corner = 0; corner < 3; ++corner) {
         const std::uint32_t vertex_index = indices[corner];
         const re4dc::room::Vertex& input = source[vertex_index];
-        if(transformed_at[vertex_index] != frame_token) {
-            float x = input.x;
-            float y = input.y;
-            float z = input.z;
-            mat_trans_single(x, y, z);
-            projected[vertex_index] = {
-                x, y, z, input.x, input.y, input.z, camera_depth(z)};
-            float light_red = 0.0f;
-            float light_green = 0.0f;
-            float light_blue = 0.0f;
+        float x = input.x;
+        float y = input.y;
+        float z = input.z;
+        mat_trans_single(x, y, z);
+        ++stats.transformed_vertices;
+        float light_red = 0.0f;
+        float light_green = 0.0f;
+        float light_blue = 0.0f;
 #if defined(RE4DC_SCENE_R100)
-            evaluate_source_lighting(input.x, input.y, input.z,
-                                     input.nx, input.ny, input.nz, false,
-                                     light_red, light_green, light_blue);
+        evaluate_source_lighting(input.x, input.y, input.z,
+                                 input.nx, input.ny, input.nz, false,
+                                 light_red, light_green, light_blue);
 #else
-            light_red = light_green = light_blue = std::clamp(
-                0.76f + 0.08f * input.nx + 0.12f * input.ny +
-                    0.04f * input.nz,
-                0.58f, 1.0f);
+        light_red = light_green = light_blue = std::clamp(
+            0.76f + 0.08f * input.nx + 0.12f * input.ny +
+                0.04f * input.nz,
+            0.58f, 1.0f);
 #endif
-            lighting[vertex_index * 3U] = light_red;
-            lighting[vertex_index * 3U + 1U] = light_green;
-            lighting[vertex_index * 3U + 2U] = light_blue;
-            transformed_at[vertex_index] = frame_token;
-            ++stats.transformed_vertices;
-        }
         triangle[corner] = {
-            .position = projected[vertex_index],
+            .position = {
+                x,
+                y,
+                z,
+                input.x,
+                input.y,
+                input.z,
+                camera_depth(z),
+            },
             .u = input.u,
             .v = input.v,
-            .light_red = lighting[vertex_index * 3U],
-            .light_green = lighting[vertex_index * 3U + 1U],
-            .light_blue = lighting[vertex_index * 3U + 2U],
+            .light_red = light_red,
+            .light_green = light_green,
+            .light_blue = light_blue,
             .offset_color = 0,
         };
     }
@@ -2660,7 +2666,7 @@ void draw_text(const char* text, float x, float y, float scale,
     }
 }
 
-void draw_hud(const Player& player) {
+[[maybe_unused]] void draw_hud(const Player& player) {
     submit_screen_quad(252.0f, 188.0f, 316.0f, 236.0f, 0xff171917U, 0.95f);
     const float health_fraction = std::clamp(
         static_cast<float>(player.health) / static_cast<float>(kPlayerMaxHealth),
@@ -2701,6 +2707,350 @@ void draw_hud(const Player& player) {
     }
 }
 
+
+#if defined(RE4DC_SCENE_R100)
+struct HudTransform {
+    float xx;
+    float xy;
+    float yx;
+    float yy;
+    float x;
+    float y;
+};
+
+HudTransform hud_multiply(const HudTransform& parent,
+                          const HudTransform& child) {
+    return {
+        parent.xx * child.xx + parent.xy * child.yx,
+        parent.xx * child.xy + parent.xy * child.yy,
+        parent.yx * child.xx + parent.yy * child.yx,
+        parent.yx * child.xy + parent.yy * child.yy,
+        parent.xx * child.x + parent.xy * child.y + parent.x,
+        parent.yx * child.x + parent.yy * child.y + parent.y,
+    };
+}
+
+int source_life_state(const Player& player) {
+    if(player.health > kPlayerMaxHealth * 2 / 3) {
+        return 0;
+    }
+    if(player.health > kPlayerMaxHealth / 3) {
+        return 1;
+    }
+    return 2;
+}
+
+float source_hud_rotation(const re4dc::hud::Unit& unit,
+                          const Player& player) {
+    if(unit.table != re4dc::hud::kTableLife) {
+        return unit.rotation[2];
+    }
+    const float rate = static_cast<float>(player.health) / 400.0f;
+    switch(unit.mark) {
+    case 0xFE:
+        // lifeLevel(20, 1200, 1200) == 0 in the source opening loadout.
+        return -45.0f;
+    case 7:
+        return rate >= 0.0f ? 180.0f - rate * 45.0f : unit.rotation[2];
+    case 8:
+        return rate > 2.0f ? 90.0f - (rate - 2.0f) * 45.0f
+                           : unit.rotation[2];
+    case 9:
+        return rate > 4.0f ? -(rate - 4.0f) * 45.0f : unit.rotation[2];
+    default:
+        return unit.rotation[2];
+    }
+}
+
+HudTransform source_hud_local_transform(const re4dc::hud::Unit& unit,
+                                        const Player& player) {
+    const float angle =
+        source_hud_rotation(unit, player) * kPi / 180.0f;
+    const float cosine = std::cos(angle);
+    const float sine = std::sin(angle);
+    return {
+        cosine, -sine, sine, cosine,
+        unit.position[0], unit.position[1],
+    };
+}
+
+std::uint32_t source_hud_table_start(const re4dc::hud::Header& header,
+                                     std::uint8_t table) {
+    if(table == re4dc::hud::kTableFrame) {
+        return header.frame_start;
+    }
+    if(table == re4dc::hud::kTableLife) {
+        return header.life_start;
+    }
+    return header.bullet_start;
+}
+
+std::uint32_t source_hud_table_count(const re4dc::hud::Header& header,
+                                     std::uint8_t table) {
+    if(table == re4dc::hud::kTableFrame) {
+        return header.frame_count;
+    }
+    if(table == re4dc::hud::kTableLife) {
+        return header.life_count;
+    }
+    return header.bullet_count;
+}
+
+const re4dc::hud::Unit* source_hud_find_number(
+    const re4dc::hud::Package& hud, std::uint8_t table,
+    std::uint8_t number) {
+    const auto& header = hud.header();
+    const std::uint32_t start = source_hud_table_start(header, table);
+    const std::uint32_t count = source_hud_table_count(header, table);
+    for(std::uint32_t index = start; index < start + count; ++index) {
+        if(hud.units()[index].number == number) {
+            return &hud.units()[index];
+        }
+    }
+    return nullptr;
+}
+
+const re4dc::hud::Unit* source_hud_find_mark(
+    const re4dc::hud::Package& hud, std::uint8_t table,
+    std::uint8_t mark) {
+    const auto& header = hud.header();
+    const std::uint32_t start = source_hud_table_start(header, table);
+    const std::uint32_t count = source_hud_table_count(header, table);
+    for(std::uint32_t index = start; index < start + count; ++index) {
+        if(hud.units()[index].mark == mark) {
+            return &hud.units()[index];
+        }
+    }
+    return nullptr;
+}
+
+const re4dc::hud::Unit* source_hud_parent(
+    const re4dc::hud::Package& hud, const re4dc::hud::Unit& unit) {
+    if(unit.parent != 0xFFU) {
+        return source_hud_find_number(hud, unit.table, unit.parent);
+    }
+    if(unit.table == re4dc::hud::kTableBullet) {
+        return source_hud_find_mark(hud, re4dc::hud::kTableLife, 0x30);
+    }
+    return nullptr;
+}
+
+bool source_hud_local_visible(const re4dc::hud::Unit& unit,
+                              const Player& player) {
+    if((unit.flags & 0x09U) != 0x09U) {
+        return false;
+    }
+    if(unit.table == re4dc::hud::kTableBullet) {
+        return unit.kind == 1U || unit.mark == 0x31U;
+    }
+    if(unit.table != re4dc::hud::kTableLife) {
+        return true;
+    }
+    const float rate = static_cast<float>(player.health) / 400.0f;
+    switch(unit.mark) {
+    case 1:
+    case 3:
+    case 0x3F:
+    case 0x41:
+    case 0x42:
+        return false;
+    case 7:
+        return rate >= 0.0f;
+    case 8:
+        return rate > 2.0f;
+    case 9:
+        return rate > 4.0f;
+    case 0x13:
+        return source_life_state(player) == 1;
+    case 0x14:
+        return source_life_state(player) == 2;
+    case 0x17:
+        return player.ammo >= 100;
+    case 0x40:
+        return true;
+    default:
+        return true;
+    }
+}
+
+bool source_hud_visible(const re4dc::hud::Package& hud,
+                        const re4dc::hud::Unit& unit,
+                        const Player& player, unsigned depth = 0) {
+    if(depth > 8U || !source_hud_local_visible(unit, player)) {
+        return false;
+    }
+    if(const auto* parent = source_hud_parent(hud, unit)) {
+        return parent != nullptr &&
+               source_hud_visible(hud, *parent, player, depth + 1U);
+    }
+    return true;
+}
+
+HudTransform source_hud_transform(const re4dc::hud::Package& hud,
+                                  const re4dc::hud::Unit& unit,
+                                  const Player& player,
+                                  unsigned depth = 0) {
+    HudTransform result = source_hud_local_transform(unit, player);
+    if(depth > 8U) {
+        return result;
+    }
+    const re4dc::hud::Unit* parent = source_hud_parent(hud, unit);
+    if(parent != nullptr) {
+        result = hud_multiply(
+            source_hud_transform(hud, *parent, player, depth + 1U),
+            result);
+    }
+    return result;
+}
+
+std::uint32_t source_hud_color(const re4dc::hud::Package& hud,
+                               const re4dc::hud::Unit& unit,
+                               const Player& player, unsigned depth = 0) {
+    const std::uint8_t* color = unit.color0;
+    if(unit.table == re4dc::hud::kTableLife && unit.mark == 0x12U) {
+        const std::uint8_t template_mark =
+            source_life_state(player) == 0 ? 0x11U
+            : source_life_state(player) == 1 ? 0x10U : 0x0FU;
+        const auto* source = source_hud_find_mark(
+            hud, re4dc::hud::kTableLife, template_mark);
+        if(source != nullptr) {
+            color = source->color0;
+        }
+    }
+    std::uint32_t alpha = color[3];
+    std::uint32_t red = color[0];
+    std::uint32_t green = color[1];
+    std::uint32_t blue = color[2];
+    if(depth <= 8U) {
+        if(const auto* parent = source_hud_parent(hud, unit)) {
+            const std::uint32_t parent_color =
+                source_hud_color(hud, *parent, player, depth + 1U);
+            alpha = alpha * ((parent_color >> 24U) & 0xFFU) / 255U;
+            red = red * ((parent_color >> 16U) & 0xFFU) / 255U;
+            green = green * ((parent_color >> 8U) & 0xFFU) / 255U;
+            blue = blue * (parent_color & 0xFFU) / 255U;
+        }
+    }
+    return (alpha << 24U) | (red << 16U) | (green << 8U) | blue;
+}
+
+unsigned source_hud_draw_priority(const re4dc::hud::Unit& unit) {
+    if(unit.table == re4dc::hud::kTableBullet && unit.mark == 0x31U) {
+        return 1U;
+    }
+    if(unit.table == re4dc::hud::kTableLife && unit.mark == 0x40U) {
+        return 2U;
+    }
+    if(unit.table == re4dc::hud::kTableLife &&
+       (unit.mark == 0x0AU || unit.mark == 0x0BU || unit.mark == 0x17U)) {
+        return 3U;
+    }
+    return 0U;
+}
+
+std::uint32_t source_hud_texture_frame(const re4dc::hud::Unit& unit,
+                                       const Player& player) {
+    if(unit.table != re4dc::hud::kTableLife) {
+        return 0U;
+    }
+    switch(unit.mark) {
+    case 0x0B:
+        return static_cast<std::uint32_t>(player.ammo % 10);
+    case 0x0A:
+        return static_cast<std::uint32_t>((player.ammo / 10) % 10);
+    case 0x17:
+        return static_cast<std::uint32_t>((player.ammo / 100) % 10);
+    default:
+        return 0U;
+    }
+}
+
+void source_hud_vertices(const re4dc::hud::Unit& unit,
+                         float x[4], float y[4]) {
+    const float width = unit.size[0];
+    const float height = unit.size[1];
+    switch(unit.vertex_type & 0x0FU) {
+    case 1:
+        x[0] = 0.0f; x[1] = width; x[2] = 0.0f; x[3] = width;
+        y[0] = 0.0f; y[1] = 0.0f; y[2] = -height; y[3] = -height;
+        break;
+    case 2:
+        x[0] = -width; x[1] = 0.0f; x[2] = -width; x[3] = 0.0f;
+        y[0] = 0.0f; y[1] = 0.0f; y[2] = -height; y[3] = -height;
+        break;
+    case 3:
+        x[0] = -width; x[1] = 0.0f; x[2] = -width; x[3] = 0.0f;
+        y[0] = height; y[1] = height; y[2] = 0.0f; y[3] = 0.0f;
+        break;
+    case 4:
+        x[0] = 0.0f; x[1] = width; x[2] = 0.0f; x[3] = width;
+        y[0] = height; y[1] = height; y[2] = 0.0f; y[3] = 0.0f;
+        break;
+    case 0:
+    default:
+        x[0] = -width * 0.5f; x[1] = width * 0.5f;
+        x[2] = -width * 0.5f; x[3] = width * 0.5f;
+        y[0] = height * 0.5f; y[1] = height * 0.5f;
+        y[2] = -height * 0.5f; y[3] = -height * 0.5f;
+        break;
+    }
+}
+
+void draw_source_hud(const re4dc::hud::Package& hud,
+                     const pvr_poly_hdr_t* headers,
+                     const Player& player) {
+    constexpr float source_width = 640.0f;
+    constexpr float source_height = 480.0f;
+    const float scale_x = kScreenWidth / source_width;
+    const float scale_y = kScreenHeight / source_height;
+    const auto* units = hud.units();
+    for(unsigned priority = 0; priority <= 3U; ++priority) {
+      for(std::uint32_t index = 0; index < hud.header().unit_count; ++index) {
+        const auto& unit = units[index];
+        if(source_hud_draw_priority(unit) != priority || unit.kind == 1U ||
+           unit.first_texture == re4dc::hud::kNoTexture ||
+           unit.texture_count == 0U ||
+           !source_hud_visible(hud, unit, player)) {
+            continue;
+        }
+        const std::uint32_t frame = std::min(
+            source_hud_texture_frame(unit, player),
+            unit.texture_count - 1U);
+        const std::uint32_t texture = unit.first_texture + frame;
+        const HudTransform transform =
+            source_hud_transform(hud, unit, player);
+        float local_x[4];
+        float local_y[4];
+        source_hud_vertices(unit, local_x, local_y);
+        pvr_vertex_t vertices[4]{};
+        constexpr float uv_x[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+        constexpr float uv_y[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+        const std::uint32_t color = source_hud_color(hud, unit, player);
+        for(unsigned corner = 0; corner < 4; ++corner) {
+            const float source_x =
+                transform.xx * local_x[corner] +
+                transform.xy * local_y[corner] + transform.x;
+            const float source_y =
+                transform.yx * local_x[corner] +
+                transform.yy * local_y[corner] + transform.y;
+            vertices[corner] = {
+                .flags = corner == 3U ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+                .x = kScreenWidth * 0.5f + source_x * scale_x,
+                .y = kScreenHeight * 0.5f - source_y * scale_y,
+                .z = 1.0f,
+                .u = uv_x[corner] * unit.uv_max[0],
+                .v = uv_y[corner] * unit.uv_max[1],
+                .argb = color,
+                .oargb = 0,
+            };
+        }
+        pvr_prim(&headers[texture], sizeof(pvr_poly_hdr_t));
+        pvr_prim(vertices, sizeof(vertices));
+      }
+    }
+}
+#endif
+
 [[maybe_unused]] void draw_goal(bool unlocked) {
     constexpr float radius = 0.55f;
     const point_t base[4] = {
@@ -2727,16 +3077,16 @@ FrameStats render_scene(const re4dc::room::Package& room,
                          const bool* leon_alpha,
                          const pvr_poly_hdr_t* ganado_headers,
                          const bool* ganado_alpha,
-                        ProjectedVertex* projected, float* room_lighting,
-                        std::uint32_t* transformed_at,
+#if defined(RE4DC_SCENE_R100)
+                         const re4dc::hud::Package& source_hud,
+                         const pvr_poly_hdr_t* source_hud_headers,
+#endif
                         ProjectedVertex* leon_projected,
                         ProjectedVertex* ganado_projected,
 #if defined(RE4DC_SCENE_R100)
-                        float* leon_normals, float* ganado_normals,
                         float* leon_lighting, float* ganado_lighting,
 #endif
-                        pvr_vertex_t* character_submit_vertices,
-                        std::uint32_t frame_token) {
+                        pvr_vertex_t* character_submit_vertices) {
     FrameStats stats{};
     const auto* groups = room.groups();
     const auto* batches = room.batches();
@@ -2756,12 +3106,12 @@ FrameStats render_scene(const re4dc::room::Package& room,
         enemy.animation_frame, enemy.state == EnemyState::Chase,
         enemy.animation_clip, 0.0f, ganado_projected);
 #if defined(RE4DC_SCENE_R100)
-    build_character_normals(leon, leon_projected, leon_normals);
-    build_character_normals(ganado, ganado_projected, ganado_normals);
+    build_character_normals(leon, leon_projected, leon_lighting);
+    build_character_normals(ganado, ganado_projected, ganado_lighting);
     build_character_lighting(
-        leon, leon_projected, leon_normals, leon_lighting);
+        leon, leon_projected, leon_lighting, leon_lighting);
     build_character_lighting(
-        ganado, ganado_projected, ganado_normals, ganado_lighting);
+        ganado, ganado_projected, ganado_lighting, ganado_lighting);
 #endif
     const std::uint64_t wait_start = timer_us_gettime64();
     pvr_wait_ready();
@@ -2799,8 +3149,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 }
                 const std::uint32_t emitted = transform_triangle(
                     vertices, indices + index,
-                    character_submit_vertices + submit_count, projected,
-                    room_lighting, transformed_at, frame_token, stats);
+                    character_submit_vertices + submit_count, stats);
                 submit_count += emitted * 3U;
                 stats.triangles += emitted;
             }
@@ -2825,7 +3174,9 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #if !defined(RE4DC_SCENE_R100)
     draw_goal(enemy.state == EnemyState::Dead);
 #endif
+#if !defined(RE4DC_SCENE_R100)
     draw_hud(player);
+#endif
     pvr_list_finish();
 
     pvr_list_begin(PVR_LIST_TR_POLY);
@@ -2858,8 +3209,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
                 }
                 const std::uint32_t emitted = transform_triangle(
                     vertices, indices + index,
-                    character_submit_vertices + submit_count, projected,
-                    room_lighting, transformed_at, frame_token, stats);
+                    character_submit_vertices + submit_count, stats);
                 submit_count += emitted * 3U;
                 stats.triangles += emitted;
             }
@@ -2880,6 +3230,9 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #endif
         ganado_headers, ganado_alpha, true,
         character_submit_vertices, kCharacterSubmitVertexCapacity);
+#if defined(RE4DC_SCENE_R100)
+    draw_source_hud(source_hud, source_hud_headers, player);
+#endif
     pvr_list_finish();
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
@@ -2891,6 +3244,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
 } // namespace
 
 int main() {
+    g_re4dc_demo_telemetry.flags = 0x10000001U;
     re4dc::room::Package room;
     if(!room.open("/rd/r10d.re4room")) {
         std::printf("re4dc-room: room load failed: %s\n", room.error());
@@ -2940,6 +3294,21 @@ int main() {
                     ganado_textures.error());
         return 1;
     }
+#if defined(RE4DC_SCENE_R100)
+    re4dc::hud::Package source_hud;
+    if(!source_hud.open("/rd/source-hud.re4hud")) {
+        std::printf("re4dc-room: source HUD load failed: %s\n",
+                    source_hud.error());
+        return 1;
+    }
+    re4dc::texture::Package source_hud_textures;
+    if(!source_hud_textures.open("/rd/source-hud.re4tex")) {
+        std::printf("re4dc-room: source HUD texture load failed: %s\n",
+                    source_hud_textures.error());
+        return 1;
+    }
+#endif
+    g_re4dc_demo_telemetry.flags = 0x10000002U;
     std::printf(
         "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
         "leon=%lu/%lu/%lu ganado=%lu/%lu/%lu\n",
@@ -2955,6 +3324,7 @@ int main() {
         static_cast<unsigned long>(ganado.header().vertex_count),
         static_cast<unsigned long>(ganado.header().index_count / 3U),
         static_cast<unsigned long>(ganado.header().frame_count));
+    g_re4dc_demo_telemetry.flags = 0x10000021U;
     if(leon.header().clip_count < 11U) {
         std::printf(
             "re4dc-room: Leon package needs source aim/fire triplets and actions\n");
@@ -2977,17 +3347,21 @@ int main() {
     }
 #endif
 
+    g_re4dc_demo_telemetry.flags = 0x10000022U;
 #if defined(RE4DC_480P)
     vid_set_mode(DM_640x480, PM_RGB565);
 #else
     vid_set_mode(DM_320x240, PM_RGB565);
 #endif
+    g_re4dc_demo_telemetry.flags = 0x10000023U;
     pvr_init_params_t pvr_params = pvr_default_params;
     pvr_params.opb_sizes[PVR_LIST_PT_POLY] = PVR_BINSIZE_16;
+    g_re4dc_demo_telemetry.flags = 0x10000024U;
     if(pvr_init(&pvr_params) < 0) {
         std::printf("re4dc-room: PVR initialization failed\n");
         return 1;
     }
+    g_re4dc_demo_telemetry.flags = 0x10000025U;
 #if defined(RE4DC_SCENE_R100)
     // r100_002.LIT cut 0 supplies the background/fog colour and distances.
     pvr_set_bg_color(kBackgroundRed, kBackgroundGreen, kBackgroundBlue);
@@ -3004,6 +3378,7 @@ int main() {
     pvr_fog_table_color(1.0f, 0.16f, 0.15f, 0.13f);
     pvr_fog_table_linear(14.0f, 48.0f);
 #endif
+    g_re4dc_demo_telemetry.flags = 0x10000003U;
     const std::size_t vram_before_textures = pvr_mem_available();
     if(!textures.upload()) {
         std::printf("re4dc-room: texture upload failed: %s\n", textures.error());
@@ -3019,6 +3394,14 @@ int main() {
                     ganado_textures.error());
         return 1;
     }
+#if defined(RE4DC_SCENE_R100)
+    if(!source_hud_textures.upload()) {
+        std::printf("re4dc-room: source HUD texture upload failed: %s\n",
+                    source_hud_textures.error());
+        return 1;
+    }
+#endif
+    g_re4dc_demo_telemetry.flags = 0x10000004U;
     pvr_poly_cxt_t context{};
     pvr_poly_hdr_t untextured_header{};
     pvr_poly_cxt_col(&context, PVR_LIST_OP_POLY);
@@ -3123,6 +3506,41 @@ int main() {
                                    ganado_alpha.get(), "Ganado")) {
         return 1;
     }
+#if defined(RE4DC_SCENE_R100)
+    pvr_poly_hdr_t* source_hud_headers =
+        new(std::nothrow)
+            pvr_poly_hdr_t[source_hud_textures.header().texture_count];
+    if(source_hud_headers == nullptr) {
+        std::printf("re4dc-room: source HUD header allocation failed\n");
+        return 1;
+    }
+    for(std::uint32_t texture_index = 0;
+        texture_index < source_hud_textures.header().texture_count;
+        ++texture_index) {
+        const auto& texture = source_hud_textures.textures()[texture_index];
+        const int format = texture.format == re4dc::texture::kRgb565
+                               ? PVR_TXRFMT_RGB565
+                               : texture.format == re4dc::texture::kArgb1555
+                                     ? PVR_TXRFMT_ARGB1555
+                                     : PVR_TXRFMT_ARGB4444;
+        pvr_poly_cxt_txr(
+            &context, PVR_LIST_TR_POLY, format, texture.width, texture.height,
+            source_hud_textures.pvr_texture(texture_index),
+            PVR_FILTER_BILINEAR);
+        context.gen.alpha = true;
+        context.gen.culling = PVR_CULLING_NONE;
+        context.gen.fog_type = PVR_FOG_DISABLE;
+        context.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+        context.depth.write = false;
+        context.blend.src = PVR_BLEND_SRCALPHA;
+        context.blend.dst = PVR_BLEND_INVSRCALPHA;
+        context.txr.alpha =
+            texture.format == re4dc::texture::kRgb565;
+        context.txr.uv_clamp = PVR_UVCLAMP_UV;
+        pvr_poly_compile(&source_hud_headers[texture_index], &context);
+    }
+#endif
+    g_re4dc_demo_telemetry.flags = 0x10000005U;
     std::printf(
         "re4dc-room: textures=%lu+%lu+%lu bytes=%lu pvr_free_before=%lu "
         "pvr_free_after=%lu\n",
@@ -3179,39 +3597,12 @@ int main() {
     bool fire_was_down = false;
     bool reload_was_down = false;
     bool restart_was_down = false;
-    std::unique_ptr<ProjectedVertex[]> projected(
-        new(std::nothrow) ProjectedVertex[room.header().vertex_count]);
-    std::unique_ptr<float[]> room_lighting(
-        new(std::nothrow) float[room.header().vertex_count * 3U]);
-    std::unique_ptr<std::uint32_t[]> transformed_at(
-        new(std::nothrow) std::uint32_t[room.header().vertex_count]());
-    std::unique_ptr<ProjectedVertex[]> leon_projected(
-        new(std::nothrow) ProjectedVertex[leon.header().vertex_count]);
-    std::unique_ptr<ProjectedVertex[]> ganado_projected(
-        new(std::nothrow) ProjectedVertex[ganado.header().vertex_count]);
-#if defined(RE4DC_SCENE_R100)
-    std::unique_ptr<float[]> leon_normals(
-        new(std::nothrow) float[leon.header().vertex_count * 3U]);
-    std::unique_ptr<float[]> ganado_normals(
-        new(std::nothrow) float[ganado.header().vertex_count * 3U]);
-    std::unique_ptr<float[]> leon_lighting(
-        new(std::nothrow) float[leon.header().vertex_count * 3U]);
-    std::unique_ptr<float[]> ganado_lighting(
-        new(std::nothrow) float[ganado.header().vertex_count * 3U]);
-#endif
-    std::unique_ptr<pvr_vertex_t[]> character_submit_vertices(
-        new(std::nothrow) pvr_vertex_t[kCharacterSubmitVertexCapacity]);
-    if(projected == nullptr || room_lighting == nullptr ||
-       transformed_at == nullptr ||
-       leon_projected == nullptr || ganado_projected == nullptr ||
-#if defined(RE4DC_SCENE_R100)
-       leon_normals == nullptr || ganado_normals == nullptr ||
-       leon_lighting == nullptr || ganado_lighting == nullptr ||
-#endif
-       character_submit_vertices == nullptr) {
-        std::printf("re4dc-room: transform cache allocation failed\n");
+    if(leon.header().vertex_count > kLeonVertexCapacity ||
+       ganado.header().vertex_count > kGanadoVertexCapacity) {
+        std::printf("re4dc-room: actor transform capacity exceeded\n");
         return 1;
     }
+    g_re4dc_demo_telemetry.flags = 0x10000006U;
     DemoAudio audio;
     if(!load_demo_audio(audio)) {
         return 1;
@@ -3227,6 +3618,7 @@ int main() {
     if(autoplay.enabled) {
         std::printf("re4dc-room: deterministic autoplay enabled\n");
     }
+    g_re4dc_demo_telemetry.flags = 0x10000007U;
     while(true) {
         const std::uint64_t now = timer_us_gettime64();
         const std::uint64_t frame_us = now - previous_time;
@@ -3432,14 +3824,15 @@ int main() {
         const FrameStats stats = render_scene(
             room, leon, ganado, player, enemy, untextured_header,
             material_headers, material_alpha.get(), leon_headers,
-            leon_alpha.get(), ganado_headers, ganado_alpha.get(), projected.get(),
-            room_lighting.get(), transformed_at.get(), leon_projected.get(),
-            ganado_projected.get(),
+            leon_alpha.get(), ganado_headers, ganado_alpha.get(),
 #if defined(RE4DC_SCENE_R100)
-            leon_normals.get(), ganado_normals.get(), leon_lighting.get(),
-            ganado_lighting.get(),
+            source_hud, source_hud_headers,
 #endif
-            character_submit_vertices.get(), frame + 1U);
+            g_leon_projected, g_ganado_projected,
+#if defined(RE4DC_SCENE_R100)
+            g_leon_lighting, g_ganado_lighting,
+#endif
+            g_character_submit_vertices);
         g_re4dc_demo_telemetry.visible_groups = stats.groups;
         g_re4dc_demo_telemetry.transformed_vertices =
             stats.transformed_vertices;
