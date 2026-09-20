@@ -32,7 +32,13 @@ BUILD_CONFIG = .build-config
 
 romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
 
-CPPFLAGS += -std=c++20 -O2 -Wall -Wextra -Werror -I../include
+# A2: the optimization level and any link-time optimization are variables so
+# the build-policy arms can be measured against each other. The accepted build
+# is the default; an arm is selected on the command line, never by editing.
+ROOM_OPT ?= -O3
+ROOM_LTO ?= 1
+ROOM_LTO_FLAGS := $(if $(ROOM_LTO),-flto=1 -ffat-lto-objects,)
+CPPFLAGS += -std=c++20 $(ROOM_OPT) $(ROOM_LTO_FLAGS) -Wall -Wextra -Werror -I../include
 ifeq ($(DEMO_SCENE),r100)
 CPPFLAGS += -DRE4DC_SCENE_R100
 endif
@@ -210,7 +216,7 @@ rm-elf:
 	-rm -f $(TARGET)
 
 $(TARGET): $(OBJS)
-	kos-c++ -o $(TARGET) $(OBJS)
+	kos-c++ $(ROOM_OPT) $(ROOM_LTO_FLAGS) -o $(TARGET) $(OBJS)
 
 run: $(TARGET)
 	$(KOS_LOADER) $(TARGET)

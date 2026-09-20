@@ -86,16 +86,16 @@ view, and timed retry. The current autoplay does not cover free movement, aim
 extremes, enemy contact, Leon death, or a human controller; those remain separate
 acceptance gates.
 
-| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w | R3x | R4c accepted |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms | 61.229 / 61.289 / 63.781 ms | 60.791 / 60.874 / 63.343 ms |
-| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms | 38.319 ms | 37.890 ms |
-| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms | 14.189 ms | 14.189 ms |
-| opaque actor draw p50 | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.430 ms |
-| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
-| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 | 11,008 | 11,008 |
-| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B | 5,357,568 B | 5,357,568 B |
-| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Matched metric, ticks 165-1194 | R3p corrected normals | R3r | R3t | R3u | R3v | R3w | R3x | R4c | R4d accepted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms | 73.247 / 73.378 / 75.838 ms | 71.369 / 71.463 / 73.929 ms | 68.789 / 68.883 / 71.326 ms | 64.758 / 64.809 / 67.294 ms | 61.229 / 61.289 / 63.781 ms | 60.791 / 60.874 / 63.343 ms | 57.951 / 58.015 / 60.509 ms |
+| `submit_us` p50 | 58.103 ms | 45.901 ms | 45.008 ms | 44.413 ms | 41.832 ms | 41.832 ms | 38.319 ms | 37.890 ms | 33.391 ms |
+| actor lighting p50 | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 18.198 ms | 14.189 ms | 14.189 ms | 14.189 ms | 16.207 ms |
+| opaque actor draw p50 | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.789 ms | 11.430 ms | 9.900 ms |
+| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 | 362 / 8,208 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 | 142 / 8,315 |
+| transformed and lit vertices | 15,350 | 10,156 | 10,156 | 10,404 | 11,008 | 11,008 | 11,008 | 11,008 | 11,008 |
+| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B | 5,332,992 B | 5,738,496 B | 5,324,800 B | 5,324,800 B | 5,357,568 B | 5,357,568 B | 5,353,472 B |
+| dropped simulation time / overruns | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
 
 R3r draws more room geometry than R3p because the corrected group test restores
 groups that R3p discarded, and is still 12.078 ms faster at p50. R3u draws the
@@ -106,10 +106,14 @@ had captured, and is still 2.580 ms faster because each reference no longer
 hashes, compares keys or re-verifies. R3w changes no emitted vertex and no
 stage but actor lighting. R3x changes no emitted vertex and no stage but the
 room passes. R4c changes no emitted byte at all, proved by a per-tick checksum
-of the submitted stream, and no stage but the two actor passes.
+of the submitted stream, and no stage but the two actor passes. R4d changes no
+source line at all: it is `-O3` plus link-time optimization. Note that its
+saving is not uniform. Every drawing and submission stage improves and actor
+lighting gets 2.018 ms worse, which is why actor lighting rises in this table
+while the frame falls, and why a per-file optimization policy is now queued.
 
-The accepted candidate presents at roughly 16 distinct frames per second. A
-33.33 ms CPU frame needs another 27.5 ms median reduction and 27.5 ms at p95.
+The accepted candidate presents at roughly 17 distinct frames per second. A
+33.33 ms CPU frame needs another 24.6 ms median reduction and 24.7 ms at p95.
 SH-4 preparation remains the dominant measured cost.
 
 R3x median CPU stages are shown without adding the overlapping `submit_us`
@@ -259,14 +263,17 @@ before/after timing and memory, and end in a keep-or-revert decision.
    entry permits batching the directional light subset only, never replacing
    RE4's point and spot terms. See
    [DCA3_SOURCE_AUDIT.md](DCA3_SOURCE_AUDIT.md).
-3b. **Build policy as a small experiment.** DCA3 ships `-Os` with a per-file
-   `-O3` list, a no-fast-math list for camera units and link-time optimization.
-   RE4's room build asks for `-O2` and compiles nearly all frame work in one
-   translation unit. Read the effective compile and link commands first, then
-   test current settings, `-O3` with unchanged floating-point semantics, and
-   compatible LTO as separate arms, holding assets, KOS and toolchain fixed and
-   measuring linked size and RAM alongside the route. No global `-ffast-math`
-   and no indiscriminate assertion removal.
+3b. **Build policy: done, and it was the cheapest 2.839 ms on this list.**
+   `-O3` with link-time optimization is now the default, measured in
+   [R4D_BUILD_POLICY_CHECKPOINT.md](R4D_BUILD_POLICY_CHECKPOINT.md). There was
+   no optimization setting on the link line at all beforehand. `-O3` alone is
+   worth 2.606 ms and LTO adds 0.233 ms on top; LTO without `-O3` is worth
+   nothing. A per-file optimization policy was considered and rejected: RE4DC
+   has seven translation units and one of them holds nearly all the frame work.
+   The measurement overturned that: actor lighting is 2.018 ms *slower* at
+   `-O3`, so splitting the prepared-light evaluators into their own unit at
+   `-O2` is worth up to 2 ms and is the next experiment. `-ffast-math` and
+   friends remain out of scope and unneeded.
 4. **Submission transport: closed by R3q.** The KOS `pvr_prim` store-queue path
    costs 1.331 ms for the room and 2.580 ms in total. Bounded KOS DMA buffers
    cannot recover more than that even if they made the copy free, and they would
@@ -429,6 +436,11 @@ not the task scheduler:
   0.429 ms off the frame with a byte-identical submitted stream over 524 ticks.
   Framebuffer capture at fixed ticks is not valid evidence for a change that
   alters frame cadence; the `SUBMIT_DIGEST` build exists for that reason.
+- R4d: `-O3` plus link-time optimization on both the compile and the link, the
+  DCA3 audit's A2. 2.839 ms off the frame for no source change, with the stream
+  proved byte-identical across 508 ticks, 7,396 more bytes of text and one page
+  less free main RAM. Actor lighting regressed 2.018 ms under it, which is the
+  measured case for a per-file optimization policy.
 
 Choose the next task from the measured bottleneck queue at the top of this file.
 ## 30 fps acceptance, separately from image/state comparison
