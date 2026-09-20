@@ -2686,6 +2686,90 @@ void accumulate_room_dynamic_lighting(float nx, float ny, float nz,
     apply_directional(5U);
 }
 
+struct SelectedSourceLights {
+    std::uint8_t indices[8]{};
+    std::uint8_t count = 0U;
+};
+
+SelectedSourceLights selected_source_lights(std::uint32_t selection) {
+    SelectedSourceLights result{};
+    for(std::size_t index = 0U; index < kSourceLightCount; ++index) {
+        if((selection & (1U << index)) == 0U) {
+            continue;
+        }
+        if(result.count == sizeof(result.indices)) {
+            break;
+        }
+        result.indices[result.count++] = static_cast<std::uint8_t>(index);
+    }
+    return result;
+}
+
+void evaluate_selected_actor_lighting(
+    float px, float py, float pz, float nx, float ny, float nz,
+    const SelectedSourceLights& selection,
+    float& red, float& green, float& blue) {
+    normalize_vector(nx, ny, nz);
+    red = kSourceActorAmbientRed;
+    green = kSourceActorAmbientGreen;
+    blue = kSourceActorAmbientBlue;
+    for(std::uint8_t slot = 0U; slot < selection.count; ++slot) {
+        const std::size_t index = selection.indices[slot];
+        const SourceLight& light = kSourceLights[index];
+        const PreparedSourceLight& prepared =
+            g_prepared_source_lights[index];
+        float lx = 0.0f;
+        float ly = 0.0f;
+        float lz = 0.0f;
+        float attenuation = light.intensity;
+        if(light.type == 5U) {
+            lx = prepared.current_direction_x;
+            ly = prepared.current_direction_y;
+            lz = prepared.current_direction_z;
+        } else {
+            lx = light.x - px;
+            ly = light.y - py;
+            lz = light.z - pz;
+            const float distance = std::sqrt(lx * lx + ly * ly + lz * lz);
+            if(distance <= 0.000001f) {
+                continue;
+            }
+            lx /= distance;
+            ly /= distance;
+            lz /= distance;
+            if(light.type == 1U) {
+                attenuation = light.radius > 0.0f
+                                  ? light.intensity * std::max(
+                                        0.0f, 1.0f - distance / light.radius)
+                                  : light.intensity;
+            } else {
+                attenuation = light.intensity /
+                              std::max(1.0f, 1.0f +
+                                                prepared.quadratic_attenuation *
+                                                    distance * distance);
+            }
+            if(light.type == 3U) {
+                const float cone_cosine =
+                    prepared.direction_x * -lx +
+                    prepared.direction_y * -ly +
+                    prepared.direction_z * -lz;
+                if(cone_cosine <= prepared.spot_cutoff) {
+                    continue;
+                }
+                attenuation *= (cone_cosine - prepared.spot_cutoff) *
+                               prepared.spot_scale;
+            }
+        }
+        const float diffuse = std::max(0.0f, nx * lx + ny * ly + nz * lz);
+        red += light.red * attenuation * diffuse;
+        green += light.green * attenuation * diffuse;
+        blue += light.blue * attenuation * diffuse;
+    }
+    red = std::clamp(red, 0.0f, 1.0f);
+    green = std::clamp(green, 0.0f, 1.0f);
+    blue = std::clamp(blue, 0.0f, 1.0f);
+}
+
 void evaluate_source_lighting(float px, float py, float pz,
                               float nx, float ny, float nz,
                               bool actor, float& red, float& green,
@@ -3490,17 +3574,17 @@ void build_character_normals(const re4dc::character::Package& character,
 void build_character_lighting(const re4dc::character::Package& character,
                               const ProjectedVertex* projected,
                               const float* normals, float* lighting,
-                              std::uint32_t light_selection) {
+                              const SelectedSourceLights& light_selection) {
     const auto* normal_positions = character.normal_positions();
     for(std::uint32_t normal = 0; normal < character.header().normal_count;
         ++normal) {
         const ProjectedVertex& position = projected[normal_positions[normal]];
-        evaluate_source_lighting(
+        evaluate_selected_actor_lighting(
             position.world_x, position.world_y, position.world_z,
             normals[normal * 3U], normals[normal * 3U + 1U],
-            normals[normal * 3U + 2U], true, lighting[normal * 3U],
-            lighting[normal * 3U + 1U], lighting[normal * 3U + 2U],
-            light_selection);
+            normals[normal * 3U + 2U], light_selection,
+            lighting[normal * 3U],
+            lighting[normal * 3U + 1U], lighting[normal * 3U + 2U]);
     }
 }
 #endif
@@ -4167,10 +4251,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
     build_character_normals(ganado, ganado_projected, ganado_lighting);
     stats.actor_normals_us = timer_us_gettime64() - actor_normals_start;
     const std::uint64_t actor_lighting_start = timer_us_gettime64();
-    const std::uint32_t leon_light_selection =
-        source_actor_light_selection(player.x, player.y, player.z, 1U);
-    const std::uint32_t ganado_light_selection =
-        source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U);
+    const SelectedSourceLights leon_light_selection = selected_source_lights(
+        source_actor_light_selection(player.x, player.y, player.z, 1U));
+    const SelectedSourceLights ganado_light_selection = selected_source_lights(
+        source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U));
     build_character_lighting(
         leon, leon_projected, leon_lighting, leon_lighting,
         leon_light_selection);

@@ -39,6 +39,10 @@ The guarded room-normal invariant and rejected actor equivalent are recorded in
 The source cut's two camera-relative directional room lights are specialized,
 with an exact packed-color comparison and general fallback, in
 [R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md](R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md).
+The actor evaluator now consumes each model's source-ordered selected-light
+list rather than rescanning every room light per normal, with an exact packed
+color comparison and matched timing in
+[R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md](R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md).
 
 ## Objective and boundaries
 

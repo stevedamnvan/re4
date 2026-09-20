@@ -184,6 +184,10 @@ The two source-selected camera-relative room lights now bypass the general
 nine-light evaluator with an exact packed-color fallback gate; the 22.7 ms
 matched reduction is recorded in
 [the R3e compact room-light checkpoint](docs/R3E_COMPACT_DYNAMIC_ROOM_LIGHTS_CHECKPOINT.md).
+Actor light masks are now converted to the source-ordered, eight-entry model
+light list once per frame; the exact packed-color proof and 4.5 ms matched
+frame reduction are recorded in
+[the R3f compact actor-light checkpoint](docs/R3F_COMPACT_ACTOR_LIGHTS_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
