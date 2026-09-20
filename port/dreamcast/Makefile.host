@@ -94,6 +94,26 @@ character-ganado:
 		--attachment right-hand:em12.drs:447:441 \
 		--attachment left-hand:em12.drs:452:441 \
 		--rigid-attachment hatchet:em12.drs:616:617:10:-313.85:-21.2:102.21:-1.0402162 \
+		--rigid-marker em-hit0-bottom:4:0:0:0:0:0:0:0 \
+		--rigid-marker em-hit0-top:4:0:0:0:0:0:110:0 \
+		--rigid-marker em-hit1-bottom:1:0:0:0:0:0:-30:0 \
+		--rigid-marker em-hit1-top:1:0:0:0:0:0:260:0 \
+		--rigid-marker em-hit2-bottom:19:0:0:0:0:-20:-400:0 \
+		--rigid-marker em-hit2-top:19:0:0:0:0:-20:0:0 \
+		--rigid-marker em-hit3-bottom:23:0:0:0:0:20:-400:0 \
+		--rigid-marker em-hit3-top:23:0:0:0:0:20:0:0 \
+		--rigid-marker em-hit4-bottom:8:0:0:0:0:-350:0:0 \
+		--rigid-marker em-hit4-top:8:0:0:0:0:0:0:0 \
+		--rigid-marker em-hit5-bottom:14:0:0:0:0:0:0:0 \
+		--rigid-marker em-hit5-top:14:0:0:0:0:350:0:0 \
+		--rigid-marker em-hit6-bottom:18:0:0:0:0:-20:-300:0 \
+		--rigid-marker em-hit6-top:18:0:0:0:0:-20:0:0 \
+		--rigid-marker em-hit7-bottom:22:0:0:0:0:20:-300:0 \
+		--rigid-marker em-hit7-top:22:0:0:0:0:20:0:0 \
+		--rigid-marker em-hit8-bottom:7:0:0:0:0:-300:0:0 \
+		--rigid-marker em-hit8-top:7:0:0:0:0:0:0:0 \
+		--rigid-marker em-hit9-bottom:13:0:0:0:0:0:0:0 \
+		--rigid-marker em-hit9-top:13:0:0:0:0:300:0:0 \
 		--rigid-marker axe-base:10:-313.85:-21.2:102.21:-1.0402162:0:0:-1000 \
 		--rigid-marker axe-low:10:-313.85:-21.2:102.21:-1.0402162:0:0:-200 \
 		--rigid-marker axe-high:10:-313.85:-21.2:102.21:-1.0402162:0:0:50 \

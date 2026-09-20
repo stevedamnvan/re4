@@ -157,9 +157,11 @@ make -C port/dreamcast/room \
 2. Replace the remaining direct-pursuit behavior along that one playable
    route. The axe now uses the source weapon matrix endpoints and 250-unit
    attack radius against Leon's five exact animated source damage capsules.
-3. Add the remaining source impact effects and room ambience; review moving
-   output after each fidelity change. Leon and the Ganado now use their source
-   hit/death motions and voice cues on the bounded encounter path.
+3. Add vertical gun aiming, the remaining source impact effects, and room
+   ambience; review moving output after each fidelity change. The level handgun
+   ray now tests the Ganado's ten exact animated source damage capsules.
+   Leon and the Ganado use their source hit/death motions and voice cues on
+   the bounded encounter path.
 4. Test manual play and repeated resets, then package the private Flycast demo
    and short recording.
 5. Validate loading, memory, audio, controller, and output on physical

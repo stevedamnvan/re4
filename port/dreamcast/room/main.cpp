@@ -177,6 +177,13 @@ constexpr float kEnemyAttackCooldownSeconds = 15.0f / 30.0f;
 constexpr float kEnemyTurnSpeed = 0.15707964f * 30.0f;
 constexpr std::uint32_t kAxeSweepMarkerCount = 3;
 constexpr float kAxeSweepRadius = 0.250f;
+// The type-0 em10 initializer registers ten active YARARE_INFO capsules.
+// Bottom/top markers precede the three axe markers in the converted package.
+constexpr std::uint32_t kEnemyHitCapsuleCount = 10;
+constexpr std::uint32_t kEnemyHitMarkerCount = kEnemyHitCapsuleCount * 2U;
+constexpr float kEnemyHitCapsuleRadii[kEnemyHitCapsuleCount] = {
+    0.160f, 0.210f, 0.150f, 0.150f, 0.100f,
+    0.100f, 0.170f, 0.170f, 0.120f, 0.120f};
 // cPlayer::init1 registers five YARARE_INFO capsules on source parts
 // 2, 3, 5, 0x13, and 0x17. The converter appends bottom/top markers for
 // each capsule after Leon's indexed render vertices.
@@ -1252,26 +1259,127 @@ bool segment_blocked_by_wall(const re4dc::collision::Package& collision,
     return false;
 }
 
+bool segment_sphere_first_hit(
+    const re4dc::collision::Vec3& start,
+    const re4dc::collision::Vec3& direction,
+    const re4dc::collision::Vec3& center, float radius, float& hit_t) {
+    const auto offset = subtract(start, center);
+    const float a = dot(direction, direction);
+    const float c = dot(offset, offset) - radius * radius;
+    if(c <= 0.0f) {
+        hit_t = 0.0f;
+        return true;
+    }
+    if(a <= 0.000001f) {
+        return false;
+    }
+    const float b = dot(offset, direction);
+    const float discriminant = b * b - a * c;
+    if(discriminant < 0.0f) {
+        return false;
+    }
+    const float candidate = (-b - std::sqrt(discriminant)) / a;
+    if(candidate < 0.0f || candidate > 1.0f) {
+        return false;
+    }
+    hit_t = candidate;
+    return true;
+}
+
+bool segment_capsule_first_hit(
+    const re4dc::collision::Vec3& start,
+    const re4dc::collision::Vec3& end,
+    const re4dc::collision::Vec3& bottom,
+    const re4dc::collision::Vec3& top, float radius, float& hit_t) {
+    if(point_segment_distance_squared(start, bottom, top) <= radius * radius) {
+        hit_t = 0.0f;
+        return true;
+    }
+    const auto direction = subtract(end, start);
+    const auto axis = subtract(top, bottom);
+    const auto origin = subtract(start, bottom);
+    const float axis_squared = dot(axis, axis);
+    float best = 2.0f;
+    if(axis_squared > 0.000001f) {
+        const float ray_squared = dot(direction, direction);
+        const float axis_ray = dot(axis, direction);
+        const float axis_origin = dot(axis, origin);
+        const float ray_origin = dot(direction, origin);
+        const float origin_squared = dot(origin, origin);
+        const float a = axis_squared * ray_squared - axis_ray * axis_ray;
+        const float b = axis_squared * ray_origin - axis_origin * axis_ray;
+        const float c = axis_squared * origin_squared -
+                        axis_origin * axis_origin -
+                        radius * radius * axis_squared;
+        const float discriminant = b * b - a * c;
+        if(std::fabs(a) > 0.000001f && discriminant >= 0.0f) {
+            const float candidate = (-b - std::sqrt(discriminant)) / a;
+            const float height = axis_origin + candidate * axis_ray;
+            if(candidate >= 0.0f && candidate <= 1.0f &&
+               height > 0.0f && height < axis_squared) {
+                best = candidate;
+            }
+        }
+    }
+    float sphere_t = 0.0f;
+    if(segment_sphere_first_hit(start, direction, bottom, radius, sphere_t)) {
+        best = std::min(best, sphere_t);
+    }
+    if(segment_sphere_first_hit(start, direction, top, radius, sphere_t)) {
+        best = std::min(best, sphere_t);
+    }
+    if(best > 1.0f) {
+        return false;
+    }
+    hit_t = best;
+    return true;
+}
+
 bool shot_hits_enemy(const Player& player, const Enemy& enemy,
-                     const re4dc::collision::Package& collision) {
-    if(enemy.state == EnemyState::Dead) {
-        return false;
-    }
-    const float dx = enemy.x - player.x;
-    const float dz = enemy.z - player.z;
-    const float distance_squared = dx * dx + dz * dz;
-    if(distance_squared > 35.0f * 35.0f) {
-        return false;
-    }
-    const float target_yaw = std::atan2(dx, dz);
-    if(std::fabs(wrap_angle(target_yaw - player.yaw)) >= 0.12f) {
+                     const re4dc::collision::Package& collision,
+                     const re4dc::character::Package& character) {
+    if(enemy.state == EnemyState::Dead ||
+       character.header().vertex_count <
+           kEnemyHitMarkerCount + kAxeSweepMarkerCount) {
         return false;
     }
     const re4dc::collision::Vec3 muzzle = {
         player.x, player.y + 1.35f, player.z};
-    const re4dc::collision::Vec3 chest = {
-        enemy.x, enemy.y + 1.20f, enemy.z};
-    return !segment_blocked_by_wall(collision, muzzle, chest);
+    const re4dc::collision::Vec3 end = {
+        muzzle.x + std::sin(player.yaw) * 35.0f,
+        muzzle.y,
+        muzzle.z + std::cos(player.yaw) * 35.0f};
+    const auto direction = subtract(end, muzzle);
+    const std::uint32_t first_marker = character.header().vertex_count -
+        kAxeSweepMarkerCount - kEnemyHitMarkerCount;
+    float nearest = 2.0f;
+    for(std::uint32_t capsule = 0; capsule < kEnemyHitCapsuleCount;
+        ++capsule) {
+        const auto bottom = actor_point_to_world(
+            sample_character_point(
+                character, enemy.animation_clip, enemy.animation_frame,
+                first_marker + capsule * 2U),
+            enemy);
+        const auto top = actor_point_to_world(
+            sample_character_point(
+                character, enemy.animation_clip, enemy.animation_frame,
+                first_marker + capsule * 2U + 1U),
+            enemy);
+        float hit_t = 0.0f;
+        if(segment_capsule_first_hit(
+               muzzle, end, bottom, top,
+               kEnemyHitCapsuleRadii[capsule], hit_t)) {
+            nearest = std::min(nearest, hit_t);
+        }
+    }
+    if(nearest > 1.0f) {
+        return false;
+    }
+    const re4dc::collision::Vec3 hit = {
+        muzzle.x + direction.x * nearest,
+        muzzle.y + direction.y * nearest,
+        muzzle.z + direction.z * nearest};
+    return !segment_blocked_by_wall(collision, muzzle, hit);
 }
 
 void update_combat(Player& player, Enemy& enemy, const Input& input,
@@ -1279,6 +1387,7 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
                    float delta_seconds,
                    const re4dc::collision::Package& collision,
                    const re4dc::character::Package& character,
+                   const re4dc::character::Package& enemy_character,
                    const DemoAudio& audio) {
     if(player.dead || player.hit_reaction) {
         return;
@@ -1322,7 +1431,8 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
         snd_sfx_play(audio.fire_0, 255, 128);
         snd_sfx_play(audio.fire_2, 255, 128);
     }
-    const bool hit = shot_hits_enemy(player, enemy, collision);
+    const bool hit = shot_hits_enemy(
+        player, enemy, collision, enemy_character);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
         if(audio.enemy_body_hit_0c != SFXHND_INVALID) {
@@ -2195,9 +2305,9 @@ int main() {
             "re4dc-room: r100 Leon package needs ten source hit-capsule markers\n");
         return 1;
     }
-    if(ganado.header().vertex_count != 2315U) {
+    if(ganado.header().vertex_count != 2335U) {
         std::printf(
-            "re4dc-room: r100 Ganado package needs three source axe sweep markers\n");
+            "re4dc-room: r100 Ganado package needs source hit capsules and axe markers\n");
         return 1;
     }
 #endif
@@ -2473,7 +2583,8 @@ int main() {
                           kSimulationDeltaSeconds);
             update_animation(player, leon, input, kSimulationDeltaSeconds);
             update_combat(player, enemy, input, fire_pressed, reload_pressed,
-                          kSimulationDeltaSeconds, collision, leon, audio);
+                          kSimulationDeltaSeconds, collision, leon, ganado,
+                          audio);
             update_enemy(enemy, player, ganado, leon, collision, audio,
                          kSimulationDeltaSeconds);
             const float goal_dx = player.x - kGoalX;
