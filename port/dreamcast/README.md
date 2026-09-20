@@ -111,9 +111,10 @@ loop. The r100 path evaluates the non-empty cabin lights from
 view-relative parallel lights; animated actor normals are rebuilt from each
 sampled pose before lighting. The character converter also retains the FCV
 kind-1 root-motion rate used by the original `MotionMove`, so the selected Leon
-and Ganado walk clips drive world movement at their authored speeds. Controls are stick/D-pad
-move and turn, right trigger or Y aim, A fire, X reload, B restart, and START
-exit. Defeat the Ganado before the route marker unlocks.
+and Ganado walk clips drive world movement at their authored speeds. Controls are
+stick/D-pad move and turn, right trigger or Y aim, stick/D-pad vertical while
+aiming, A fire, X reload, B restart, and START exit. Defeat the Ganado before
+the route marker unlocks.
 
 For the r100 build, convert the private room route graph and pass it to the
 native build:
@@ -173,9 +174,11 @@ make -C port/dreamcast/room \
 2. Replace the remaining direct-pursuit behavior along that one playable
    route. The axe now uses the source weapon matrix endpoints and 250-unit
    attack radius against Leon's five exact animated source damage capsules.
-3. Add vertical gun aiming, the remaining source impact effects, and room
-   ambience; review moving output after each fidelity change. The level handgun
-   shot now starts at the source animated hand/muzzle transform, uses the source
+3. Add the remaining source impact effects and room ambience; review moving
+   output after each fidelity change. Vertical gun aiming now uses the source
+   `0x26`/`0x27`/`0x28` aim and `0x29`/`0x2A`/`0x2B` fire triplets, source
+   `PlWepLockCtrl` pitch rate, and matching three-entry `g_readyOfs` camera
+   blend. The handgun shot starts at the source animated hand/muzzle transform, uses the source
    50-metre direction and spread generator, and tests the Ganado's ten exact
    animated damage capsules. Held fire repeats at the source starting-handgun
    frame-12 ready point. Leon and the Ganado use their source hit/death motions

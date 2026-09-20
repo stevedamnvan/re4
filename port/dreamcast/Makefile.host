@@ -89,10 +89,14 @@ character-leon:
 		--rigid-marker pl-hit4-bottom:22:0:0:0:0:20:-300:0 \
 		--rigid-marker pl-hit4-top:22:0:0:0:0:20:0:0 \
 		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 \
-		--clip aim:wep02.drs:39 --clip fire:wep02.drs:42 \
+		--clip aim-positive:wep02.drs:38:16 --clip aim-level:wep02.drs:39 \
+		--clip aim-negative:wep02.drs:40:16 \
+		--clip fire-positive:wep02.drs:41:16 --clip fire-level:wep02.drs:42 \
+		--clip fire-negative:wep02.drs:43:16 \
 		--clip reload:wep02.drs:45 --clip hit-left:pl00.drs:70 \
 		--clip death:pl00.drs:72 \
 		--sample-step $(CHARACTER_SAMPLE_STEP) --cluster-mm $(CHARACTER_CLUSTER_MM) \
+		--quantum-mm 0.125 \
 		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(LEON_CHARACTER)
 

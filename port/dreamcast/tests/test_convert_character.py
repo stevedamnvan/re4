@@ -74,6 +74,16 @@ class CharacterConverterTests(unittest.TestCase):
 
     def test_attachment_spec_and_frame_sampling(self):
         self.assertEqual(
+            MODULE.parse_clip("aim:wep02.drs:0x27"),
+            ("aim", "wep02.drs", 0x27, None),
+        )
+        self.assertEqual(
+            MODULE.parse_clip("aim-up:wep02.drs:0x28:16"),
+            ("aim-up", "wep02.drs", 0x28, 16),
+        )
+        with self.assertRaises(MODULE.argparse.ArgumentTypeError):
+            MODULE.parse_clip("aim-up:wep02.drs:0x28:0")
+        self.assertEqual(
             MODULE.parse_attachment("hair:pl00.drs:2:3"),
             ("hair", "pl00.drs", 2, 3),
         )

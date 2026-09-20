@@ -379,12 +379,17 @@ def load_archive(source, name, cache_dir):
 
 def parse_clip(specification):
     fields = specification.split(":")
-    if len(fields) != 3:
-        raise argparse.ArgumentTypeError("clip must be NAME:ARCHIVE:ENTRY")
-    name, archive_name, entry = fields
+    if len(fields) not in (3, 4):
+        raise argparse.ArgumentTypeError(
+            "clip must be NAME:ARCHIVE:ENTRY[:SAMPLE_STEP]"
+        )
+    name, archive_name, entry = fields[:3]
     if not name or len(name.encode("ascii", "strict")) > 15:
         raise argparse.ArgumentTypeError("clip name must be 1-15 ASCII bytes")
-    return name, archive_name, int(entry, 0)
+    sample_step = int(fields[3], 0) if len(fields) == 4 else None
+    if sample_step is not None and sample_step <= 0:
+        raise argparse.ArgumentTypeError("clip sample step must be positive")
+    return name, archive_name, int(entry, 0), sample_step
 
 
 def parse_attachment(specification):
@@ -633,7 +638,7 @@ def convert(args):
     marker_frames = []
     clips = []
     source_manifest = []
-    for name, archive_name, entry_index in args.clip:
+    for name, archive_name, entry_index, clip_sample_step in args.clip:
         if archive_name not in archives:
             archives[archive_name] = load_archive(args.source, archive_name, cache_dir)
         entry = archives[archive_name].entry(entry_index)
@@ -646,7 +651,8 @@ def convert(args):
         # their starting pose and bake the wrong terminal silhouette.
         player = evalhost.Player(model, motion, loop=False)
         first_frame = len(frames)
-        frame_indices = sampled_frame_indices(motion.n_frames, args.sample_step)
+        sample_step = clip_sample_step or args.sample_step
+        frame_indices = sampled_frame_indices(motion.n_frames, sample_step)
         for frame in frame_indices:
             pose = player.frame(frame)
             combined_frame = []
@@ -694,6 +700,7 @@ def convert(args):
             "entry": entry_index,
             "source_frames": motion.n_frames,
             "frames": len(frame_indices),
+            "sample_step": sample_step,
             "root_forward_speed_mps": root_speed,
             "sha256": hashlib.sha256(entry.data).hexdigest(),
         })
@@ -840,7 +847,7 @@ def main():
         help="NAME:PARENT_BONE:TX:TY:TZ:YAW:PX:PY:PZ (repeatable)",
     )
     parser.add_argument("--clip", action="append", type=parse_clip, required=True,
-                        help="NAME:ARCHIVE:ENTRY (repeatable)")
+                        help="NAME:ARCHIVE:ENTRY[:SAMPLE_STEP] (repeatable)")
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--sample-step", type=int, default=1,
                         help="bake every Nth source frame; runtime interpolates")

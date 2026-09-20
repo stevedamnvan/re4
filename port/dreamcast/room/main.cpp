@@ -205,11 +205,17 @@ constexpr int kPlayerMaxHealth = 1200;
 constexpr int kEnemyAttackDamage = 380;
 constexpr std::uint32_t kPlayerIdleClip = 0;
 constexpr std::uint32_t kPlayerWalkClip = 1;
-constexpr std::uint32_t kPlayerAimClip = 2;
-constexpr std::uint32_t kPlayerFireClip = 3;
-constexpr std::uint32_t kPlayerReloadClip = 4;
-constexpr std::uint32_t kPlayerHitLeftClip = 5;
-constexpr std::uint32_t kPlayerDeathClip = 6;
+// pl_handgun's cMot3 triplets. Positive pitch blends the level pose toward
+// the first motion, while negative pitch blends it toward the third motion.
+constexpr std::uint32_t kPlayerAimPositiveClip = 2;
+constexpr std::uint32_t kPlayerAimLevelClip = 3;
+constexpr std::uint32_t kPlayerAimNegativeClip = 4;
+constexpr std::uint32_t kPlayerFirePositiveClip = 5;
+constexpr std::uint32_t kPlayerFireLevelClip = 6;
+constexpr std::uint32_t kPlayerFireNegativeClip = 7;
+constexpr std::uint32_t kPlayerReloadClip = 8;
+constexpr std::uint32_t kPlayerHitLeftClip = 9;
+constexpr std::uint32_t kPlayerDeathClip = 10;
 #if defined(RE4DC_SCENE_R100)
 // R100Init creates this exact id-0x12 Ganado with 500 HP. Weapon 1 uses the
 // em10 base value 150 at the starting 0.9 power multiplier: 135 body damage.
@@ -255,6 +261,8 @@ struct Player {
     float reload_seconds = 0.0f;
     bool reload_refilled = false;
     float fire_animation_seconds = 0.0f;
+    float aim_pitch = 0.0f;
+    float aim_repeat = 0.0f;
     bool aiming = false;
     bool hit_reaction = false;
     bool dead = false;
@@ -294,6 +302,8 @@ struct DemoAudio {
 struct Input {
     float move = 0.0f;
     float turn = 0.0f;
+    float aim_pitch_stick = 0.0f;
+    int aim_pitch_dpad = 0;
     bool aim = false;
     bool fire = false;
     bool reload = false;
@@ -373,6 +383,7 @@ Input read_input() {
     if(state == nullptr) {
         return input;
     }
+    input.aim = state->rtrig > 24 || (state->buttons & CONT_Y) != 0;
     input.turn = analog_axis(state->joyx);
     input.move = -analog_axis(state->joyy);
     if((state->buttons & CONT_DPAD_LEFT) != 0) {
@@ -380,12 +391,21 @@ Input read_input() {
     } else if((state->buttons & CONT_DPAD_RIGHT) != 0) {
         input.turn = 1.0f;
     }
-    if((state->buttons & CONT_DPAD_UP) != 0) {
+    if(input.aim) {
+        // Keep the signed raw source range for PlWepLockCtrl's acceleration
+        // formula. Dreamcast and GameCube both report roughly -128..127.
+        input.aim_pitch_stick = static_cast<float>(state->joyy);
+        input.move = 0.0f;
+        if((state->buttons & CONT_DPAD_UP) != 0) {
+            input.aim_pitch_dpad = 1;
+        } else if((state->buttons & CONT_DPAD_DOWN) != 0) {
+            input.aim_pitch_dpad = -1;
+        }
+    } else if((state->buttons & CONT_DPAD_UP) != 0) {
         input.move = 1.0f;
     } else if((state->buttons & CONT_DPAD_DOWN) != 0) {
         input.move = -1.0f;
     }
-    input.aim = state->rtrig > 24 || (state->buttons & CONT_Y) != 0;
     input.fire = (state->buttons & CONT_A) != 0;
     input.reload = (state->buttons & CONT_X) != 0;
     input.restart = (state->buttons & CONT_B) != 0;
@@ -691,6 +711,28 @@ void update_player(Player& player, const re4dc::collision::Package& collision,
     if(player.dead || player.hit_reaction) {
         return;
     }
+    if(player.aiming) {
+        // PlWepLockCtrl ramps repCtr from 1 through 7 while either main-stick
+        // axis is held. KOS reports Y with the opposite sign to the source
+        // GameCube pad, so negate it before applying the source equation.
+        if(std::fabs(input.aim_pitch_stick) > 0.0f ||
+           std::fabs(input.turn) > 0.0f) {
+            player.aim_repeat = std::min(7.0f, player.aim_repeat + 1.0f);
+        } else {
+            player.aim_repeat = 0.0f;
+        }
+        float pitch_delta =
+            static_cast<float>(input.aim_pitch_dpad) * 0.035f;
+        pitch_delta -= input.aim_pitch_stick * player.aim_repeat *
+                       0.15f / 200.0f / 10.0f;
+        if(player.aim_pitch > 0.0f) {
+            pitch_delta *= 0.8f;
+        }
+        player.aim_pitch = std::clamp(
+            player.aim_pitch + pitch_delta, -1.0f, 1.0f);
+    } else {
+        player.aim_repeat = 0.0f;
+    }
     player.yaw += input.turn * kTurnSpeed * delta_seconds;
     const float movement = player.aiming ? 0.0f : input.move;
     const float old_x = player.x;
@@ -723,12 +765,12 @@ void update_animation(Player& player, const re4dc::character::Package& character
         desired_clip = kPlayerReloadClip;
         loop = false;
     } else if(player.fire_animation_seconds > 0.0f) {
-        desired_clip = kPlayerFireClip;
+        desired_clip = kPlayerFireLevelClip;
         loop = false;
         player.fire_animation_seconds = std::max(
             0.0f, player.fire_animation_seconds - delta_seconds);
     } else if(player.aiming) {
-        desired_clip = kPlayerAimClip;
+        desired_clip = kPlayerAimLevelClip;
     } else if(std::fabs(input.move) > 0.05f) {
         desired_clip = kPlayerWalkClip;
     }
@@ -792,10 +834,22 @@ Input autoplay_input(Autoplay& autoplay, const Player& player,
                                             enemy.z - player.z);
         input.turn = std::clamp(wrap_angle(target_yaw - player.yaw) * 2.0f,
                                 -1.0f, 1.0f);
-        input.fire = tick == 6U || tick == 16U || tick == 26U || tick == 36U;
+        input.fire = tick == 6U || tick == 16U || tick == 26U ||
+                     tick == 36U || tick == 52U;
+        if(tick >= 7U && tick < 14U) {
+            input.aim_pitch_dpad = 1;
+        } else if(tick >= 18U && tick < 25U) {
+            input.aim_pitch_dpad = -1;
+        }
     } else if(tick >= 150U && tick < 360U) {
-        // Hold the source handgun-ready camera for a readable result shot.
+        // Hold the source handgun-ready camera for a readable result shot,
+        // briefly exercising both authored camera/motion blend directions.
         input.aim = true;
+        if(tick < 168U) {
+            input.aim_pitch_dpad = 1;
+        } else if(tick >= 225U && tick < 243U) {
+            input.aim_pitch_dpad = -1;
+        }
     }
     if(tick == 60U) {
         input.reload = true;
@@ -1081,6 +1135,55 @@ re4dc::collision::Vec3 sample_character_point(
     };
 }
 
+struct PlayerPitchBlend {
+    std::uint32_t base_clip;
+    std::uint32_t secondary_clip;
+    float amount;
+};
+
+PlayerPitchBlend player_pitch_blend(std::uint32_t animation_clip,
+                                    float aim_pitch) {
+    if(animation_clip == kPlayerAimLevelClip) {
+        return {
+            kPlayerAimLevelClip,
+            aim_pitch >= 0.0f ? kPlayerAimPositiveClip
+                              : kPlayerAimNegativeClip,
+            std::fabs(aim_pitch)};
+    }
+    if(animation_clip == kPlayerFireLevelClip) {
+        return {
+            kPlayerFireLevelClip,
+            aim_pitch >= 0.0f ? kPlayerFirePositiveClip
+                              : kPlayerFireNegativeClip,
+            std::fabs(aim_pitch)};
+    }
+    return {animation_clip, animation_clip, 0.0f};
+}
+
+re4dc::collision::Vec3 sample_player_point(
+    const re4dc::character::Package& character, const Player& player,
+    std::uint32_t vertex_index) {
+    const auto blend = player_pitch_blend(
+        player.animation_clip, player.aim_pitch);
+    const auto base = sample_character_point(
+        character, blend.base_clip, player.animation_frame, vertex_index);
+    if(blend.amount <= 0.0f) {
+        return base;
+    }
+    const auto& base_clip = character.clips()[blend.base_clip];
+    const auto& secondary_clip = character.clips()[blend.secondary_clip];
+    const float secondary_frame = player.animation_frame *
+        secondary_clip.frames_per_second / base_clip.frames_per_second;
+    const auto secondary = sample_character_point(
+        character, blend.secondary_clip, secondary_frame,
+        vertex_index);
+    return {
+        base.x + (secondary.x - base.x) * blend.amount,
+        base.y + (secondary.y - base.y) * blend.amount,
+        base.z + (secondary.z - base.z) * blend.amount,
+    };
+}
+
 template <typename Actor>
 re4dc::collision::Vec3 actor_point_to_world(
     const re4dc::collision::Vec3& point, const Actor& actor) {
@@ -1138,13 +1241,13 @@ bool source_axe_sweep_hits_player(
     for(std::uint32_t capsule = 0; capsule < kPlayerHitCapsuleCount;
         ++capsule) {
         const auto bottom = actor_point_to_world(
-            sample_character_point(
-                player_character, player.animation_clip,
-                player.animation_frame, first_player_marker + capsule * 2U),
+            sample_player_point(
+                player_character, player,
+                first_player_marker + capsule * 2U),
             player);
         const auto top = actor_point_to_world(
-            sample_character_point(
-                player_character, player.animation_clip, player.animation_frame,
+            sample_player_point(
+                player_character, player,
                 first_player_marker + capsule * 2U + 1U),
             player);
         const float radius =
@@ -1531,11 +1634,25 @@ bool shot_hits_enemy(const Player& player, const Enemy& enemy,
     const std::uint32_t first_player_fire_marker =
         player_character.header().vertex_count - kPlayerHitMarkerCount -
         kPlayerFireMarkerCount;
+    const auto fire_blend = player_pitch_blend(
+        kPlayerFireLevelClip, player.aim_pitch);
     const auto player_fire_point = [&](std::uint32_t marker) {
+        const auto base = sample_character_point(
+            player_character, fire_blend.base_clip, 0.0f,
+            first_player_fire_marker + marker);
+        re4dc::collision::Vec3 point = base;
+        if(fire_blend.amount > 0.0f) {
+            const auto secondary = sample_character_point(
+                player_character, fire_blend.secondary_clip, 0.0f,
+                first_player_fire_marker + marker);
+            point = {
+                base.x + (secondary.x - base.x) * fire_blend.amount,
+                base.y + (secondary.y - base.y) * fire_blend.amount,
+                base.z + (secondary.z - base.z) * fire_blend.amount,
+            };
+        }
         return actor_point_to_world(
-            sample_character_point(player_character, kPlayerFireClip, 0.0f,
-                                   first_player_fire_marker + marker),
-            player);
+            point, player);
     };
     const auto muzzle = player_fire_point(0U);
     const auto minus_x = normalized_difference(player_fire_point(1U), muzzle);
@@ -2034,6 +2151,7 @@ void project_character(const re4dc::character::Package& character,
                        float actor_x, float actor_y, float actor_z,
                        float actor_yaw, std::uint32_t animation_clip,
                        float animation_frame, bool loop,
+                       std::uint32_t secondary_clip, float pose_blend,
                        ProjectedVertex* projected) {
     const auto& clip = character.clips()[animation_clip];
     const float wrapped_frame = std::fmod(
@@ -2046,22 +2164,68 @@ void project_character(const re4dc::character::Package& character,
     const auto* source = character.frame_positions(clip.first_frame + local_frame);
     const auto* next_source = character.frame_positions(
         clip.first_frame + next_frame);
+    const std::int16_t* secondary_source = nullptr;
+    const std::int16_t* secondary_next_source = nullptr;
+    float secondary_frame_blend = 0.0f;
+    if(pose_blend > 0.0f && secondary_clip != animation_clip) {
+        const auto& secondary = character.clips()[secondary_clip];
+        const float secondary_time_frame = std::max(
+            animation_frame * secondary.frames_per_second /
+                clip.frames_per_second,
+            0.0f);
+        const float secondary_frame = loop
+            ? std::fmod(secondary_time_frame,
+                        static_cast<float>(secondary.frame_count))
+            : std::min(secondary_time_frame,
+                       static_cast<float>(secondary.frame_count - 1U));
+        const std::uint32_t secondary_local =
+            static_cast<std::uint32_t>(secondary_frame);
+        const std::uint32_t secondary_next = loop
+            ? (secondary_local + 1U) % secondary.frame_count
+            : std::min(secondary_local + 1U, secondary.frame_count - 1U);
+        secondary_frame_blend =
+            secondary_frame - static_cast<float>(secondary_local);
+        secondary_source = character.frame_positions(
+            secondary.first_frame + secondary_local);
+        secondary_next_source = character.frame_positions(
+            secondary.first_frame + secondary_next);
+    }
     const float scale = character.header().position_quantum_m;
     const float sine = std::sin(actor_yaw);
     const float cosine = std::cos(actor_yaw);
     for(std::uint32_t index = 0; index < character.header().vertex_count; ++index) {
-        const float local_x =
+        float local_x =
             (static_cast<float>(source[index * 3U]) +
              (static_cast<float>(next_source[index * 3U]) -
               static_cast<float>(source[index * 3U])) * frame_blend) * scale;
-        const float local_y =
+        float local_y =
             (static_cast<float>(source[index * 3U + 1U]) +
              (static_cast<float>(next_source[index * 3U + 1U]) -
               static_cast<float>(source[index * 3U + 1U])) * frame_blend) * scale;
-        const float local_z =
+        float local_z =
             (static_cast<float>(source[index * 3U + 2U]) +
              (static_cast<float>(next_source[index * 3U + 2U]) -
               static_cast<float>(source[index * 3U + 2U])) * frame_blend) * scale;
+        if(secondary_source != nullptr) {
+            const float secondary_x =
+                (static_cast<float>(secondary_source[index * 3U]) +
+                 (static_cast<float>(secondary_next_source[index * 3U]) -
+                  static_cast<float>(secondary_source[index * 3U])) *
+                     secondary_frame_blend) * scale;
+            const float secondary_y =
+                (static_cast<float>(secondary_source[index * 3U + 1U]) +
+                 (static_cast<float>(secondary_next_source[index * 3U + 1U]) -
+                  static_cast<float>(secondary_source[index * 3U + 1U])) *
+                     secondary_frame_blend) * scale;
+            const float secondary_z =
+                (static_cast<float>(secondary_source[index * 3U + 2U]) +
+                 (static_cast<float>(secondary_next_source[index * 3U + 2U]) -
+                  static_cast<float>(secondary_source[index * 3U + 2U])) *
+                     secondary_frame_blend) * scale;
+            local_x += (secondary_x - local_x) * pose_blend;
+            local_y += (secondary_y - local_y) * pose_blend;
+            local_z += (secondary_z - local_z) * pose_blend;
+        }
         float x = actor_x + local_x * cosine + local_z * sine;
         float y = actor_y + local_y;
         float z = actor_z - local_x * sine + local_z * cosine;
@@ -2328,14 +2492,19 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const auto* batches = room.batches();
     const auto* vertices = room.vertices();
     const auto* indices = room.indices();
+    const auto player_blend = player_pitch_blend(
+        player.animation_clip, player.aim_pitch);
     project_character(
-        leon, player.x, player.y, player.z, player.yaw, player.animation_clip,
-        player.animation_frame, player.animation_clip <= kPlayerAimClip,
-        leon_projected);
+        leon, player.x, player.y, player.z, player.yaw, player_blend.base_clip,
+        player.animation_frame,
+        player.animation_clip == kPlayerIdleClip ||
+            player.animation_clip == kPlayerWalkClip ||
+            player.animation_clip == kPlayerAimLevelClip,
+        player_blend.secondary_clip, player_blend.amount, leon_projected);
     project_character(
         ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
         enemy.animation_frame, enemy.state == EnemyState::Chase,
-        ganado_projected);
+        enemy.animation_clip, 0.0f, ganado_projected);
 #if defined(RE4DC_SCENE_R100)
     build_character_normals(leon, leon_projected, leon_normals);
     build_character_normals(ganado, ganado_projected, ganado_normals);
@@ -2512,9 +2681,9 @@ int main() {
         static_cast<unsigned long>(ganado.header().vertex_count),
         static_cast<unsigned long>(ganado.header().index_count / 3U),
         static_cast<unsigned long>(ganado.header().frame_count));
-    if(leon.header().clip_count < 7U) {
+    if(leon.header().clip_count < 11U) {
         std::printf(
-            "re4dc-room: Leon package needs idle/walk/aim/fire/reload/hit/death\n");
+            "re4dc-room: Leon package needs source aim/fire triplets and actions\n");
         return 1;
     }
     if(ganado.header().clip_count < 5U) {
@@ -2762,7 +2931,8 @@ int main() {
         return 1;
     }
     std::printf(
-        "re4dc-room: stick=turn/move RT/Y=aim A=fire X=reload B=restart "
+        "re4dc-room: stick=turn/move RT/Y=aim; stick/dpad Y=pitch; "
+        "A=fire X=reload B=restart "
 #if defined(RE4DC_SCENE_R100)
         "START=exit; defeat Ganado or retry the source encounter\n");
 #else
@@ -2873,15 +3043,34 @@ int main() {
         point_t target{};
         float half_fov = kPi / 6.0f;
         if(shoulder_view) {
-            // g_readyOfs[0][0][1] in src/game/cam_qfps.cpp: Leon's
-            // default mid-site handgun camera. The player matrix applies the
-            // model-to-world 0.001 scale to these source offsets.
-            constexpr float camera_x = -0.530f;
-            constexpr float camera_y = 1.765f;
-            constexpr float camera_z = -0.590f;
-            constexpr float target_x = -0.065f;
-            constexpr float target_y = 1.340f;
-            constexpr float target_z = 1.480f;
+            // CameraQuasiFPS::calcOffset blends the authored up/mid/down
+            // g_readyOfs[0][0] entries using exactly the weapon pitch that
+            // drives pl_handgun's cMot3 motion blend.
+            constexpr float camera_mid[3] = {-0.530f, 1.765f, -0.590f};
+            constexpr float target_mid[3] = {-0.065f, 1.340f, 1.480f};
+            constexpr float camera_positive[3] = {-0.527f, 0.600f, -0.680f};
+            constexpr float target_positive[3] = {-0.220f, 4.080f, 1.100f};
+            constexpr float camera_negative[3] = {-0.393f, 2.058f, -0.005f};
+            constexpr float target_negative[3] = {-0.179f, 0.365f, 0.943f};
+            const float pitch_amount = std::fabs(player.aim_pitch);
+            const float* camera_extreme = player.aim_pitch >= 0.0f
+                ? camera_positive
+                : camera_negative;
+            const float* target_extreme = player.aim_pitch >= 0.0f
+                ? target_positive
+                : target_negative;
+            const float camera_x = camera_mid[0] +
+                (camera_extreme[0] - camera_mid[0]) * pitch_amount;
+            const float camera_y = camera_mid[1] +
+                (camera_extreme[1] - camera_mid[1]) * pitch_amount;
+            const float camera_z = camera_mid[2] +
+                (camera_extreme[2] - camera_mid[2]) * pitch_amount;
+            const float target_x = target_mid[0] +
+                (target_extreme[0] - target_mid[0]) * pitch_amount;
+            const float target_y = target_mid[1] +
+                (target_extreme[1] - target_mid[1]) * pitch_amount;
+            const float target_z = target_mid[2] +
+                (target_extreme[2] - target_mid[2]) * pitch_amount;
             eye = {
                 player.x + camera_x * rx + camera_z * fx,
                 player.y + camera_y,
