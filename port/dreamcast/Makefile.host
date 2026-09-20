@@ -18,6 +18,13 @@ R100_EXPORT_DIR ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/stream/r100_full_export
 R100_OBJ ?= $(R100_EXPORT_DIR)/R100.encounter-radius180.obj
 R100_SMX ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_006.SMX
 R100_ROOM ?= build/private/r100-encounter-source-meters-smx.re4room
+R100_PRODUCTION_ROOM ?= build/private/r100-source-cell-1.re4room
+R100_PRODUCTION_CELL_SIZE ?= 1
+R100_UNPARTITIONED_MATERIALS := ROOM_MATERIAL_002 ROOM_MATERIAL_003 \
+	ROOM_MATERIAL_004 ROOM_MATERIAL_005 ROOM_MATERIAL_008 ROOM_MATERIAL_009 \
+	ROOM_MATERIAL_014 ROOM_MATERIAL_015 ROOM_MATERIAL_016 ROOM_MATERIAL_027 \
+	ROOM_MATERIAL_028 ROOM_MATERIAL_029 ROOM_MATERIAL_035 ROOM_MATERIAL_043
+R100_UNPARTITIONED_ARGS := $(foreach material,$(R100_UNPARTITIONED_MATERIALS),--unpartitioned-material $(material))
 R10D_CELL_SIZE ?= 20
 R10D_CLUSTER_SIZE ?= 0
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
@@ -32,7 +39,7 @@ CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_SAMPLE_STEP ?= 4
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source collision-r100-source route-r100 texture-r10d character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production collision-r100-source route-r100 texture-r10d character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -70,6 +77,18 @@ room-r100-source:
 		--smd FILE_02=$(R100_EXPORT_DIR)/r100_02_000.SMD \
 		--common-smd $(R100_EXPORT_DIR)/r100_005.SMD \
 		--source-unit-scale 0.001 $(R100_OBJ) $(R100_ROOM)
+
+room-r100-production:
+	$(PYTHON) tools/convert_room_obj.py --source-scale 0.1 \
+		--cell-size $(R100_PRODUCTION_CELL_SIZE) \
+		$(R100_UNPARTITIONED_ARGS) \
+		--smx $(R100_SMX) \
+		--smd MAINSCENARIO=$(R100_EXPORT_DIR)/r100_004.SMD \
+		--smd FILE_00=$(R100_EXPORT_DIR)/r100_00_000.SMD \
+		--smd FILE_01=$(R100_EXPORT_DIR)/r100_01_000.SMD \
+		--smd FILE_02=$(R100_EXPORT_DIR)/r100_02_000.SMD \
+		--common-smd $(R100_EXPORT_DIR)/r100_005.SMD \
+		--source-unit-scale 0.001 $(R100_OBJ) $(R100_PRODUCTION_ROOM)
 
 collision-r100-source:
 	$(PYTHON) tools/convert_sat.py --source-scale 0.001 \

@@ -2558,7 +2558,9 @@ std::uint32_t g_source_dynamic_light_mask = 0U;
 bool g_room_dynamic_light_fast_path = false;
 constexpr std::uint32_t kRoomStaticLightingVertexCapacity = 45000U;
 float g_room_static_lighting[kRoomStaticLightingVertexCapacity * 3U]{};
-std::uint8_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
+std::uint16_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
+constexpr std::uint16_t kRoomLightingConflicted = 0xfffeU;
+constexpr std::uint16_t kRoomLightingUnowned = 0xffffU;
 bool g_room_normals_are_unit = false;
 
 void normalize_vector(float& x, float& y, float& z) {
@@ -3046,11 +3048,12 @@ std::uint32_t source_actor_light_selection(float x, float y, float z,
 
 bool prepare_room_static_lighting(const re4dc::room::Package& room) {
     if(room.header().vertex_count > kRoomStaticLightingVertexCapacity ||
-       room.header().group_count > 255U) {
+       room.header().group_count > kRoomLightingConflicted) {
         return false;
     }
     std::memset(g_room_static_lighting_owner, 0xff,
-                room.header().vertex_count);
+                static_cast<std::size_t>(room.header().vertex_count) *
+                    sizeof(g_room_static_lighting_owner[0]));
     const auto* groups = room.groups();
     const auto* batches = room.batches();
     const auto* indices = room.indices();
@@ -3093,20 +3096,26 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
                 if(vertex_index >= room.header().vertex_count) {
                     return false;
                 }
-                std::uint8_t& owner =
+                std::uint16_t& owner =
                     g_room_static_lighting_owner[vertex_index];
-                if(owner != 0xffU) {
+                if(owner == kRoomLightingConflicted) {
+                    continue;
+                }
+                if(owner != kRoomLightingUnowned) {
                     const std::uint32_t owner_selection =
                         source_group_light_selection(
                             source_groups != nullptr
                                 ? source_groups + owner
                                 : nullptr);
                     if(owner_selection != selection) {
-                        return false;
+                        // A source vertex shared by objects with different
+                        // selected-light lists cannot share one baked static
+                        // contribution. Leave it on the exact per-use path.
+                        owner = kRoomLightingConflicted;
                     }
                     continue;
                 }
-                owner = static_cast<std::uint8_t>(group_index);
+                owner = static_cast<std::uint16_t>(group_index);
                 const auto& vertex = vertices[vertex_index];
                 float red = kSourceRoomAmbientRed;
                 float green = kSourceRoomAmbientGreen;
@@ -3311,7 +3320,8 @@ const RenderVertex& cached_room_vertex(
     float light_blue = 0.0f;
 #if defined(RE4DC_SCENE_R100)
     if(vertex_index < kRoomStaticLightingVertexCapacity &&
-       g_room_static_lighting_owner[vertex_index] != 0xffU) {
+       g_room_static_lighting_owner[vertex_index] <
+           kRoomLightingConflicted) {
         const float* source = g_room_static_lighting + vertex_index * 3U;
         light_red = source[0];
         light_green = source[1];

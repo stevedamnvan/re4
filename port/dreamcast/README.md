@@ -205,6 +205,10 @@ gain and matched performance result are in
 The recovered memory also permits a measured 2,048-entry room vertex cache;
 larger candidates were rejected after reaching the same reuse ceiling in
 [the R3j cache-bound checkpoint](docs/R3J_ROOM_VERTEX_CACHE_BOUND_CHECKPOINT.md).
+The r100 production room now uses conservative one-metre opaque child cells
+while retaining source-order alpha batches and every source triangle. The
+20.6% matched frame reduction and the rejected finer split are recorded in
+[the R3k source-child cell checkpoint](docs/R3K_SOURCE_CHILD_CELL_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
