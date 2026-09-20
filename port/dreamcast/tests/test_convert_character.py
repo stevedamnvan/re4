@@ -162,6 +162,41 @@ class CharacterConverterTests(unittest.TestCase):
             MODULE.root_forward_speed_mps(motion, 30.0), 1.5
         )
 
+    def test_weight_palette_reuses_source_remainder_and_quantises_pose(self):
+        def translated(x, y, z):
+            return [
+                1.0, 0.0, 0.0, x,
+                0.0, 1.0, 0.0, y,
+                0.0, 0.0, 1.0, z,
+            ]
+
+        pose = SimpleNamespace(mat=[
+            translated(10.0, 0.0, 0.0),
+            translated(0.0, 20.0, 0.0),
+            translated(0.0, 0.0, 30.0),
+        ])
+        palette = MODULE.make_weight_palette(
+            pose,
+            [(0.0, 0.0, 0.0)] * 3,
+            [((0, 1, 2), (20, 30, 0))],
+        )
+        # The source assigns the remainder to the final influence: 20/30/50.
+        self.assertEqual(
+            MODULE.skin_frame([(1.0, 2.0, 3.0)], [0], palette)[0],
+            (3.0, 8.0, 18.0),
+        )
+        packed, maximum_linear_error = MODULE.quantise_pose_matrices([palette])
+        self.assertEqual(len(packed), MODULE.POSE_MATRIX.size)
+        self.assertEqual(maximum_linear_error, 0.0)
+        maximum_position_error, exact, compared = (
+            MODULE.pose_matrix_position_error(
+                [palette], [(1.0, 2.0, 3.0, 0)],
+                [[(3.0, 8.0, 18.0)]], 0.25
+            )
+        )
+        self.assertEqual(maximum_position_error, 0.0)
+        self.assertEqual((exact, compared), (1, 1))
+
     def test_clusters_every_animation_frame_and_removes_degenerate_faces(self):
         positions = [
             (0.0, 0.0, 0.0),

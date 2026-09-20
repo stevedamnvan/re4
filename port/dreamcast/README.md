@@ -115,8 +115,10 @@ tank movement, SAT floor/wall collision, a shoulder follow camera,
 source-derived actor animation, source-cut RGB lighting for r100, and the combat
 loop. The r100 path evaluates the non-empty cabin lights from
 `r100_002.LIT` cut 0, including its separate scenery/enemy ambient colours and
-view-relative parallel lights; animated actor normals are rebuilt from each
-sampled pose before lighting. Source textures with alpha are preserved as
+view-relative parallel lights. Character package v6 retains source positions,
+authored normals, UV draw corners, and weight-palette identities; the runtime
+interpolates each pose palette once and reuses it for position and normal work.
+Source textures with alpha are preserved as
 ARGB4444 and drawn through the PVR translucent list using the source default
 alpha blend, so the cabin's soft shadow and cutout masks do not become opaque
 black geometry. The r100 camera uses the room CAM file's area-2 camera, target,
@@ -196,6 +198,10 @@ Character package v5 now preserves source BIN normals and their reusable weight
 palettes instead of rebuilding normals from deformed triangles. Its bounded
 direction error, 2.7 ms normal-stage reduction, and temporary RAM cost are in
 [the R3h source normal-palette checkpoint](docs/R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md).
+Character package v6 now removes the redundant baked mesh poses and reuses one
+prepared source palette for both positions and normals. Its 5.34 MiB live-RAM
+gain and matched performance result are in
+[the R3i source position-palette checkpoint](docs/R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md).
 The manual controller is now sampled independently of long render frames in
 [the R0 input-service checkpoint](docs/R0_INPUT_SERVICE_CHECKPOINT.md).
 
@@ -232,9 +238,10 @@ make -C port/dreamcast/room \
    assets; R0, R1a, and the target-side R1b/R1c implementations are complete,
    while source-trace acceptance remains open.
 3. Complete source SAT primitive/query parity on top of the recovered hierarchy.
-   Character package version 4 now preserves separate position, normal, and
-   draw-corner identities; next retain the source normal values and weight
-   palettes instead of designing a replacement animation system.
+   Character package version 6 now preserves source positions, normals,
+   draw-corner identities, and reusable weight palettes. Next integrate or
+   behaviorally trace the source motion/state path rather than adding another
+   animation representation.
 4. Complete human-controller combat, reload, death, disconnect, and repeated
    reset acceptance on the independent input service; its short-edge and
    autoplay tests are complete in Flycast.

@@ -25,8 +25,8 @@ import convert_tpl  # noqa: E402
 
 
 MAGIC = b"R4CH"
-VERSION = 5
-HEADER = struct.Struct("<4s24If")
+VERSION = 6
+HEADER = struct.Struct("<4s26If")
 BATCH = struct.Struct("<6I")
 PRIMITIVE = struct.Struct("<IIHHB3x")
 CLIP = struct.Struct("<16sIIff")
@@ -34,6 +34,8 @@ DRAW_VERTEX = struct.Struct("<HH2f")
 NORMAL_POSITION = struct.Struct("<H")
 NORMAL_SOURCE = struct.Struct("<H")
 SOURCE_NORMAL = struct.Struct("<3hH")
+POSITION_RECORD = struct.Struct("<3fHH")
+POSE_MATRIX = struct.Struct("<9h2x3f")
 
 
 def align(value, alignment=4):
@@ -344,20 +346,22 @@ def linear_matrix(matrix):
     return tuple(matrix[index] for index in (0, 1, 2, 4, 5, 6, 8, 9, 10))
 
 
-def quantise_normal_matrices(frames):
+def quantise_pose_matrices(frames):
     output = bytearray()
     maximum_error = 0.0
     for frame in frames:
         for matrix in frame:
             quantised = []
-            for value in matrix:
+            for value in linear_matrix(matrix):
                 bounded = max(-1.0, min(1.0, value))
                 integer = int(round(bounded * 32767.0))
                 quantised.append(integer)
                 maximum_error = max(
                     maximum_error, abs(value - integer / 32767.0)
                 )
-            output += struct.pack("<9h", *quantised)
+            output += POSE_MATRIX.pack(
+                *quantised, matrix[3], matrix[7], matrix[11]
+            )
     return output, maximum_error
 
 
@@ -366,7 +370,7 @@ def normal_matrix_direction_error(frames, source_normals):
     compared = 0
     for frame in frames:
         for nx, ny, nz, matrix_index in source_normals:
-            matrix = frame[matrix_index]
+            matrix = linear_matrix(frame[matrix_index])
             quantised = [
                 int(round(max(-1.0, min(1.0, value)) * 32767.0)) /
                 32767.0
@@ -396,6 +400,40 @@ def normal_matrix_direction_error(frames, source_normals):
     if compared == 0:
         return 0.0
     return math.degrees(math.acos(minimum_dot))
+
+
+def pose_matrix_position_error(frames, position_records, reference_frames,
+                               quantum_mm):
+    maximum_error = 0.0
+    exact_quantised = 0
+    compared = 0
+    for matrices, reference_frame in zip(frames, reference_frames):
+        for index, (x, y, z, matrix_index) in enumerate(position_records):
+            matrix = matrices[matrix_index]
+            linear = [
+                int(round(max(-1.0, min(1.0, value)) * 32767.0)) /
+                32767.0
+                for value in linear_matrix(matrix)
+            ]
+            candidate = (
+                linear[0] * x + linear[1] * y + linear[2] * z + matrix[3],
+                linear[3] * x + linear[4] * y + linear[5] * z + matrix[7],
+                linear[6] * x + linear[7] * y + linear[8] * z + matrix[11],
+            )
+            reference = reference_frame[index]
+            maximum_error = max(
+                maximum_error,
+                math.sqrt(sum((a - b) ** 2 for a, b in zip(candidate, reference)))
+            )
+            candidate_quantised = tuple(
+                int(round(value / quantum_mm)) for value in candidate
+            )
+            reference_quantised = tuple(
+                int(round(value / quantum_mm)) for value in reference
+            )
+            exact_quantised += candidate_quantised == reference_quantised
+            compared += 1
+    return maximum_error, exact_quantised, compared
 
 
 def cluster_animated_geometry(positions, texcoords, indices, batches, frames,
@@ -663,6 +701,7 @@ def convert(args):
     components = []
     component_manifest = []
     positions = []
+    position_records = []
     draw_position_indices = []
     draw_normal_indices = []
     normal_positions = []
@@ -738,6 +777,10 @@ def convert(args):
         primitive_index_base = len(primitive_indices)
         primitive_base = len(primitives)
         positions.extend(component_positions)
+        position_records.extend(
+            (*position, normal_matrix_base + palette)
+            for position, palette in zip(component_positions, palette_indices)
+        )
         source_normals.extend(
             (*normal, normal_matrix_base + palette)
             for normal, palette in zip(component_normals, normal_palettes)
@@ -808,7 +851,7 @@ def convert(args):
         })
 
     frames = []
-    normal_matrix_frames = []
+    pose_matrix_frames = []
     marker_frames = []
     clips = []
     source_manifest = []
@@ -830,7 +873,7 @@ def convert(args):
         for frame in frame_indices:
             pose = player.frame(frame)
             combined_frame = []
-            combined_normal_matrices = []
+            combined_pose_matrices = []
             for (_, source_positions, palette_indices, weights,
                  parent_bone, rigid_translation,
                  rigid_yaw) in components:
@@ -839,9 +882,7 @@ def convert(args):
                     source_frame = skin_frame(
                         source_positions, palette_indices, palette
                     )
-                    combined_normal_matrices.extend(
-                        linear_matrix(matrix) for matrix in palette
-                    )
+                    combined_pose_matrices.extend(palette)
                 else:
                     rigid_matrix = rigid_component_matrix(
                         pose, parent_bone, rigid_translation, rigid_yaw
@@ -850,14 +891,14 @@ def convert(args):
                         transform_point(rigid_matrix, position)
                         for position in source_positions
                     ]
-                    combined_normal_matrices.extend(
-                        linear_matrix(rigid_matrix) for _ in weights
+                    combined_pose_matrices.extend(
+                        rigid_matrix for _ in weights
                     )
                 combined_frame.extend(source_frame)
             frames.append(combined_frame)
-            if len(combined_normal_matrices) != normal_matrix_count:
-                raise ValueError("normal matrix palette count changed between frames")
-            normal_matrix_frames.append(combined_normal_matrices)
+            if len(combined_pose_matrices) != normal_matrix_count:
+                raise ValueError("pose matrix palette count changed between frames")
+            pose_matrix_frames.append(combined_pose_matrices)
             marker_frames.append([
                 transform_point(
                     pose.mat[parent_bone],
@@ -901,8 +942,9 @@ def convert(args):
         normal_positions = list(range(len(positions)))
         normal_sources = []
         source_normals = []
+        position_records = []
         normal_matrix_count = 0
-        normal_matrix_frames = []
+        pose_matrix_frames = []
         # Position clustering can remove degenerate triangles and changes draw
         # vertex identities, so the source GX streams are no longer valid.
         # Keep the package readable and select the triangle-normal fallback.
@@ -915,14 +957,24 @@ def convert(args):
     positions.extend((0.0, 0.0, 0.0) for _ in args.rigid_marker)
     for frame, markers in zip(frames, marker_frames):
         frame.extend(markers)
-    frame_data, maximum_error, bounds_min, bounds_max = quantise_frames(
+    legacy_frame_data, maximum_error, bounds_min, bounds_max = quantise_frames(
         frames, args.quantum_mm
     )
-    normal_matrix_data, normal_matrix_error = quantise_normal_matrices(
-        normal_matrix_frames
+    skinned_position_count = len(position_records)
+    stored_frame_positions = marker_frames if position_records else frames
+    marker_frame_data, _, _, _ = quantise_frames(
+        stored_frame_positions, args.quantum_mm
+    )
+    pose_matrix_data, normal_matrix_error = quantise_pose_matrices(
+        pose_matrix_frames
     )
     normal_direction_error = normal_matrix_direction_error(
-        normal_matrix_frames, source_normals
+        pose_matrix_frames, source_normals
+    )
+    position_matrix_error, exact_quantised_positions, compared_positions = (
+        pose_matrix_position_error(
+            pose_matrix_frames, position_records, frames, args.quantum_mm
+        ) if position_records else (0.0, 0, 0)
     )
     if normal_sources and len(normal_sources) != len(normal_positions):
         raise ValueError("normal source map does not match normal work items")
@@ -951,20 +1003,24 @@ def convert(args):
     source_normal_offset = align(
         normal_source_offset + len(normal_sources) * NORMAL_SOURCE.size
     )
-    frame_offset = align(
+    position_record_offset = align(
         source_normal_offset + len(source_normals) * SOURCE_NORMAL.size
     )
-    normal_matrix_offset = align(frame_offset + len(frame_data))
-    blob = bytearray(normal_matrix_offset + len(normal_matrix_data))
+    marker_frame_offset = align(
+        position_record_offset + len(position_records) * POSITION_RECORD.size
+    )
+    pose_matrix_offset = align(marker_frame_offset + len(marker_frame_data))
+    blob = bytearray(pose_matrix_offset + len(pose_matrix_data))
     HEADER.pack_into(
-        blob, 0, MAGIC, VERSION, header_size, len(positions), len(texcoords),
+        blob, 0, MAGIC, VERSION, header_size, len(positions),
+        skinned_position_count, len(texcoords),
         len(normal_positions), len(source_normals), len(indices), len(batches),
         len(clips), len(frames), len(primitives),
         len(primitive_indices), normal_matrix_count,
         index_offset, batch_offset, primitive_offset,
         primitive_index_offset, clip_offset, draw_vertex_offset,
         normal_position_offset, normal_source_offset, source_normal_offset,
-        frame_offset, normal_matrix_offset,
+        position_record_offset, marker_frame_offset, pose_matrix_offset,
         args.quantum_mm * 0.001,
     )
     struct.pack_into(f"<{len(indices)}H", blob, index_offset, *indices)
@@ -1009,9 +1065,16 @@ def convert(args):
             blob, source_normal_offset + index * SOURCE_NORMAL.size,
             *normal,
         )
-    blob[frame_offset:frame_offset + len(frame_data)] = frame_data
-    blob[normal_matrix_offset:normal_matrix_offset + len(normal_matrix_data)] = (
-        normal_matrix_data
+    for index, position in enumerate(position_records):
+        POSITION_RECORD.pack_into(
+            blob, position_record_offset + index * POSITION_RECORD.size,
+            *position, 0,
+        )
+    blob[marker_frame_offset:marker_frame_offset + len(marker_frame_data)] = (
+        marker_frame_data
+    )
+    blob[pose_matrix_offset:pose_matrix_offset + len(pose_matrix_data)] = (
+        pose_matrix_data
     )
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1051,7 +1114,7 @@ def convert(args):
         encoding="utf-8",
     )
     manifest = {
-        "format": "re4dc-character-v5",
+        "format": "re4dc-character-v6",
         "output": str(output.resolve()),
         "bytes": len(blob),
         "sha256": hashlib.sha256(blob).hexdigest(),
@@ -1080,13 +1143,22 @@ def convert(args):
             "bytes": len(texture_package),
         },
         "positions": len(positions),
+        "skinned_positions": skinned_position_count,
+        "marker_positions": len(positions) - skinned_position_count,
+        "position_record_bytes": len(position_records) * POSITION_RECORD.size,
+        "marker_frame_bytes": len(marker_frame_data),
+        "legacy_frame_bytes": len(legacy_frame_data),
+        "legacy_frame_sha256": hashlib.sha256(legacy_frame_data).hexdigest(),
         "draw_vertices": len(texcoords),
         "normal_work_items": len(normal_positions),
         "source_normals": len(source_normals),
         "normal_matrices_per_frame": normal_matrix_count,
-        "normal_matrix_bytes": len(normal_matrix_data),
+        "pose_matrix_bytes": len(pose_matrix_data),
         "maximum_normal_matrix_error": normal_matrix_error,
         "maximum_normal_direction_error_degrees": normal_direction_error,
+        "maximum_position_matrix_error_mm": position_matrix_error,
+        "exact_legacy_quantised_positions": exact_quantised_positions,
+        "compared_legacy_quantised_positions": compared_positions,
         "vertices": len(texcoords),
         "uv_split_vertices": uv_split_vertex_count,
         "triangles": len(indices) // 3,

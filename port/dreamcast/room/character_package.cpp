@@ -54,7 +54,56 @@ bool Package::open(const char* path) {
             return false;
         }
         normalized_header_ = *current;
-    } else if(legacy->version == kLegacyVersion &&
+    } else if(legacy->version == kLegacyVersion5) {
+        if(total < static_cast<ssize_t>(sizeof(LegacyHeaderV5))) {
+            error_ = "file is smaller than the v5 header";
+            close();
+            return false;
+        }
+        const auto* previous = reinterpret_cast<const LegacyHeaderV5*>(data_);
+        if(previous->header_size != sizeof(LegacyHeaderV5)) {
+            error_ = "v5 header size mismatch";
+            close();
+            return false;
+        }
+        std::memset(&normalized_header_, 0, sizeof(normalized_header_));
+        std::memcpy(normalized_header_.magic, previous->magic,
+                    sizeof(normalized_header_.magic));
+        normalized_header_.version = previous->version;
+        normalized_header_.header_size = previous->header_size;
+        normalized_header_.position_count = previous->position_count;
+        normalized_header_.draw_vertex_count = previous->draw_vertex_count;
+        normalized_header_.normal_count = previous->normal_count;
+        normalized_header_.source_normal_count =
+            previous->source_normal_count;
+        normalized_header_.index_count = previous->index_count;
+        normalized_header_.batch_count = previous->batch_count;
+        normalized_header_.clip_count = previous->clip_count;
+        normalized_header_.frame_count = previous->frame_count;
+        normalized_header_.primitive_count = previous->primitive_count;
+        normalized_header_.primitive_index_count =
+            previous->primitive_index_count;
+        normalized_header_.normal_matrix_count =
+            previous->normal_matrix_count;
+        normalized_header_.index_offset = previous->index_offset;
+        normalized_header_.batch_offset = previous->batch_offset;
+        normalized_header_.primitive_offset = previous->primitive_offset;
+        normalized_header_.primitive_index_offset =
+            previous->primitive_index_offset;
+        normalized_header_.clip_offset = previous->clip_offset;
+        normalized_header_.draw_vertex_offset = previous->draw_vertex_offset;
+        normalized_header_.normal_position_offset =
+            previous->normal_position_offset;
+        normalized_header_.normal_source_offset =
+            previous->normal_source_offset;
+        normalized_header_.source_normal_offset =
+            previous->source_normal_offset;
+        normalized_header_.marker_frame_offset = previous->frame_offset;
+        normalized_header_.pose_matrix_offset =
+            previous->normal_matrix_offset;
+        normalized_header_.position_quantum_m =
+            previous->position_quantum_m;
+    } else if(legacy->version == kLegacyVersion4 &&
               legacy->header_size == sizeof(LegacyHeaderV4)) {
         std::memset(&normalized_header_, 0, sizeof(normalized_header_));
         std::memcpy(normalized_header_.magic, legacy->magic,
@@ -80,7 +129,7 @@ bool Package::open(const char* path) {
         normalized_header_.draw_vertex_offset = legacy->draw_vertex_offset;
         normalized_header_.normal_position_offset =
             legacy->normal_position_offset;
-        normalized_header_.frame_offset = legacy->frame_offset;
+        normalized_header_.marker_frame_offset = legacy->frame_offset;
         normalized_header_.position_quantum_m = legacy->position_quantum_m;
     } else {
         error_ = "magic, version, or header size mismatch";
@@ -96,15 +145,33 @@ bool Package::open(const char* path) {
         close();
         return false;
     }
+    const bool current_version = header_->version == kVersion;
+    if(header_->skinned_position_count > header_->position_count) {
+        error_ = "skinned position count exceeds position count";
+        close();
+        return false;
+    }
+    const std::uint32_t stored_position_count = current_version
+        ? header_->position_count - header_->skinned_position_count
+        : header_->position_count;
     const std::uint64_t frame_bytes =
         static_cast<std::uint64_t>(header_->frame_count) *
-        header_->position_count * 3U * sizeof(std::int16_t);
+        stored_position_count * 3U * sizeof(std::int16_t);
     const std::uint64_t normal_matrix_bytes =
         static_cast<std::uint64_t>(header_->frame_count) *
-        header_->normal_matrix_count * 9U * sizeof(std::int16_t);
+        header_->normal_matrix_count *
+        (current_version ? sizeof(PoseMatrix)
+                         : 9U * sizeof(std::int16_t));
     const bool has_source_normals = header_->source_normal_count != 0U;
     if(has_source_normals != (header_->normal_matrix_count != 0U)) {
         error_ = "partial source normal data";
+        close();
+        return false;
+    }
+    if(current_version &&
+       ((header_->skinned_position_count != 0U) !=
+        (header_->normal_matrix_count != 0U))) {
+        error_ = "partial source position data";
         close();
         return false;
     }
@@ -122,7 +189,12 @@ bool Package::open(const char* path) {
                     static_cast<std::uint64_t>(header_->draw_vertex_count) * sizeof(DrawVertex)) ||
        !range_valid(header_->normal_position_offset,
                     static_cast<std::uint64_t>(header_->normal_count) * sizeof(std::uint16_t)) ||
-       !range_valid(header_->frame_offset, frame_bytes) ||
+       !range_valid(header_->marker_frame_offset, frame_bytes) ||
+       (current_version && header_->skinned_position_count != 0U &&
+        !range_valid(header_->position_record_offset,
+                     static_cast<std::uint64_t>(
+                         header_->skinned_position_count) *
+                         sizeof(PositionRecord))) ||
        (has_source_normals &&
         (!range_valid(header_->normal_source_offset,
                       static_cast<std::uint64_t>(header_->normal_count) *
@@ -130,7 +202,7 @@ bool Package::open(const char* path) {
          !range_valid(header_->source_normal_offset,
                       static_cast<std::uint64_t>(header_->source_normal_count) *
                           sizeof(SourceNormal)) ||
-         !range_valid(header_->normal_matrix_offset,
+         !range_valid(header_->pose_matrix_offset,
                       normal_matrix_bytes)))) {
         error_ = "record range exceeds package";
         close();
@@ -217,6 +289,27 @@ bool Package::open(const char* path) {
             return false;
         }
     }
+    if(current_version && header_->skinned_position_count != 0U) {
+        const auto* package_positions = position_records();
+        for(std::uint32_t index = 0;
+            index < header_->skinned_position_count; ++index) {
+            if(package_positions[index].matrix >=
+               header_->normal_matrix_count) {
+                error_ = "source position exceeds matrix palette";
+                close();
+                return false;
+            }
+        }
+        for(std::uint32_t index = 0; index < header_->draw_vertex_count;
+            ++index) {
+            if(package_draw_vertices[index].position >=
+               header_->skinned_position_count) {
+                error_ = "draw vertex references marker position";
+                close();
+                return false;
+            }
+        }
+    }
     if(has_source_normals) {
         const auto* package_normal_sources = normal_sources();
         for(std::uint32_t index = 0; index < header_->normal_count; ++index) {
@@ -299,25 +392,60 @@ const SourceNormal* Package::source_normals() const {
         data_ + header_->source_normal_offset);
 }
 
+const PositionRecord* Package::position_records() const {
+    if(header_->version != kVersion ||
+       header_->skinned_position_count == 0U) {
+        return nullptr;
+    }
+    return reinterpret_cast<const PositionRecord*>(
+        data_ + header_->position_record_offset);
+}
+
 const std::int16_t* Package::frame_positions(std::uint32_t frame) const {
-    if(frame >= header_->frame_count) {
+    if(frame >= header_->frame_count || header_->version == kVersion) {
         return nullptr;
     }
     const std::size_t stride =
         static_cast<std::size_t>(header_->position_count) * 3U;
-    return reinterpret_cast<const std::int16_t*>(data_ + header_->frame_offset) +
+    return reinterpret_cast<const std::int16_t*>(
+               data_ + header_->marker_frame_offset) +
            frame * stride;
 }
 
 const std::int16_t* Package::frame_normal_matrices(
     std::uint32_t frame) const {
-    if(frame >= header_->frame_count || header_->normal_matrix_count == 0U) {
+    if(frame >= header_->frame_count || header_->normal_matrix_count == 0U ||
+       header_->version != kLegacyVersion5) {
         return nullptr;
     }
     const std::size_t stride =
         static_cast<std::size_t>(header_->normal_matrix_count) * 9U;
     return reinterpret_cast<const std::int16_t*>(
-               data_ + header_->normal_matrix_offset) +
+               data_ + header_->pose_matrix_offset) +
+           frame * stride;
+}
+
+const std::int16_t* Package::frame_marker_positions(
+    std::uint32_t frame) const {
+    if(frame >= header_->frame_count || header_->version != kVersion) {
+        return nullptr;
+    }
+    const std::size_t stride =
+        static_cast<std::size_t>(header_->position_count -
+                                 header_->skinned_position_count) * 3U;
+    return reinterpret_cast<const std::int16_t*>(
+               data_ + header_->marker_frame_offset) +
+           frame * stride;
+}
+
+const PoseMatrix* Package::frame_pose_matrices(std::uint32_t frame) const {
+    if(frame >= header_->frame_count || header_->version != kVersion ||
+       header_->normal_matrix_count == 0U) {
+        return nullptr;
+    }
+    const std::size_t stride = header_->normal_matrix_count;
+    return reinterpret_cast<const PoseMatrix*>(
+               data_ + header_->pose_matrix_offset) +
            frame * stride;
 }
 

@@ -8,8 +8,9 @@
 namespace re4dc::character {
 
 inline constexpr char kMagic[4] = {'R', '4', 'C', 'H'};
-inline constexpr std::uint32_t kVersion = 5;
-inline constexpr std::uint32_t kLegacyVersion = 4;
+inline constexpr std::uint32_t kVersion = 6;
+inline constexpr std::uint32_t kLegacyVersion5 = 5;
+inline constexpr std::uint32_t kLegacyVersion4 = 4;
 
 struct LegacyHeaderV4 {
     char magic[4];
@@ -35,7 +36,7 @@ struct LegacyHeaderV4 {
     float position_quantum_m;
 };
 
-struct Header {
+struct LegacyHeaderV5 {
     char magic[4];
     std::uint32_t version;
     std::uint32_t header_size;
@@ -61,6 +62,37 @@ struct Header {
     std::uint32_t source_normal_offset;
     std::uint32_t frame_offset;
     std::uint32_t normal_matrix_offset;
+    float position_quantum_m;
+};
+
+struct Header {
+    char magic[4];
+    std::uint32_t version;
+    std::uint32_t header_size;
+    std::uint32_t position_count;
+    std::uint32_t skinned_position_count;
+    std::uint32_t draw_vertex_count;
+    std::uint32_t normal_count;
+    std::uint32_t source_normal_count;
+    std::uint32_t index_count;
+    std::uint32_t batch_count;
+    std::uint32_t clip_count;
+    std::uint32_t frame_count;
+    std::uint32_t primitive_count;
+    std::uint32_t primitive_index_count;
+    std::uint32_t normal_matrix_count;
+    std::uint32_t index_offset;
+    std::uint32_t batch_offset;
+    std::uint32_t primitive_offset;
+    std::uint32_t primitive_index_offset;
+    std::uint32_t clip_offset;
+    std::uint32_t draw_vertex_offset;
+    std::uint32_t normal_position_offset;
+    std::uint32_t normal_source_offset;
+    std::uint32_t source_normal_offset;
+    std::uint32_t position_record_offset;
+    std::uint32_t marker_frame_offset;
+    std::uint32_t pose_matrix_offset;
     float position_quantum_m;
 };
 
@@ -104,13 +136,30 @@ struct SourceNormal {
     std::uint16_t matrix;
 };
 
-static_assert(sizeof(Header) == 104);
+struct PositionRecord {
+    float x;
+    float y;
+    float z;
+    std::uint16_t matrix;
+    std::uint16_t reserved;
+};
+
+struct PoseMatrix {
+    std::int16_t linear[9];
+    std::uint16_t reserved;
+    float translation[3];
+};
+
+static_assert(sizeof(Header) == 112);
 static_assert(sizeof(LegacyHeaderV4) == 84);
+static_assert(sizeof(LegacyHeaderV5) == 104);
 static_assert(sizeof(Batch) == 24);
 static_assert(sizeof(Primitive) == 16);
 static_assert(sizeof(Clip) == 32);
 static_assert(sizeof(DrawVertex) == 12);
 static_assert(sizeof(SourceNormal) == 8);
+static_assert(sizeof(PositionRecord) == 16);
+static_assert(sizeof(PoseMatrix) == 32);
 
 class Package {
 public:
@@ -132,8 +181,11 @@ public:
     const std::uint16_t* normal_positions() const;
     const std::uint16_t* normal_sources() const;
     const SourceNormal* source_normals() const;
+    const PositionRecord* position_records() const;
     const std::int16_t* frame_positions(std::uint32_t frame) const;
     const std::int16_t* frame_normal_matrices(std::uint32_t frame) const;
+    const std::int16_t* frame_marker_positions(std::uint32_t frame) const;
+    const PoseMatrix* frame_pose_matrices(std::uint32_t frame) const;
     const char* error() const { return error_; }
 
 private:

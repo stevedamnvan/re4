@@ -507,6 +507,11 @@ struct ProjectedVertex {
     float depth;
 };
 
+struct PreparedPoseMatrix {
+    float linear[9];
+    float translation[3];
+};
+
 struct RenderVertex {
     ProjectedVertex position;
     float u;
@@ -1601,6 +1606,59 @@ re4dc::collision::Vec3 sample_character_point(
     const std::uint32_t next_frame =
         std::min(local_frame + 1U, clip.frame_count - 1U);
     const float blend = frame - static_cast<float>(local_frame);
+    if(character.header().version == re4dc::character::kVersion) {
+        if(vertex_index >= character.header().skinned_position_count) {
+            const std::uint32_t marker =
+                vertex_index - character.header().skinned_position_count;
+            const auto* current = character.frame_marker_positions(
+                clip.first_frame + local_frame) + marker * 3U;
+            const auto* next = character.frame_marker_positions(
+                clip.first_frame + next_frame) + marker * 3U;
+            const float scale = character.header().position_quantum_m;
+            return {
+                (static_cast<float>(current[0]) +
+                 (static_cast<float>(next[0]) -
+                  static_cast<float>(current[0])) * blend) * scale,
+                (static_cast<float>(current[1]) +
+                 (static_cast<float>(next[1]) -
+                  static_cast<float>(current[1])) * blend) * scale,
+                (static_cast<float>(current[2]) +
+                 (static_cast<float>(next[2]) -
+                  static_cast<float>(current[2])) * blend) * scale,
+            };
+        }
+        constexpr float kMatrixScale = 1.0f / 32767.0f;
+        constexpr float kMillimetresToMetres = 0.001f;
+        const auto& position = character.position_records()[vertex_index];
+        const auto transform = [&](std::uint32_t frame_index) {
+            const auto& matrix =
+                character.frame_pose_matrices(frame_index)[position.matrix];
+            return re4dc::collision::Vec3{
+                ((static_cast<float>(matrix.linear[0]) * position.x +
+                  static_cast<float>(matrix.linear[1]) * position.y +
+                  static_cast<float>(matrix.linear[2]) * position.z) *
+                     kMatrixScale + matrix.translation[0]) *
+                    kMillimetresToMetres,
+                ((static_cast<float>(matrix.linear[3]) * position.x +
+                  static_cast<float>(matrix.linear[4]) * position.y +
+                  static_cast<float>(matrix.linear[5]) * position.z) *
+                     kMatrixScale + matrix.translation[1]) *
+                    kMillimetresToMetres,
+                ((static_cast<float>(matrix.linear[6]) * position.x +
+                  static_cast<float>(matrix.linear[7]) * position.y +
+                  static_cast<float>(matrix.linear[8]) * position.z) *
+                     kMatrixScale + matrix.translation[2]) *
+                    kMillimetresToMetres,
+            };
+        };
+        const auto current = transform(clip.first_frame + local_frame);
+        const auto next = transform(clip.first_frame + next_frame);
+        return {
+            current.x + (next.x - current.x) * blend,
+            current.y + (next.y - current.y) * blend,
+            current.z + (next.z - current.z) * blend,
+        };
+    }
     const auto* current = character.frame_positions(
         clip.first_frame + local_frame) + vertex_index * 3U;
     const auto* next = character.frame_positions(
@@ -2870,6 +2928,8 @@ bool group_visible(const re4dc::room::Group& group) {
 constexpr std::uint32_t kCharacterSubmitVertexCapacity = 768U;
 constexpr std::uint32_t kLeonVertexCapacity = 8192U;
 constexpr std::uint32_t kGanadoVertexCapacity = 4096U;
+constexpr std::uint32_t kLeonPoseMatrixCapacity = 512U;
+constexpr std::uint32_t kGanadoPoseMatrixCapacity = 128U;
 constexpr std::uint32_t kRoomVertexCacheCapacity = 1024U;
 static_assert((kRoomVertexCacheCapacity & (kRoomVertexCacheCapacity - 1U)) == 0U);
 
@@ -2882,6 +2942,8 @@ struct RoomVertexCacheEntry {
 
 ProjectedVertex g_leon_projected[kLeonVertexCapacity];
 ProjectedVertex g_ganado_projected[kGanadoVertexCapacity];
+PreparedPoseMatrix g_leon_pose_palette[kLeonPoseMatrixCapacity];
+PreparedPoseMatrix g_ganado_pose_palette[kGanadoPoseMatrixCapacity];
 #if defined(RE4DC_SCENE_R100)
 float g_leon_lighting[kLeonVertexCapacity * 3U];
 float g_ganado_lighting[kGanadoVertexCapacity * 3U];
@@ -3444,12 +3506,211 @@ void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
     pvr_prim(vertices, sizeof(vertices));
 }
 
+void transform_pose_position(
+    const PreparedPoseMatrix* matrices,
+    const re4dc::character::PositionRecord& position,
+    float& x, float& y, float& z) {
+    const auto& matrix = matrices[position.matrix];
+    x = matrix.linear[0] * position.x +
+        matrix.linear[1] * position.y + matrix.linear[2] * position.z +
+        matrix.translation[0];
+    y = matrix.linear[3] * position.x +
+        matrix.linear[4] * position.y + matrix.linear[5] * position.z +
+        matrix.translation[1];
+    z = matrix.linear[6] * position.x +
+        matrix.linear[7] * position.y + matrix.linear[8] * position.z +
+        matrix.translation[2];
+}
+
+void prepare_pose_palette(
+    const re4dc::character::PoseMatrix* source,
+    const re4dc::character::PoseMatrix* next_source, float frame_blend,
+    const re4dc::character::PoseMatrix* secondary_source,
+    const re4dc::character::PoseMatrix* secondary_next_source,
+    float secondary_frame_blend, float pose_blend,
+    std::uint32_t matrix_count, PreparedPoseMatrix* prepared) {
+    constexpr float kMatrixScale = 1.0f / 32767.0f;
+    for(std::uint32_t matrix = 0U; matrix < matrix_count; ++matrix) {
+        for(unsigned element = 0U; element < 9U; ++element) {
+            float value =
+                (static_cast<float>(source[matrix].linear[element]) +
+                 (static_cast<float>(next_source[matrix].linear[element]) -
+                  static_cast<float>(source[matrix].linear[element])) *
+                     frame_blend) * kMatrixScale;
+            if(secondary_source != nullptr) {
+                const float secondary_value =
+                    (static_cast<float>(
+                         secondary_source[matrix].linear[element]) +
+                     (static_cast<float>(
+                          secondary_next_source[matrix].linear[element]) -
+                      static_cast<float>(
+                          secondary_source[matrix].linear[element])) *
+                         secondary_frame_blend) * kMatrixScale;
+                value += (secondary_value - value) * pose_blend;
+            }
+            prepared[matrix].linear[element] = value;
+        }
+        for(unsigned element = 0U; element < 3U; ++element) {
+            float value =
+                source[matrix].translation[element] +
+                (next_source[matrix].translation[element] -
+                 source[matrix].translation[element]) * frame_blend;
+            if(secondary_source != nullptr) {
+                const float secondary_value =
+                    secondary_source[matrix].translation[element] +
+                    (secondary_next_source[matrix].translation[element] -
+                     secondary_source[matrix].translation[element]) *
+                        secondary_frame_blend;
+                value += (secondary_value - value) * pose_blend;
+            }
+            prepared[matrix].translation[element] = value;
+        }
+    }
+}
+
+void project_palette_character(
+    const re4dc::character::Package& character,
+    float actor_x, float actor_y, float actor_z, float actor_yaw,
+    std::uint32_t animation_clip, float animation_frame, bool loop,
+    std::uint32_t secondary_clip, float pose_blend,
+    ProjectedVertex* projected, PreparedPoseMatrix* prepared_pose) {
+    const auto& clip = character.clips()[animation_clip];
+    const float wrapped_frame = std::fmod(
+        std::max(animation_frame, 0.0f), static_cast<float>(clip.frame_count));
+    const std::uint32_t local_frame = static_cast<std::uint32_t>(wrapped_frame);
+    const std::uint32_t next_frame = loop
+        ? (local_frame + 1U) % clip.frame_count
+        : std::min(local_frame + 1U, clip.frame_count - 1U);
+    const float frame_blend = wrapped_frame - static_cast<float>(local_frame);
+    const auto* source = character.frame_pose_matrices(
+        clip.first_frame + local_frame);
+    const auto* next_source = character.frame_pose_matrices(
+        clip.first_frame + next_frame);
+    const auto* markers = character.frame_marker_positions(
+        clip.first_frame + local_frame);
+    const auto* next_markers = character.frame_marker_positions(
+        clip.first_frame + next_frame);
+    const re4dc::character::PoseMatrix* secondary_source = nullptr;
+    const re4dc::character::PoseMatrix* secondary_next_source = nullptr;
+    const std::int16_t* secondary_markers = nullptr;
+    const std::int16_t* secondary_next_markers = nullptr;
+    float secondary_frame_blend = 0.0f;
+    if(pose_blend > 0.0f && secondary_clip != animation_clip) {
+        const auto& secondary = character.clips()[secondary_clip];
+        const float secondary_time_frame = std::max(
+            animation_frame * secondary.frames_per_second /
+                clip.frames_per_second,
+            0.0f);
+        const float secondary_frame = loop
+            ? std::fmod(secondary_time_frame,
+                        static_cast<float>(secondary.frame_count))
+            : std::min(secondary_time_frame,
+                       static_cast<float>(secondary.frame_count - 1U));
+        const std::uint32_t secondary_local =
+            static_cast<std::uint32_t>(secondary_frame);
+        const std::uint32_t secondary_next = loop
+            ? (secondary_local + 1U) % secondary.frame_count
+            : std::min(secondary_local + 1U, secondary.frame_count - 1U);
+        secondary_frame_blend =
+            secondary_frame - static_cast<float>(secondary_local);
+        secondary_source = character.frame_pose_matrices(
+            secondary.first_frame + secondary_local);
+        secondary_next_source = character.frame_pose_matrices(
+            secondary.first_frame + secondary_next);
+        secondary_markers = character.frame_marker_positions(
+            secondary.first_frame + secondary_local);
+        secondary_next_markers = character.frame_marker_positions(
+            secondary.first_frame + secondary_next);
+    }
+    prepare_pose_palette(
+        source, next_source, frame_blend,
+        secondary_source, secondary_next_source, secondary_frame_blend,
+        pose_blend, character.header().normal_matrix_count, prepared_pose);
+    const float sine = std::sin(actor_yaw);
+    const float cosine = std::cos(actor_yaw);
+    const auto project = [&](std::uint32_t index,
+                             float local_x, float local_y, float local_z) {
+        local_x *= 0.001f;
+        local_y *= 0.001f;
+        local_z *= 0.001f;
+        float x = actor_x + local_x * cosine + local_z * sine;
+        float y = actor_y + local_y;
+        float z = actor_z - local_x * sine + local_z * cosine;
+        const float world_x = x;
+        const float world_y = y;
+        const float world_z = z;
+        mat_trans_single(x, y, z);
+        projected[index] = {
+            x, y, z, world_x, world_y, world_z, camera_depth(z)};
+    };
+    const auto* positions = character.position_records();
+    for(std::uint32_t index = 0U;
+        index < character.header().skinned_position_count; ++index) {
+        float local_x = 0.0f;
+        float local_y = 0.0f;
+        float local_z = 0.0f;
+        transform_pose_position(
+            prepared_pose, positions[index], local_x, local_y, local_z);
+        project(index, local_x, local_y, local_z);
+    }
+    const std::uint32_t marker_count =
+        character.header().position_count -
+        character.header().skinned_position_count;
+    const float marker_scale = character.header().position_quantum_m * 1000.0f;
+    for(std::uint32_t marker = 0U; marker < marker_count; ++marker) {
+        const std::uint32_t offset = marker * 3U;
+        float local_x =
+            (static_cast<float>(markers[offset]) +
+             (static_cast<float>(next_markers[offset]) -
+              static_cast<float>(markers[offset])) * frame_blend) * marker_scale;
+        float local_y =
+            (static_cast<float>(markers[offset + 1U]) +
+             (static_cast<float>(next_markers[offset + 1U]) -
+              static_cast<float>(markers[offset + 1U])) * frame_blend) * marker_scale;
+        float local_z =
+            (static_cast<float>(markers[offset + 2U]) +
+             (static_cast<float>(next_markers[offset + 2U]) -
+              static_cast<float>(markers[offset + 2U])) * frame_blend) * marker_scale;
+        if(secondary_markers != nullptr) {
+            float secondary_x =
+                (static_cast<float>(secondary_markers[offset]) +
+                 (static_cast<float>(secondary_next_markers[offset]) -
+                  static_cast<float>(secondary_markers[offset])) *
+                     secondary_frame_blend) * marker_scale;
+            float secondary_y =
+                (static_cast<float>(secondary_markers[offset + 1U]) +
+                 (static_cast<float>(secondary_next_markers[offset + 1U]) -
+                  static_cast<float>(secondary_markers[offset + 1U])) *
+                     secondary_frame_blend) * marker_scale;
+            float secondary_z =
+                (static_cast<float>(secondary_markers[offset + 2U]) +
+                 (static_cast<float>(secondary_next_markers[offset + 2U]) -
+                  static_cast<float>(secondary_markers[offset + 2U])) *
+                     secondary_frame_blend) * marker_scale;
+            local_x += (secondary_x - local_x) * pose_blend;
+            local_y += (secondary_y - local_y) * pose_blend;
+            local_z += (secondary_z - local_z) * pose_blend;
+        }
+        project(character.header().skinned_position_count + marker,
+                local_x, local_y, local_z);
+    }
+}
+
 void project_character(const re4dc::character::Package& character,
                        float actor_x, float actor_y, float actor_z,
                        float actor_yaw, std::uint32_t animation_clip,
                        float animation_frame, bool loop,
                        std::uint32_t secondary_clip, float pose_blend,
-                       ProjectedVertex* projected) {
+                       ProjectedVertex* projected,
+                       PreparedPoseMatrix* prepared_pose) {
+    if(character.header().version == re4dc::character::kVersion &&
+       character.header().skinned_position_count != 0U) {
+        project_palette_character(
+            character, actor_x, actor_y, actor_z, actor_yaw,
+            animation_clip, animation_frame, loop, secondary_clip,
+            pose_blend, projected, prepared_pose);
+        return;
+    }
     const auto& clip = character.clips()[animation_clip];
     const float wrapped_frame = std::fmod(
         std::max(animation_frame, 0.0f), static_cast<float>(clip.frame_count));
@@ -3594,10 +3855,68 @@ void transform_source_normal(
          static_cast<float>(matrix[8]) * source_z) * kMatrixScale;
 }
 
+void transform_source_normal(
+    const re4dc::character::PoseMatrix* matrices,
+    const re4dc::character::SourceNormal& normal,
+    float& x, float& y, float& z) {
+    constexpr float kNormalScale = 1.0f / 16384.0f;
+    constexpr float kMatrixScale = 1.0f / 32767.0f;
+    const float source_x = static_cast<float>(normal.x) * kNormalScale;
+    const float source_y = static_cast<float>(normal.y) * kNormalScale;
+    const float source_z = static_cast<float>(normal.z) * kNormalScale;
+    const auto& matrix = matrices[normal.matrix];
+    x = (static_cast<float>(matrix.linear[0]) * source_x +
+         static_cast<float>(matrix.linear[1]) * source_y +
+         static_cast<float>(matrix.linear[2]) * source_z) * kMatrixScale;
+    y = (static_cast<float>(matrix.linear[3]) * source_x +
+         static_cast<float>(matrix.linear[4]) * source_y +
+         static_cast<float>(matrix.linear[5]) * source_z) * kMatrixScale;
+    z = (static_cast<float>(matrix.linear[6]) * source_x +
+         static_cast<float>(matrix.linear[7]) * source_y +
+         static_cast<float>(matrix.linear[8]) * source_z) * kMatrixScale;
+}
+
+void transform_source_normal(
+    const PreparedPoseMatrix* matrices,
+    const re4dc::character::SourceNormal& normal,
+    float& x, float& y, float& z) {
+    constexpr float kNormalScale = 1.0f / 16384.0f;
+    const float source_x = static_cast<float>(normal.x) * kNormalScale;
+    const float source_y = static_cast<float>(normal.y) * kNormalScale;
+    const float source_z = static_cast<float>(normal.z) * kNormalScale;
+    const auto& matrix = matrices[normal.matrix];
+    x = matrix.linear[0] * source_x + matrix.linear[1] * source_y +
+        matrix.linear[2] * source_z;
+    y = matrix.linear[3] * source_x + matrix.linear[4] * source_y +
+        matrix.linear[5] * source_z;
+    z = matrix.linear[6] * source_x + matrix.linear[7] * source_y +
+        matrix.linear[8] * source_z;
+}
+
 void build_character_source_normals(
     const re4dc::character::Package& character, float actor_yaw,
     std::uint32_t animation_clip, float animation_frame, bool loop,
-    std::uint32_t secondary_clip, float pose_blend, float* normals) {
+    std::uint32_t secondary_clip, float pose_blend, float* normals,
+    const PreparedPoseMatrix* prepared_pose) {
+    if(prepared_pose != nullptr) {
+        const float sine = std::sin(actor_yaw);
+        const float cosine = std::cos(actor_yaw);
+        const auto* source_normals = character.source_normals();
+        for(std::uint32_t index = 0U;
+            index < character.header().source_normal_count; ++index) {
+            float local_x = 0.0f;
+            float local_y = 0.0f;
+            float local_z = 0.0f;
+            transform_source_normal(
+                prepared_pose, source_normals[index],
+                local_x, local_y, local_z);
+            normals[index * 3U] = local_x * cosine + local_z * sine;
+            normals[index * 3U + 1U] = local_y;
+            normals[index * 3U + 2U] =
+                -local_x * sine + local_z * cosine;
+        }
+        return;
+    }
     const auto& clip = character.clips()[animation_clip];
     const float wrapped_frame = std::fmod(
         std::max(animation_frame, 0.0f), static_cast<float>(clip.frame_count));
@@ -3610,8 +3929,14 @@ void build_character_source_normals(
         clip.first_frame + local_frame);
     const std::int16_t* next_source = character.frame_normal_matrices(
         clip.first_frame + next_frame);
+    const auto* pose_source = character.frame_pose_matrices(
+        clip.first_frame + local_frame);
+    const auto* pose_next_source = character.frame_pose_matrices(
+        clip.first_frame + next_frame);
     const std::int16_t* secondary_source = nullptr;
     const std::int16_t* secondary_next_source = nullptr;
+    const re4dc::character::PoseMatrix* secondary_pose_source = nullptr;
+    const re4dc::character::PoseMatrix* secondary_pose_next_source = nullptr;
     float secondary_frame_blend = 0.0f;
     if(pose_blend > 0.0f && secondary_clip != animation_clip) {
         const auto& secondary = character.clips()[secondary_clip];
@@ -3635,10 +3960,24 @@ void build_character_source_normals(
             secondary.first_frame + secondary_local);
         secondary_next_source = character.frame_normal_matrices(
             secondary.first_frame + secondary_next);
+        secondary_pose_source = character.frame_pose_matrices(
+            secondary.first_frame + secondary_local);
+        secondary_pose_next_source = character.frame_pose_matrices(
+            secondary.first_frame + secondary_next);
     }
     const float sine = std::sin(actor_yaw);
     const float cosine = std::cos(actor_yaw);
     const auto* source_normals = character.source_normals();
+    const auto transform = [&](const std::int16_t* legacy_matrices,
+                               const re4dc::character::PoseMatrix* pose_matrices,
+                               const re4dc::character::SourceNormal& normal,
+                               float& x, float& y, float& z) {
+        if(pose_matrices != nullptr) {
+            transform_source_normal(pose_matrices, normal, x, y, z);
+        } else {
+            transform_source_normal(legacy_matrices, normal, x, y, z);
+        }
+    };
     for(std::uint32_t index = 0U;
         index < character.header().source_normal_count; ++index) {
         float current_x = 0.0f;
@@ -3647,26 +3986,26 @@ void build_character_source_normals(
         float next_x = 0.0f;
         float next_y = 0.0f;
         float next_z = 0.0f;
-        transform_source_normal(
-            source, source_normals[index], current_x, current_y, current_z);
-        transform_source_normal(
-            next_source, source_normals[index], next_x, next_y, next_z);
+        transform(source, pose_source, source_normals[index],
+                  current_x, current_y, current_z);
+        transform(next_source, pose_next_source, source_normals[index],
+                  next_x, next_y, next_z);
         float local_x = current_x + (next_x - current_x) * frame_blend;
         float local_y = current_y + (next_y - current_y) * frame_blend;
         float local_z = current_z + (next_z - current_z) * frame_blend;
-        if(secondary_source != nullptr) {
+        if(secondary_source != nullptr || secondary_pose_source != nullptr) {
             float secondary_x = 0.0f;
             float secondary_y = 0.0f;
             float secondary_z = 0.0f;
             float secondary_next_x = 0.0f;
             float secondary_next_y = 0.0f;
             float secondary_next_z = 0.0f;
-            transform_source_normal(
-                secondary_source, source_normals[index],
-                secondary_x, secondary_y, secondary_z);
-            transform_source_normal(
-                secondary_next_source, source_normals[index],
-                secondary_next_x, secondary_next_y, secondary_next_z);
+            transform(secondary_source, secondary_pose_source,
+                      source_normals[index],
+                      secondary_x, secondary_y, secondary_z);
+            transform(secondary_next_source, secondary_pose_next_source,
+                      source_normals[index],
+                      secondary_next_x, secondary_next_y, secondary_next_z);
             secondary_x +=
                 (secondary_next_x - secondary_x) * secondary_frame_blend;
             secondary_y +=
@@ -4356,11 +4695,13 @@ FrameStats render_scene(const re4dc::room::Package& room,
         player.animation_clip == kPlayerIdleClip ||
             player.animation_clip == kPlayerWalkClip ||
             player.animation_clip == kPlayerAimLevelClip,
-        player_blend.secondary_clip, player_blend.amount, leon_projected);
+        player_blend.secondary_clip, player_blend.amount, leon_projected,
+        g_leon_pose_palette);
     project_character(
         ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
         enemy.animation_frame, enemy.state == EnemyState::Chase,
-        enemy.animation_clip, 0.0f, ganado_projected);
+        enemy.animation_clip, 0.0f, ganado_projected,
+        g_ganado_pose_palette);
     stats.actor_pose_us = timer_us_gettime64() - actor_pose_start;
 #if defined(RE4DC_SCENE_R100)
     const std::uint64_t actor_normals_start = timer_us_gettime64();
@@ -4370,7 +4711,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
             player.animation_clip == kPlayerIdleClip ||
                 player.animation_clip == kPlayerWalkClip ||
                 player.animation_clip == kPlayerAimLevelClip,
-            player_blend.secondary_clip, player_blend.amount, leon_lighting);
+            player_blend.secondary_clip, player_blend.amount, leon_lighting,
+            leon.header().version == re4dc::character::kVersion
+                ? g_leon_pose_palette
+                : nullptr);
     } else {
         build_character_normals(leon, leon_projected, leon_lighting);
     }
@@ -4378,7 +4722,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
         build_character_source_normals(
             ganado, enemy.yaw, enemy.animation_clip, enemy.animation_frame,
             enemy.state == EnemyState::Chase, enemy.animation_clip, 0.0f,
-            ganado_lighting);
+            ganado_lighting,
+            ganado.header().version == re4dc::character::kVersion
+                ? g_ganado_pose_palette
+                : nullptr);
     } else {
         build_character_normals(ganado, ganado_projected, ganado_lighting);
     }
@@ -4698,12 +5045,16 @@ int main() {
             "re4dc-room: r100 Ganado package needs source hit capsules and axe markers\n");
         return 1;
     }
-    if(leon.header().source_normal_count != 5860U ||
+    if(leon.header().version != re4dc::character::kVersion ||
+       leon.header().skinned_position_count != 5731U ||
+       leon.header().source_normal_count != 5860U ||
        leon.header().normal_matrix_count != 394U ||
+       ganado.header().version != re4dc::character::kVersion ||
+       ganado.header().skinned_position_count != 1667U ||
        ganado.header().source_normal_count != 1818U ||
        ganado.header().normal_matrix_count != 112U) {
         std::printf(
-            "re4dc-room: r100 actors need source normals and weight palettes\n");
+            "re4dc-room: r100 actors need source positions, normals, and pose palettes\n");
         return 1;
     }
 #endif

@@ -49,6 +49,9 @@ the float near-plane fallback retained, in
 Source BIN normals and their original weight-palette identities now replace
 per-frame triangle-normal reconstruction in
 [R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md](R3H_SOURCE_NORMAL_PALETTES_CHECKPOINT.md).
+Source BIN positions now share the same prepared pose palettes; complete baked
+mesh poses have been removed while gameplay marker tracks remain exact in
+[R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md](R3I_SOURCE_POSITION_PALETTES_CHECKPOINT.md).
 
 ## Objective and boundaries
 
@@ -183,7 +186,7 @@ an optimization commit.
 | R1b | Recover source object identity and per-model light selection; prepare constants; only then cache/bake static contributions | **In progress:** target package/runtime implemented and measured; selected light IDs/order and changed image still need the matched source trace |
 | R1c | Reuse selected fixed room-light contributions while retaining view-relative lights | **Target-side complete:** prior packed vertex colors matched at the checked camera; original-game image/light trace and hardware timing remain open |
 | R2a | Export source SAT blocks/edges and adapt source traversal/filtering/primitives | **In progress:** hierarchy/edges/traversal are implemented and measured; source primitive, attribute, manager, and matched query-result parity remain open |
-| R2b | Retain source attribute/weight-palette structure; source eligibility before preparation; benchmark skinning | **In progress:** version 4 separates source position, authored normal identity, and UV draw-corner work with measured target and memory results. Source normal values, weight-palette runtime skinning, eligibility, and parity traces remain open |
+| R2b | Retain source attribute/weight-palette structure; source eligibility before preparation; benchmark skinning | **In progress:** package v6 retains source positions, authored normals, independent UV draw corners, and shared weight palettes. Runtime palette reuse is measured and complete for the current actors; source eligibility, live motion integration, and parity traces remain open |
 | R3 | Native draw templates from source cull/material state; child clusters; clipping/packet improvements | **In progress:** source actor strips and conservative source-object child bounds are integrated and measured; alpha batches retain source order. Source material state, room packets, matched image tests, clipping stress, and TA limits remain open |
 | R4 | Qualify the unchanged encounter against the stock hardware frame budget | Live presentation/input/audio distributions and peak memory meet the acceptance section below |
 | R5 | Explicit residency and source-runtime integration before expanding content | Bounded loading/restart/transition peaks; original behavior coverage grows instead of a second gameplay implementation |
