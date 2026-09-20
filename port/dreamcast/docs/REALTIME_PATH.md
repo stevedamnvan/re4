@@ -1,7 +1,6 @@
 # Fidelity-preserving real-time r100 plan
 
-Updated 2026-09-20 from the corrected R3p actor-normal build and the R3q
-submission profile. This is the authoritative execution plan. Earlier R0-R3 checkpoint documents remain evidence
+Updated 2026-09-20 from the accepted R3r strip-culling build. This is the authoritative execution plan. Earlier R0-R3 checkpoint documents remain evidence
 records; their letter sequence no longer determines the next task.
 
 ## Current status
@@ -19,19 +18,30 @@ actor and room strips, ordered-alpha strip protection, packed actor colors,
 validated room normals, compact selected-light evaluators, a bounded room vertex
 cache, conservative one-metre opaque child cells, source-authorized binary
 punch-through, one source-ordered visible-room list reused by every material
-pass, combined header/first-payload submissions, and separate immutable actor
-normal scratch. Do not propose these again as unimplemented work.
+pass, combined header/first-payload submissions, separate immutable actor
+normal scratch, and per-strip bounds culling. Do not propose these again as
+unimplemented work.
 
 R3m preserves source-authorized binary alpha while retaining gradient blend.
 R3n reuses visibility, cull state, and room-light selection across material
 passes. R3o combines each PVR header with its first payload, halving immediate
 call count but saving only 0.12 ms. R3p fixes a source-normal identity defect by
 separating transformed normals from lighting output. R3q changes no accepted
-code; it profiles the room submission path and closes two candidates. See the
-corresponding checkpoint records, most recently
-[R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md](R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md)
+code; it profiles the room submission path and closes two candidates. R3r adds
+per-strip bounds culling and corrects a projection error that made every frustum
+test in the port too tight. See the corresponding checkpoint records, most
+recently
+[R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md](R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md)
 and
-[R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md](R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md).
+[R3R_STRIP_CULL_CHECKPOINT.md](R3R_STRIP_CULL_CHECKPOINT.md).
+
+**Projection bias.** KOS `mat_perspective()` leaves `w = 1 - z_view`, so
+`mat_trans_single()` divides screen coordinates by `depth + 1`. Any visibility
+test that compares a view-space extent against the projected half-width must use
+`(depth + 1) * tan(fovy/2)`, not `depth * tan(fovy/2)`. `group_visible()` had
+omitted this since R3a and was discarding 35 on-screen groups and 684 triangles
+per frame. The constant is `kProjectionDepthBias`; do not write a new visibility
+test without it.
 
 The rejected R3p subexperiment used KallistiOS `frsqrt`. A valid dual-path run
 found a worst observed difference of one channel value in one packed color, but
@@ -40,39 +50,42 @@ the fast path was 0.822 ms slower at actor-lighting p50. It has been removed.
 ## Current measured budget
 
 Flycast measurements use the pinned 640x480 build and stock Dreamcast memory
-sizes. They are emulator evidence. R3o and R3p are matched over simulation ticks
+sizes. They are emulator evidence. R3p and R3r are matched over simulation ticks
 165-1194 and include source-timed turn, aim, fire, reload, enemy kill, held result
 view, and timed retry. The current autoplay does not cover free movement, aim
 extremes, enemy contact, Leon death, or a human controller; those remain separate
 acceptance gates.
 
-| Matched metric, ticks 165-1194 | R3o aliasing baseline | R3p corrected normals |
+| Matched metric, ticks 165-1194 | R3p corrected normals | R3r accepted |
 |---|---:|---:|
-| CPU frame p50 / p95 / p99 | 87.615 / 90.116 / 90.209 ms | 86.217 / 88.719 / 88.836 ms |
-| presented ready-to-ready p50 / p95 | 83.411 / 100.096 ms | 83.409 / 100.096 ms |
-| PVR registration p50 | 58.731 ms | 58.096 ms |
-| actor lighting p50 | 18.959 ms | 18.198 ms |
-| main-RAM break-to-stack headroom | 5,668,864 B | 5,570,560 B |
+| CPU frame p50 / p95 / p99 | 86.217 / 88.719 / 88.814 ms | 74.139 / 74.238 / 76.701 ms |
+| `submit_us` p50 | 58.103 ms | 45.901 ms |
+| actor lighting p50 | 18.198 ms | 18.198 ms |
+| visible groups / room triangles | 327 / 9,155 | 362 / 8,208 |
+| transformed and lit vertices | 15,350 | 10,156 |
+| main-RAM break-to-stack headroom | 5,570,560 B | 5,308,416 B |
 | dropped simulation time / overruns | 0 / 0 | 0 / 0 |
 
-The accepted candidate still presents at roughly 11-12 distinct frames per
-second. A 33.33 ms CPU frame needs another 52.9 ms median reduction and 55.4 ms
-at p95. PVR raster time was 7.50 ms p50 in the preceding matched R3n trace; SH-4
-preparation and TA registration remain the dominant measured costs.
+R3r draws more room geometry than R3p because the corrected group test restores
+groups that R3p discarded, and is still 12.078 ms faster at p50.
 
-R3p median CPU stages are shown without adding the overlapping `submit_us`
+The accepted candidate presents at roughly 13-14 distinct frames per second. A
+33.33 ms CPU frame needs another 40.8 ms median reduction and 40.9 ms at p95.
+SH-4 preparation remains the dominant measured cost.
+
+R3r median CPU stages are shown without adding the overlapping `submit_us`
 aggregate to its children:
 
 | Stage | p50 |
 |---|---:|
-| opaque room transform/light/clip/submit | 26.687 ms |
-| binary plus blended alpha room work | 17.820 ms |
+| opaque room transform/light/clip/submit | 29.244 ms |
 | actor lighting | 18.198 ms |
-| opaque actor draw | 11.792 ms |
+| opaque actor draw | 11.789 ms |
 | actor pose palettes/projection | 5.820 ms |
+| binary plus blended alpha room work | 3.053 ms |
+| room visibility and light selection | 2.089 ms |
 | actor normals | 1.831 ms |
 | translucent actors and HUD | 1.760 ms |
-| room visibility and light selection | 1.959 ms |
 
 `submit_us` is 58.103 ms p50 and contains room transform, lighting, clipping,
 packet construction, and immediate TA submission. It is not a transfer-only
@@ -115,6 +128,8 @@ Exact identities:
 - R3o manual ELF: `13857924539cec27012e1d6cdd46c9ec44ee17a5db942281b2f3caedaa3267ea`
 - R3p autoplay ELF: `4fd89b4e929aca49a9cdc8b7e231c9a1e33ff387cac81466d42e0d49b686a44f`
 - R3p manual ELF: `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
+- R3r autoplay ELF: `f3975be3408b2059d9c9557753d16a736d359a21d2d911e47a0d09a397bef35d`
+- R3r manual ELF: `7137228e6287394cbec9e12c67438bd06282a19d5410f5dd76346bba50c9859c`
 
 The R3q diagnostic option added preprocessor lines to `room/main.cpp`, so the
 two R3p ELF hashes above reproduce only from the pre-R3q tree. The executable
@@ -124,10 +139,12 @@ is byte-identical and the debug-stripped ELFs are
 and `570c36bdda2e440bc69eca4d573f4e89e0cad316063aa3b386db6eca1e7b042c` for
 manual in both trees.
 
-Evidence is retained in `d202` through `d224` under
+Evidence is retained in `d202` through `d234` under
 `C:\Flycast-Evidence\re4-dreamcast`. Timing evidence for R3p is in `d219`,
 the manual smoke in `d220`, and the qualitative framebuffer check in `d221`.
-The R3q profile captures are `d222`, `d223`, and `d224`.
+The R3q profile captures are `d222`, `d223`, and `d224`. The R3r captures are
+`d225` through `d234`, including the culling audits in `d229` and the paired
+framebuffer comparisons in `d226`, `d231`, and `d233`.
 Physical Dreamcast timing remains pending.
 
 ## Measured bottleneck queue
@@ -136,21 +153,23 @@ Choose each next experiment from the current trace. Every candidate must boot,
 retain a reference path where appropriate, pass its correctness check, record
 before/after timing and memory, and end in a keep-or-revert decision.
 
-1. **Per-strip bounds culling for unpartitioned alpha.** R3q measured the blended
-   list at 18.917 ms for 1,718 triangles, transforming 3.63 vertices per triangle
-   against 1.23 for the opaque list. All 22 blended batches already carry
-   certified strips, so this is not a strip-coverage problem. R3k deliberately
-   left the alpha materials unpartitioned to protect source draw order, so
-   blended geometry sits in 17 groups with extents up to 273.83 m against a 35 m
-   horizon. The pass references 77% of the package's blended strip vertices and
-   emits 40% of its blended triangles; the depth and clip tests that discard the
-   rest run only after the transform and lighting are already paid.
-   Attach bounds to each strip and reject the strip before touching its vertices.
-   Skipping a strip removes work without reordering any triangle that is still
-   drawn, so the R3c blend-order certificate holds by construction; finer alpha
-   cells would not. Bounds for the 2,067 blended primitives cost about 33 KB.
-   Skipping the empty punch-through list is correct but worth only 0.135 ms; do
-   not confuse the two.
+1. **The opaque room per-vertex kernel.** R3r took the blended list from
+   17.820 ms to 3.053 ms, leaving the opaque room pass at 29.244 ms as the
+   largest single cost. Strip culling barely touched it, because the one-metre
+   child cells already cull it well: 10,156 of its vertices are genuinely
+   distinct and each costs roughly 3 us. R3q showed caching cannot reduce that
+   count. Two levers remain. First, identity reuse: across the accepted package
+   only 61.1% of the 40,419 room vertices have distinct positions and 82.4% have
+   distinct position-and-normal pairs, so a transform keyed on position identity
+   and lighting keyed on position-and-normal identity could remove up to 38.9%
+   of the transforms and 17.6% of the light evaluations. The actor path already
+   does this; the room path does not, and it would need package support and a
+   full-size identity table rather than the current short-window cache. Second,
+   the kernel itself: inspect the SH-4 output of `mat_trans_single` plus the
+   selected-light evaluator and keep the portable evaluator as the numerical
+   reference with explicit bounds. Note that Flycast will only reward work-volume
+   reductions; it does not model the SH-4 data cache, so micro-architectural
+   changes cannot be validated here.
 2. **The per-vertex transform and light kernel.** R3q showed room cost is close
    to a constant 3.1 us per transformed and lit vertex, and that caching cannot
    reduce the 15,317 distinct vertices a frame touches. After the blended-list

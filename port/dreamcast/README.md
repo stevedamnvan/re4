@@ -20,7 +20,8 @@ Leon uses the source body, costume, head, hair, eyes, Red9 hands and handgun;
 the Ganado uses the correct right-handed hand/hatchet assembly. Room, source
 camera, selected lighting, HUD, transparency, collision, and combat remain intact.
 
-R3p is now the Dreamcast regression and performance baseline. It fixes a real
+R3r is now the Dreamcast regression and performance baseline. R3p remains the
+preceding reference and is described below because R3r is measured against it. It fixes a real
 actor-lighting defect: the old runtime overwrote transformed source normals with
 lighting output while later work items could still reference those normals.
 The corrected path keeps immutable normal scratch separate from per-work-item
@@ -67,6 +68,8 @@ Exact active identities:
 - R3o manual ELF `13857924539cec27012e1d6cdd46c9ec44ee17a5db942281b2f3caedaa3267ea`
 - R3p autoplay ELF `4fd89b4e929aca49a9cdc8b7e231c9a1e33ff387cac81466d42e0d49b686a44f`
 - R3p manual ELF `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
+- R3r autoplay ELF `f3975be3408b2059d9c9557753d16a736d359a21d2d911e47a0d09a397bef35d`
+- R3r manual ELF `7137228e6287394cbec9e12c67438bd06282a19d5410f5dd76346bba50c9859c`
 
 R3q profiled that room path without changing any accepted code. With
 `SUBMIT_PROFILE` unset the room build is byte-identical to R3p once DWARF line
@@ -80,20 +83,40 @@ vertices per triangle against 1.23 for the opaque list. Every blended batch
 already carries certified strips; the cost comes from R3k leaving the alpha
 materials unpartitioned, so blended geometry sits in 17 groups reaching 273.83 m
 against a 35 m horizon and is transformed before the depth and clip tests
-discard it. Order-safe per-strip bounds culling is the next experiment and the
-largest identified saving; see
+discard it. See
 [the R3q submission profile checkpoint](docs/R3Q_ROOM_SUBMISSION_PROFILE_CHECKPOINT.md).
-The next actor experiment should still target the stable selected-light work,
-especially Leon's 13.960 ms median, while retaining the portable evaluator as a
-reference. Do not retry the rejected reciprocal-square-root path without new
-evidence.
+
+R3r acted on that and is the accepted build. It rejects a native strip against a
+bounding sphere before touching any of its vertices, which is order-safe because
+skipping a strip never reorders a triangle that is still drawn. It also fixes a
+projection error that had made every frustum test in the port too tight: KOS
+`mat_perspective()` leaves `w = 1 - z_view`, so screen coordinates divide by
+`depth + 1` and the projected half-extents must be measured at `depth + 1`.
+`group_visible()` had omitted that since R3a and was discarding 35 on-screen
+groups and 684 triangles per frame. Against R3p over matched ticks 165-1194, CPU
+frame p50 falls from 86.217 to 74.139 ms and p95 from 88.719 to 74.238 ms while
+the frame draws more room geometry than R3p did; the blended room pass falls from
+17.820 to 3.053 ms. A gated audit build confirms no rejected strip has a
+projected bounding box touching the screen, and the strip-culling build alone is
+byte-identical to R3p at three matched ticks. The strip table costs 262,144 bytes
+of static main RAM. Details and limits are in
+[the R3r strip-cull checkpoint](docs/R3R_STRIP_CULL_CHECKPOINT.md).
+
+The opaque room pass, now 29.244 ms, is the largest remaining cost, followed by
+actor lighting at 18.198 ms with Leon's 13.960 ms median inside it. Retain the
+portable evaluator as the numerical reference. Do not retry the rejected
+reciprocal-square-root path without new evidence, and do not write a new
+visibility test without `kProjectionDepthBias`.
 
 Rebuild the diagnostic with:
 
 ```sh
 source port/dreamcast/kos-env.sh
 make -C port/dreamcast/room r100-autoplay-profile
+make -C port/dreamcast/room r100-autoplay-cull-audit
 ```
+
+Both diagnostics are compile-gated and absent from accepted builds.
 The Linux checkout is required because upstream contains distinct `src/Tools`
 and `src/tools` paths. A normal Windows checkout collapses three filename pairs.
 The incomplete Windows checkout created during bootstrap was retained as
