@@ -185,6 +185,8 @@ constexpr std::uint32_t kPlayerWalkClip = 1;
 constexpr std::uint32_t kPlayerAimClip = 2;
 constexpr std::uint32_t kPlayerFireClip = 3;
 constexpr std::uint32_t kPlayerReloadClip = 4;
+constexpr std::uint32_t kPlayerHitLeftClip = 5;
+constexpr std::uint32_t kPlayerDeathClip = 6;
 #if defined(RE4DC_SCENE_R100)
 // R100Init creates this exact id-0x12 Ganado with 500 HP. Weapon 1 uses the
 // em10 base value 150 at the starting 0.9 power multiplier: 135 body damage.
@@ -227,7 +229,10 @@ struct Player {
     bool reload_refilled = false;
     float fire_animation_seconds = 0.0f;
     bool aiming = false;
+    bool hit_reaction = false;
     bool dead = false;
+    bool death_complete = false;
+    std::uint32_t damage_voice_cycle = 0;
 };
 
 struct Enemy {
@@ -253,6 +258,9 @@ struct DemoAudio {
     sfxhnd_t enemy_body_hit_0c = SFXHND_INVALID;
     sfxhnd_t enemy_damage_voice_47 = SFXHND_INVALID;
     sfxhnd_t enemy_death_voice_16 = SFXHND_INVALID;
+    sfxhnd_t player_damage_voice[3] = {
+        SFXHND_INVALID, SFXHND_INVALID, SFXHND_INVALID};
+    sfxhnd_t player_death_voice_13 = SFXHND_INVALID;
     bool initialized = false;
 };
 
@@ -377,6 +385,13 @@ bool load_demo_audio(DemoAudio& audio) {
         "/rd/em12-damage-voice-47.wav";
     constexpr const char* enemy_death_voice_path =
         "/rd/em12-death-voice-16.wav";
+    constexpr const char* player_damage_voice_paths[] = {
+        "/rd/pl00-damage-voice-09.wav",
+        "/rd/pl00-damage-voice-10.wav",
+        "/rd/pl00-damage-voice-11.wav",
+    };
+    constexpr const char* player_death_voice_path =
+        "/rd/pl00-death-voice-13.wav";
     const bool fire_0_exists = file_exists(fire_0_path);
     const bool fire_2_exists = file_exists(fire_2_path);
     const bool reload_exists = file_exists(reload_path);
@@ -385,9 +400,19 @@ bool load_demo_audio(DemoAudio& audio) {
     const bool enemy_damage_voice_exists =
         file_exists(enemy_damage_voice_path);
     const bool enemy_death_voice_exists = file_exists(enemy_death_voice_path);
+    const bool player_damage_voice_exists[] = {
+        file_exists(player_damage_voice_paths[0]),
+        file_exists(player_damage_voice_paths[1]),
+        file_exists(player_damage_voice_paths[2]),
+    };
+    const bool player_death_voice_exists = file_exists(player_death_voice_path);
+    const bool any_player_reaction_audio =
+        player_damage_voice_exists[0] || player_damage_voice_exists[1] ||
+        player_damage_voice_exists[2] || player_death_voice_exists;
     if(!fire_0_exists && !fire_2_exists && !reload_exists &&
        !enemy_swing_exists && !enemy_hit_exists &&
-       !enemy_damage_voice_exists && !enemy_death_voice_exists) {
+       !enemy_damage_voice_exists && !enemy_death_voice_exists &&
+       !any_player_reaction_audio) {
         std::printf("re4dc-room: source combat audio not packaged\n");
         return true;
     }
@@ -407,6 +432,12 @@ bool load_demo_audio(DemoAudio& audio) {
         std::printf("re4dc-room: incomplete enemy reaction audio package\n");
         return false;
     }
+    if(any_player_reaction_audio &&
+       (!player_damage_voice_exists[0] || !player_damage_voice_exists[1] ||
+        !player_damage_voice_exists[2] || !player_death_voice_exists)) {
+        std::printf("re4dc-room: incomplete player reaction audio package\n");
+        return false;
+    }
     snd_init();
     audio.initialized = true;
     if(any_weapon_audio) {
@@ -424,6 +455,13 @@ bool load_demo_audio(DemoAudio& audio) {
         audio.enemy_death_voice_16 =
             snd_sfx_load(enemy_death_voice_path);
     }
+    if(any_player_reaction_audio) {
+        for(unsigned index = 0; index < 3; ++index) {
+            audio.player_damage_voice[index] =
+                snd_sfx_load(player_damage_voice_paths[index]);
+        }
+        audio.player_death_voice_13 = snd_sfx_load(player_death_voice_path);
+    }
     if((any_weapon_audio &&
         (audio.fire_0 == SFXHND_INVALID ||
          audio.fire_2 == SFXHND_INVALID ||
@@ -433,7 +471,12 @@ bool load_demo_audio(DemoAudio& audio) {
        (any_enemy_reaction_audio &&
         (audio.enemy_body_hit_0c == SFXHND_INVALID ||
          audio.enemy_damage_voice_47 == SFXHND_INVALID ||
-         audio.enemy_death_voice_16 == SFXHND_INVALID))) {
+         audio.enemy_death_voice_16 == SFXHND_INVALID)) ||
+       (any_player_reaction_audio &&
+        (audio.player_damage_voice[0] == SFXHND_INVALID ||
+         audio.player_damage_voice[1] == SFXHND_INVALID ||
+         audio.player_damage_voice[2] == SFXHND_INVALID ||
+         audio.player_death_voice_13 == SFXHND_INVALID))) {
         std::printf("re4dc-room: source combat audio load failed\n");
         snd_sfx_unload_all();
         snd_shutdown();
@@ -445,6 +488,8 @@ bool load_demo_audio(DemoAudio& audio) {
                 any_weapon_audio ? 1 : 0, reload_exists ? 1 : 0,
                 enemy_swing_exists ? 1 : 0,
                 any_enemy_reaction_audio ? 1 : 0);
+    std::printf("re4dc-room: source player reactions=%d\n",
+                any_player_reaction_audio ? 1 : 0);
     return true;
 }
 void release_demo_audio(DemoAudio& audio) {
@@ -615,8 +660,8 @@ std::uint32_t resolve_actor_walls(
 void update_player(Player& player, const re4dc::collision::Package& collision,
                    const Input& input, float move_speed,
                    float delta_seconds) {
-    player.aiming = input.aim && !player.dead;
-    if(player.dead) {
+    player.aiming = input.aim && !player.dead && !player.hit_reaction;
+    if(player.dead || player.hit_reaction) {
         return;
     }
     player.yaw += input.turn * kTurnSpeed * delta_seconds;
@@ -641,7 +686,13 @@ void update_animation(Player& player, const re4dc::character::Package& character
                       const Input& input, float delta_seconds) {
     std::uint32_t desired_clip = kPlayerIdleClip;
     bool loop = true;
-    if(player.reload_seconds > 0.0f) {
+    if(player.dead) {
+        desired_clip = kPlayerDeathClip;
+        loop = false;
+    } else if(player.hit_reaction) {
+        desired_clip = kPlayerHitLeftClip;
+        loop = false;
+    } else if(player.reload_seconds > 0.0f) {
         desired_clip = kPlayerReloadClip;
         loop = false;
     } else if(player.fire_animation_seconds > 0.0f) {
@@ -667,6 +718,14 @@ void update_animation(Player& player, const re4dc::character::Package& character
     } else {
         player.animation_frame = std::min(
             player.animation_frame, static_cast<float>(clip.frame_count - 1U));
+    }
+    if(player.hit_reaction &&
+       player.animation_frame >= static_cast<float>(clip.frame_count - 1U)) {
+        player.hit_reaction = false;
+    }
+    if(player.dead &&
+       player.animation_frame >= static_cast<float>(clip.frame_count - 1U)) {
+        player.death_complete = true;
     }
 }
 
@@ -950,6 +1009,21 @@ void update_enemy(Enemy& enemy, Player& player,
                     attack_seconds * 30.0f, player.health);
                 if(player.health == 0) {
                     player.dead = true;
+                    player.hit_reaction = false;
+                    if(audio.player_death_voice_13 != SFXHND_INVALID) {
+                        snd_sfx_play(audio.player_death_voice_13, 255, 128);
+                    }
+                    std::printf(
+                        "re4dc-room: source Leon death voice cue=13\n");
+                } else {
+                    player.hit_reaction = true;
+                    const unsigned voice = player.damage_voice_cycle++ % 3U;
+                    if(audio.player_damage_voice[voice] != SFXHND_INVALID) {
+                        snd_sfx_play(audio.player_damage_voice[voice], 255, 128);
+                    }
+                    std::printf(
+                        "re4dc-room: source Leon damage voice cue=%u\n",
+                        voice + 9U);
                 }
             }
         }
@@ -1096,7 +1170,7 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
                    const re4dc::collision::Package& collision,
                    const re4dc::character::Package& character,
                    const DemoAudio& audio) {
-    if(player.dead) {
+    if(player.dead || player.hit_reaction) {
         return;
     }
     if(player.reload_seconds > 0.0f) {
@@ -1529,12 +1603,15 @@ void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
 void project_character(const re4dc::character::Package& character,
                        float actor_x, float actor_y, float actor_z,
                        float actor_yaw, std::uint32_t animation_clip,
-                       float animation_frame, ProjectedVertex* projected) {
+                       float animation_frame, bool loop,
+                       ProjectedVertex* projected) {
     const auto& clip = character.clips()[animation_clip];
     const float wrapped_frame = std::fmod(
         std::max(animation_frame, 0.0f), static_cast<float>(clip.frame_count));
     const std::uint32_t local_frame = static_cast<std::uint32_t>(wrapped_frame);
-    const std::uint32_t next_frame = (local_frame + 1U) % clip.frame_count;
+    const std::uint32_t next_frame = loop
+        ? (local_frame + 1U) % clip.frame_count
+        : std::min(local_frame + 1U, clip.frame_count - 1U);
     const float frame_blend = wrapped_frame - static_cast<float>(local_frame);
     const auto* source = character.frame_positions(clip.first_frame + local_frame);
     const auto* next_source = character.frame_positions(
@@ -1774,7 +1851,7 @@ void draw_hud(const Player& player) {
         submit_screen_quad(159.0f, 110.0f, 160.0f, 117.0f, 0xffff4040U);
         submit_screen_quad(159.0f, 123.0f, 160.0f, 130.0f, 0xffff4040U);
     }
-    if(player.dead) {
+    if(player.death_complete) {
         submit_screen_quad(72.0f, 100.0f, 248.0f, 140.0f, 0xff310707U,
                            0.95f);
         draw_text("YOU ARE DEAD", 88.0f, 106.0f, 2.0f, 0xffb9211cU);
@@ -1823,10 +1900,12 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const auto* indices = room.indices();
     project_character(
         leon, player.x, player.y, player.z, player.yaw, player.animation_clip,
-        player.animation_frame, leon_projected);
+        player.animation_frame, player.animation_clip <= kPlayerAimClip,
+        leon_projected);
     project_character(
         ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
-        enemy.animation_frame, ganado_projected);
+        enemy.animation_frame, enemy.state == EnemyState::Chase,
+        ganado_projected);
 #if defined(RE4DC_SCENE_R100)
     build_character_normals(leon, leon_projected, leon_normals);
     build_character_normals(ganado, ganado_projected, ganado_normals);
@@ -1991,8 +2070,9 @@ int main() {
         static_cast<unsigned long>(ganado.header().vertex_count),
         static_cast<unsigned long>(ganado.header().index_count / 3U),
         static_cast<unsigned long>(ganado.header().frame_count));
-    if(leon.header().clip_count < 5U) {
-        std::printf("re4dc-room: Leon package needs idle/walk/aim/fire/reload\n");
+    if(leon.header().clip_count < 7U) {
+        std::printf(
+            "re4dc-room: Leon package needs idle/walk/aim/fire/reload/hit/death\n");
         return 1;
     }
     if(ganado.header().clip_count < 5U) {

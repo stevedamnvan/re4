@@ -16,13 +16,15 @@ RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
 DTK ?= $(REPO_ROOT)/build/tools/dtk
 SOURCE_AUDIO_DIR ?= build/private/source-audio
 SOURCE_ENEMY_AUDIO_DIR ?= build/private/source-enemy-audio
+SOURCE_PLAYER_AUDIO_DIR ?= build/private/source-player-audio
 LEON_CHARACTER ?= build/private/leon.re4chr
 GANADO_CHARACTER ?= build/private/ganado.re4chr
 CHARACTER_CLUSTER_MM ?= 0
 CHARACTER_TEXTURE_MAX_DIMENSION ?=
+CHARACTER_SAMPLE_STEP ?= 4
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -55,6 +57,8 @@ texture-r10d:
 	$(PYTHON) tools/convert_tpl.py $(R10D_TPL) $(R10D_MTL) $(R10D_TEXTURE)
 
 character-leon:
+	# PL_ARC_PTR numbers include the four-word DRS body header: source
+	# hit-left 0x4a and death 0x4c are archive entries 70 and 72.
 	$(PYTHON) tools/convert_character.py --source $(RE4_DISC) \
 		--cache-dir build/private/disc-cache --model-archive pl00.drs --model-entry 0 \
 		--attachment costume:pl00.drs:6:1 \
@@ -67,8 +71,9 @@ character-leon:
 		--rigid-attachment handgun:wep02.drs:2:1:10 \
 		--clip idle:wep02.drs:7 --clip walk:wep02.drs:13 \
 		--clip aim:wep02.drs:39 --clip fire:wep02.drs:42 \
-		--clip reload:wep02.drs:45 \
-		--sample-step 2 --cluster-mm $(CHARACTER_CLUSTER_MM) \
+		--clip reload:wep02.drs:45 --clip hit-left:pl00.drs:70 \
+		--clip death:pl00.drs:72 \
+		--sample-step $(CHARACTER_SAMPLE_STEP) --cluster-mm $(CHARACTER_CLUSTER_MM) \
 		$(CHARACTER_TEXTURE_MAX_ARG) \
 		--output $(LEON_CHARACTER)
 
@@ -101,7 +106,15 @@ source-enemy-audio:
 	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs 0x47 $(SOURCE_ENEMY_AUDIO_DIR)/em12-damage-voice-47.wav
 	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_ENEMY_AUDIO_DIR)/em12.drs 0x16 $(SOURCE_ENEMY_AUDIO_DIR)/em12-death-voice-16.wav
 
-demo-r10d: room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio
+source-player-audio:
+	@mkdir -p $(SOURCE_PLAYER_AUDIO_DIR)
+	$(DTK) vfs cp $(RE4_DISC):/files/em/pl00.drs $(SOURCE_PLAYER_AUDIO_DIR)/pl00.drs
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_PLAYER_AUDIO_DIR)/pl00.drs 9 $(SOURCE_PLAYER_AUDIO_DIR)/pl00-cue09.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_PLAYER_AUDIO_DIR)/pl00.drs 10 $(SOURCE_PLAYER_AUDIO_DIR)/pl00-cue10.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_PLAYER_AUDIO_DIR)/pl00.drs 11 $(SOURCE_PLAYER_AUDIO_DIR)/pl00-cue11.wav
+	$(PYTHON) tools/extract_drs_audio.py $(SOURCE_PLAYER_AUDIO_DIR)/pl00.drs 13 $(SOURCE_PLAYER_AUDIO_DIR)/pl00-cue13.wav
+
+demo-r10d: room-r10d texture-r10d character-leon character-ganado source-weapon-audio source-enemy-audio source-player-audio
 
 script-check:
 	bash -n kos-env.sh tools/bootstrap_kos.sh

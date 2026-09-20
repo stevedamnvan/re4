@@ -15,6 +15,10 @@ ENEMY_SWING_SOUND ?=
 ENEMY_HIT_SOUND ?=
 ENEMY_DAMAGE_VOICE ?=
 ENEMY_DEATH_VOICE ?=
+PLAYER_DAMAGE_VOICE_9 ?=
+PLAYER_DAMAGE_VOICE_10 ?=
+PLAYER_DAMAGE_VOICE_11 ?=
+PLAYER_DEATH_VOICE_13 ?=
 DEMO_SCENE ?= r10d
 DEMO_RESOLUTION ?= 240p
 KOS_ROMDISK_DIR = ../build/room-romdisk
@@ -77,7 +81,11 @@ prepare-romdisk:
 		$(KOS_ROMDISK_DIR)/em12-swing-3d.wav \
 		$(KOS_ROMDISK_DIR)/em12-body-hit-0c.wav \
 		$(KOS_ROMDISK_DIR)/em12-damage-voice-47.wav \
-		$(KOS_ROMDISK_DIR)/em12-death-voice-16.wav
+		$(KOS_ROMDISK_DIR)/em12-death-voice-16.wav \
+		$(KOS_ROMDISK_DIR)/pl00-damage-voice-09.wav \
+		$(KOS_ROMDISK_DIR)/pl00-damage-voice-10.wav \
+		$(KOS_ROMDISK_DIR)/pl00-damage-voice-11.wav \
+		$(KOS_ROMDISK_DIR)/pl00-death-voice-13.wav
 	@if [ -n "$(AUTOPLAY_FLAG)" ]; then \
 		test -f "$(AUTOPLAY_FLAG)" || { echo 'missing autoplay flag: $(AUTOPLAY_FLAG)' >&2; exit 1; }; \
 		cp "$(AUTOPLAY_FLAG)" $(KOS_ROMDISK_DIR)/autoplay.flag; \
@@ -105,6 +113,18 @@ prepare-romdisk:
 		cp "$(ENEMY_HIT_SOUND)" $(KOS_ROMDISK_DIR)/em12-body-hit-0c.wav; \
 		cp "$(ENEMY_DAMAGE_VOICE)" $(KOS_ROMDISK_DIR)/em12-damage-voice-47.wav; \
 		cp "$(ENEMY_DEATH_VOICE)" $(KOS_ROMDISK_DIR)/em12-death-voice-16.wav; \
+	fi
+	@if [ -n "$(PLAYER_DAMAGE_VOICE_9)$(PLAYER_DAMAGE_VOICE_10)$(PLAYER_DAMAGE_VOICE_11)$(PLAYER_DEATH_VOICE_13)" ]; then \
+		test -n "$(PLAYER_DAMAGE_VOICE_9)" -a -n "$(PLAYER_DAMAGE_VOICE_10)" -a -n "$(PLAYER_DAMAGE_VOICE_11)" -a -n "$(PLAYER_DEATH_VOICE_13)" || \
+			{ echo 'source player reactions require damage cues 9-11 and death cue 13' >&2; exit 1; }; \
+		test -f "$(PLAYER_DAMAGE_VOICE_9)" || { echo 'missing player damage voice 9: $(PLAYER_DAMAGE_VOICE_9)' >&2; exit 1; }; \
+		test -f "$(PLAYER_DAMAGE_VOICE_10)" || { echo 'missing player damage voice 10: $(PLAYER_DAMAGE_VOICE_10)' >&2; exit 1; }; \
+		test -f "$(PLAYER_DAMAGE_VOICE_11)" || { echo 'missing player damage voice 11: $(PLAYER_DAMAGE_VOICE_11)' >&2; exit 1; }; \
+		test -f "$(PLAYER_DEATH_VOICE_13)" || { echo 'missing player death voice 13: $(PLAYER_DEATH_VOICE_13)' >&2; exit 1; }; \
+		cp "$(PLAYER_DAMAGE_VOICE_9)" $(KOS_ROMDISK_DIR)/pl00-damage-voice-09.wav; \
+		cp "$(PLAYER_DAMAGE_VOICE_10)" $(KOS_ROMDISK_DIR)/pl00-damage-voice-10.wav; \
+		cp "$(PLAYER_DAMAGE_VOICE_11)" $(KOS_ROMDISK_DIR)/pl00-damage-voice-11.wav; \
+		cp "$(PLAYER_DEATH_VOICE_13)" $(KOS_ROMDISK_DIR)/pl00-death-voice-13.wav; \
 	fi
 
 romdisk.img: prepare-romdisk

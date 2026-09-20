@@ -91,6 +91,11 @@ class CharacterConverterTests(unittest.TestCase):
             ),
         )
         self.assertEqual(MODULE.sampled_frame_indices(7, 2), [0, 2, 4, 6])
+        self.assertEqual(MODULE.sampled_frame_indices(8, 3), [0, 3, 6, 7])
+        self.assertAlmostEqual(
+            MODULE.sampled_frames_per_second([0, 3, 6, 7], 7, 30.0),
+            90.0 / 7.0,
+        )
 
     def test_rigid_attachment_applies_source_yaw_then_translation(self):
         point = MODULE.transform_rigid_point(

@@ -127,20 +127,27 @@ Flycast evidence are in [the Ganado P2 checkpoint](docs/GANADO_P2_BASELINE.md).
 The measured LOD experiment, complete-loop replay, and remaining hardware and
 presentation limits are in [the P3 prototype checkpoint](docs/P3_PLAYABLE_BASELINE.md).
 
-The source audio targets privately extract `wep02.drs` and `em12.drs` from
+The source audio targets privately extract `wep02.drs`, `em12.drs`, and
+`pl00.drs` from
 Disc 1 and decode their GameCube DSP-ADPCM cues. The handgun fire event plays
 cues 0 and 2 together exactly as `cObjMauser::moveFire` requests; the starting
-reload uses cue `0x16`; and the r100 hatchet swing plays cue `0x3d` on source
-sequence frame 37. No DRS, encoded sample, or decoded WAV is tracked by Git:
+reload uses cue `0x16`; the r100 hatchet swing plays cue `0x3d` on source
+sequence frame 37; and Leon's normal damage path selects hurt cues 9-11 before
+death cue 13. No DRS, encoded sample, or decoded WAV is tracked by Git:
 
 ```sh
-make -C port/dreamcast -f Makefile.host source-weapon-audio source-enemy-audio
+make -C port/dreamcast -f Makefile.host \
+  source-weapon-audio source-enemy-audio source-player-audio
 source port/dreamcast/kos-env.sh
 make -C port/dreamcast/room \
   FIRE_SOUND_0=../build/private/source-audio/wep02-cue00.wav \
   FIRE_SOUND_2=../build/private/source-audio/wep02-cue02.wav \
   RELOAD_SOUND=../build/private/source-audio/wep02-cue16.wav \
-  ENEMY_SWING_SOUND=../build/private/source-enemy-audio/em12-cue3d.wav
+  ENEMY_SWING_SOUND=../build/private/source-enemy-audio/em12-cue3d.wav \
+  PLAYER_DAMAGE_VOICE_9=../build/private/source-player-audio/pl00-cue09.wav \
+  PLAYER_DAMAGE_VOICE_10=../build/private/source-player-audio/pl00-cue10.wav \
+  PLAYER_DAMAGE_VOICE_11=../build/private/source-player-audio/pl00-cue11.wav \
+  PLAYER_DEATH_VOICE_13=../build/private/source-player-audio/pl00-cue13.wav
 ```
 
 ## Near-term sequence
@@ -149,8 +156,9 @@ make -C port/dreamcast/room \
    actor, motion, collision, and sound data.
 2. Replace the remaining direct-pursuit and simplified melee-sweep behavior
    along that one playable route with source behavior.
-3. Add source hit reactions, impact effects, enemy voice, and room ambience;
-   review moving output after each fidelity change.
+3. Add the remaining source impact effects and room ambience; review moving
+   output after each fidelity change. Leon and the Ganado now use their source
+   hit/death motions and voice cues on the bounded encounter path.
 4. Test manual play and repeated resets, then package the private Flycast demo
    and short recording.
 5. Validate loading, memory, audio, controller, and output on physical

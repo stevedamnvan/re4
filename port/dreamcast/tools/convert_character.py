@@ -436,7 +436,18 @@ def transform_rigid_point(point, translation, yaw):
 def sampled_frame_indices(frame_count, step):
     if frame_count <= 0 or step <= 0:
         raise ValueError("frame count and sample step must be positive")
-    return list(range(0, frame_count, step))
+    indices = list(range(0, frame_count, step))
+    final_frame = frame_count - 1
+    if indices[-1] != final_frame:
+        indices.append(final_frame)
+    return indices
+
+
+def sampled_frames_per_second(frame_indices, source_max_frame, source_fps):
+    """Keep a reduced clip's duration equal to its authored FCV duration."""
+    if source_max_frame <= 0 or len(frame_indices) <= 1:
+        return source_fps
+    return (len(frame_indices) - 1) * source_fps / source_max_frame
 
 
 def root_forward_speed_mps(motion, frames_per_second):
@@ -637,8 +648,11 @@ def convert(args):
                 )
             frames.append(combined_frame)
         root_speed = root_forward_speed_mps(motion, args.fps)
+        sampled_fps = sampled_frames_per_second(
+            frame_indices, motion.max_frame, args.fps
+        )
         clips.append((
-            name, first_frame, len(frame_indices), args.fps / args.sample_step,
+            name, first_frame, len(frame_indices), sampled_fps,
             root_speed,
         ))
         source_manifest.append({
