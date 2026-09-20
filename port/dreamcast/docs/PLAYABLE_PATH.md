@@ -38,7 +38,7 @@ controlled.
 | Camera and fog | Original data with Dreamcast projection adaptation | Use r100 CAM area 2 cut 2 offsets/FOV, the global handgun-ready offsets/FOV, and r100 LIT fog/background values. |
 | Enemy HP and handgun body damage | Original data | Ganado starts at 500 HP; weapon 1 body damage is 150 x the starting 0.9 multiplier = 135. |
 | Character geometry/motion | Original data, converted offline | Preserve complete source batches, materials, and sampled original motion; Leon now uses the handgun archive's level aim `0x27`, fire `0x2A`, and starting reload `0x2D`, while baked frames remain a Dreamcast memory/runtime adaptation. |
-| Player and Ganado state machines | Temporary approximation | Direct pursuit, attack timing, reload timing, and the reduced input/state layer remain explicit port debt. Do not add rooms or enemies before replacing approximations along this slice. |
+| Player and Ganado state machines | Mixed adaptation and temporary approximation | Both actors now resolve against the shared source SAT walls, and shot segments are rejected by intervening wall triangles. Direct pursuit, attack timing, reload timing, and the reduced input/state layer remain explicit port debt. |
 | HUD and sound | Temporary presentation layer | HUD is native and readable. Source sound integration remains open and cannot be claimed complete. |
 
 ## Why the previous finish line was insufficient
@@ -76,7 +76,7 @@ testing and packaging; no new renderer features enter that window.
 | D0 - complete | Extract the source-streamed r100 geometry, identify the BLK residency at the encounter, recover material bindings from the BIN ModelPart headers, and correct all coordinate scales. | Native Flycast frame shows Leon, Ganado, collision, camera, and intact textured architecture in one coherent world. |
 | D1 - current | Lock the exact normal and aiming camera, source placements, source HP/damage, fog, restart behavior, and a bounded 30-second route. Remove any invented exit marker from r100. | Manual build begins at the post-s03 state, supports aim/fire/reload/death/retry, and remains in the encounter after a kill. |
 | D2 | Inspect the actual normal, aiming, firing, hit, death, and retry views. Correct visible actor attachment, alpha, near clipping, or material faults before adding features. | Captured native frames and a 30-second moving capture are visibly coherent and use the same executable as the manual demo. |
-| D3 | Replace the temporary behavior on the slice in risk order: shot occlusion and aim agreement, enemy wall collision, source attack/damage timing, then source audio cues. | No visible through-wall shot or movement in the permitted route; each action has matching visible and audible feedback. |
+| D3 - active | Shared SAT wall resolution and wall-occluded shots are implemented. Replace the remaining temporary behavior in risk order: source attack/damage timing, then source audio cues. | No visible through-wall shot or movement in the permitted route; each action has matching visible and audible feedback. |
 | D4 | Freeze and package the private Flycast candidate. Record exact executable/package hashes, controls, memory use, and observed frame rate without turning performance into today's acceptance gate. | Launchable manual demo, death/retry and kill/retry checked, private assets excluded from Git, code/tools/tests/docs pushed and remote SHA verified. |
 
 D1-D2 are the current acceptance risk. We have a native textured picture; every

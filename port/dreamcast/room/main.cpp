@@ -350,8 +350,9 @@ bool find_floor(const re4dc::collision::Package& collision, float x, float z,
     return found;
 }
 
-std::uint32_t resolve_walls(const re4dc::collision::Package& collision,
-                            Player& player) {
+std::uint32_t resolve_actor_walls(
+    const re4dc::collision::Package& collision, float& actor_x, float actor_y,
+    float& actor_z, float actor_radius, float actor_height) {
     const auto* vertices = collision.vertices();
     const auto* normals = collision.normals();
     const auto* polygons = collision.polygons();
@@ -368,7 +369,7 @@ std::uint32_t resolve_walls(const re4dc::collision::Package& collision,
             const auto& c = vertices[polygon.vertex[2]];
             const float wall_min_y = std::min({a.y, b.y, c.y});
             const float wall_max_y = std::max({a.y, b.y, c.y});
-            if(player.y + kPlayerHeight < wall_min_y || player.y > wall_max_y) {
+            if(actor_y + actor_height < wall_min_y || actor_y > wall_max_y) {
                 continue;
             }
             const re4dc::collision::Vec3 points[3] = {a, b, c};
@@ -395,15 +396,15 @@ std::uint32_t resolve_walls(const re4dc::collision::Package& collision,
             const float sx = end.x - start.x;
             const float sz = end.z - start.z;
             const float projection = std::clamp(
-                ((player.x - start.x) * sx + (player.z - start.z) * sz) /
+                ((actor_x - start.x) * sx + (actor_z - start.z) * sz) /
                     longest,
                 0.0f, 1.0f);
             const float nearest_x = start.x + projection * sx;
             const float nearest_z = start.z + projection * sz;
-            float dx = player.x - nearest_x;
-            float dz = player.z - nearest_z;
+            float dx = actor_x - nearest_x;
+            float dz = actor_z - nearest_z;
             const float distance_squared = dx * dx + dz * dz;
-            if(distance_squared >= kPlayerRadius * kPlayerRadius) {
+            if(distance_squared >= actor_radius * actor_radius) {
                 continue;
             }
             float distance = std::sqrt(distance_squared);
@@ -418,9 +419,9 @@ std::uint32_t resolve_walls(const re4dc::collision::Package& collision,
                     distance = std::sqrt(dx * dx + dz * dz);
                 }
             }
-            const float correction = (kPlayerRadius - distance) / distance;
-            player.x += dx * correction;
-            player.z += dz * correction;
+            const float correction = (actor_radius - distance) / distance;
+            actor_x += dx * correction;
+            actor_z += dz * correction;
             ++hits;
             moved = true;
         }
@@ -443,7 +444,9 @@ void update_player(Player& player, const re4dc::collision::Package& collision,
     const float old_z = player.z;
     player.x += std::sin(player.yaw) * movement * kMoveSpeed * delta_seconds;
     player.z += std::cos(player.yaw) * movement * kMoveSpeed * delta_seconds;
-    player.wall_hits += resolve_walls(collision, player);
+    player.wall_hits += resolve_actor_walls(
+        collision, player.x, player.y, player.z, kPlayerRadius,
+        kPlayerHeight);
     float floor_y = player.y;
     if(find_floor(collision, player.x, player.z, player.y, floor_y)) {
         player.y = floor_y;
@@ -673,11 +676,18 @@ void update_enemy(Enemy& enemy, Player& player,
         if(!player.dead && distance > 0.001f) {
             const float step = std::min(kEnemyMoveSpeed * delta_seconds,
                                         distance - kEnemyAttackRange * 0.85f);
+            const float old_x = enemy.x;
+            const float old_z = enemy.z;
             enemy.x += dx / distance * std::max(step, 0.0f);
             enemy.z += dz / distance * std::max(step, 0.0f);
+            resolve_actor_walls(collision, enemy.x, enemy.y, enemy.z,
+                                kPlayerRadius, kPlayerHeight);
             float floor_y = enemy.y;
             if(find_floor(collision, enemy.x, enemy.z, enemy.y, floor_y)) {
                 enemy.y = floor_y;
+            } else {
+                enemy.x = old_x;
+                enemy.z = old_z;
             }
         }
         advance_enemy_animation(enemy, character, delta_seconds, true);
@@ -708,7 +718,74 @@ void update_enemy(Enemy& enemy, Player& player,
     }
 }
 
-bool shot_hits_enemy(const Player& player, const Enemy& enemy) {
+re4dc::collision::Vec3 subtract(const re4dc::collision::Vec3& a,
+                                const re4dc::collision::Vec3& b) {
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+re4dc::collision::Vec3 cross(const re4dc::collision::Vec3& a,
+                             const re4dc::collision::Vec3& b) {
+    return {a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x};
+}
+
+float dot(const re4dc::collision::Vec3& a,
+          const re4dc::collision::Vec3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+bool segment_intersects_triangle(
+    const re4dc::collision::Vec3& start,
+    const re4dc::collision::Vec3& end,
+    const re4dc::collision::Vec3& a,
+    const re4dc::collision::Vec3& b,
+    const re4dc::collision::Vec3& c) {
+    constexpr float epsilon = 0.00001f;
+    const auto direction = subtract(end, start);
+    const auto edge1 = subtract(b, a);
+    const auto edge2 = subtract(c, a);
+    const auto p = cross(direction, edge2);
+    const float determinant = dot(edge1, p);
+    if(std::fabs(determinant) < epsilon) {
+        return false;
+    }
+    const float inverse = 1.0f / determinant;
+    const auto offset = subtract(start, a);
+    const float u = dot(offset, p) * inverse;
+    if(u < 0.0f || u > 1.0f) {
+        return false;
+    }
+    const auto q = cross(offset, edge1);
+    const float v = dot(direction, q) * inverse;
+    if(v < 0.0f || u + v > 1.0f) {
+        return false;
+    }
+    const float fraction = dot(edge2, q) * inverse;
+    return fraction > 0.001f && fraction < 0.999f;
+}
+
+bool shot_blocked_by_wall(const re4dc::collision::Package& collision,
+                          const re4dc::collision::Vec3& start,
+                          const re4dc::collision::Vec3& end) {
+    const auto* vertices = collision.vertices();
+    const auto* polygons = collision.polygons();
+    const std::uint32_t first_wall =
+        collision.header().floor_count + collision.header().slope_count;
+    for(std::uint32_t index = first_wall;
+        index < collision.header().polygon_count; ++index) {
+        const auto& polygon = polygons[index];
+        if(segment_intersects_triangle(
+               start, end, vertices[polygon.vertex[0]],
+               vertices[polygon.vertex[1]], vertices[polygon.vertex[2]])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool shot_hits_enemy(const Player& player, const Enemy& enemy,
+                     const re4dc::collision::Package& collision) {
     if(enemy.state == EnemyState::Dead) {
         return false;
     }
@@ -719,12 +796,20 @@ bool shot_hits_enemy(const Player& player, const Enemy& enemy) {
         return false;
     }
     const float target_yaw = std::atan2(dx, dz);
-    return std::fabs(wrap_angle(target_yaw - player.yaw)) < 0.12f;
+    if(std::fabs(wrap_angle(target_yaw - player.yaw)) >= 0.12f) {
+        return false;
+    }
+    const re4dc::collision::Vec3 muzzle = {
+        player.x, player.y + 1.35f, player.z};
+    const re4dc::collision::Vec3 chest = {
+        enemy.x, enemy.y + 1.20f, enemy.z};
+    return !shot_blocked_by_wall(collision, muzzle, chest);
 }
 
 void update_combat(Player& player, Enemy& enemy, const Input& input,
                    bool fire_pressed, bool reload_pressed,
-                   float delta_seconds) {
+                   float delta_seconds,
+                   const re4dc::collision::Package& collision) {
     if(player.dead) {
         return;
     }
@@ -747,7 +832,7 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
     }
     --player.ammo;
     player.fire_animation_seconds = 0.4f;
-    const bool hit = shot_hits_enemy(player, enemy);
+    const bool hit = shot_hits_enemy(player, enemy, collision);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
         enemy.health = std::max(0, enemy.health - kHandgunBodyDamage);
@@ -1618,7 +1703,7 @@ int main() {
             update_player(player, collision, input, kSimulationDeltaSeconds);
             update_animation(player, leon, input, kSimulationDeltaSeconds);
             update_combat(player, enemy, input, fire_pressed, reload_pressed,
-                          kSimulationDeltaSeconds);
+                          kSimulationDeltaSeconds, collision);
             update_enemy(enemy, player, ganado, collision,
                          kSimulationDeltaSeconds);
             const float goal_dx = player.x - kGoalX;
