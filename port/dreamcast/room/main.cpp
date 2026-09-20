@@ -145,11 +145,21 @@ struct DemoTelemetry {
     std::uint32_t opaque_room_misses;
     std::uint32_t punchthrough_room_references;
     std::uint32_t punchthrough_room_misses;
+    std::uint32_t room_miss_us;
+    std::uint32_t room_cull_test_us;
+    std::uint32_t room_cull_tests;
+    std::uint32_t room_hit_lookup_us;
+    std::uint32_t room_gather_us;
+    std::uint32_t room_verify_us;
+    std::uint32_t room_pack_us;
+    std::uint32_t room_batch_us;
+    std::uint32_t room_batches;
+    std::uint32_t room_gather_brackets;
 #endif
 };
 
 #if defined(RE4DC_SUBMIT_PROFILE)
-static_assert(sizeof(DemoTelemetry) == 440U);
+static_assert(sizeof(DemoTelemetry) == 480U);
 #elif defined(RE4DC_CULL_AUDIT)
 static_assert(sizeof(DemoTelemetry) == 392U);
 #else
@@ -575,6 +585,16 @@ struct FrameStats {
     std::uint32_t opaque_room_misses = 0;
     std::uint32_t punchthrough_room_references = 0;
     std::uint32_t punchthrough_room_misses = 0;
+    std::uint64_t room_miss_ns = 0;
+    std::uint64_t room_cull_test_ns = 0;
+    std::uint32_t room_cull_tests = 0;
+    std::uint64_t room_hit_lookup_ns = 0;
+    std::uint64_t room_gather_ns = 0;
+    std::uint64_t room_verify_ns = 0;
+    std::uint64_t room_pack_ns = 0;
+    std::uint64_t room_batch_ns = 0;
+    std::uint32_t room_batches = 0;
+    std::uint32_t room_gather_brackets = 0;
 #endif
 };
 
@@ -3607,6 +3627,9 @@ const RoomVertexCacheEntry& cached_room_entry(
 
     ++stats.room_cache_misses;
     ++stats.transformed_vertices;
+#if defined(RE4DC_SUBMIT_PROFILE)
+    const std::uint64_t miss_start = timer_ns_gettime64();
+#endif
     const re4dc::room::Vertex& input = source[vertex_index];
     float x = input.x;
     float y = input.y;
@@ -3673,6 +3696,9 @@ const RoomVertexCacheEntry& cached_room_entry(
         .offset_color = 0,
     };
     entry.argb = shade_color(light_red, light_green, light_blue);
+#if defined(RE4DC_SUBMIT_PROFILE)
+    stats.room_miss_ns += timer_ns_gettime64() - miss_start;
+#endif
     return entry;
 }
 
@@ -3704,6 +3730,10 @@ void submit_room_strips(const re4dc::room::Package& room,
                         std::uint32_t submit_capacity,
                         FrameStats& stats, std::uint8_t cull_mode,
                         std::uint32_t light_selection) {
+#if defined(RE4DC_SUBMIT_PROFILE)
+    const std::uint64_t batch_start = timer_ns_gettime64();
+    ++stats.room_batches;
+#endif
     const auto* source = room.vertices();
     const auto* primitives = room.primitives();
     const auto* primitive_indices = room.primitive_indices();
@@ -3733,7 +3763,16 @@ void submit_room_strips(const re4dc::room::Package& room,
     for(std::uint32_t primitive_index = batch.first_primitive;
         primitive_index < primitive_end; ++primitive_index) {
         const auto& primitive = primitives[primitive_index];
+#if defined(RE4DC_SUBMIT_PROFILE)
+        const std::uint64_t cull_start = timer_ns_gettime64();
+        const bool strip_rejected =
+            g_room_primitive_bounds_ready && !primitive_visible(primitive_index);
+        stats.room_cull_test_ns += timer_ns_gettime64() - cull_start;
+        ++stats.room_cull_tests;
+        if(strip_rejected) {
+#else
         if(g_room_primitive_bounds_ready && !primitive_visible(primitive_index)) {
+#endif
             ++stats.room_strips_culled;
             stats.room_strip_culled_vertices += primitive.vertex_count;
 #if defined(RE4DC_CULL_AUDIT)
@@ -3784,6 +3823,10 @@ void submit_room_strips(const re4dc::room::Package& room,
         }
         bool direct_strip = primitive.vertex_count <= submit_capacity;
         if(direct_strip) {
+#if defined(RE4DC_SUBMIT_PROFILE)
+            const std::uint64_t gather_start = timer_ns_gettime64();
+            ++stats.room_gather_brackets;
+#endif
             for(std::uint32_t local = 0U; local < primitive.vertex_count;
                 ++local) {
                 const std::uint32_t vertex_index =
@@ -3798,8 +3841,14 @@ void submit_room_strips(const re4dc::room::Package& room,
                     break;
                 }
             }
+#if defined(RE4DC_SUBMIT_PROFILE)
+            stats.room_gather_ns += timer_ns_gettime64() - gather_start;
+#endif
         }
         if(direct_strip) {
+#if defined(RE4DC_SUBMIT_PROFILE)
+            const std::uint64_t verify_start = timer_ns_gettime64();
+#endif
             // A later lookup in the same strip can evict an earlier entry from
             // the direct-mapped cache. Confirm every entry still holds the
             // vertex it was looked up for before reading through the pointers;
@@ -3815,11 +3864,17 @@ void submit_room_strips(const re4dc::room::Package& room,
                     break;
                 }
             }
+#if defined(RE4DC_SUBMIT_PROFILE)
+            stats.room_verify_ns += timer_ns_gettime64() - verify_start;
+#endif
         }
         if(direct_strip) {
             if(submit_count + primitive.vertex_count > submit_capacity) {
                 flush();
             }
+#if defined(RE4DC_SUBMIT_PROFILE)
+            const std::uint64_t pack_start = timer_ns_gettime64();
+#endif
             for(std::uint32_t local = 0U; local < primitive.vertex_count;
                 ++local) {
                 const RoomVertexCacheEntry& entry = *g_room_strip_entries[local];
@@ -3837,6 +3892,9 @@ void submit_room_strips(const re4dc::room::Package& room,
                     .oargb = vertex.offset_color,
                 };
             }
+#if defined(RE4DC_SUBMIT_PROFILE)
+            stats.room_pack_ns += timer_ns_gettime64() - pack_start;
+#endif
             stats.room_vertex_records += primitive.vertex_count;
             ++stats.room_direct_strips;
             stats.triangles += primitive.triangle_count;
@@ -3863,6 +3921,9 @@ void submit_room_strips(const re4dc::room::Package& room,
         }
     }
     flush();
+#if defined(RE4DC_SUBMIT_PROFILE)
+    stats.room_batch_ns += timer_ns_gettime64() - batch_start;
+#endif
 }
 
 void submit_world_triangle(const point_t& a, const point_t& b, const point_t& c,
@@ -6445,6 +6506,24 @@ int main() {
             stats.punchthrough_room_references;
         g_re4dc_demo_telemetry.punchthrough_room_misses =
             stats.punchthrough_room_misses;
+        g_re4dc_demo_telemetry.room_miss_us =
+            saturate_u32(stats.room_miss_ns / 1000U);
+        g_re4dc_demo_telemetry.room_cull_test_us =
+            saturate_u32(stats.room_cull_test_ns / 1000U);
+        g_re4dc_demo_telemetry.room_cull_tests = stats.room_cull_tests;
+        g_re4dc_demo_telemetry.room_hit_lookup_us =
+            saturate_u32(stats.room_hit_lookup_ns / 1000U);
+        g_re4dc_demo_telemetry.room_gather_us =
+            saturate_u32(stats.room_gather_ns / 1000U);
+        g_re4dc_demo_telemetry.room_verify_us =
+            saturate_u32(stats.room_verify_ns / 1000U);
+        g_re4dc_demo_telemetry.room_pack_us =
+            saturate_u32(stats.room_pack_ns / 1000U);
+        g_re4dc_demo_telemetry.room_batch_us =
+            saturate_u32(stats.room_batch_ns / 1000U);
+        g_re4dc_demo_telemetry.room_batches = stats.room_batches;
+        g_re4dc_demo_telemetry.room_gather_brackets =
+            stats.room_gather_brackets;
 #endif
         __asm__ volatile("" ::: "memory");
         g_re4dc_demo_telemetry.sequence = publish_sequence + 2U;
