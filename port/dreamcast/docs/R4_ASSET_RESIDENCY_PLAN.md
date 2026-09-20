@@ -1,6 +1,9 @@
 # R4: Dreamcast asset residency and streaming
 
-Status: planned workstream, opened 2026-09-20. No R4 code exists yet.
+Status: open. Deliverable 1 is done and is recorded in
+[R4A_TEXTURE_INVENTORY_CHECKPOINT.md](R4A_TEXTURE_INVENTORY_CHECKPOINT.md);
+its measured findings have already corrected two assumptions in this plan, and
+the corrections are folded in below.
 
 ## Goal
 
@@ -121,34 +124,41 @@ The Dreamcast does not inherit the PS2 downgrade. Decide per asset:
       no -> inspect the PS2 reduction  acceptable on DC?    yes -> PS2-sized, GC-sourced
                                                             no  -> escalate
 
-A 512x512 16-bit GameCube wall is 512 KB uncompressed and about 66 KB plus
-codebook as PVR VQ, against the PS2's 256x256 at 128 KB; the higher-resolution
-GameCube artwork can be cheaper than the PS2 reduction. Those numbers must
-come from the real assets through the tool below, not from this paragraph.
+This is now measured rather than assumed, on the r100 textures: a 256x512
+GameCube wall the build had reduced to 128x256 costs 65,536 B as shipped and
+34,848 B at full resolution under VQ, with 5.7 dB better PSNR. The
+higher-resolution GameCube artwork is genuinely cheaper than the reduction, on
+this room, for every texture that was reduced. It is not cheaper in quality
+terms for textures that were not reduced; see the checkpoint.
 
 PS2 teaches what can be reduced; DCA3 teaches how to manage it; GameCube says
 what the correct result is.
 
 ## Deliverables and order
 
-1. **Asset inventory tool** (`tools/asset_residency_report.py`, new). For the
-   r100 encounter and then per room: every texture and mesh with GameCube
-   size and format, the PS2 counterpart where one is matched, each Dreamcast
-   candidate representation with its VRAM or RAM cost, and a decision column.
-   Output a table such as
-
-   | Asset | GC | PS2 | DC candidate | VRAM | Decision |
-   |---|---|---|---|---:|---|
-   | cabin wall | 512^2 16bpp | 256^2 | 512^2 VQ | ~66 KB | keep GC detail |
-   | Leon face | 256^2 | 128^2 | 256^2 16bpp | 128 KB | keep GC |
-   | foliage alpha | 256^2 | 128^2 | 256^2 1555 | 128 KB | uncompressed |
-
-   with measured values. Alpha edges, HUD, faces and near architecture get
-   separate quality decisions, reviewed in moving scenes, with an
-   uncompressed fallback.
-2. **Native texture layout** (existing queue item): offline twiddled payloads
-   with explicit layout metadata and one uploaded handle per deduplicated
-   payload, then per-texture VQ, palette and mip candidates through `pvrtex`.
+1. **Asset inventory tool** — **done**, `tools/asset_residency_report.py`, with
+   `texture-r100-production` added to reproduce the previously untracked r100
+   texture package. Run it with
+   `make -C port/dreamcast -f Makefile.host asset-residency-r100`. Its first
+   findings, in
+   [R4A_TEXTURE_INVENTORY_CHECKPOINT.md](R4A_TEXTURE_INVENTORY_CHECKPOINT.md):
+   six r100 textures that the build reduced to meet a 256-pixel limit can be
+   restored to their authored resolution under vector quantisation for 46% less
+   VRAM and 5.7 to 7.3 dB more PSNR, so that change has no trade-off to review;
+   and vector quantisation applied to textures that were *not* reduced costs 3
+   to 13 dB, so it is not a default and is reserved for a residency budget that
+   requires it. The default candidate plan is 1,732,608 B against the shipped
+   1,978,368 B, with six textures gaining detail; the all-VQ floor is
+   472,576 B. No PS2 disc is present in this workspace, so that column reads
+   "no PS2 source" until one is supplied to `--ps2-manifest`. Meshes are not
+   yet inventoried; extend the tool when the residency model needs them.
+2. **Native texture layout** (next): offline twiddled payloads with explicit
+   layout metadata and one uploaded handle per deduplicated payload, then the
+   per-texture representations deliverable 1 selected. This needs the `re4tex`
+   header to carry the payload format, since the runtime currently assumes
+   linear 16-bit and twiddles during `pvr_txr_load_ex()`; VQ and palette
+   payloads cannot be expressed in the present format. Take the six
+   restorations first: they are strictly better and exercise the whole path.
    Credit this to load time and memory unless a frame trace changes.
 3. **Package-resident batch-local tables**: emit the R3v local strip indices
    and batch vertex tables from the converter, recovering most of the 413,696

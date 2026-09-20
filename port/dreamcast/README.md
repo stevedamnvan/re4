@@ -383,12 +383,15 @@ make -C port/dreamcast/room \
    SH-4 kernel dependency contract; retain and compare the reference path.
 3. Benchmark packet aggregation and KOS DMA only after exact list byte/call
    counts exist. Immediate submission already uses store queues.
-4. Open the R4 asset residency and streaming workstream: an asset inventory
-   that compares each GameCube asset with its PS2 counterpart and every
-   Dreamcast candidate representation, then offline native texture layout
-   and shared upload handles, then VQ/palette/mipmap candidates per texture
-   with previews and moving-scene quality acceptance. See
-   [the R4 plan](docs/R4_ASSET_RESIDENCY_PLAN.md).
+4. Continue the R4 asset residency and streaming workstream. Its inventory
+   tool is in place and has measured the r100 textures: six of them were
+   reduced by a 256-pixel build limit and can be restored to their authored
+   resolution under vector quantisation for 46% less VRAM and 5.7 to 7.3 dB
+   more PSNR, while quantising the textures that were not reduced would cost
+   3 to 13 dB and is therefore not a default. Next is the native texture
+   layout that can express those payloads, which the current `re4tex` header
+   cannot. See [the R4 plan](docs/R4_ASSET_RESIDENCY_PLAN.md) and
+   [the R4a inventory checkpoint](docs/R4A_TEXTURE_INVENTORY_CHECKPOINT.md).
 5. Derive the residency model from the authored GameCube block sets, replace
    the embedded ROM disk with asynchronous reads into a staging arena, and
    prove one room transition with the previous room evicted.

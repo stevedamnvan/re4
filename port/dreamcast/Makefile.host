@@ -20,6 +20,10 @@ R100_SMX ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_006.SMX
 R100_ROOM ?= build/private/r100-encounter-source-meters-smx.re4room
 R100_PRODUCTION_ROOM ?= build/private/r100-source-cell-4.re4room
 R100_PRODUCTION_CELL_SIZE ?= 4
+R100_TPL ?= $(R100_EXPORT_DIR)/R100.TPL.TPL
+R100_MTL ?= $(R100_EXPORT_DIR)/R100.allparts.mtl
+R100_TEXTURE ?= build/private/r100-entry-source.re4tex
+R100_TEXTURE_MAX_DIMENSION ?= 256
 R100_UNPARTITIONED_MATERIALS := ROOM_MATERIAL_002 ROOM_MATERIAL_003 \
 	ROOM_MATERIAL_004 ROOM_MATERIAL_005 ROOM_MATERIAL_008 ROOM_MATERIAL_009 \
 	ROOM_MATERIAL_014 ROOM_MATERIAL_015 ROOM_MATERIAL_016 ROOM_MATERIAL_027 \
@@ -39,7 +43,7 @@ CHARACTER_TEXTURE_MAX_DIMENSION ?=
 CHARACTER_SAMPLE_STEP ?= 4
 CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-max-dimension $(CHARACTER_TEXTURE_MAX_DIMENSION),)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production collision-r100-source route-r100 texture-r10d character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production collision-r100-source route-r100 texture-r10d texture-r100-production asset-residency-r100 character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -99,6 +103,18 @@ route-r100:
 
 texture-r10d:
 	$(PYTHON) tools/convert_tpl.py $(R10D_TPL) $(R10D_MTL) $(R10D_TEXTURE)
+
+# Reproduces the accepted r100 texture package. The 256-pixel limit is the one
+# the accepted package was built with; it is a source-asset reduction and is
+# recorded as such in the asset residency report.
+texture-r100-production:
+	$(PYTHON) tools/convert_tpl.py 		--max-dimension $(R100_TEXTURE_MAX_DIMENSION) 		$(R100_TPL) $(R100_MTL) $(R100_TEXTURE)
+
+# R4 deliverable 1. Reports every r100 texture's GameCube source, the
+# representation the accepted package ships, and each Dreamcast candidate with
+# its exact VRAM cost. Reads private assets and writes only a report.
+asset-residency-r100:
+	$(PYTHON) tools/asset_residency_report.py 		--tpl $(R100_TPL) --mtl $(R100_MTL) 		--package $(R100_TEXTURE) 		--max-dimension $(R100_TEXTURE_MAX_DIMENSION) 		--json build/private/r100-residency.json
 
 character-leon:
 	# PL_ARC_PTR numbers include the four-word DRS body header: source
