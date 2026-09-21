@@ -5,6 +5,7 @@ assert not bpy.app.online_access
 for addon in list(bpy.context.preferences.addons):
  bpy.ops.preferences.addon_disable(module=addon.module)
 bpy.ops.object.select_all(action='SELECT');bpy.ops.object.delete(use_global=False)
+for mat in list(bpy.data.materials):bpy.data.materials.remove(mat)
 bpy.ops.wm.obj_import(filepath=str(src),forward_axis='Y',up_axis='Z',global_scale=1.0,validate_meshes=False)
 ref=bpy.data.collections.new('REFERENCE_LOCKED');bpy.context.scene.collection.children.link(ref)
 meshes=[o for o in bpy.context.scene.objects if o.type=='MESH']

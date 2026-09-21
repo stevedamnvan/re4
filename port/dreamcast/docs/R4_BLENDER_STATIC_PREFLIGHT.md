@@ -1,79 +1,133 @@
-# D323 isolated Blender static-asset preflight
+# D323 isolated Blender static-asset experiment
 
-Disposition: specific blocked conversion boundary; no runtime replacement or
-reduction candidate accepted. This is secondary to source-resource lifetime work.
-Branch `experiment/r100-environment-blender`, base
-`b1cda581c96ce4f44d86e43e3c9153e10bc47172`. Main checkout untouched.
+**Decision: not worthwhile; reject both geometry reductions.** No package, emulator
+run, merge, push or default switch. Main source-resource lifetime work takes priority.
+This supersedes the initial converter-blocked preflight in commit f68ea09.
+Isolated branch `experiment/r100-environment-blender`, base b1cda581c96ce4f44d86e43e3c9153e10bc47172.
 
-## Selection and ceiling
+## Actual allocation and bounded return
 
-Read-only residency audit selects r100.arc entry 5, common SMD BIN 0..10:
-529,344 encoded bytes, 12,336 source positions, 23,127 GX triangle equivalents,
-11 material parts. Each has one joint, no weights or morph table; common placement
-records use motion 255 / source ID 254. They share room-archive backing across
-block instances. This direct room allocation is the proposed replacement boundary.
-529,344 is an impossible deletion ceiling, not feasible savings. Even hypothetical
-50% encoded reduction recovers only 264,672 bytes against D322's 3,095,232-byte
-enemy shortfall. Character mesh total is smaller (415,040) and carries animation
-contracts; environment selection follows measured backing, not editing convenience.
-No block-pool saving: its maximum active set is blocks 1/2/3, 1,126,272 bytes.
+The residency audit selected common r100.arc entry 5 / SMD BIN 0..10, by measured
+backing rather than editing convenience. Total encoded geometry is 529,344 bytes,
+12,336 positions / 23,127 nondegenerate triangles / 11 parts. Each has one joint,
+no weights or morph table, motion 255 and source ID 254 in the audited common
+placements. Their shared owner is the room archive; repeated DAT instances do not
+multiply this saving. The 1,126,272-byte block pool is unaffected (its maximum
+active set is blocks 1/2/3). Source collision, navigation, events and transforms
+were never changed.
 
-## Executed unmodified pilot
+529,344 bytes is a deletion ceiling, not attainable saving. Hypothetical 50%
+encoded reduction would be 264,672 bytes. Neither could resolve D322's 3,095,232-byte
+or D324's subsequently reported 2,621,536-byte enemy-allocation shortfall.
+Character mesh total 415,040 bytes is smaller and has additional motion contracts;
+mesh work does not compress FCV/SEQ.
 
-Largest common BIN 9: 87,872 source bytes, 1,888 positions, 3,704 nondegenerate
-triangles. JADERLINK GC/WII BIN Tool 1.0.4 exports privately to OBJ and companions.
-Both a tool-only repack and OBJ -> Blender -> OBJ -> BIN were independently checked.
-The checker reuses `convert_character.triangulate`, compares oriented triangle
-position/UV multisets, material header bytes, color corners and integer normals.
-All 3,704 oriented position/UV triangles and material headers match in both paths.
-Blender retained 1,888 positions; import/export uses the same Y-forward/Z-up axes
-and unit scale. No scene recentering or gameplay transforms were applied.
+| Measured private encoding | Bytes | Meaning |
+|---|---:|---|
+| Six numerically qualified source BINs (0,1,4,6,7,9) | 308,480 | Subset after roundtrip testing |
+| Same six, unmodified Blender numerical roundtrip | 291,840 | 16,640-byte encoding-only difference; no target acceptance |
+| Protected 80% candidate | 289,504 | Only 2,336 additional geometry bytes; rejected |
+| Protected 60% candidate | 289,504 | Same constraint-limited result; rejected |
 
-However, both repacks fail source fidelity **before reduction**:
+## Narrow converter correction and qualified interchange
 
-- All 11,112 referenced color corners change from RGBA (0,0,0,0) to (255,255,255,255).
-- Header flags change 0xa0000000 -> 0xe0000000; nTex changes 7 -> 0.
-- Normal components differ by up to one signed integer step.
+Pinned release JADERLINK GC/WII BIN Tool 1.0.4 was inspected against upstream source
+commit `638e9d5f63fb8322cfab0d48f4ffbb23f6e7bb68`. Its OBJ repack passes literal
+`false` to `RepackOBJ` for colors despite `UseVertexColor:True`. The asset-free
+patch changes that argument to `idxbin.UseVertexColor`. PowerShell's installed
+Roslyn compiled the source locally; no SDK installation or binary patching was
+needed. Original source/license notices remain intact in the private clone. MIT
+license and one-line patch are retained under `tools/patches/jaderlink-bin-1.0.4`.
 
-`UseVertexColor:True` and `UseIdxMaterial:True` retain a color stream and original
-material header, but do not restore the source values. Default `UseVertexColor:False`
-omits the color pointer entirely. Source `commonModelTrans` uses bit31 to bind the
-color array, so this is not an ignorable unused data difference. Tool-only bytes
-78,976 and Blender bytes 79,008 are **not accepted memory savings**. Further work
-requires a small source-qualified exchange/repack correction, then the same
-unmodified roundtrip gate; no gameplay changes should accommodate exporter loss.
+A strict bridge proves all referenced corners, including degenerate records, use
+constant zero RGBA across this exact set, emits that constant on OBJ vertices,
+and restores source flags/nTex after validating the repacked stream and material
+headers. Uniform color has an unambiguous mapping even if topology changes. The
+bridge rejects other flags, color patterns, multiple material parts, weights and
+morphs. It checks active sampler IDs against the original texture count before
+retaining nTex; it does not invent a count or alter pointers. Original companion
+idxggbin, idxmaterial and MTL are authoritative. Blender material-name collisions
+were removed by clearing the private session's unused material datablocks.
 
-## Local Blender execution and artifacts
+All 11 pass corrected tool-only numerical gates: exact oriented position/UV
+triangle multisets, referenced colors, material headers and source flags/nTex.
+The OBJ exporter normalizes original integer normals; repacking normalizes again
+and quantizes to S8 range 127. Tool-only maximum angular difference is 0.355207
+degrees. No referenced source normal has zero length.
 
-Blender 5.2.0 LTS, build fbe6228777e7, was launched headlessly with factory startup,
-`--offline-mode --disable-autoexec`, isolated BLENDER_USER_RESOURCES. Script asserts
-`bpy.app.online_access == False` and disables all add-ons. API properties were
-introspected before use. No MCP server was found or configured; this was local bpy.
-No external upload, model API, render, emulator run or build was performed.
+Blender's unmodified roundtrip passes BIN0/1/4/6/7/9 with <=1 integer-component
+error and <=0.5 degree angular error (worst 0.465046 degrees). This is a bounded
+numerical candidate, **not exact normal arrays or visual equivalence**. BIN2/3/5/8/10
+remain original: Blender introduces zero/changed normals or exceeds the bound;
+BIN8 reaches approximately 75.71 degrees. The threshold was not relaxed. The
+checker reuses `convert_character.triangulate`, rejects ambiguous duplicate triangle
+identities, and independently checks actual BIN corner streams.
 
-Private root:
+## Reduction results and rejection
+
+Both candidates protect boundary/UV seam/material/sharp-edge vertices and edges,
+plus bounds extrema. Sharp edges use a 30-degree criterion. Targets 80% and 60%
+are requests, not claimed achieved ratios. Saved pristine references precede every
+destructive modifier operation. Empty reducible groups explicitly skip reduction.
+
+BIN0/1/7 have no eligible interior under those protections and retain their geometry.
+BIN4/6/9 retain all protected edges/vertices but remove only 58/70/50 triangles.
+Across the six files, 13,684 triangles become 13,506. Sampled bidirectional distance
+(vertices and triangle centroids in both directions) is respectively 101.22,
+66.38 and 85.16 mm. These fail the declared conservative 10 mm / lean 20 mm limits.
+They are sampled distances, not a continuous Hausdorff bound. OBJ unit=100 source
+millimetres was checked against source fixed-point positions and exporter scaling.
+The 2,336-byte marginal geometry gain does not justify those deviations. No rejected
+mesh was inserted into the actual room archive; archive alignment, staging, retained
+native identities, free heap, VRAM or CPU improvements therefore remain unmeasured.
+
+No visual approval is claimed: textures were not loaded for this geometry preflight,
+no Blender render was made, review camera collections remain empty, and the recovered
+game's source hold prevents complete world-visible acceptance. No target measurement
+window was requested for rejected content. Processing paused during the parent's
+D324 capture and resumed after the explicit window release.
+
+## Reproduction and exact private artifacts
+
+Private Windows root:
 `C:/Game Dev/Emulators/re4_helpers/experiments/r100-environment-d323`
 
-- `blender-bin9/reference-locked.blend`: pristine geometry, REFERENCE_LOCKED;
-  CANDIDATE_CONSERVATIVE, CANDIDATE_LEAN and REVIEW_CAMERAS are intentionally empty.
-- `blender-bin9/blender-report.json`, `blender-api.json`: offline/add-on/API evidence.
-- `roundtrip-validation.json`, `validate_roundtrip.py`: exact private comparison.
-- `roundtrip-bin9`: original exchange companions and tool-only failure outputs.
-- `blender-bin9`: Blender exchange and repacked failure output.
-- Linux `/root/probe/r100-environment-d323/audit/FINDINGS.md` and `inventory.json`:
-  bounded shared allocation/instance inventory.
+- `source-candidate-manifest.json`: all source hashes, exact archive/tag/BIN identities,
+  source placements/material cost audit, bounded gates, candidate hashes/bytes and decisions.
+- `set-source`: copies verified byte-identical to private original BINs 0..10.
+- `set-tool`: corrected tool-only exchange/repack; `set-tool-gate.json` initial numerical report.
+- `set-blender-qualified/{0000,0001,0004,0006,0007,0009}`: final clean-name unmodified
+  roundtrips and `.blend` references; final comparison results are in the manifest.
+- `candidates/<BIN>/reference-locked.blend` and `selectable-candidates.blend`:
+  REFERENCE_LOCKED, CANDIDATE_CONSERVATIVE, CANDIDATE_LEAN, REVIEW_CAMERAS collections.
+- `candidates/<BIN>/<CANDIDATE_*>`: OBJ, authoritative metadata and corrected BIN.
+- `candidates/geometry-report.json`: protected-boundary and sampled distance results.
+- `tools/bin-source`, `tools/bin-color-fix.dll`: pinned source clone and private patched build.
+- `blender-api.json` and Blender logs: version/offline/API evidence; initial failed
+  intermediates remain private as diagnostics, not selectable accepted packages.
 
-Tracked `blender_static_roundtrip.py` takes input OBJ and a private output directory.
-Preserve/restore the original idxggbin, idxmaterial and MTL companions before BIN
-repack; Blender-generated MTL is not authoritative. Textures were absent from this
-geometry-only preflight and no visual/material appearance acceptance is claimed.
+Linux audit: `/root/probe/r100-environment-d323/audit/FINDINGS.md` and `inventory.json`.
+Main checkout, shared originals, mirrors, sound, externalized texels and fixtures
+were untouched. No proprietary data or derived models/textures/captures are tracked.
 
-80%/60% geometry variants, source-compatible room repack, matched 640x480 source
-views, allocation/reservation/VRAM/CPU measurements and source-hold world-visible
-acceptance remain pending. Nothing was merged, pushed, selected by default or
-inserted into a shared original, mirror, archive or evidence fixture.
+The tracked scripts are bounded reproducible components:
 
-Workflow references: https://github.com/JADERLINK/RE4-GCWII-BIN-TOOL and
+1. Apply `tools/patches/jaderlink-bin-1.0.4/use-colors.patch` to the pinned private clone.
+   Build it with the adjacent `build-private.ps1`; no upstream source is vendored.
+2. Export private BIN copies with the pinned tool. Run `static_bin_exchange_gate.py
+   prepare SOURCE.BIN OUTPUT.obj`, corrected tool repack, then `finalize` and `compare`.
+3. Run `blender_static_roundtrip.py -- INPUT.obj PRIVATE_OUTPUT_DIRECTORY` using Blender
+   `--background --factory-startup --offline-mode --disable-autoexec --python SCRIPT`.
+   Preserve original metadata companions, repeat prepare/repack/finalize/compare.
+4. After the six gates pass, run `blender_static_candidates.py -- PRIVATE_ROOT` with
+   the same Blender flags. It consumes the documented set-tool layout. Repeat the
+   same guarded repack per candidate; these particular candidates must remain rejected.
+5. Run `static_bin_manifest.py PRIVATE_ROOT ORIGINAL_BIN_DIRECTORY AUDIT_INVENTORY.json`.
+   The generated manifest checks original copy identity and all six roundtrip gates.
+
+Blender was 5.2.0 LTS build fbe6228777e7; a private BLENDER_USER_RESOURCES directory,
+`bpy.app.online_access == False` assertion and disabling all add-ons keep the workflow
+local. No MCP was installed or used. The user-provided community thread describes
+headless bpy but is not verified provenance for an OpenAI release demo:
 https://community.openai.com/t/how-does-gpt-6-actually-generate-3d-models-in-release-demo-via-codex-local-blender-or-mcps-apis/1395391
-The latter is a community description of headless bpy, not verified provenance
-of an OpenAI demo or evidence of installed MCP capabilities.
+Upstream converter: https://github.com/JADERLINK/RE4-GCWII-BIN-TOOL
