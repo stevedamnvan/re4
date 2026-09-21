@@ -50,15 +50,16 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (3ca3d32 / D306 replay, 2026-09-21)
+## Current boot frontier (D307 replay, 2026-09-21)
 
 D305 qualifies r100 and loads its 4,669,568-byte archive through the recovered
 ReadAreaData/gameRoomInit path, retaining ROOM/FOOT sound-container dispatch.
-Source initialization then exhausts the room heap at collision-manager arrays
-and the event table. D306 logs allocation sizes: the source primitive buffer
-takes 638,976 bytes, leaving 4,384 before required collision/event pools fail.
-Next work is a measured target reservation/lifetime correction without arbitrary
-gameplay-pool reductions or dropped render work. See
+After D306 measured pool exhaustion, D307 corrects a duplicate platform
+reservation and returns 458,752 bytes to the heap. Required collision/event
+allocations now succeed with unchanged gameplay pools and primitive buffers.
+The next stall is Leon model creation's source `notBinData` wait; the mirror
+still marks the source-layout `em/pl00.drs:0` payload unhandled. Qualify that
+dependency with existing converters before further native consumption. See
 [R4_ROOM_MEMORY_CHECKPOINT.md](R4_ROOM_MEMORY_CHECKPOINT.md). r101 remains
 explicitly rejected for incomplete EVS conversion.
 

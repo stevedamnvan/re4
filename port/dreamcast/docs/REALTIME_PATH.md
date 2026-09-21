@@ -1,6 +1,6 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Updated 2026-09-21; current integration reference `3ca3d32` / D306.
+Updated 2026-09-21; current integration reference D307 (native arena correction).
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first
@@ -42,16 +42,17 @@ missing. Keep rejected branches closed absent new workload evidence.
 |---|---|
 | Implemented in native scene runtime | `port/dreamcast/room/` owns measured visibility, prepared lighting, strips, texture sharing/upload, transient payload and retirement work. Reuse these components. |
 | Connected to recovered game | `port/dreamcast/game/` uses qualified source-layout DAR through the DVD queue/source heap and reaches r100 allocation. This does not connect every scene-runtime optimization. |
-| Validated in normal gameplay | Not yet established: the game still links GX/audio placeholders, and D306 repeats initialization heap exhaustion. Viewer timings are not its gameplay frame budget. |
+| Validated in normal gameplay | Not yet established: the game still links GX/audio placeholders. D307 clears the measured allocation failures but stalls on unconverted player model data. Viewer timings are not its gameplay frame budget. |
 
 Qualified `.dar` -> source DVD queue/heap ownership -> recovered initialization
 and behavior differs from native scene/texture packages -> existing rendering
 and resource mechanisms. Adapt those through explicit interfaces; never replace
 the archive behind `pG->pRoom` with a viewer `.re4room` package.
 
-Latest primary evidence is D306's allocation trace after D305 archive/sound-block
-consumption. Sound dispatch is not playback; `read_us=0` is not valid timing.
-Diagnose current memory demand, then measure integrated rendering when connected.
+Latest primary evidence is D307's 458,752-byte recovery at matched allocation
+points; source pools and primitive capacity are unchanged. Player archive
+qualification is next. Sound dispatch is not playback; `read_us=0` is invalid
+timing. Measure integrated rendering when connected.
 Historical workload measurements below remain component-reuse references.
 
 ## Historical evidence and necessary corrections

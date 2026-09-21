@@ -1,6 +1,8 @@
-// Memory layout: one arena from the KOS heap, carved into the regions the
-// GameCube build keeps at fixed addresses. The region sizes are the GameCube's
-// (main_mem.cpp SystemMemInit); what remains is the game's OSAlloc arena. The
+// Memory layout: one arena from the KOS heap, carved into the live regions the
+// GameCube build keeps at fixed addresses. SndInit starts at 0x80370000; the
+// source SystemMemMap names are boundary labels, not allocation owners. The
+// DVD staging buffer is re4dc_dvd_buff below, outside this arena. What remains
+// after sound and the archives is the game's OSAlloc arena. The
 // GameCube had 21 MB after its ELF for these; the Dreamcast has 16 MB in
 // total, so the heap is smaller and R4_ASSET_RESIDENCY_PLAN.md owns the
 // consequences. The frame-buffer and FIFO regions (0x80460000, 0x803F0000)
@@ -15,8 +17,7 @@
 
 struct Re4dcMemLayout re4dc_mem;
 
-static const unsigned long kDvdSize = 0x80000;      // 0x80370000-0x803F0000
-static const unsigned long kSoundSize = 0x70000;    // 0x803F0000-0x80460000
+static const unsigned long kSoundSize = 0x80000;    // SND_DATA_TOP 0x80370000 to GX FIFO 0x803F0000
 static const unsigned long kCoreSize = 0x234000;    // CORE_DATA_MAX
 static const unsigned long kOptionSize = 0x40000;
 static const unsigned long kPlayerSize = 0x118000;  // 0x807EC000-0x80904000
@@ -33,7 +34,7 @@ void re4dc_mem_init(void)
     if (re4dc_mem.arena_lo) {
         return;
     }
-    unsigned long fixed = kDvdSize + kSoundSize + kCoreSize + kOptionSize + kPlayerSize + kWeaponSize;
+    unsigned long fixed = kSoundSize + kCoreSize + kOptionSize + kPlayerSize + kWeaponSize;
     // Take the largest arena the KOS heap gives us, leaving the runtime some room.
     unsigned long want = 13 * 1024 * 1024;
     void* p = NULL;
@@ -51,8 +52,10 @@ void re4dc_mem_init(void)
     unsigned long lo = (unsigned long) p;
     re4dc_mem.arena_lo = lo;
     re4dc_mem.arena_hi = lo + want;
+    // dvd is the legacy SystemMemMap lower-bound marker, not DVD storage.
+    // Only SndInit owns this arena region; actual DVD staging is separate.
     re4dc_mem.dvd = lo;
-    re4dc_mem.sound = re4dc_mem.dvd + kDvdSize;
+    re4dc_mem.sound = lo;
     re4dc_mem.core = re4dc_mem.sound + kSoundSize;
     re4dc_mem.option = re4dc_mem.core + kCoreSize;
     re4dc_mem.player = re4dc_mem.option + kOptionSize;

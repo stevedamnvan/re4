@@ -1,6 +1,6 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-Updated 2026-09-21; current integration reference `3ca3d32` / D306.
+Updated 2026-09-21; current integration reference D307 (native arena correction).
 Historical resource measurements retain their original revision identities.
 This policy supports the authoritative [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
 R4 is not an independent prerequisite project that must be perfected before
@@ -47,6 +47,10 @@ references. Viewer tests do not prove the latter two states.
 Current recovered-game ownership is qualified source-layout `.dar` -> source
 DVD queue and source heap -> recovered initialization/behavior. D305 consumes
 r100 and dispatches its sound blocks; D306 measures the ensuing pool exhaustion.
+D307 reclaims a duplicate platform reservation, returning 458,752 bytes without
+cutting gameplay pools or render capacity. Collision/event allocations succeed;
+unconverted player archive data is now the exact initialization blocker. This
+is startup recovery, not final gameplay headroom or a rendering speedup.
 Custom `.re4room`/`.re4sat` and native textures serve the scene renderer and are
 not interchangeable with the source archive behind `pG->pRoom`. The recovered
 target still links GX/audio placeholders; explicit connection and normal

@@ -22,8 +22,8 @@ extern "C" {
 struct Re4dcMemLayout {
     unsigned long arena_lo;   // first byte of the platform arena
     unsigned long arena_hi;   // one past its last byte
-    unsigned long dvd;        // SysMem.dvd     (GameCube 0x80370000, 512 KB)
-    unsigned long sound;      // SysMem.sound   (0x803F0000, 448 KB)  = snd.cpp SND_DATA_TOP
+    unsigned long dvd;        // legacy lower-bound marker; aliases sound, not DVD staging
+    unsigned long sound;      // snd.cpp SND_DATA_TOP (GameCube 0x80370000, 512 KB)
     unsigned long core;       // SysMem.core / read.cpp CORE_DATA_ADDR (0x80578000, CORE_DATA_MAX 0x234000)
     unsigned long option;     // SysMem.option / OPTION_DATA_ADDR (0x807AC000, 0x40000)
     unsigned long player;     // SysMem.player / PL_DATA_ADDR (0x807EC000, 0x118000)

@@ -13,19 +13,23 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - 3ca3d32 / D306
+## Current resumption point - D307 native arena correction
 
-Branch `dreamcast-port`; implementation `c325c41` qualifies r100, and `3ca3d32`
-adds the measured allocation diagnostic. Latest completed target replay is D306:
+Branch `dreamcast-port`; `c325c41` qualifies r100, `3ca3d32` adds allocation
+diagnostics and `44509f9` reconciles planning. Latest completed replay is D307:
 normal first-play opening completion -> r100 stage -> qualified archive and
-ROOM/FOOT sound dispatch -> collision/event allocation failure. The source
-638,976-byte primitive allocation leaves 4,384 bytes; required later pools fail.
+ROOM/FOOT sound dispatch -> successful collision/event pools -> Leon model
+version-rejection wait. D307 returns 458,752 bytes from a duplicate platform
+reservation, without reducing source pools or the primitive buffer. There are
+429,536 bytes free after the event allocation; this is not final peak headroom.
 
-Next primary task: remove demonstrated target reservation/lifetime overhead,
-preserving source gameplay pool capacity and render work. Trace primitive-buffer
-consumers and native backend ownership before changing its representation.
+Next primary task: qualify `em/pl00.drs:0` (the source-layout player archive,
+still unhandled in the mirror). The task stack reaches `cModInfoMgr::create`'s
+`notBinData` wait through `cPlLeon::setModel`. Reuse existing motion/archive,
+BIN/TPL/FCV/EFF conversion and require qualified data before native consumption;
+do not bypass checks or substitute a viewer character package.
 See [R4_ROOM_MEMORY_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_MEMORY_CHECKPOINT.md)
-for exact allocation evidence/build hashes and the D305 endian checkpoint for
+for exact D307 implementation/evidence/build hashes and the D305 endian checkpoint for
 qualified data contracts. Do not return to missing YZ2, r120 or EFF work.
 
 Current limits: the game target still links `platform/gx_stub.cpp` and
@@ -323,7 +327,10 @@ still confirms the source title debug menu defaults; it is not manual acceptance
 The real `port/dreamcast/fixtures/boot-deps.txt` is the cold-boot/title manifest
 and remains an untracked local integration file. It does not require a room.
 Copy it and append the r100 ARC/DAR dependencies for this bounded fixture as
-below. The saved D305 report passes these combined requirements. This is not a
+below. The saved D305 report passes these combined requirements. D307 identifies
+an additional player dependency: append `em/pl00.drs` when qualifying progress
+beyond this diagnostic frontier; it currently fails and must not be ignored.
+This is not a
 declaration that all future native core/player/room consumers are qualified.
 
 ```bash
