@@ -57,6 +57,16 @@ extern "C" int re4dc_module_bind(void* header)
         return 0;
     }
     u32* h = (u32*) header;
+    if (h[0x1c / 4] == 0xDC000001) {
+        // Compact offline descriptor: no section, name, import or raw code fields.
+        for (unsigned i = 1; i < 16; ++i) {
+            if (i != 0x1c / 4 && i != 0x20 / 4 && i != 0x34 / 4 && i != 0x38 / 4 && h[i] != 0) {
+                re4dc_log("module: malformed native descriptor; link failed\n");
+                h[0x34 / 4] = h[0x38 / 4] = 0;
+                return 0;
+            }
+        }
+    }
     const Re4dcModule* m = 0;
     for (unsigned i = 0; i < sizeof(g_modules) / sizeof(g_modules[0]); i++) {
         if (g_modules[i].id == h[0]) m = &g_modules[i];
@@ -65,6 +75,13 @@ extern "C" int re4dc_module_bind(void* header)
     void (**epilog)(void) = (void (**)(void)) &h[0x38 / 4];
     if (m == 0) {
         re4dc_log("module: id %lu not in the image; link failed\n", h[0]);
+        *prolog = 0;
+        *epilog = 0;
+        return 0;
+    }
+    if (h[0x1c / 4] == 0xDC000001 &&
+        ((h[0x34 / 4] && *prolog != m->prolog) || (h[0x38 / 4] && *epilog != m->epilog))) {
+        re4dc_log("module: invalid native entry points; link failed\n");
         *prolog = 0;
         *epilog = 0;
         return 0;

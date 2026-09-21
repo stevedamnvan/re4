@@ -50,7 +50,7 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D312 replay, 2026-09-21)
+## Current boot frontier (D312 integration / D313 storage candidate, 2026-09-21)
 
 D312 qualifies required EVD/FCV variants and binds native em12 using the existing
 module mechanism. The R100Em constructor alias passes its SH-4 layout check.
@@ -65,6 +65,14 @@ resource ownership and existing mechanisms; preserve qualified loader semantics.
 See [R4_EVENT_ENEMY_CHECKPOINT.md](R4_EVENT_ENEMY_CHECKPOINT.md). The required
 D312 mirror manifest passes; r101 still rejects unsupported EVS. GX/audio stubs,
 ID/effect errors and module reload/reset behavior remain open.
+
+D313 adds selectable compact native-module descriptors through the existing
+mirror/binder: 46,464 live heap bytes recovered, em12 demand reduced by 428,288.
+Both block/enemy allocations still fail. See
+[R4_STATIC_MODULE_STORAGE_CHECKPOINT.md](R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
+Next connect bounded resource ownership based on the source-active texture set;
+retaining all images as 16-bit native textures would exceed VRAM. Preserve source
+metadata, CPU users and the existing accepted viewer reference.
 
 D303's source-derived first-play opening skip still reaches r100 through normal
 stage initialization; r120 is cinematic staging, not a playable room. Its D302

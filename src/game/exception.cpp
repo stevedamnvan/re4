@@ -208,6 +208,13 @@ void ExceptionInit()
 // Reads a symbol file; returns the symbol_err_tbl index (1 ok, 2 memory, 4 open, 5 table full).
 int excepLoadSymbolSub(char* name, OSModuleHeader* module)
 {
+#if !defined(__PPC__)
+    // Native static modules have no PPC text base; GameCube .sym files cannot
+    // describe their SH-4 code. Keep the target ELF/nm diagnostic path.
+    if (module && (module->numSections < 2 || module->sectionInfo == NULL)) {
+        return 4;
+    }
+#endif
     int ret = 1;
     void* addr;
     int r;

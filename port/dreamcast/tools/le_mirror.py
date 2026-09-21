@@ -8,6 +8,11 @@ passes for each sidecar. --native-rooms additionally emits qualified .dar DVD
 containers for the native loader, retaining the original sound dispatch. A
 rejected room has no .dar output (including removal of an older generated one).
 
+--compact-static-rel removes unused PowerPC bodies only for the native modules
+listed in the existing game registry/Makefile, after whole-file qualification.
+It retains source archive slots, assets and sound. Use a separate output tree for
+this selectable candidate; the default mirror remains the full reference.
+
     le_mirror.py <src-tree> <dst-tree> [--force] [--require <deps.txt>]
 
 --require names a file listing the disc paths a boot fixture actually reads
@@ -40,6 +45,7 @@ The tree and the mirror are private game data; only this tool is committed.
 import fnmatch
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import sys
@@ -1867,6 +1873,95 @@ def prepare_native_room(rel, converted_container, decoded, entries):
     struct.pack_into('<4I', data, payload_headers[0], 0, len(decoded), 0, offset)
     return native_rel, data
 
+
+# Native descriptor uses the existing OSModuleHeader layout, with no PPC sections.
+# Version marks an explicit static binding; only id and bssSize survive.
+STATIC_REL_VERSION = 0xDC000001
+
+
+def static_module_ids():
+    """Use the existing binding table; refuse a stale Makefile/registry pair."""
+    root = Path(__file__).resolve().parents[3]
+    registry = (root / 'port/dreamcast/game/platform/modules.cpp').read_text()
+    bindings = re.findall(r'^    MODULE\((\d+), (\w+)\),$', registry, re.M)
+    makefile = (root / 'port/dreamcast/game/Makefile').read_text()
+    selected = re.search(r'^MODULES = (.*)$', makefile, re.M)
+    if not bindings or selected is None or set(selected[1].split()) != {n for _, n in bindings}:
+        raise ValueError('static module registry and Makefile disagree')
+    result = {int(i): n for i, n in bindings}
+    if len(result) != len(bindings):
+        raise ValueError('duplicate static module id')
+    for ident, name in result.items():
+        config = json.loads((root / 'config/G4BE08/modules' / name / 'rel.json').read_text())
+        if config['module_id'] != ident:
+            raise ValueError('static module id differs from source config: ' + name)
+    return result
+
+
+def compact_static_rel(rel, data, entries, bindings):
+    """Drop only unused code after whole-file qualification, never asset entries.
+
+    DRS remains a source DVD container. Its body/REL boundary is unchanged;
+    the nested sound container is moved as an intact byte string. Rebase only
+    top-level DVD offsets, and keep all asset offsets and source slot numbers.
+    Runtime OSLink must bind the marked descriptor to real compiled SH-4 code.
+    """
+    embedded = rel.startswith('em/') and rel.endswith('.drs')
+    standalone = rel.startswith('rel/') and rel.endswith('.rel')
+    if not (embedded or standalone):
+        return data
+    own = [e for e in entries if e['file'] == rel]
+    if not own or any(not e.get('handled') or e.get('complete') is not True or e.get('error') for e in own):
+        return data  # failed qualification remains failed; never turn it into success
+    if embedded:
+        kind, body_size, dest, body_off = struct.unpack_from('<4I', data, 32)
+        if kind != 0 or dest or body_off != HEADER_TABLE or body_off + body_size > len(data):
+            raise ValueError('compact DRS requires the validated source body layout')
+        rel_offset = struct.unpack_from('<I', data, body_off + 4)[0]
+        if not rel_offset:
+            return data
+        start, end = body_off + rel_offset, body_off + body_size
+    else:
+        start, end = 0, len(data)
+    if end - start < 64:
+        raise ValueError('short static module header')
+    ident = struct.unpack_from('<I', data, start)[0]
+    if ident not in bindings:
+        return data  # unknown modules retain the explicit native-binding requirement
+    version, bss = struct.unpack_from('<2I', data, start + 0x1c)
+    if version != 3:
+        raise ValueError('expected an unlinked source REL version 3')
+    header = bytearray(64)
+    struct.pack_into('<I', header, 0, ident)
+    struct.pack_into('<2I', header, 0x1c, STATIC_REL_VERSION, bss)
+    out = bytearray(data[:start]) + header + data[end:]
+    saved = end - start - len(header)
+    if embedded:
+        struct.pack_into('<I', out, 36, body_size - saved)
+        for at in range(64, HEADER_TABLE, ENTRY_SIZE):
+            kind, size, dest, offset = struct.unpack_from('<4I', out, at)
+            if kind == END_OF_TABLE:
+                break
+            if kind not in (NESTED, SKIP_ENTRY) or offset < end or offset + size > len(data):
+                raise ValueError('unexpected compact DRS trailing record')
+            struct.pack_into('<I', out, at + 12, offset - saved)
+    for e in own:
+        if e.get('ofs', -1) >= end:
+            e['ofs'] -= saved
+        if e.get('tag') == 'REL' or (standalone and 'part' not in e and 'sub' not in e):
+            e['source_size'] = e['size']; e['size'] = 64
+            e.pop('raw_parts', None)
+            e['native_binding_required'] = True
+            e['static_module'] = bindings[ident]
+        elif embedded and e.get('part') == '0':
+            e['source_size'] = e['size']; e['size'] -= saved
+        if 'part' not in e and 'sub' not in e:
+            e['source_size'] = len(data); e['size'] = len(out)
+            e['native_compacted'] = True
+            e['unused_ppc_bytes_removed'] = saved
+    return out
+
+
 def main():
     argv = sys.argv[1:]
     require = None
@@ -1876,6 +1971,8 @@ def main():
         del argv[i:i + 2]
     args = [a for a in argv if not a.startswith("--")]
     force = "--force" in argv
+    compact_modules = "--compact-static-rel" in argv
+    bindings = static_module_ids() if compact_modules else {}
     native_rooms = "--native-rooms" in argv
     decode_rooms = "--decode-rooms" in argv or native_rooms
     if len(args) != 2:
@@ -1899,7 +1996,8 @@ def main():
                 native_path = os.path.join(dst, native_rel)
                 with open(native_path, "wb") as f:
                     f.write(decoded)
-            if not force and not (native_rooms and fnmatch.fnmatchcase(rel, "st*/r*.das")) and os.path.exists(dp) and rel in previous:
+            was_compacted = any(e.get("native_compacted") for e in previous.get(rel, []))
+            if not force and not compact_modules and not was_compacted and not (native_rooms and fnmatch.fnmatchcase(rel, "st*/r*.das")) and os.path.exists(dp) and rel in previous:
                 dm = os.path.getmtime(dp)
                 if dm >= os.path.getmtime(sp) and dm >= tool_mtime:
                     REPORT.extend(previous[rel])
@@ -1907,6 +2005,8 @@ def main():
                     continue
             data = bytearray(open(sp, "rb").read())
             convert_file(rel, data)
+            if compact_modules:
+                data = compact_static_rel(rel, data, REPORT, bindings)
             with open(dp, "wb") as f:
                 f.write(data)
             if native_rooms and fnmatch.fnmatchcase(rel, "st*/r*.das"):

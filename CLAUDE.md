@@ -13,7 +13,7 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D312 required working-set failure
+## Current resumption point - D313 bounded resource integration
 
 Branch `dreamcast-port`; D312 passes the former R100Em constructor stub, links
 native em12 using the existing module mechanism, and qualifies the four required
@@ -21,18 +21,26 @@ r100 EVD archives. The expanded `/root/probe/d312-required.txt` gate now passes.
 See [R4_EVENT_ENEMY_CHECKPOINT.md](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md)
 for the actual source/data checks, exact artifacts and remaining coverage.
 
-Next primary task: make the required source working set fit without pool/content
-cuts. The 55-second replay fails a 1,126,272-byte block-model reservation with
-419,456 bytes free, then em12's 4,006,016-byte body with 409,152 bytes free.
-Retries see 343,552 free. R100Init reports enemy creation failure; active room
-check tasks are not proof of successful initialization. EVD ARAM_LOAD is a
-placeholder dispatch, not resident/played event data. ID/effect errors persist.
+D313 keeps a selectable compact static-module mirror at `/root/re4data-le-static`;
+full reference `/root/re4data-le` is preserved. Use `--compact-static-rel` with
+the existing mirror. Same scripted replay recovers 46,464 live heap bytes;
+Ganado demand falls 428,288 bytes to 3,577,728, but it still fails with 455,616
+free. The required 1,126,272-byte block-model pool also fails with 465,920 free.
+See [R4_STATIC_MODULE_STORAGE_CHECKPOINT.md](port/dreamcast/docs/R4_STATIC_MODULE_STORAGE_CHECKPOINT.md)
+for command, source/data equivalence checks, identities and exact next work.
 
-Inspect actual archive contents and source ownership before changing loading.
-Reuse the existing native storage/texture mechanisms when connecting resources;
-retain qualified source structures behind recovered consumers. D307 recovered
-458,752 bytes without source pool cuts, but does not solve this larger working
-set. r101 EVS still rejects. No additional decoder or generic GX engine needed.
+Next primary task: source-active texture/resource lifetimes and bounded native
+ownership, using the existing storage/texture sharing/upload/retirement code.
+Base images in core+r100+actors total about 4.31 MiB in source archives, but a
+naive 16-bit upload of every image needs 13.76 MiB before mipmaps/framebuffers.
+Determine the actual active set; do not replace main-RAM overflow with VRAM
+overflow. Keep source metadata, required behavior and CPU texture users valid;
+only reclaim backing storage after ownership transfers successfully. Also account
+for source block and event staging; ARAM dispatch is still a placeholder.
+
+The room's door/window tasks are active despite failed initialization. Required
+Ganado creation, block residency, ID/effect issues, r101 EVS and native graphics/
+audio remain open. Do not report that the current room is complete or rendered.
 
 Current limits: the game target still links `platform/gx_stub.cpp` and
 `platform/audio_stub.cpp`; source execution does not establish visible menus,

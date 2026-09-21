@@ -23,6 +23,21 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
+The recovered `game/` target passes player/handgun startup and reaches r100 source
+room tasks, but **required block/enemy allocations fail**. D312 qualifies the
+opening EVD data and binds native em12; D313's selectable compact-module mirror
+recovers 46,464 heap bytes and reduces enemy demand by 428,288, still insufficient.
+See [D313 evidence and next task](docs/R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
+Native GX/audio integration, visible controllable menu, manual gameplay and the
+three-room route remain unaccepted. Source task execution is not rendered play.
+The next resource task uses source-active lifetimes and existing native texture/
+storage ownership; an upload-all 16-bit texture scheme exceeds VRAM.
+
+## Preserved scene-runtime visual and performance references
+
+The measurements below describe `room/` reference builds. They are not timings
+or acceptance results for the active recovered `game/` executable.
+
 The corrected-character presentation at commit `dba07e2` remains the audiovisual
 reference. Its 32-second Flycast video with game audio is retained at
 `C:\Flycast-Evidence\re4-dreamcast\d202-current-progress-video-audio-dba07e2`.
@@ -66,7 +81,7 @@ for that image extraction; performance results use the pinned normal Flycast
 configuration. Physical Dreamcast timing and human-controller acceptance remain
 pending.
 
-Exact active identities:
+Exact identities of that historical scene checkpoint:
 
 - source `9dcd989370be7f083a9b66cfd19907fda627c893`
 - KallistiOS `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`

@@ -1,11 +1,16 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-Updated 2026-09-21; current integration reference D312 (required block/enemy memory allocations fail).
+Updated 2026-09-21; current integration reference D313 (compact module storage; block/enemy allocations still fail).
 Historical resource measurements retain their original revision identities.
 This policy supports the authoritative [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
 R4 is not an independent prerequisite project that must be perfected before
 boot-forward game integration can start. [REALTIME_PATH.md](REALTIME_PATH.md)
 defines measurement and fidelity/performance qualification.
+
+D313's selectable static-module compaction reclaims 46,464 live heap bytes and
+reduces em12 demand by 428,288; neither required allocation fits yet. Source
+base-texture inventory is a next capacity lead, not a measured active set or
+license to upload everything. See [the exact checkpoint](R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
 
 ## Current decision
 

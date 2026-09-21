@@ -317,6 +317,71 @@ class DrsBoundaryTest(unittest.TestCase):
             self.assertIn('em/wep02.drs:0#0: no handler (tag XYZ)', LE.check_required(LE.REPORT,deps))
 
 
+class CompactStaticRelTest(unittest.TestCase):
+    def converted(self):
+        raw, offset = DrsBoundaryTest.fixture()
+        out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file('em/wep02.drs', out)
+        return out, offset
+
+    def test_keeps_assets_slots_and_empty_sound_record(self):
+        out, offset = self.converted(); original = bytes(out)
+        compact = LE.compact_static_rel('em/wep02.drs', out, LE.REPORT, {4:'wep02'})
+        self.assertEqual(compact[1024:offset], original[1024:offset])
+        self.assertEqual(len(compact), len(original)-32)
+        self.assertEqual(struct.unpack_from('<I',compact,36)[0],len(compact)-1024)
+        self.assertEqual(struct.unpack_from('<I',compact,76)[0],len(compact))
+        self.assertEqual(struct.unpack_from('<I',compact,offset)[0],4)
+        self.assertEqual(struct.unpack_from('<I',compact,offset+28)[0],LE.STATIC_REL_VERSION)
+        self.assertEqual(compact[offset+52:offset+64], bytes(12))
+        entry=next(e for e in LE.REPORT if e.get('tag')=='REL')
+        self.assertEqual(entry['size'],64)
+        self.assertEqual(LE.REPORT[-1]['unused_ppc_bytes_removed'],32)
+
+    def test_moves_sound_whole_and_rebases_report(self):
+        out, offset = self.converted(); end=len(out)
+        sound=bytes(range(256))*8
+        struct.pack_into('<8I',out,64,4,len(sound),0,end,0,0,0,0)
+        out+=sound
+        LE.REPORT.append({'file':'em/wep02.drs','part':'1/1','handled':True,
+                          'complete':True,'ofs':end+1024,'size':1024})
+        compact=LE.compact_static_rel('em/wep02.drs',out,LE.REPORT,{4:'wep02'})
+        moved=struct.unpack_from('<I',compact,76)[0]
+        self.assertEqual(moved,end-32);self.assertEqual(compact[moved:],sound)
+        self.assertEqual(LE.REPORT[-1]['ofs'],moved+1024)
+
+    def test_unknown_or_incomplete_stays_reference(self):
+        out,_=self.converted();original=bytes(out)
+        self.assertEqual(LE.compact_static_rel('em/wep02.drs',out,LE.REPORT,{}),original)
+        LE.REPORT[0]['complete']=False
+        self.assertEqual(LE.compact_static_rel('em/wep02.drs',out,LE.REPORT,{4:'wep02'}),original)
+        self.assertFalse(any(e.get('native_compacted') for e in LE.REPORT))
+
+    def test_cli_switch_back_does_not_reuse_compacted_cache(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            src=pathlib.Path(tmp)/'src';dst=pathlib.Path(tmp)/'dst'
+            (src/'em').mkdir(parents=True)
+            raw,_=DrsBoundaryTest.fixture();(src/'em/wep02.drs').write_bytes(raw)
+            cmd=[sys.executable,str(SCRIPT),str(src),str(dst)]
+            subprocess.run(cmd,check=True,capture_output=True)
+            reference=(dst/'em/wep02.drs').read_bytes()
+            subprocess.run(cmd+['--compact-static-rel'],check=True,capture_output=True)
+            self.assertLess((dst/'em/wep02.drs').stat().st_size,len(reference))
+            subprocess.run(cmd,check=True,capture_output=True)
+            self.assertEqual((dst/'em/wep02.drs').read_bytes(),reference)
+
+    def test_standalone_retains_bss_rejects_bad_header(self):
+        raw=bytearray(256);struct.pack_into('<I',raw,0,74)
+        struct.pack_into('<2I',raw,28,3,128)
+        report=[{'file':'rel/st1_0.rel','handled':True,'complete':True,'size':256}]
+        compact=LE.compact_static_rel('rel/st1_0.rel',raw,report,{74:'st1_0'})
+        self.assertEqual(len(compact),64)
+        self.assertEqual(struct.unpack_from('<2I',compact,28),(LE.STATIC_REL_VERSION,128))
+        with self.assertRaisesRegex(ValueError,'version 3'):
+            LE.compact_static_rel('rel/st1_0.rel',compact,report,{74:'st1_0'})
+
+
 class EventArchiveTest(unittest.TestCase):
     @staticmethod
     def fixture():

@@ -1,10 +1,15 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Updated 2026-09-21; current integration reference D312 (required block/enemy memory allocations fail).
+Updated 2026-09-21; current integration reference D313 (compact module storage; block/enemy allocations still fail).
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first
 roadmap. Historical R0-R4 experiment labels do not determine the next task.
+
+D313's selectable static-module compaction reclaims 46,464 live heap bytes and
+reduces em12 demand by 428,288; neither required allocation fits yet. Source
+base-texture inventory is a next capacity lead, not a measured active set or
+license to upload everything. See [the exact checkpoint](R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
 
 ## Corrective execution policy
 
