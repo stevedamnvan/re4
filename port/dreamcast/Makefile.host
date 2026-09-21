@@ -47,6 +47,9 @@ R101_MTL ?= $(R101_DIR)/r101_004.scenario.mtl
 # is why r101 looked texture-poor when only the standalone TPL chunks were
 # counted.
 R101_TPL ?= $(R101_DIR)/r101_004.TPL
+R101_SMX ?= $(R101_DIR)/r101_005.SMX
+R101_SMD ?= $(R101_DIR)/r101_004.SMD
+R101_LIT ?= $(R101_DIR)/r101_002.LIT
 R101_SAT_SOURCE ?= $(R101_DIR)/r101_001.SAT
 R101_RTP_SOURCE ?= $(R101_DIR)/r101_016.RTP
 R101_ROOM ?= build/private/r101-source-cell-4.re4room
@@ -56,6 +59,7 @@ R101_TEXTURE ?= build/private/r101-source.re4tex
 R101_CELL_SIZE ?= 4
 R101_TEXTURE_MAX_DIMENSION ?= 256
 
+R100_LIT ?= $(REPO_ROOT)/orig/G4BE08/rooms/r100/r100/r100_002.LIT
 RE4_DISC ?= $(REPO_ROOT)/orig/G4BE08/re4_debug_disc1.iso
 DTK ?= $(REPO_ROOT)/build/tools/dtk
 SOURCE_AUDIO_DIR ?= build/private/source-audio
@@ -70,7 +74,7 @@ CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-m
 CHARACTER_TWIDDLE ?=
 CHARACTER_TWIDDLE_ARG := $(if $(CHARACTER_TWIDDLE),--twiddle-textures,)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production room-r100-production-compat room-r101 room-r101-source collision-r101-source route-r101 texture-r101-source collision-r100-source route-r100 texture-r10d texture-r100-production asset-residency-r100 hud-source character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production room-r100-production-compat lit-r100 lit-r101 room-r101 room-r101-source collision-r101-source route-r101 texture-r101-source collision-r100-source route-r100 texture-r10d texture-r100-production asset-residency-r100 hud-source character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -121,6 +125,17 @@ room-r100-production:
 		--common-smd $(R100_EXPORT_DIR)/r100_005.SMD \
 		--source-unit-scale 0.001 $(R100_OBJ) $(R100_PRODUCTION_ROOM)
 
+# A room's authored lighting environment: fog, background, ambient and the light
+# table for a cut, read from its .LIT rather than transcribed by hand. Verified
+# by regenerating r100's, which reproduces the constants in main.cpp.
+lit-r100:
+	$(PYTHON) tools/convert_lit.py \
+		$(R100_LIT) --name R100 --header build/private/r100_lit.hpp
+
+lit-r101:
+	$(PYTHON) tools/convert_lit.py \
+		$(R101_LIT) --name R101 --header build/private/r101_lit.hpp
+
 # The accepted layout, every batch carrying both a triangle range and strips,
 # kept available so the one-representation package can be compared against it.
 room-r100-production-compat:
@@ -131,6 +146,8 @@ room-r100-production-compat:
 room-r101-source:
 	$(PYTHON) tools/convert_room_obj.py --source-scale 0.1 \
 		--cell-size $(R101_CELL_SIZE) \
+		--smx $(R101_SMX) \
+		--smd GGSCENARIO=$(R101_SMD) \
 		--source-unit-scale 0.001 $(R101_OBJ) $(R101_ROOM)
 
 collision-r101-source:

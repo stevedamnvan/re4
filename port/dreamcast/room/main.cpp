@@ -2824,6 +2824,9 @@ std::uint16_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
 constexpr std::uint16_t kRoomLightingConflicted = 0xfffeU;
 constexpr std::uint16_t kRoomLightingUnowned = 0xffffU;
 bool g_room_normals_are_unit = false;
+// How many vertices from the front of the package carry a baked static
+// contribution. A vertex at or beyond this is lit exactly, per use.
+std::uint32_t g_room_static_lighting_count = 0;
 
 void normalize_vector(float& x, float& y, float& z) {
     const float length = std::sqrt(x * x + y * y + z * z);
@@ -3366,6 +3369,9 @@ struct RoomPrimitiveBounds {
 static_assert(sizeof(RoomPrimitiveBounds) == 16U);
 RoomPrimitiveBounds g_room_primitive_bounds[kRoomPrimitiveBoundsCapacity];
 bool g_room_primitive_bounds_ready = false;
+// How many strips from the front of the package have bounds. A strip at or
+// beyond this is never culled, which draws it.
+std::uint32_t g_room_primitive_bounds_count = 0;
 
 // R3v: every strip vertex reference is renumbered at load into a batch-local
 // index, and each batch gets a table from local index back to package vertex.
@@ -3396,11 +3402,17 @@ struct RoomBatchSlot {
 };
 static_assert(sizeof(RoomBatchSlot) == 32U);
 std::uint16_t g_room_local_indices[kRoomLocalIndexCapacity];
-std::uint16_t g_room_batch_vertices[kRoomBatchVertexCapacity];
+// Global package vertex indices. 32 bits because a room may have more than
+// 65,535 vertices and this is the identity of a vertex, not a position within
+// a batch.
+std::uint32_t g_room_batch_vertices[kRoomBatchVertexCapacity];
 std::uint32_t g_room_batch_first_vertex[kRoomBatchTableCapacity];
 std::uint16_t g_room_batch_vertex_count[kRoomBatchTableCapacity];
 RoomBatchSlot g_room_batch_slots[kRoomBatchSlotCapacity];
 bool g_room_batch_locals_ready = false;
+// How many batches from the front of the package have local tables. A batch at
+// or beyond this resolves through the hashed vertex cache instead.
+std::uint32_t g_room_batch_locals_count = 0;
 std::uint32_t g_room_batch_serial = 0U;
 std::uint32_t g_room_batch_local_total = 0U;
 std::uint32_t g_room_batch_local_max = 0U;
@@ -3501,13 +3513,17 @@ std::uint32_t source_actor_light_selection(float x, float y, float z,
     return selection;
 }
 
+// Bakes the static contribution for as many vertices as the arrays hold. A
+// vertex beyond them is not baked and not wrong: light_room_vertex() evaluates
+// it exactly, per use, which is the same path a conflicted vertex takes.
 bool prepare_room_static_lighting(const re4dc::room::Package& room) {
-    if(room.header().vertex_count > kRoomStaticLightingVertexCapacity ||
-       room.header().group_count > kRoomLightingConflicted) {
+    if(room.header().group_count > kRoomLightingConflicted) {
         return false;
     }
+    g_room_static_lighting_count =
+        std::min(room.header().vertex_count, kRoomStaticLightingVertexCapacity);
     std::memset(g_room_static_lighting_owner, 0xff,
-                static_cast<std::size_t>(room.header().vertex_count) *
+                static_cast<std::size_t>(g_room_static_lighting_count) *
                     sizeof(g_room_static_lighting_owner[0]));
     const auto* groups = room.groups();
     const auto* batches = room.batches();
@@ -3558,6 +3574,10 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
             const auto own_vertex = [&](std::uint32_t vertex_index) {
                 if(vertex_index >= room.header().vertex_count) {
                     failed = true;
+                    return;
+                }
+                if(vertex_index >= g_room_static_lighting_count) {
+                    // Outside the baked range. Lit exactly at every use.
                     return;
                 }
                 std::uint16_t& owner =
@@ -3684,6 +3704,11 @@ bool primitive_visible(std::uint32_t primitive_index) {
     // one strip. Rejecting a whole strip before any vertex work removes
     // transform and lighting without reordering the triangles that remain, so
     // the R3c source blend order is preserved by construction.
+    if(primitive_index >= g_room_primitive_bounds_count) {
+        // No bounds for this strip, so nothing is known about it and it is
+        // drawn. Never the other way round.
+        return true;
+    }
     const RoomPrimitiveBounds& bounds = g_room_primitive_bounds[primitive_index];
     const float relative_x = bounds.center_x - g_source_camera_eye.x;
     const float relative_y = bounds.center_y - g_source_camera_eye.y;
@@ -3842,11 +3867,13 @@ void run_flycast_calibration() {
 }
 #endif
 
+// Prepares as many strips as the table holds. Returns false only when the
+// room did not fit entirely, which is a hit-rate report rather than an error:
+// the strips that were prepared are used and the rest are drawn unculled.
 bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
     const auto& header = room.header();
-    if(header.primitive_count > kRoomPrimitiveBoundsCapacity) {
-        return false;
-    }
+    g_room_primitive_bounds_count =
+        std::min(header.primitive_count, kRoomPrimitiveBoundsCapacity);
     const auto* primitives = room.primitives();
     const auto* primitive_indices = room.primitive_indices();
     const auto* vertices = room.vertices();
@@ -3893,23 +3920,23 @@ bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
 //
 //  * kRoomBatchTableCapacity (4,096) bounds the room's *batch count*.
 //  * kRoomLocalIndexCapacity (65,536) bounds its primitive index count.
-//  * 0xffff bounds the room's *global vertex count*, because
-//    g_room_batch_vertices stores global vertex indices as std::uint16_t. This
-//    is a restriction on the room as a whole and is independent of both the
-//    per-batch slot capacity and the static-lighting capacity; a room of more
-//    than 65,535 vertices cannot use this path at all, whatever those are set
-//    to. Widening it means widening that array's element type, not raising a
-//    constant.
+//  * kRoomBatchVertexCapacity bounds the total local vertices across batches.
 //
-// Returning false is a refusal, not a failure: the caller keeps rendering
-// through the hashed-cache fallback. Nothing is truncated.
+// The room's global vertex count is no longer one of them: g_room_batch_vertices
+// holds 32-bit global indices, so a room of more than 65,535 vertices is fine.
+// The 16-bit values here are g_room_local_indices, which are indices within one
+// batch and are validated against 0xffff per batch below.
+//
+// Batches are filled in order until a table is full; the rest render through
+// the hashed vertex cache. Returning false says the room did not fit entirely,
+// which costs hit rate, not correctness.
 bool prepare_room_batch_locals(const re4dc::room::Package& room) {
     const auto& header = room.header();
-    if(header.batch_count > kRoomBatchTableCapacity ||
-       header.primitive_index_count > kRoomLocalIndexCapacity ||
-       header.vertex_count > 0xffffU) {
-        return false;
-    }
+    g_room_batch_locals_count = 0;
+    // A room with more batches than the per-batch tables hold is not refused
+    // either: the batches past the table render through the hashed cache.
+    const std::uint32_t batch_limit =
+        std::min(header.batch_count, kRoomBatchTableCapacity);
     const auto* batches = room.batches();
     const auto* primitives = room.primitives();
     const auto* primitive_indices = room.primitive_indices();
@@ -3931,15 +3958,19 @@ bool prepare_room_batch_locals(const re4dc::room::Package& room) {
     std::uint32_t largest = 0U;
     std::uint32_t oversize = 0U;
     bool ok = true;
+    // Set when a table ran out. Distinct from !ok, which means the package is
+    // wrong; this one just means the room is bigger than the tables.
+    bool full = false;
+    std::uint32_t filled_batches = 0U;
     for(std::uint32_t batch_index = 0U;
-        ok && batch_index < header.batch_count; ++batch_index) {
+        ok && !full && batch_index < batch_limit; ++batch_index) {
         const auto& batch = batches[batch_index];
         const std::uint32_t first = total;
         std::uint32_t count = 0U;
         const std::uint32_t primitive_end =
             batch.first_primitive + batch.primitive_count;
         for(std::uint32_t primitive_index = batch.first_primitive;
-            ok && primitive_index < primitive_end; ++primitive_index) {
+            ok && !full && primitive_index < primitive_end; ++primitive_index) {
             const auto& primitive = primitives[primitive_index];
             for(std::uint32_t local = 0U; local < primitive.vertex_count;
                 ++local) {
@@ -3950,23 +3981,37 @@ bool prepare_room_batch_locals(const re4dc::room::Package& room) {
                     ok = false;
                     break;
                 }
+                if(position >= kRoomLocalIndexCapacity) {
+                    full = true;
+                    break;
+                }
                 if(last_batch[vertex_index] != batch_index) {
+                    // count is a local index and is stored 16-bit; total spans
+                    // the shared table. Either running out ends the fill.
                     if(total >= kRoomBatchVertexCapacity || count >= 0xffffU) {
-                        ok = false;
+                        full = true;
                         break;
                     }
                     last_batch[vertex_index] = batch_index;
                     local_of[vertex_index] = static_cast<std::uint16_t>(count);
-                    g_room_batch_vertices[total++] =
-                        static_cast<std::uint16_t>(vertex_index);
+                    // Global vertex identity, stored whole.
+                    g_room_batch_vertices[total++] = vertex_index;
                     ++count;
                 }
                 g_room_local_indices[position] = local_of[vertex_index];
             }
         }
+        if(full) {
+            // Abandon this batch rather than leave it half indexed. Its
+            // vertices go back to the shared table and it renders through the
+            // hashed cache with every batch after it.
+            total = first;
+            break;
+        }
         g_room_batch_first_vertex[batch_index] = first;
         g_room_batch_vertex_count[batch_index] =
             static_cast<std::uint16_t>(count);
+        filled_batches = batch_index + 1U;
         if(count > largest) {
             largest = count;
         }
@@ -3982,8 +4027,11 @@ bool prepare_room_batch_locals(const re4dc::room::Package& room) {
     g_room_batch_local_total = total;
     g_room_batch_local_max = largest;
     g_room_batch_local_oversize = oversize;
-    g_room_batch_locals_ready = true;
-    return true;
+    g_room_batch_locals_count = filled_batches;
+    g_room_batch_locals_ready = filled_batches != 0U;
+    // False reports that the room did not fit entirely. The batches that did
+    // are still used.
+    return filled_batches == header.batch_count;  // fully covered, or not
 }
 
 std::uint32_t clip_projected_triangle(const RenderVertex* source,
@@ -4146,7 +4194,7 @@ inline void light_room_vertex(const re4dc::room::Vertex& input,
     light_green = 0.0f;
     light_blue = 0.0f;
 #if defined(RE4DC_SCENE_R100)
-    if(vertex_index < kRoomStaticLightingVertexCapacity &&
+    if(vertex_index < g_room_static_lighting_count &&
        g_room_static_lighting_owner[vertex_index] <
            kRoomLightingConflicted) {
         const float* source = g_room_static_lighting + vertex_index * 3U;
@@ -4290,8 +4338,9 @@ void submit_room_strips(const re4dc::room::Package& room,
         static_cast<std::uint32_t>(&batch - room.batches());
     const bool use_locals =
         g_room_batch_locals_ready &&
+        batch_index < g_room_batch_locals_count &&
         g_room_batch_vertex_count[batch_index] <= kRoomBatchSlotCapacity;
-    const std::uint16_t* batch_vertices =
+    const std::uint32_t* batch_vertices =
         g_room_batch_vertices + g_room_batch_first_vertex[batch_index];
     const std::uint32_t batch_serial = ++g_room_batch_serial;
     std::uint32_t submit_count = 0U;
