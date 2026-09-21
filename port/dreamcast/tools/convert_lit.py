@@ -119,6 +119,11 @@ def emit_header(cut, name, scale, source):
     out.append("constexpr float kSourceRoomAmbientRed = %d.0f / 255.0f;" % ar)
     out.append("constexpr float kSourceRoomAmbientGreen = %d.0f / 255.0f;" % ag)
     out.append("constexpr float kSourceRoomAmbientBlue = %d.0f / 255.0f;" % ab)
+    mr, mg, mb, _ = env["ambient_model"]
+    out.append("// cLightEnv model ambient: what the actors sit in.")
+    out.append("constexpr float kSourceActorAmbientRed = %d.0f / 255.0f;" % mr)
+    out.append("constexpr float kSourceActorAmbientGreen = %d.0f / 255.0f;" % mg)
+    out.append("constexpr float kSourceActorAmbientBlue = %d.0f / 255.0f;" % mb)
     out.append("")
     live = [l for l in cut["lights"] if not l["empty"]]
     out.append("// %d authored lights in this cut, of %d slots. Empty slots are"

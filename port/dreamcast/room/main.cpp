@@ -258,10 +258,14 @@ constexpr float kTurnSpeed = 2.4f;
 // Whether this scene has the player and enemy actors. The village does not:
 // its own enemies, events and door progression are not implemented, and
 // borrowing the cabin's would be substituting one room's content for another.
+// Player availability and scene-enemy availability are separate: r101 has
+// Leon and no Ganado. The cabin encounter is the only scene with an enemy.
 #if defined(RE4DC_SCENE_R101)
-constexpr bool kSceneHasActors = false;
+constexpr bool kSceneHasPlayer = true;
+constexpr bool kSceneHasEnemy = false;
 #else
-constexpr bool kSceneHasActors = true;
+constexpr bool kSceneHasPlayer = true;
+constexpr bool kSceneHasEnemy = true;
 #endif
 
 #if defined(RE4DC_SCENE_R100)
@@ -388,12 +392,11 @@ constexpr SourceLight kSourceLights[] = {
 constexpr float kSourceRoomAmbientRed = 2.0f / 255.0f;
 constexpr float kSourceRoomAmbientGreen = 2.0f / 255.0f;
 constexpr float kSourceRoomAmbientBlue = 2.0f / 255.0f;
-#endif
-// The actor ambient is the cLightEnv model ambient. r101's is read with the
-// rest of its environment; r100's stays here with the transcription.
+// The actor ambient is the cLightEnv model ambient of this transcription.
 constexpr float kSourceActorAmbientRed = 26.0f / 255.0f;
 constexpr float kSourceActorAmbientGreen = 26.0f / 255.0f;
 constexpr float kSourceActorAmbientBlue = 24.0f / 255.0f;
+#endif
 #endif
 constexpr float kFallbackEnemyMoveSpeed = 1.9f;
 // em10AxeAtkCk admits the normal hatchet attack at sqrt(2890000) source
@@ -741,6 +744,98 @@ void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
     }
 #endif
 }
+
+#if defined(RE4DC_SUBMIT_DIGEST)
+// One record per batch submitted during the captured frame. tag: 0 room,
+// 1 Leon, 2 Ganado, +10 for the translucent pass. path: 1 batch-local
+// tables, 2 hashed-cache fallback, 0 not a room batch.
+struct DigestRecord {
+    std::uint32_t tag;
+    std::uint32_t index;
+    std::uint32_t path;
+    std::uint32_t bytes;
+    std::uint32_t all;
+    std::uint32_t header;
+    std::uint32_t positions;
+    std::uint32_t colors;
+};
+constexpr std::uint32_t kDigestRecordCapacity = 3072U;
+struct DigestTable {
+    std::uint32_t magic;
+    std::uint32_t sequence;
+    std::uint32_t generation;
+    std::uint32_t tick;
+    std::uint32_t count;
+    std::uint32_t overflow;
+    std::uint32_t state[26];
+    DigestRecord records[kDigestRecordCapacity];
+};
+extern "C" {
+DigestTable g_digest_table{};
+}
+bool g_digest_armed = false;
+bool g_digest_capturing = false;
+std::uint32_t g_digest_armed_generation = 0U;
+std::uint32_t g_digest_armed_tick = 0U;
+// Which character package is Leon, so draw_character() can tag itself.
+const void* g_digest_leon = nullptr;
+
+void digest_arm(std::uint32_t generation, std::uint32_t tick) {
+    g_digest_armed = true;
+    g_digest_armed_generation = generation;
+    g_digest_armed_tick = tick;
+}
+
+inline std::uint32_t fnv_word(std::uint32_t digest, std::uint32_t word) {
+    for(unsigned shift = 0U; shift < 32U; shift += 8U) {
+        digest = (digest ^ ((word >> shift) & 0xffU)) * 0x01000193U;
+    }
+    return digest;
+}
+
+DigestRecord* digest_begin(std::uint32_t tag, std::uint32_t index,
+                           std::uint32_t path) {
+    if(!g_digest_capturing) {
+        return nullptr;
+    }
+    if(g_digest_table.count >= kDigestRecordCapacity) {
+        ++g_digest_table.overflow;
+        return nullptr;
+    }
+    DigestRecord& record = g_digest_table.records[g_digest_table.count++];
+    record = {tag, index, path, 0U, 0x811c9dc5U, 0x811c9dc5U, 0x811c9dc5U,
+              0x811c9dc5U};
+    return &record;
+}
+
+void digest_packet(DigestRecord* record, const pvr_vertex_t* vertices,
+                   std::uint32_t count) {
+    if(record == nullptr) {
+        return;
+    }
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(vertices);
+    const std::size_t byte_count = sizeof(pvr_vertex_t) * count;
+    for(std::size_t index = 0; index < byte_count; ++index) {
+        record->all = (record->all ^ bytes[index]) * 0x01000193U;
+    }
+    record->bytes += static_cast<std::uint32_t>(byte_count);
+    for(std::uint32_t index = 0; index < count; ++index) {
+        const pvr_vertex_t& vertex = vertices[index];
+        const auto* words = reinterpret_cast<const std::uint32_t*>(&vertex);
+        if(vertex.flags == PVR_CMD_POLYHDR) {
+            for(unsigned word = 0U; word < 8U; ++word) {
+                record->header = fnv_word(record->header, words[word]);
+            }
+            continue;
+        }
+        record->positions = fnv_word(record->positions, words[1]);
+        record->positions = fnv_word(record->positions, words[2]);
+        record->positions = fnv_word(record->positions, words[3]);
+        record->colors = fnv_word(record->colors, vertex.argb);
+        record->colors = fnv_word(record->colors, vertex.oargb);
+    }
+}
+#endif
 
 void begin_pvr_packet(pvr_vertex_t* commands, std::uint32_t& command_count,
                       const pvr_poly_hdr_t& header) {
@@ -2789,7 +2884,8 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
         snd_sfx_play(audio.fire_0, 255, 128);
         snd_sfx_play(audio.fire_2, 255, 128);
     }
-    const bool hit = shot_hits_enemy(
+    // Without a scene enemy a shot is fired into the room and hits nothing.
+    const bool hit = kSceneHasEnemy && shot_hits_enemy(
         player, enemy, collision, character, enemy_character);
     std::printf("re4dc-room: fire ammo=%d hit=%d\n", player.ammo, hit ? 1 : 0);
     if(hit) {
@@ -3390,7 +3486,7 @@ ProjectedVertex g_leon_projected[kLeonVertexCapacity];
 ProjectedVertex g_ganado_projected[kGanadoVertexCapacity];
 PreparedPoseMatrix g_leon_pose_palette[kLeonPoseMatrixCapacity];
 PreparedPoseMatrix g_ganado_pose_palette[kGanadoPoseMatrixCapacity];
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
 float g_leon_normals[kLeonNormalScratchCapacity * 3U];
 float g_ganado_normals[kGanadoNormalScratchCapacity * 3U];
 float g_leon_lighting[kLeonVertexCapacity * 3U];
@@ -4455,10 +4551,17 @@ void submit_room_strips(const re4dc::room::Package& room,
     const std::uint32_t batch_serial = ++g_room_batch_serial;
     std::uint32_t submit_count = 0U;
     begin_pvr_packet(submit_vertices, submit_count, header);
+#if defined(RE4DC_SUBMIT_DIGEST)
+    DigestRecord* digest_record =
+        digest_begin(0U, batch_index, use_locals ? 1U : 2U);
+#endif
     const auto flush = [&]() {
         if(submit_count == 0U) {
             return;
         }
+#if defined(RE4DC_SUBMIT_DIGEST)
+        digest_packet(digest_record, submit_vertices, submit_count);
+#endif
         submit_pvr(stats, submit_vertices,
                    sizeof(pvr_vertex_t) * submit_count);
         submit_count = 0U;
@@ -4991,7 +5094,7 @@ void project_character(const re4dc::character::Package& character,
     }
 }
 
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
 void build_character_normals(const re4dc::character::Package& character,
                              const ProjectedVertex* projected,
                              float* normals) {
@@ -5273,7 +5376,7 @@ void build_character_lighting(const re4dc::character::Package& character,
 
 std::uint32_t draw_character(const re4dc::character::Package& character,
                              const ProjectedVertex* projected,
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
                              const float* lighting,
                              const std::uint32_t* colors,
 #endif
@@ -5296,10 +5399,18 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
         std::uint32_t submit_count = 0;
         begin_pvr_packet(submit_vertices, submit_count,
                          material_headers[batch_index]);
+#if defined(RE4DC_SUBMIT_DIGEST)
+        DigestRecord* digest_record = digest_begin(
+            (&character == g_digest_leon ? 1U : 2U) + (alpha_pass ? 10U : 0U),
+            batch_index, 0U);
+#endif
         const auto flush = [&]() {
             if(submit_count == 0U) {
                 return;
             }
+#if defined(RE4DC_SUBMIT_DIGEST)
+            digest_packet(digest_record, submit_vertices, submit_count);
+#endif
             submit_pvr(stats, submit_vertices,
                        sizeof(pvr_vertex_t) * submit_count);
             submit_count = 0;
@@ -5317,7 +5428,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
             RenderVertex source_triangle[3]{};
             for(unsigned corner = 0; corner < 3; ++corner) {
                 const auto& draw = draw_vertices[source_indices[corner]];
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
                 const float light_red = lighting[draw.normal * 3U];
                 const float light_green = lighting[draw.normal * 3U + 1U];
                 const float light_blue = lighting[draw.normal * 3U + 2U];
@@ -5383,7 +5494,7 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                         direct_strip = false;
                         break;
                     }
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
                     const std::uint32_t color = colors[draw.normal];
 #else
                     const std::uint32_t color = 0xffffffffU;
@@ -5925,12 +6036,59 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #endif
                         ProjectedVertex* leon_projected,
                         ProjectedVertex* ganado_projected,
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
                         float* leon_normals, float* ganado_normals,
                         float* leon_lighting, float* ganado_lighting,
 #endif
                         pvr_vertex_t* character_submit_vertices) {
     FrameStats stats{};
+#if defined(RE4DC_SUBMIT_DIGEST)
+    g_digest_capturing = g_digest_armed;
+    g_digest_armed = false;
+    if(g_digest_capturing) {
+        g_digest_leon = &leon;
+        g_digest_table.count = 0U;
+        g_digest_table.overflow = 0U;
+        g_digest_table.generation = g_digest_armed_generation;
+        g_digest_table.tick = g_digest_armed_tick;
+        const auto bits = [](float value) {
+            std::uint32_t word;
+            std::memcpy(&word, &value, sizeof(word));
+            return word;
+        };
+        std::uint32_t* state = g_digest_table.state;
+        state[0] = bits(player.x);
+        state[1] = bits(player.y);
+        state[2] = bits(player.z);
+        state[3] = bits(player.yaw);
+        state[4] = player.animation_clip;
+        state[5] = bits(player.animation_frame);
+        state[6] = bits(player.aim_pitch);
+        state[7] = player.aiming ? 1U : 0U;
+        state[8] = static_cast<std::uint32_t>(player.health);
+        state[9] = static_cast<std::uint32_t>(player.ammo);
+        state[10] = bits(enemy.x);
+        state[11] = bits(enemy.y);
+        state[12] = bits(enemy.z);
+        state[13] = bits(enemy.yaw);
+        state[14] = static_cast<std::uint32_t>(enemy.state);
+        state[15] = enemy.animation_clip;
+        state[16] = bits(enemy.animation_frame);
+        state[17] = static_cast<std::uint32_t>(enemy.health);
+        state[18] = g_room_vertex_cache_generation;
+        state[19] = g_room_batch_locals_count;
+        state[20] = g_room_primitive_bounds_count;
+        state[21] = g_room_static_lighting_count;
+        state[22] = static_cast<std::uint32_t>(
+            reinterpret_cast<std::uintptr_t>(&g_room_batch_vertices[0]));
+        state[23] = static_cast<std::uint32_t>(
+            reinterpret_cast<std::uintptr_t>(&g_leon_lighting[0]));
+        state[24] = static_cast<std::uint32_t>(
+            reinterpret_cast<std::uintptr_t>(&g_ganado_lighting[0]));
+        state[25] = static_cast<std::uint32_t>(
+            reinterpret_cast<std::uintptr_t>(leon_headers));
+    }
+#endif
     ++g_room_vertex_cache_generation;
     if(g_room_vertex_cache_generation == 0U) {
         for(RoomVertexCacheEntry& entry : g_room_vertex_cache) {
@@ -5947,23 +6105,28 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const auto player_blend = player_pitch_blend(
         player.animation_clip, player.aim_pitch);
     const std::uint64_t actor_pose_start = timer_us_gettime64();
-    project_character(
-        leon, player.x, player.y, player.z, player.yaw, player_blend.base_clip,
-        player.animation_frame,
-        player.animation_clip == kPlayerIdleClip ||
-            player.animation_clip == kPlayerWalkClip ||
-            player.animation_clip == kPlayerAimLevelClip,
-        player_blend.secondary_clip, player_blend.amount, leon_projected,
-        g_leon_pose_palette);
-    project_character(
-        ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
-        enemy.animation_frame, enemy.state == EnemyState::Chase,
-        enemy.animation_clip, 0.0f, ganado_projected,
-        g_ganado_pose_palette);
+    if(kSceneHasPlayer) {
+        project_character(
+            leon, player.x, player.y, player.z, player.yaw,
+            player_blend.base_clip, player.animation_frame,
+            player.animation_clip == kPlayerIdleClip ||
+                player.animation_clip == kPlayerWalkClip ||
+                player.animation_clip == kPlayerAimLevelClip,
+            player_blend.secondary_clip, player_blend.amount, leon_projected,
+            g_leon_pose_palette);
+    }
+    if(kSceneHasEnemy) {
+        project_character(
+            ganado, enemy.x, enemy.y, enemy.z, enemy.yaw, enemy.animation_clip,
+            enemy.animation_frame, enemy.state == EnemyState::Chase,
+            enemy.animation_clip, 0.0f, ganado_projected,
+            g_ganado_pose_palette);
+    }
     stats.actor_pose_us = timer_us_gettime64() - actor_pose_start;
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     const std::uint64_t actor_normals_start = timer_us_gettime64();
-    if(leon.header().source_normal_count != 0U) {
+    if(!kSceneHasPlayer) {
+    } else if(leon.header().source_normal_count != 0U) {
         build_character_source_normals(
             leon, player.yaw, player_blend.base_clip, player.animation_frame,
             player.animation_clip == kPlayerIdleClip ||
@@ -5976,7 +6139,8 @@ FrameStats render_scene(const re4dc::room::Package& room,
     } else {
         build_character_normals(leon, leon_projected, leon_normals);
     }
-    if(ganado.header().source_normal_count != 0U) {
+    if(!kSceneHasEnemy) {
+    } else if(ganado.header().source_normal_count != 0U) {
         build_character_source_normals(
             ganado, enemy.yaw, enemy.animation_clip, enemy.animation_frame,
             enemy.state == EnemyState::Chase, enemy.animation_clip, 0.0f,
@@ -5998,15 +6162,19 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const SelectedSourceLights ganado_light_selection =
         selected_source_lights(stats.ganado_light_selection);
     const std::uint64_t leon_lighting_start = timer_us_gettime64();
-    build_character_lighting(
-        leon, leon_projected, leon_normals, leon_lighting, g_leon_colors,
-        leon_light_selection, stats);
+    if(kSceneHasPlayer) {
+        build_character_lighting(
+            leon, leon_projected, leon_normals, leon_lighting, g_leon_colors,
+            leon_light_selection, stats);
+    }
     stats.leon_lighting_us = timer_us_gettime64() - leon_lighting_start;
     const std::uint64_t ganado_lighting_start = timer_us_gettime64();
-    build_character_lighting(
-        ganado, ganado_projected, ganado_normals, ganado_lighting,
-        g_ganado_colors,
-        ganado_light_selection, stats);
+    if(kSceneHasEnemy) {
+        build_character_lighting(
+            ganado, ganado_projected, ganado_normals, ganado_lighting,
+            g_ganado_colors,
+            ganado_light_selection, stats);
+    }
     stats.ganado_lighting_us = timer_us_gettime64() - ganado_lighting_start;
     stats.actor_lighting_us = timer_us_gettime64() - actor_lighting_start;
 #endif
@@ -6131,21 +6299,24 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #endif
     const std::uint64_t opaque_actor_start = timer_us_gettime64();
     submit_pvr(stats, &untextured_header, sizeof(untextured_header));
-    if(kSceneHasActors) {
-    stats.character_triangles = draw_character(
-        leon, leon_projected,
-#if defined(RE4DC_SCENE_R100)
-        leon_lighting, g_leon_colors,
+    stats.character_triangles = 0U;
+    if(kSceneHasPlayer) {
+        stats.character_triangles += draw_character(
+            leon, leon_projected,
+#if defined(RE4DC_SOURCE_SCENE)
+            leon_lighting, g_leon_colors,
 #endif
-        leon_headers, leon_alpha, false,
-        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
-    stats.character_triangles += draw_character(
-        ganado, ganado_projected,
-#if defined(RE4DC_SCENE_R100)
-        ganado_lighting, g_ganado_colors,
+            leon_headers, leon_alpha, false,
+            character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
+    }
+    if(kSceneHasEnemy) {
+        stats.character_triangles += draw_character(
+            ganado, ganado_projected,
+#if defined(RE4DC_SOURCE_SCENE)
+            ganado_lighting, g_ganado_colors,
 #endif
-        ganado_headers, ganado_alpha, false,
-        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
+            ganado_headers, ganado_alpha, false,
+            character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
     }
 #if !defined(RE4DC_SOURCE_SCENE)
     draw_goal(enemy.state == EnemyState::Dead);
@@ -6298,20 +6469,24 @@ FrameStats render_scene(const re4dc::room::Package& room,
     g_submit_phase_room = false;
 #endif
     const std::uint64_t translucent_actor_hud_start = timer_us_gettime64();
-    stats.character_triangles += draw_character(
-        leon, leon_projected,
-#if defined(RE4DC_SCENE_R100)
-        leon_lighting, g_leon_colors,
+    if(kSceneHasPlayer) {
+        stats.character_triangles += draw_character(
+            leon, leon_projected,
+#if defined(RE4DC_SOURCE_SCENE)
+            leon_lighting, g_leon_colors,
 #endif
-        leon_headers, leon_alpha, true,
-        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
-    stats.character_triangles += draw_character(
-        ganado, ganado_projected,
-#if defined(RE4DC_SCENE_R100)
-        ganado_lighting, g_ganado_colors,
+            leon_headers, leon_alpha, true,
+            character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
+    }
+    if(kSceneHasEnemy) {
+        stats.character_triangles += draw_character(
+            ganado, ganado_projected,
+#if defined(RE4DC_SOURCE_SCENE)
+            ganado_lighting, g_ganado_colors,
 #endif
-        ganado_headers, ganado_alpha, true,
-        character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
+            ganado_headers, ganado_alpha, true,
+            character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
+    }
 #if defined(RE4DC_SCENE_R100)
     draw_source_hud(source_hud, source_hud_headers, player, stats);
 #endif
@@ -6321,6 +6496,14 @@ FrameStats render_scene(const re4dc::room::Package& room,
     const std::uint64_t finish_start = timer_us_gettime64();
     stats.submit_us = finish_start - submit_start;
     pvr_scene_finish();
+#if defined(RE4DC_SUBMIT_DIGEST)
+    if(g_digest_capturing) {
+        g_digest_capturing = false;
+        g_digest_table.magic = 0x54534744U;
+        // Published last: the host waits on this changing.
+        ++g_digest_table.sequence;
+    }
+#endif
     stats.finish_us = timer_us_gettime64() - finish_start;
     stats.total_us = timer_us_gettime64() - render_start;
     return stats;
@@ -6400,6 +6583,10 @@ void snapshot_tick_reached(std::uint32_t tick, std::uint64_t now_us) {
     g_fb_snapshot_header.frozen = 1U;
     ++g_fb_snapshot_next;
     g_fb_snapshot_thaw_at_us = now_us + kSnapshotFreezeUs;
+#if defined(RE4DC_SUBMIT_DIGEST)
+    // The next render draws exactly this state; record it.
+    digest_arm(g_fb_snapshot_generation, g_fb_snapshot_header.tick);
+#endif
     // Published last: the host waits on this changing.
     ++g_fb_snapshot_header.sequence;
     std::printf("re4dc-room: frozen at route tick %lu generation %lu\n",
@@ -6942,14 +7129,14 @@ bool load_room(DemoAudio& audio) {
                           inject_upload_failure)) {
         return false;
     }
-    if(kSceneHasActors &&
+    if(kSceneHasEnemy &&
        !load_room_texture(ganado_textures, kRoomEnemyTex, &upload_us, false)) {
         return false;
     }
     // A completed upload is the precondition for the release the loader just
     // did; assert it rather than trusting the ordering to stay this way.
     if(!textures.payload_released() ||
-       (kSceneHasActors && !ganado_textures.payload_released())) {
+       (kSceneHasEnemy && !ganado_textures.payload_released())) {
         std::printf("re4dc-room: room textures resident after a load\n");
         return false;
     }
@@ -6964,7 +7151,7 @@ bool load_room(DemoAudio& audio) {
        !load_room_resource(route, kRoomRoute)) {
         return false;
     }
-    if(kSceneHasActors && !load_room_resource(ganado, kRoomEnemy)) {
+    if(kSceneHasEnemy && !load_room_resource(ganado, kRoomEnemy)) {
         return false;
     }
     // Texture memory owned and the persistent packages adopted, so retirement
@@ -6974,7 +7161,7 @@ bool load_room(DemoAudio& audio) {
     }
     // The shape checks main() makes on the first load apply to every load: the
     // hit-capsule and axe-marker arithmetic indexes off the end otherwise.
-    if(kSceneHasActors &&
+    if(kSceneHasEnemy &&
       (ganado.header().clip_count < 5U ||
        ganado.header().position_count != 1690U ||
        ganado.header().version != re4dc::character::kVersion ||
@@ -6984,7 +7171,7 @@ bool load_room(DemoAudio& audio) {
         std::printf("re4dc-room: reloaded Ganado package has the wrong shape\n");
         return false;
     }
-    if(kSceneHasActors &&
+    if(kSceneHasEnemy &&
       (ganado.header().position_count > kGanadoVertexCapacity ||
        ganado.header().normal_count > kGanadoVertexCapacity ||
        ganado.header().source_normal_count > kGanadoVertexCapacity)) {
@@ -7004,7 +7191,7 @@ bool load_room(DemoAudio& audio) {
     material_alpha.reset(new(std::nothrow) bool[room.header().material_count]);
     material_punchthrough.reset(
         new(std::nothrow) bool[room.header().material_count]);
-    if(kSceneHasActors) {
+    if(kSceneHasEnemy) {
         ganado_headers =
             new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
         ganado_alpha.reset(new(std::nothrow) bool[ganado.header().batch_count]);
@@ -7012,7 +7199,7 @@ bool load_room(DemoAudio& audio) {
     if(material_headers == nullptr || room_strip_headers == nullptr ||
        room_punchthrough_headers == nullptr || visible_room_groups == nullptr ||
        material_alpha == nullptr || material_punchthrough == nullptr ||
-       (kSceneHasActors &&
+       (kSceneHasEnemy &&
         (ganado_headers == nullptr || ganado_alpha == nullptr))) {
         std::printf("re4dc-room: room header allocation failed\n");
         return false;
@@ -7026,7 +7213,7 @@ bool load_room(DemoAudio& audio) {
     if(!compile_room_material_headers()) {
         return false;
     }
-    if(kSceneHasActors &&
+    if(kSceneHasEnemy &&
        !compile_character_headers_for(ganado, ganado_textures, ganado_headers,
                                       ganado_alpha.get(), "Ganado")) {
         return false;
@@ -7041,7 +7228,7 @@ bool load_room(DemoAudio& audio) {
         std::printf("re4dc-room: room strip bounds unavailable\n");
     }
     prepare_room_batch_locals(room);
-    if(kSceneHasActors && !load_enemy_audio(audio)) {
+    if(kSceneHasEnemy && !load_enemy_audio(audio)) {
         std::printf("re4dc-room: enemy audio load failed\n");
         return false;
     }
@@ -7109,7 +7296,7 @@ int main() {
         return 1;
     }
     g_room_boot_stage = 32U;
-    if(kSceneHasActors &&
+    if(kSceneHasEnemy &&
        !load_room_texture(ganado_textures, kRoomEnemyTex,
                           &texture_upload_us_total, false)) {
         return 1;
@@ -7135,12 +7322,9 @@ int main() {
 #endif
     re4dc::character::Package leon;
     re4dc::texture::Package leon_textures;
-    if(kSceneHasActors) {
+    if(kSceneHasPlayer) {
         if(!leon.open("/rd/leon.re4chr")) {
             std::printf("re4dc-room: Leon load failed: %s\n", leon.error());
-            return 1;
-        }
-        if(!load_room_resource(ganado, kRoomEnemy)) {
             return 1;
         }
         if(!leon_textures.open("/rd/leon.re4tex")) {
@@ -7148,6 +7332,9 @@ int main() {
                         leon_textures.error());
             return 1;
         }
+    }
+    if(kSceneHasEnemy && !load_room_resource(ganado, kRoomEnemy)) {
+        return 1;
     }
 #if defined(RE4DC_SCENE_R100)
     re4dc::hud::Package source_hud;
@@ -7164,7 +7351,7 @@ int main() {
     }
 #endif
     g_re4dc_demo_telemetry.flags = 0x10000002U;
-    if(kSceneHasActors) {
+    if(kSceneHasPlayer && kSceneHasEnemy) {
     std::printf(
         "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
         "hierarchy=%lu/%lu leon=%lu/%lu/%lu/%lu/%lu "
@@ -7193,16 +7380,16 @@ int main() {
         room.source_groups() != nullptr ? "yes" : "no");
     g_re4dc_demo_telemetry.flags = 0x10000021U;
     }
-    if(kSceneHasActors) {
-    if(leon.header().clip_count < 11U) {
+    if(kSceneHasPlayer && leon.header().clip_count < 11U) {
         std::printf(
             "re4dc-room: Leon package needs source aim/fire triplets and actions\n");
         return 1;
     }
-    if(ganado.header().clip_count < 5U) {
+    if(kSceneHasEnemy && ganado.header().clip_count < 5U) {
         std::printf("re4dc-room: Ganado package needs idle/walk/attack/hit/death\n");
         return 1;
     }
+    if(kSceneHasPlayer && kSceneHasEnemy) {
 #if defined(RE4DC_SCENE_R100)
     if(leon.header().position_count != 5687U) {
         std::printf(
@@ -7234,7 +7421,7 @@ int main() {
     // a heap copy and nothing else.
     g_room_boot_stage = 36U;
     const std::uint64_t texture_upload_begin = timer_us_gettime64();
-    if(kSceneHasActors && !leon_textures.upload()) {
+    if(kSceneHasPlayer && !leon_textures.upload()) {
         std::printf("re4dc-room: Leon texture upload failed: %s\n",
                     leon_textures.error());
         return 1;
@@ -7279,27 +7466,33 @@ int main() {
     g_room_boot_stage = 39U;
     pvr_poly_hdr_t* leon_headers = nullptr;
     std::unique_ptr<bool[]> leon_alpha;
-    if(kSceneHasActors) {
+    if(kSceneHasPlayer) {
         leon_headers =
             new(std::nothrow) pvr_poly_hdr_t[leon.header().batch_count];
+        leon_alpha.reset(new(std::nothrow) bool[leon.header().batch_count]);
+    }
+    if(kSceneHasEnemy) {
         ganado_headers =
             new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
-        leon_alpha.reset(new(std::nothrow) bool[leon.header().batch_count]);
         ganado_alpha.reset(
             new(std::nothrow) bool[ganado.header().batch_count]);
     }
-    if(kSceneHasActors &&
-      (leon_headers == nullptr || ganado_headers == nullptr ||
-       leon_alpha == nullptr || ganado_alpha == nullptr)) {
+    if((kSceneHasPlayer &&
+        (leon_headers == nullptr || leon_alpha == nullptr)) ||
+       (kSceneHasEnemy &&
+        (ganado_headers == nullptr || ganado_alpha == nullptr))) {
         std::printf("re4dc-room: character material header allocation failed\n");
         return 1;
     }
 
-    if(kSceneHasActors &&
-      (!compile_character_headers_for(leon, leon_textures, leon_headers,
-                                      leon_alpha.get(), "Leon") ||
+    if(kSceneHasPlayer &&
+       !compile_character_headers_for(leon, leon_textures, leon_headers,
+                                      leon_alpha.get(), "Leon")) {
+        return 1;
+    }
+    if(kSceneHasEnemy &&
        !compile_character_headers_for(ganado, ganado_textures, ganado_headers,
-                                      ganado_alpha.get(), "Ganado"))) {
+                                      ganado_alpha.get(), "Ganado")) {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
@@ -7346,19 +7539,17 @@ int main() {
         "pvr_free_before=%lu pvr_free_after=%lu\n",
         static_cast<unsigned long>(textures.header().texture_count),
         static_cast<unsigned long>(
-            kSceneHasActors ? leon_textures.header().texture_count : 0U),
+            kSceneHasPlayer ? leon_textures.header().texture_count : 0U),
         static_cast<unsigned long>(
-            kSceneHasActors ? ganado_textures.header().texture_count : 0U),
+            kSceneHasEnemy ? ganado_textures.header().texture_count : 0U),
         static_cast<unsigned long>(
             textures.shared_textures() +
-            (kSceneHasActors ? leon_textures.shared_textures() +
-                                   ganado_textures.shared_textures()
-                             : 0U)),
+            (kSceneHasPlayer ? leon_textures.shared_textures() : 0U) +
+            (kSceneHasEnemy ? ganado_textures.shared_textures() : 0U)),
         static_cast<unsigned long>(
             textures.vram_bytes() +
-            (kSceneHasActors
-                 ? leon_textures.vram_bytes() + ganado_textures.vram_bytes()
-                 : 0U)),
+            (kSceneHasPlayer ? leon_textures.vram_bytes() : 0U) +
+            (kSceneHasEnemy ? ganado_textures.vram_bytes() : 0U)),
         static_cast<unsigned long>(vram_before_textures),
         static_cast<unsigned long>(pvr_mem_available()));
 
@@ -7366,17 +7557,17 @@ int main() {
     const vector_t up = {0.0f, -1.0f, 0.0f, 0.0f};
     Player player{};
     Enemy enemy{};
-    // Without actors there is no authored root speed to take, so the viewer
-    // moves at the fallback rate.
+    // Without the actor there is no authored root speed to take, so the
+    // fallback rate applies.
     const float player_move_speed =
-        (kSceneHasActors &&
+        (kSceneHasPlayer &&
          std::fabs(leon.clips()[kPlayerWalkClip].root_forward_speed_mps) >
              0.0001f)
             ? std::fabs(
                   leon.clips()[kPlayerWalkClip].root_forward_speed_mps)
             : kFallbackPlayerMoveSpeed;
     float enemy_move_speed =
-        (kSceneHasActors &&
+        (kSceneHasEnemy &&
          std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f)
             ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
             : kFallbackEnemyMoveSpeed;
@@ -7418,24 +7609,27 @@ int main() {
     bool reload_was_down = false;
     bool restart_was_down = false;
     InputService input_service{};
-    if(kSceneHasActors &&
-      (leon.header().position_count > kLeonVertexCapacity ||
-       leon.header().normal_count > kLeonVertexCapacity ||
-       leon.header().source_normal_count > kLeonVertexCapacity ||
-       ganado.header().position_count > kGanadoVertexCapacity ||
-       ganado.header().normal_count > kGanadoVertexCapacity ||
-       ganado.header().source_normal_count > kGanadoVertexCapacity)) {
+    if((kSceneHasPlayer &&
+        (leon.header().position_count > kLeonVertexCapacity ||
+         leon.header().normal_count > kLeonVertexCapacity ||
+         leon.header().source_normal_count > kLeonVertexCapacity)) ||
+       (kSceneHasEnemy &&
+        (ganado.header().position_count > kGanadoVertexCapacity ||
+         ganado.header().normal_count > kGanadoVertexCapacity ||
+         ganado.header().source_normal_count > kGanadoVertexCapacity))) {
         std::printf("re4dc-room: actor transform capacity exceeded\n");
         return 1;
     }
 #if defined(RE4DC_SOURCE_SCENE)
-    if(kSceneHasActors) {
+    {
         const std::uint32_t leon_normal_scratch_count =
-            leon.header().source_normal_count != 0U
+            !kSceneHasPlayer ? 0U
+            : leon.header().source_normal_count != 0U
                 ? leon.header().source_normal_count
                 : leon.header().normal_count;
         const std::uint32_t ganado_normal_scratch_count =
-            ganado.header().source_normal_count != 0U
+            !kSceneHasEnemy ? 0U
+            : ganado.header().source_normal_count != 0U
                 ? ganado.header().source_normal_count
                 : ganado.header().normal_count;
         if(leon_normal_scratch_count > kLeonNormalScratchCapacity ||
@@ -7491,11 +7685,13 @@ int main() {
                 source_group_light_selection(&room.source_groups()[group]));
         }
     }
-    if(kSceneHasActors) {
-        const std::uint32_t leon_light_selection =
-            source_actor_light_selection(player.x, player.y, player.z, 1U);
-        const std::uint32_t ganado_light_selection =
-            source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U);
+    {
+        const std::uint32_t leon_light_selection = kSceneHasPlayer
+            ? source_actor_light_selection(player.x, player.y, player.z, 1U)
+            : 0U;
+        const std::uint32_t ganado_light_selection = kSceneHasEnemy
+            ? source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U)
+            : 0U;
         std::printf(
             "re4dc-room: source light selection room_links=%lu "
             "leon_mask=%08lx/%u ganado_mask=%08lx/%u\n",
@@ -7504,9 +7700,6 @@ int main() {
             selected_light_count(leon_light_selection),
             static_cast<unsigned long>(ganado_light_selection),
             selected_light_count(ganado_light_selection));
-    } else {
-        std::printf("re4dc-room: source light selection room_links=%lu\n",
-                    static_cast<unsigned long>(room_light_links));
     }
 #endif
     g_room_boot_stage = 46U;
@@ -7597,7 +7790,7 @@ int main() {
                 }
             }
             enemy_move_speed =
-                (kSceneHasActors &&
+                (kSceneHasEnemy &&
                  std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f)
                     ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
                     : kFallbackEnemyMoveSpeed;
@@ -7706,21 +7899,32 @@ int main() {
             // the entry point, meet geometry and face a different way each
             // cycle. Overwrites the pad so a capture needs no operator.
             {
-                const std::uint64_t phase =
-                    simulation_tick % (30U * 10U);
-                const bool turning = phase >= 30U * 8U;
+                // 6 s walking, 2 s turning, 4 s aiming with the pitch stick
+                // swept, repeating.
+                const std::uint64_t phase = simulation_tick % (30U * 12U);
                 input = Input{};
-                input.move = turning ? 0.0f : 1.0f;
-                input.turn = turning ? 1.0f : 0.0f;
+                if(phase < 30U * 6U) {
+                    input.move = 1.0f;
+                } else if(phase < 30U * 8U) {
+                    input.turn = 1.0f;
+                } else {
+                    input.aim = true;
+                    const float aim_phase =
+                        static_cast<float>(phase - 30U * 8U) / (30.0f * 4.0f);
+                    input.aim_pitch_stick =
+                        std::sin(aim_phase * 2.0f * kPi);
+                }
             }
 #endif
             update_player(player, collision, input, player_move_speed,
                           kSimulationDeltaSeconds);
-            if(kSceneHasActors) {
+            if(kSceneHasPlayer) {
                 update_animation(player, leon, input, kSimulationDeltaSeconds);
                 update_combat(player, enemy, input, fire_pressed,
                               reload_pressed, kSimulationDeltaSeconds,
                               collision, leon, ganado, audio);
+            }
+            if(kSceneHasEnemy) {
                 update_enemy(enemy, player, ganado, leon, collision, route_ptr,
                              audio, kSimulationDeltaSeconds);
             }
@@ -7904,7 +8108,7 @@ int main() {
             source_hud, source_hud_headers,
 #endif
             g_leon_projected, g_ganado_projected,
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
             g_leon_normals, g_ganado_normals,
             g_leon_lighting, g_ganado_lighting,
 #endif

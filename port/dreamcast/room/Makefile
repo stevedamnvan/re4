@@ -29,8 +29,10 @@ PLAYER_DEATH_VOICE_13 ?=
 DEMO_SCENE ?= r10d
 R100_ROOM_PACKAGE ?= ../build/private/r100-source-cell-4.re4room
 # Preserve the r100 presentation slice at native Dreamcast VGA resolution.
-# The older r10d engineering fixture stays at 240p unless explicitly overridden.
-DEMO_RESOLUTION ?= $(if $(filter r100,$(DEMO_SCENE)),480p,240p)
+# Source-authored scenes are 480p. The older r10d engineering fixture stays at
+# 240p unless explicitly overridden; a 240p source-scene build is a separately
+# labelled diagnostic, never a performance comparison with the 480p one.
+DEMO_RESOLUTION ?= $(if $(filter r100 r101,$(DEMO_SCENE)),480p,240p)
 KOS_ROMDISK_DIR = ../build/room-romdisk
 
 # R4 5A. Room-owned packages leave the linked romdisk and are read from the
@@ -138,8 +140,16 @@ r101:
 		COLLISION_PACKAGE=../build/private/r101-meters.re4sat \
 		TEXTURE_PACKAGE=../build/private/r101-source.re4tex \
 		ROUTE_PACKAGE=../build/private/r101.re4rtp \
-		CHARACTER_PACKAGE= ENEMY_PACKAGE= \
-		CHARACTER_TEXTURE_PACKAGE= ENEMY_TEXTURE_PACKAGE=
+		CHARACTER_PACKAGE=../build/private/leon-source-r100-gunhitcaps-pitch.re4chr \
+		CHARACTER_TEXTURE_PACKAGE=../build/private/leon-source-r100-gunhitcaps-pitch.re4tex \
+		ENEMY_PACKAGE= ENEMY_TEXTURE_PACKAGE= \
+		FIRE_SOUND_0=../build/private/source-audio/wep02-cue00.wav \
+		FIRE_SOUND_2=../build/private/source-audio/wep02-cue02.wav \
+		RELOAD_SOUND=../build/private/source-audio/wep02-cue16.wav \
+		PLAYER_DAMAGE_VOICE_9=../build/private/source-player-audio/pl00-cue09.wav \
+		PLAYER_DAMAGE_VOICE_10=../build/private/source-player-audio/pl00-cue10.wav \
+		PLAYER_DAMAGE_VOICE_11=../build/private/source-player-audio/pl00-cue11.wav \
+		PLAYER_DEATH_VOICE_13=../build/private/source-player-audio/pl00-cue13.wav
 
 r101-disc: r101
 	$(MAKE) disc
@@ -231,8 +241,10 @@ prepare-romdisk:
 	rm -f $(KOS_ROMDISK_DIR)/leon.re4chr $(KOS_ROMDISK_DIR)/ganado.re4chr $(KOS_ROMDISK_DIR)/leon.re4tex $(KOS_ROMDISK_DIR)/ganado.re4tex
 	@if [ -n "$(CHARACTER_PACKAGE)" ]; then \
 		cp $(CHARACTER_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4chr; \
-		cp $(ENEMY_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4chr; \
 		cp $(CHARACTER_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4tex; \
+	fi
+	@if [ -n "$(ENEMY_PACKAGE)" ]; then \
+		cp $(ENEMY_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4chr; \
 		cp $(ENEMY_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4tex; \
 	fi
 	cp $(TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4tex
