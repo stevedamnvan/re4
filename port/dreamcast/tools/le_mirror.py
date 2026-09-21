@@ -1557,12 +1557,48 @@ def find_handler(table, key):
     return None
 
 
-def convert_part(sw, rel, key, part_off, size, entry):
+def fmt_drs_body(sw, off, size, ctx):
+    # tools/drs.py validated the original container before any endian edits.
+    # The final tagged entry ends at rel_offset, not at the end of PPC code.
+    rel_offset = sw.peek32(off + 4)
+    fmt_tagged(sw, off, rel_offset or size, ctx)
+    sw.u32(off + 4)
+    if rel_offset:
+        entry = {"file": sw.label, "sub": ctx + "#REL", "tag": "REL",
+                 "ofs": off + rel_offset, "size": size - rel_offset,
+                 "handled": True, "module_id": sw.peek32(off + rel_offset),
+                 "native_binding_required": True}
+        guarded(sw, fmt_rel, off + rel_offset, size - rel_offset, ctx + "#REL", entry)
+        REPORT.append(entry)
+
+
+def fmt_drs(sw, off, size, ctx):
+    # Use the repository's existing archive parser, including its REL boundary
+    # and sound-bank checks. Do not infer DVD containers from arbitrary bytes.
+    tools_dir = str(Path(__file__).resolve().parents[3] / 'tools')
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import drs
+    original = bytes(sw.data[off:off + size])
+    try:
+        archive = drs.Drs(original)
+        if archive.pack() != original:
+            raise ValueError('DRS source roundtrip differs')
+    except (AssertionError, IndexError, struct.error) as exc:
+        raise ValueError('invalid source DRS: ' + str(exc)) from exc
+    convert_container(sw, ctx, drs_body=True)
+
+
+def convert_part(sw, rel, key, part_off, size, entry, drs_body=False):
     if entry["type"] == 1:  # sound block, MRAM half (type 2 is the ARAM sample data)
         entry["format"] = "SND"
         entry["handled"] = True
         guarded(sw, lambda sw_, o, n, c: fmt_snd_mram(sw_, o, n, c, bgm=entry["snd"][0] == 3),
                 part_off, size, "%s:%s" % (rel, key), entry)
+    elif drs_body and entry["type"] == 0:
+        entry["format"] = "DRS_ARC"
+        entry["handled"] = True
+        guarded(sw, fmt_drs_body, part_off, size, "%s:%s" % (rel, key), entry)
     elif looks_like_tagged(sw.data, part_off, size):
         entry["format"] = "ARC"
         entry["handled"] = True
@@ -1576,7 +1612,7 @@ def convert_part(sw, rel, key, part_off, size, entry):
         entry["safe_raw"] = "sample bytes"
 
 
-def convert_container(sw, rel):
+def convert_container(sw, rel, drs_body=False):
     data = sw.data
 
     def walk(base, key_prefix, depth):
@@ -1600,7 +1636,7 @@ def convert_container(sw, rel):
                     raise ValueError("%s part %s outside the file" % (rel, key))
                 entry = {"file": rel, "part": key, "type": t, "ofs": part_off, "size": size,
                          "snd": [snd_type, snd_arg, snd_no], "handled": False}
-                convert_part(sw, rel, key, part_off, size, entry)
+                convert_part(sw, rel, key, part_off, size, entry, drs_body and depth == 0)
                 REPORT.append(entry)
             off += ENTRY_SIZE
             i += 1
@@ -1610,7 +1646,7 @@ def convert_container(sw, rel):
 
 def convert_file(rel, data):
     sw = Swapper(data, rel)
-    handler = find_handler(FILE_FORMATS, rel)
+    handler = fmt_drs if fnmatch.fnmatchcase(rel, "em/*.drs") else find_handler(FILE_FORMATS, rel)
     if handler:
         entry = {"file": rel, "handled": True, "size": len(data)}
         guarded(sw, handler, 0, len(data), rel, entry)

@@ -573,14 +573,15 @@ void re4dc_threads_dump(void)
                   (unsigned long) t->kt->context.pc, (unsigned long) t->kt->context.pr);
         // Return addresses left on the thread's stack (no frame pointers: a
         // scan for text addresses between the saved SP and the stack top).
-        if (t->kt->state == STATE_WAIT && t->stackBase != NULL) {
+        if ((t->kt->state == STATE_WAIT || (t->kt == thd_current && cur)) && t->stackBase != NULL) {
             extern char re4dc_etext[] __asm__("_etext");  // the linker's end-of-text symbol
-            u32* sp = (u32*) (t->kt->context.r[15] & ~3u);
+            irq_context_t* context = t->kt == thd_current && cur ? cur : &t->kt->context;
+            u32* sp = (u32*) (context->r[15] & ~3u);
             u32* top = (u32*) t->stackBase;
-            char line[200];
+            char line[400];
             int n = 0;
             line[0] = 0;
-            for (; sp < top && n < 12; sp++) {
+            for (; sp >= t->stackEnd && sp < top && n < 32; sp++) {
                 u32 v = *sp;
                 if (v >= 0x8c010000u && v < (u32) re4dc_etext && (v & 1) == 0) {
                     snprintf(line + strlen(line), sizeof(line) - strlen(line), " %08lx", (unsigned long) v);
@@ -632,14 +633,14 @@ char* OSGetFontTexture(const char* string, void** image, s32* x, s32* y, s32* wi
     return (char*) string + (*string ? 1 : 0);
 }
 
-// Modules: every REL is linked into this image; OSLink only validates. The
-// module table (platform/modules.cpp) redirects prolog/epilog to the compiled
-// code once that slice exists; until then the loader reports it.
+// Known RELs use compiled native entry points; unknown IDs fail explicitly.
+// Lifecycle remains limited: static BSS/constructors are not reloaded by OSLink.
+extern "C" int re4dc_module_bind(void* header);
+
 BOOL OSLink(void* module, void* bss)
 {
     (void) bss;
-    re4dc_log("OSLink(%p): module id %lu\n", module, *(u32*) module);
-    return 1;
+    return re4dc_module_bind(module);
 }
 
 BOOL OSUnlink(void* module)

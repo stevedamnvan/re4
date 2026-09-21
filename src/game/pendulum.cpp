@@ -5,6 +5,10 @@
 // update); the pl_cloth / em_cloth / obj units pick one per accessory.
 
 #include "pendulum.h"
+#if !defined(__PPC__)
+extern "C" unsigned char re4dc_locked_cache[];
+#endif
+
 #include "pl_cloth.h"
 #include "atari.h"
 #include "model.h"
@@ -1175,7 +1179,13 @@ PenAtWork* penClothAtMake(cModel* m, CLOTH_AT_SET* at, int n)
     if (at == 0 || n == 0 || m == 0) {
         return 0;
     }
+#if defined(__PPC__)
     wk = (PenAtWork*) 0xE0000000;
+#else
+    // Same transient scratch lifetime as the source locked cache. On SH-4,
+    // 0xE0000000 addresses store queues, not the Gekko collision workspace.
+    wk = (PenAtWork*) re4dc_locked_cache;
+#endif
     a = wk->at;
     wk->num = n;
     wk->pAt = a;

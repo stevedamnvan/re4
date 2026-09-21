@@ -13,30 +13,28 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D308 player archive
+## Current resumption point - D311 authored room initialization
 
-Branch `dreamcast-port`; `7747d29` corrects the native arena and `44509f9`
-reconciles planning. D308 reuses that exact executable with a corrected mirror:
-valid zero-length player-archive slots are preserved, so all 133 source slots in
-`em/pl00.drs` qualify through existing handlers. The replay passes D307's Leon
-model-version rejection and reaches the equipped weapon read. Room/sound loading
-and collision/event allocations still succeed; no source pool was reduced.
+Branch `dreamcast-port`; D308/`605c5ec` qualified Leon. D309 qualifies the original
+weapon DRS using the existing parser and binds embedded module 4 to compiled
+SH-4 handgun sources. D310 diagnoses the next stall; D311 moves cloth collision
+scratch from the Gekko address to the existing native locked-cache buffer.
+The replay now reaches R100Init after player/weapon startup and BGM dispatch.
 
-Next primary task: qualify `em/wep02.drs` before another native replay. Its
-alternate Shift-JIS DVD signature is not recognized; the raw header produces
-an invalid `e0390400` read size, repeated DVD errors, then stack-underrun failure.
-The existing `tools/drs.py` parses and roundtrips it, including an embedded REL.
-Reuse that format knowledge and existing converters/static-module mechanism;
-check module 4's compiled coverage before qualifying its PPC payload as data.
-Do not bypass source checks or substitute a viewer character package.
+Next primary task: resolve the existing `R100Em` constructor-name stub after
+checking its compact stack-object layout against cEm construction; reuse
+platform/aliases-manual.ld's compiler-asm alias mechanism. Required em12 and
+r100s40/41/43/44 event files have been extracted from the original ISO into
+`/root/re4data` after D311. Em12 data passes an isolated conversion probe but its
+native module is not linked; all four EVD files remain unhandled. Qualify their
+required consumers and module before another native replay. Do not omit authored
+events or treat these files as already on the captured disc.
 
-The expanded private manifest `/root/probe/d309-required.txt` (D308 requirements
-plus `em/wep02.drs`) correctly rejects the current mirror. D308's prior manifest
-qualified only dependencies known through Leon; its run is discovery evidence,
-not a qualified complete-room run. See
-[R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md)
-for identities and [R4_ROOM_MEMORY_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_MEMORY_CHECKPOINT.md)
-for D307 memory evidence. Do not return to missing YZ2, r120 or EFF work.
+`/root/probe/d309-required.txt` passed dependencies through the weapon. Expanded
+`/root/probe/d312-required.txt` rejects the newly observed EVD dependencies.
+See [R4_WEAPON_CLOTH_CHECKPOINT.md](port/dreamcast/docs/R4_WEAPON_CLOTH_CHECKPOINT.md)
+for D309-D311 exact evidence and limits. The last logged room allocation leaves
+343,552 bytes, not final peak headroom. No source pools or visible content were cut.
 
 Current limits: the game target still links `platform/gx_stub.cpp` and
 `platform/audio_stub.cpp`; source execution does not establish visible menus,
@@ -335,11 +333,11 @@ still confirms the source title debug menu defaults; it is not manual acceptance
 The real `port/dreamcast/fixtures/boot-deps.txt` is the cold-boot/title manifest
 and remains an untracked local integration file. It does not require a room.
 Copy it and append r100 ARC/DAR, Leon and the now-observed weapon dependency as
-below. D308 passes all but `em/wep02.drs`; the current expanded gate must fail
-until its container, embedded module and payload coverage are qualified. With
-`set -e`, that failure prevents packaging. The actual saved expanded manifest is
-`/root/probe/d309-required.txt`. This is not a declaration that all future native
-core/player/room consumers are qualified.
+below, including em12 and the four now-observed event archives. D309 passed
+through the weapon; the expanded gate fails until event conversion is qualified.
+With `set -e`, that failure prevents packaging. The actual saved expanded manifest
+is `/root/probe/d312-required.txt`. Also verify native module availability; archive
+conversion does not compile enemy code or establish all future consumer coverage.
 
 ```bash
 set -e
@@ -349,7 +347,7 @@ test -f port/dreamcast/fixtures/boot-deps.txt
 test -f /root/probe/d292-fixtures/padscript.txt
 required=$(mktemp /root/probe/re4-r100-required.XXXXXX)
 cat port/dreamcast/fixtures/boot-deps.txt > "$required"
-printf '\nst1/r100.arc\nst1/r100.dar\nem/pl00.drs\nem/wep02.drs\n' >> "$required"
+printf '\nst1/r100.arc\nst1/r100.dar\nem/pl00.drs\nem/wep02.drs\nem/em12.drs\nevd/r100s40.evd\nevd/r100s41.evd\nevd/r100s43.evd\nevd/r100s44.evd\n' >> "$required"
 mirror_out=$(mktemp -d /root/probe/re4-le-r100.XXXXXX)
 python3 port/dreamcast/tools/le_mirror.py /root/re4data "$mirror_out" --native-rooms --require "$required"
 make -C port/dreamcast/game -j4

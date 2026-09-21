@@ -1,6 +1,6 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Updated 2026-09-21; current integration reference D307 (native arena correction).
+Updated 2026-09-21; current integration reference D311 (weapon/cloth startup reaches R100Init).
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first

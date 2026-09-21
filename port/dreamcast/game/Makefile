@@ -17,7 +17,7 @@ ROOT = ../../..
 # The executable is the DOL's own code (src/game). The REL modules (stage
 # rooms, sub-screens, tools, enemies) each define their own _prolog/_epilog
 # and re-compile shared sources per module, so they join through the module
-# table with per-module symbol prefixes (a later slice); the census still
+# table with per-module symbol prefixes; the census still
 # compiles them all to keep the platform inventory complete.
 GAME_DIRS = src/game
 CENSUS_DIRS = src/game src/st src/st1 src/Sscrn \
@@ -30,6 +30,7 @@ GAME_EXCLUDE = src/game/yz2asm.cpp src/game/memset_2.cpp \
 	src/tools/t_util_menu.cpp src/tools/t_util_nomenu.cpp src/tools/t_util_id.cpp
 GAME_SRCS = $(filter-out $(addprefix $(ROOT)/,$(GAME_EXCLUDE)), \
 	$(foreach d,$(GAME_DIRS),$(wildcard $(ROOT)/$(d)/*.cpp)))
+
 CENSUS_SRCS = $(filter-out $(addprefix $(ROOT)/,$(GAME_EXCLUDE)), \
 	$(foreach d,$(CENSUS_DIRS),$(wildcard $(ROOT)/$(d)/*.cpp)))
 PLATFORM_SRCS = $(wildcard platform/*.cpp)
@@ -39,11 +40,20 @@ SDK_UNITS = mtx mtxvec mtx44 vec quat OSAlloc
 SDK_GEN = $(addprefix platform/sdk/gen/,$(addsuffix .c,$(SDK_UNITS)))
 
 OBJDIR = obj
+# REL modules linked into the image. On the GameCube each stage REL is its
+# own link (config/G4BE08/modules/<mod>/splits.txt lists its units; the
+# rooms it does not hold resolve to its _unresolved). tools/gen_modules.py
+# turns every module in MODULES into one partially linked object whose only
+# global symbols are its renamed entry points (obj/modules.mk), and
+# platform/modules.cpp maps the REL header ids to them for OSLink.
+MODULES = st1_0 st1_1 st1_2 st1_3 wep02
+MODULE_OBJS =
+MODULES_MK = $(OBJDIR)/modules.mk
 GAME_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS))
 CENSUS_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(CENSUS_SRCS))
 PLATFORM_OBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(PLATFORM_SRCS))
 SDK_OBJS = $(patsubst platform/sdk/gen/%.c,$(OBJDIR)/sdk/%.o,$(SDK_GEN))
-OBJS = $(GAME_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
+OBJS = $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1
 # -fpermissive: cManager<T>::arrayPush names Debug_alloc before its
@@ -83,6 +93,11 @@ $(OBJDIR)/sdk/%.o: platform/sdk/gen/%.c
 	kos-cc $(KOS_CFLAGS) $(SDK_CFLAGS) -MMD -MP -c $< -o $@
 
 -include $(OBJS:.o=.d) $(CENSUS_OBJS:.o=.d)
+
+$(MODULES_MK): Makefile tools/gen_modules.py $(ROOT)/config/G4BE08/modules.py $(ROOT)/config/G4BE08/modules/*/splits.txt $(ROOT)/src/st1/st1.cpp
+	@mkdir -p $(OBJDIR)
+	python3 tools/gen_modules.py $(ROOT)/config/G4BE08/modules $(ROOT) $(OBJDIR) $@ $(MODULES)
+include $(MODULES_MK)
 
 $(TARGET): $(OBJS) tools/link.sh tools/gen_aliases.py tools/gen_missing.py platform/aliases-manual.ld
 	bash tools/link.sh $(TARGET) "$(GAME_OPT)" $(OBJS)

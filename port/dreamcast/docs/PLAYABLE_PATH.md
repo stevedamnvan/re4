@@ -50,22 +50,20 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D308 replay, 2026-09-21)
+## Current boot frontier (D311 replay, 2026-09-21)
 
-D305 qualifies r100 and loads its 4,669,568-byte archive through the recovered
-ReadAreaData/gameRoomInit path, retaining ROOM/FOOT sound-container dispatch.
-After D306 measured pool exhaustion, D307 corrects a duplicate platform
-reservation and returns 458,752 bytes to the heap. Required collision/event
-allocations now succeed with unchanged gameplay pools and primitive buffers.
-D308 preserves valid empty player-archive slots and converts Leon's full source
-archive with existing handlers. The same executable passes the prior model-version
-wait and reaches `em/wep02.drs`. That weapon's unrecognized alternate DVD signature
-leaves its header raw: invalid read size, repeated DVD errors and stack underrun.
-The expanded dependency gate now rejects that file before further replay. Reuse
-`tools/drs.py`, existing conversion and static-module machinery to qualify it;
-its embedded module 4 is not yet in the native registry. See
-[R4_ROOM_MEMORY_CHECKPOINT.md](R4_ROOM_MEMORY_CHECKPOINT.md) for D307 and the endian
-checkpoint for D308. r101 remains rejected for incomplete EVS conversion.
+Qualified r100, Leon and weapon loading now reach the authored R100Init. D307's
+arena correction remains; D309 reuses the existing DRS parser and static-module
+mechanism for handgun module 4. D311 corrects cloth scratch to use the existing
+native locked-cache buffer, preserving the PowerPC path and cloth behavior.
+
+R100Init reports missing em12/event files, then stops in the pre-existing
+`R100Em` constructor stub. Those five source files are now extracted privately;
+the expanded gate rejects the four unhandled EVD archives. Em12 data conversion
+is probed but its native module is not linked. Resolve the constructor/layout
+contract and qualify the required event/enemy dependencies next. No blanket
+cinematic/event bypass. See [R4_WEAPON_CLOTH_CHECKPOINT.md](R4_WEAPON_CLOTH_CHECKPOINT.md).
+r101 remains rejected for incomplete EVS conversion.
 
 D303's source-derived first-play opening skip still reaches r100 through normal
 stage initialization; r120 is cinematic staging, not a playable room. Its D302

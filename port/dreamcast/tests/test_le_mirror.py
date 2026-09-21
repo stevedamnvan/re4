@@ -267,6 +267,56 @@ class ArchiveSlotsTest(unittest.TestCase):
                              ['player.dat#1: no handler (tag XYZ)'])
 
 
+class DrsBoundaryTest(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        body = bytearray(make_tagged([('TPL', make_tpl([(8, 8, 5, IMAGE[:128])])), ('', b'')]))
+        rel_off = len(body)
+        struct.pack_into('>I', body, 4, rel_off)
+        rel = bytearray(96)
+        struct.pack_into('>I', rel, 0, 4)
+        struct.pack_into('>I', rel, 0x1c, 3)
+        struct.pack_into('>2I', rel, 0x28, 64, 8)
+        struct.pack_into('>2I', rel, 64, 0, 72)
+        rel[74] = 203  # R_DOLPHIN_END, existing tools/relfile.py
+        rel[80:] = b'\xcd' * 16
+        body += rel
+        magic = 'ハカセのアホーーーーーーー！！！'.encode('shift_jis')
+        head = magic + be32(0, len(body), 0, 1024, 0, 0, 0, 0)
+        head += be32(0xfffffffe, 0, 0, 1024 + len(body), 0, 0, 0, 0)
+        head += be32(0xffffffff, 0, 0, 0, 0, 0, 0, 0)
+        return head + bytes(1024 - len(head)) + body, 1024 + rel_off
+
+    def test_embedded_rel_does_not_extend_last_asset(self):
+        raw, rel_off = self.fixture(); out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file('em/wep02.drs', out)
+        self.assertTrue(all(e.get('handled') and e.get('complete') for e in LE.REPORT), LE.REPORT)
+        self.assertEqual(struct.unpack_from('<4I', out, 32), (0, len(raw)-1024, 0, 1024))
+        self.assertEqual(struct.unpack_from('<I', out, 1028)[0], rel_off-1024)
+        entry = next(e for e in LE.REPORT if e.get('tag') == 'REL')
+        self.assertEqual((entry['module_id'], entry['ofs']), (4, rel_off))
+        self.assertTrue(entry['native_binding_required'])
+        self.assertEqual(out[rel_off+64:], raw[rel_off+64:])
+        self.assertEqual(struct.unpack_from('<I', out, rel_off)[0], 4)
+        self.assertEqual(len([e for e in LE.REPORT if e.get('tag') == 'TPL']), 1)
+
+    def test_invalid_rel_offset_rolls_back_entire_container(self):
+        raw, rel_off = self.fixture(); out = bytearray(raw)
+        struct.pack_into('>I', out, 1028, len(raw)+32)
+        before = bytes(out); LE.REPORT.clear()
+        LE.convert_file('em/wep02.drs', out)
+        self.assertEqual(out, before)
+        self.assertFalse(LE.REPORT[-1]['complete'])
+
+    def test_unknown_neighbor_is_not_qualified_by_container_success(self):
+        raw, _ = self.fixture(); out = bytearray(raw)
+        out[1024+24:1024+28] = b'XYZ\0'; LE.REPORT.clear()
+        LE.convert_file('em/wep02.drs', out)
+        with tempfile.TemporaryDirectory() as work:
+            deps = pathlib.Path(work)/'deps'; deps.write_text('em/wep02.drs\n')
+            self.assertIn('em/wep02.drs:0#0: no handler (tag XYZ)', LE.check_required(LE.REPORT,deps))
+
+
 class RequireTest(unittest.TestCase):
     def test_required_parts_must_be_complete_or_safe_raw(self):
         report = [
