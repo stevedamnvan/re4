@@ -70,7 +70,7 @@ CHARACTER_TEXTURE_MAX_ARG := $(if $(CHARACTER_TEXTURE_MAX_DIMENSION),--texture-m
 CHARACTER_TWIDDLE ?=
 CHARACTER_TWIDDLE_ARG := $(if $(CHARACTER_TWIDDLE),--twiddle-textures,)
 
-.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production room-r101 room-r101-source collision-r101-source route-r101 texture-r101-source collision-r100-source route-r100 texture-r10d texture-r100-production asset-residency-r100 hud-source character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
+.PHONY: all test audit motion-host motion-cross-host motion-real-host room-r10d room-r100-source room-r100-production room-r100-production-compat room-r101 room-r101-source collision-r101-source route-r101 texture-r101-source collision-r100-source route-r100 texture-r10d texture-r100-production asset-residency-r100 hud-source character-leon character-ganado characters-r100 source-weapon-audio source-enemy-audio source-player-audio demo-r10d script-check unit clean
 
 all: $(BUILD)/abi_probe
 
@@ -120,6 +120,11 @@ room-r100-production:
 		--smd FILE_02=$(R100_EXPORT_DIR)/r100_02_000.SMD \
 		--common-smd $(R100_EXPORT_DIR)/r100_005.SMD \
 		--source-unit-scale 0.001 $(R100_OBJ) $(R100_PRODUCTION_ROOM)
+
+# The accepted layout, every batch carrying both a triangle range and strips,
+# kept available so the one-representation package can be compared against it.
+room-r100-production-compat:
+	$(PYTHON) tools/convert_room_obj.py --source-scale 0.1 		--cell-size $(R100_PRODUCTION_CELL_SIZE) 		--keep-triangle-indices 		$(R100_UNPARTITIONED_ARGS) 		--smx $(R100_SMX) 		--smd MAINSCENARIO=$(R100_EXPORT_DIR)/r100_004.SMD 		--smd FILE_00=$(R100_EXPORT_DIR)/r100_00_000.SMD 		--smd FILE_01=$(R100_EXPORT_DIR)/r100_01_000.SMD 		--smd FILE_02=$(R100_EXPORT_DIR)/r100_02_000.SMD 		--common-smd $(R100_EXPORT_DIR)/r100_005.SMD 		--source-unit-scale 0.001 $(R100_OBJ) 		build/private/r100-source-cell-4-both.re4room
 
 # r101, r100's only authored neighbour. Same converters, same settings, no
 # r100-specific overrides.

@@ -3512,6 +3512,8 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
     const auto* groups = room.groups();
     const auto* batches = room.batches();
     const auto* indices = room.indices();
+    const auto* primitives = room.primitives();
+    const auto* primitive_indices = room.primitive_indices();
     const auto* vertices = room.vertices();
     const auto* source_groups = room.source_groups();
     const std::uint32_t static_mask = ~g_source_dynamic_light_mask;
@@ -3542,19 +3544,26 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
             const auto& batch = batches[group.first_batch + local_batch];
             if(batch.first_index > room.header().index_count ||
                batch.index_count >
-                   room.header().index_count - batch.first_index) {
+                   room.header().index_count - batch.first_index ||
+               batch.first_primitive > room.header().primitive_count ||
+               batch.primitive_count >
+                   room.header().primitive_count - batch.first_primitive) {
                 return false;
             }
-            const std::uint32_t end = batch.first_index + batch.index_count;
-            for(std::uint32_t index = batch.first_index; index < end; ++index) {
-                const std::uint32_t vertex_index = indices[index];
+            // This pass needs the *set* of vertices the group touches and
+            // nothing about their order, so it reads whichever table the batch
+            // has. A batch's strips reference exactly the vertices its
+            // triangles do.
+            bool failed = false;
+            const auto own_vertex = [&](std::uint32_t vertex_index) {
                 if(vertex_index >= room.header().vertex_count) {
-                    return false;
+                    failed = true;
+                    return;
                 }
                 std::uint16_t& owner =
                     g_room_static_lighting_owner[vertex_index];
                 if(owner == kRoomLightingConflicted) {
-                    continue;
+                    return;
                 }
                 if(owner != kRoomLightingUnowned) {
                     const std::uint32_t owner_selection =
@@ -3568,7 +3577,7 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
                         // contribution. Leave it on the exact per-use path.
                         owner = kRoomLightingConflicted;
                     }
-                    continue;
+                    return;
                 }
                 owner = static_cast<std::uint16_t>(group_index);
                 const auto& vertex = vertices[vertex_index];
@@ -3584,6 +3593,28 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
                 destination[0] = red;
                 destination[1] = green;
                 destination[2] = blue;
+            };
+            if((batch.flags & re4dc::room::kBatchTrianglesResident) != 0U) {
+                const std::uint32_t end = batch.first_index + batch.index_count;
+                for(std::uint32_t index = batch.first_index; index < end;
+                    ++index) {
+                    own_vertex(indices[index]);
+                }
+            } else {
+                const std::uint32_t end =
+                    batch.first_primitive + batch.primitive_count;
+                for(std::uint32_t strip = batch.first_primitive; strip < end;
+                    ++strip) {
+                    const auto& primitive = primitives[strip];
+                    for(std::uint32_t local = 0U;
+                        local < primitive.vertex_count; ++local) {
+                        own_vertex(
+                            primitive_indices[primitive.first_vertex + local]);
+                    }
+                }
+            }
+            if(failed) {
+                return false;
             }
         }
     }
@@ -6077,6 +6108,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
             if(cull_mode == kCullAll) {
                 continue;
             }
+            // Alpha order is source triangle order, so this is the one pass
+            // that cannot take strips unless they are proven to reproduce it.
+            // The batches without that proof are exactly the batches the
+            // converter still stores a triangle range for.
             if(batch.primitive_count != 0U &&
                (batch.flags & re4dc::room::kBatchStripOrderPreserved) != 0U) {
                 submit_room_strips(
@@ -6085,6 +6120,12 @@ FrameStats render_scene(const re4dc::room::Package& room,
                     character_submit_vertices,
                     kCharacterSubmitVertexCapacity, stats, cull_mode,
                     light_selection);
+                continue;
+            }
+            if((batch.flags & re4dc::room::kBatchTrianglesResident) == 0U) {
+                // Dropping the batch here would render a hole. The converter
+                // cannot produce this; count it rather than trust the rule.
+                ++stats.room_strip_fallbacks;
                 continue;
             }
             std::uint32_t submit_count = 0;
@@ -6263,7 +6304,10 @@ void restart_snapshots(std::uint32_t tick) {
 // water is also the proof that the release is real rather than bookkeeping --
 // the room cannot load out of 3.5 MB unless the texel bytes genuinely come
 // back.
-constexpr std::size_t kRoomArenaCapacity = 3U * 1024U * 1024U + 512U * 1024U;
+//
+// Down again to 3,440,640 now that r100's batches carry one primitive
+// representation each: the measured high water is 3,343,712.
+constexpr std::size_t kRoomArenaCapacity = 3U * 1024U * 1024U + 288U * 1024U;
 alignas(32) std::uint8_t g_room_arena_memory[kRoomArenaCapacity];
 re4dc::storage::Arena g_room_arena;
 
@@ -6868,7 +6912,7 @@ int main() {
         "ganado=%lu/%lu/%lu/%lu/%lu "
         "source_groups=%s\n",
         static_cast<unsigned long>(room.header().vertex_count),
-        static_cast<unsigned long>(room.header().index_count / 3U),
+        static_cast<unsigned long>(room.header().triangle_count),
         static_cast<unsigned long>(room.header().group_count),
         static_cast<unsigned long>(collision.header().floor_count),
         static_cast<unsigned long>(collision.header().slope_count),

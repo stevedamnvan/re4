@@ -135,22 +135,10 @@ bool Package::validate() {
             return false;
         }
     }
-    const auto* package_batches = batches();
-    for(std::uint32_t index = 0; index < header_->batch_count; ++index) {
-        const auto& batch = package_batches[index];
-        if(batch.index_count == 0U || batch.index_count % 3U != 0U ||
-           (batch.flags & ~kBatchStripOrderPreserved) != 0U ||
-           static_cast<std::uint64_t>(batch.first_index) +
-                   batch.index_count > header_->index_count ||
-           static_cast<std::uint64_t>(batch.first_primitive) +
-                   batch.primitive_count > header_->primitive_count) {
-            error_ = "batch range exceeds package counts";
-            close();
-            return false;
-        }
-    }
     const auto* package_primitives = primitives();
     const auto* package_primitive_indices = primitive_indices();
+    // The strip table has to be checked before the batch loop reads through it
+    // to count triangles.
     for(std::uint32_t index = 0; index < header_->primitive_count; ++index) {
         const auto& primitive = package_primitives[index];
         if(primitive.vertex_count < 3U ||
@@ -170,6 +158,50 @@ bool Package::validate() {
                 return false;
             }
         }
+    }
+    std::uint32_t triangles = 0;
+    const auto* package_batches = batches();
+    for(std::uint32_t index = 0; index < header_->batch_count; ++index) {
+        const auto& batch = package_batches[index];
+        const bool triangles_resident =
+            (batch.flags & kBatchTrianglesResident) != 0U;
+        if((batch.flags & ~kBatchFlagMask) != 0U ||
+           static_cast<std::uint64_t>(batch.first_index) +
+                   batch.index_count > header_->index_count ||
+           static_cast<std::uint64_t>(batch.first_primitive) +
+                   batch.primitive_count > header_->primitive_count) {
+            error_ = "batch range exceeds package counts";
+            close();
+            return false;
+        }
+        if(triangles_resident) {
+            if(batch.index_count == 0U || batch.index_count % 3U != 0U) {
+                error_ = "resident triangle range is empty or not whole";
+                close();
+                return false;
+            }
+        } else {
+            // Without a triangle range the strips are the batch, so there has
+            // to be at least one, and the range must be empty rather than
+            // stale: nothing should be able to read it by accident.
+            if(batch.primitive_count == 0U || batch.index_count != 0U ||
+               batch.first_index != 0U) {
+                error_ = "batch has neither triangles nor strips";
+                close();
+                return false;
+            }
+            if((batch.flags & kBatchStripOrderPreserved) == 0U) {
+                error_ = "strips are authoritative without an order proof";
+                close();
+                return false;
+            }
+        }
+        triangles += batch_triangle_count(batch, package_primitives);
+    }
+    if(triangles != header_->triangle_count) {
+        error_ = "batch triangles do not add up to the header count";
+        close();
+        return false;
     }
     error_ = nullptr;
     return true;

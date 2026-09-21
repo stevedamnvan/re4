@@ -20,8 +20,11 @@ from dataclasses import dataclass, field, replace
 
 
 MAGIC = b"RE4DCRM\0"
-VERSION = 2
-HEADER = struct.Struct("<8s23I6f")
+VERSION = 3
+# ...6f is the bounds; the trailing I is triangle_count, the room's total
+# triangle count, which index_count no longer gives because the triangle
+# table now holds only the batches that still need one.
+HEADER = struct.Struct("<8s23I6fI")
 VERTEX = struct.Struct("<8f")  # position, normal, UV
 INDEX = struct.Struct("<I")
 MATERIAL = struct.Struct("<64s")
@@ -32,6 +35,10 @@ SOURCE_GROUP = struct.Struct("<I4BII15f")
 FLAG_SOURCE_GROUP_METADATA = 1 << 0
 SOURCE_GROUP_HAS_LIGHT_VOLUME = 1 << 0
 BATCH_STRIP_ORDER_PRESERVED = 1 << 0
+# Set when this batch's triangle index range is present in the package.
+# Clear means the strips are the batch's only representation, and they are
+# authoritative because the order-preserved proof passed.
+BATCH_TRIANGLES_RESIDENT = 1 << 1
 SOURCE_GROUP_NAME = re.compile(r"#SMX_(\d+)#")
 SOURCE_OBJECT_NAME = re.compile(
     r"^([^#]+)#SMD_(\d+)#SMX_(\d+)#.*#BIN_(\d+)#(CommonBIN#)?$"
@@ -657,6 +664,7 @@ def strip_triangle_order_preserved(
 def build_package(
     parsed: dict[str, object],
     source_groups: dict[str, SourceGroupData] | None = None,
+    keep_triangle_indices: bool = False,
 ) -> tuple[bytes, dict[str, object]]:
     vertices = parsed["vertices"]
     materials = parsed["materials"]
@@ -674,6 +682,9 @@ def build_package(
     ordered_batch_count = 0
     ordered_strip_batches = 0
     ordered_strip_triangles = 0
+    resident_triangle_batches = 0
+    dropped_index_bytes = 0
+    total_triangles = 0
     all_min = [math.inf, math.inf, math.inf]
     all_max = [-math.inf, -math.inf, -math.inf]
 
@@ -682,9 +693,6 @@ def build_package(
         first_batch = ordered_batch_count
         for source_batch_index in group.batch_indices:
             batch = source_batches[source_batch_index]
-            first_index = len(index_blob) // INDEX.size
-            for index in batch.indices:
-                index_blob.extend(INDEX.pack(index))
             strips = stripify_triangles(batch.indices)
             order_preserved = strip_triangle_order_preserved(
                 batch.indices, strips
@@ -692,6 +700,21 @@ def build_package(
             if order_preserved:
                 ordered_strip_batches += 1
                 ordered_strip_triangles += len(batch.indices) // 3
+            # A batch keeps its triangle range only when the strips are not
+            # proven to reproduce it, or when a comparison build asks for the
+            # old layout. A batch with no strips at all always keeps it.
+            triangles_resident = (
+                keep_triangle_indices or not order_preserved or not strips
+            )
+            total_triangles += len(batch.indices) // 3
+            first_index = len(index_blob) // INDEX.size
+            if triangles_resident:
+                resident_triangle_batches += 1
+                for index in batch.indices:
+                    index_blob.extend(INDEX.pack(index))
+            else:
+                first_index = 0
+                dropped_index_bytes += len(batch.indices) * INDEX.size
             first_primitive = len(primitive_blob) // PRIMITIVE.size
             for strip in strips:
                 first_vertex = len(primitive_index_blob) // INDEX.size
@@ -704,9 +727,10 @@ def build_package(
                 BATCH.pack(
                     material_ids[batch.material],
                     first_index,
-                    len(batch.indices),
+                    len(batch.indices) if triangles_resident else 0,
                     group_index,
-                    BATCH_STRIP_ORDER_PRESERVED if order_preserved else 0,
+                    (BATCH_STRIP_ORDER_PRESERVED if order_preserved else 0) |
+                    (BATCH_TRIANGLES_RESIDENT if triangles_resident else 0),
                     first_primitive,
                     len(primitive_blob) // PRIMITIVE.size - first_primitive,
                 )
@@ -784,6 +808,7 @@ def build_package(
         FLAG_SOURCE_GROUP_METADATA if source_groups is not None else 0,
         *all_min,
         *all_max,
+        total_triangles,
     )
     metadata = {
         "format": "re4dc-room",
@@ -798,6 +823,9 @@ def build_package(
         "strip_vertices": len(primitive_index_blob) // INDEX.size,
         "ordered_strip_batches": ordered_strip_batches,
         "ordered_strip_triangles": ordered_strip_triangles,
+        "total_triangles": total_triangles,
+        "resident_triangle_batches": resident_triangle_batches,
+        "dropped_index_bytes": dropped_index_bytes,
         "bounds": {"min": all_min, "max": all_max},
         "payload_crc32": f"{payload_crc32:08x}",
     }
@@ -821,6 +849,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", type=pathlib.Path, help="private exported room OBJ")
     parser.add_argument("output", type=pathlib.Path, help="private Dreamcast room package")
     parser.add_argument("--manifest", type=pathlib.Path, help="JSON manifest path")
+    parser.add_argument(
+        "--keep-triangle-indices",
+        action="store_true",
+        help="store every batch's triangle range as well as its strips, which "
+             "is the accepted layout, for comparison",
+    )
     parser.add_argument(
         "--smx", type=pathlib.Path,
         help="source room SMX whose per-object masks and cull modes are appended",
@@ -892,7 +926,9 @@ def main(argv: list[str] | None = None) -> int:
         set(args.unpartitioned_material),
     )
     cluster_geometry(parsed, args.cluster_size)
-    package, metadata = build_package(parsed, source_groups)
+    package, metadata = build_package(
+        parsed, source_groups, args.keep_triangle_indices
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(package)
     metadata.update(

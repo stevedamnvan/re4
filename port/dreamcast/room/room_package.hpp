@@ -8,12 +8,19 @@
 namespace re4dc::room {
 
 inline constexpr char kMagic[8] = {'R', 'E', '4', 'D', 'C', 'R', 'M', '\0'};
-inline constexpr std::uint32_t kVersion = 2;
+inline constexpr std::uint32_t kVersion = 3;
 inline constexpr std::uint32_t kFlagSourceGroupMetadata = 1U << 0U;
 inline constexpr std::uint32_t kSourceGroupHasLightVolume = 1U << 0U;
 // Source SmxSetFlag() maps bit 3 to an alpha-test reference of 0x80.
 inline constexpr std::uint32_t kSourceGroupAlphaOmit128 = 1U << 3U;
 inline constexpr std::uint32_t kBatchStripOrderPreserved = 1U << 0U;
+// Set when the batch's triangle index range is stored. Clear means its strips
+// are its only representation, which the converter permits only after proving
+// they reproduce the source triangle order and winding. Nothing may read
+// first_index or index_count on a batch without this bit.
+inline constexpr std::uint32_t kBatchTrianglesResident = 1U << 1U;
+inline constexpr std::uint32_t kBatchFlagMask =
+    kBatchStripOrderPreserved | kBatchTrianglesResident;
 
 struct Header {
     char magic[8];
@@ -42,6 +49,9 @@ struct Header {
     std::uint32_t flags;
     float bounds_min[3];
     float bounds_max[3];
+    // The room's total triangle count. index_count no longer gives it: the
+    // triangle table holds only the batches that still need one.
+    std::uint32_t triangle_count;
 };
 
 struct Vertex {
@@ -83,6 +93,21 @@ struct Primitive {
     std::uint16_t triangle_count;
 };
 
+// The triangles a batch has, wherever they are stored. A batch with a resident
+// triangle range answers from it; one represented only by strips answers from
+// the strips, which cover exactly the same triangles.
+inline std::uint32_t batch_triangle_count(const Batch& batch,
+                                          const Primitive* primitives) {
+    if((batch.flags & kBatchTrianglesResident) != 0U) {
+        return batch.index_count / 3U;
+    }
+    std::uint32_t triangles = 0;
+    for(std::uint32_t index = 0; index < batch.primitive_count; ++index) {
+        triangles += primitives[batch.first_primitive + index].triangle_count;
+    }
+    return triangles;
+}
+
 // Optional records appended directly after the index array when
 // kFlagSourceGroupMetadata is set. Values come from the source room SMX.
 struct SourceGroup {
@@ -98,7 +123,7 @@ struct SourceGroup {
     float inverse_rotation[9];
 };
 
-static_assert(sizeof(Header) == 124);
+static_assert(sizeof(Header) == 128);
 static_assert(sizeof(Vertex) == 32);
 static_assert(sizeof(Material) == 64);
 static_assert(sizeof(Group) == 96);
