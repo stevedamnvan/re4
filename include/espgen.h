@@ -33,8 +33,13 @@ struct SstList {
         union {
             u16 no;    // 0x00 room number range key
             struct {
+#if defined(__PPC__)
                 u8 x0;
                 u8 id; // 0x01 display flag bit (GetSstDispFlag)
+#else
+                u8 id; // low byte of native numeric no
+                u8 x0;
+#endif
             } b;
         };
         u16 type;      // 0x02

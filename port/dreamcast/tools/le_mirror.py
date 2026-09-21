@@ -370,6 +370,103 @@ def fmt_snd_mram(sw, off, size, ctx, bgm=False):
 
 
 
+def fmt_tex(sw, off, size, ctx):
+    """texture.h TexData and texture.cpp cTexSys::DataLoad."""
+    version, oi, ot, oa = sw.u32s(off, 4)
+    if version != 3:
+        raise ValueError('unsupported TexData version')
+    ids = off + oi
+    count = sw.u32(ids)
+    for i in range(count):
+        sw.u16s(ids + 4 + i * 8, 2)
+        sw.u32(ids + 8 + i * 8)
+    if not count:
+        return
+    tables = []
+    for rel in (ot, oa):
+        base = off + rel
+        if sw.u32(base) != count:
+            raise ValueError('TexData table counts differ')
+        tables.append([base + v for v in sw.u32s(base + 4, count)])
+    for t in set(tables[0]):
+        fmt_tpl(sw, t, off + size - t, ctx + '/tpl')
+    for a in set(tables[1]):
+        sw.u16s(a, 5)  # TexAnm dimensions/centre/frame count; rest bytes
+
+
+def fmt_shd(sw, off, size, ctx):
+    """shadow.h ShdHeader/ShdEntry; table-relative ModelData."""
+    sw._check(off, 16)
+    if sw.data[off] > 0x41:
+        raise ValueError('unsupported shadow version')
+    count = sw.u16(off + 2)
+    table = off + sw.u32(off + 4)
+    sw._check(off + 16, count * 72)
+    models = []
+    for i in range(count):
+        p = off + 16 + i * 72
+        sw.f32s(p, 9)
+        models.append(sw.data[p + 36])
+    if not models:
+        return
+    offsets = sw.u32s(table, max(models) + 1)
+    starts = sorted(set(table + offsets[m] for m in models))
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else off + size
+        with sw.bounded(start, end - start):
+            raw = fmt_bin(sw, start, end - start, ctx + '/model')
+        if raw:
+            raise ValueError('incomplete shadow model: ' + str(raw))
+
+
+def fmt_fse(sw, off, size, ctx):
+    """flr_at.h; a zero header is the source reader's empty sentinel."""
+    sw._check(off, 16)
+    if not any(sw.data[off:off + 16]):
+        return
+    if sw.data[off:off + 4] != b'FSE\0' or sw.u16(off + 4) != 0x103:
+        raise ValueError('unsupported floor attribute header')
+    count = sw.u16(off + 6)
+    sw._check(off + 16, count * 132)
+    for i in range(count):
+        p = off + 16 + i * 132
+        a = p + 20
+        if sw.data[a + 1] not in (0, 1, 2, 3):
+            raise ValueError('unsupported floor area type')
+        sw.u16(a + 2)
+        sw.f32s(a + 4, 11)
+        if sw.data[p + 1] == 2:
+            sw.u32s(p + 72, 2)
+            sw.u16s(p + 80, 2)
+            sw.u32(p + 84)
+        elif sw.data[p + 1] not in (0, 1, 3):
+            raise ValueError('unsupported floor attribute type')
+
+
+def fmt_sequence(sw, off, size, ctx):
+    """esp.h EspSeqData/EspGenWork; unknown union payloads stay rejected."""
+    raw = []
+    count = sw.u16(off)
+    sw.u16(off + 8)
+    sw.f32s(off + 12, 6)
+    sw._check(off + 48, count * 300)
+    for i in range(count):
+        p = off + 48 + i * 300
+        sw.u16(p + 4)
+        sw.u32(p + 8)
+        sw.f32s(p + 12, 36)
+        sw.f32s(p + 160, 4)
+        sw.u16s(p + 176, 6)
+        sw.u16(p + 190)
+        if any(sw.data[p + 204:p + 212]):
+            raw.append('sequence%d effect parameter union' % i)
+        sw.u32(p + 212)
+        sw.f32s(p + 216, 9)
+        sw.u16s(p + 272, 4)
+        sw.f32s(p + 280, 3)
+    return raw
+
+
 def fmt_eff(sw, off, size, ctx):
     """Effect data file, version 0xB (src/game/eff_sys.cpp EffData; the ID
     layout system reads the same block through src/game/id_tex.cpp
@@ -455,8 +552,24 @@ def fmt_eff(sw, off, size, ctx):
                 raw.append("efm%d extra body" % i)
     for name, o_list, o_data in (("est", ofs_est_list, ofs_est_data), ("sst", ofs_sst_list, ofs_sst_data),
                                  ("path", ofs_path_list, ofs_path_data)):
-        if o_list and sw.peek32(off + o_list):
-            raw.append("%s list and data" % name)
+        if not o_list:
+            continue
+        if name == 'path' and sw.peek32(off + o_list):
+            raw.append('path list and data')
+            continue
+        ids = id_table(off + o_list)
+        if not ids:
+            continue
+        if not o_data:
+            raise ValueError('effect list has no data table')
+        blocks = ofs_table(off + o_data)
+        if len(blocks) != len(ids):
+            raise ValueError('effect sequence table counts differ')
+        starts = sorted(set(blocks))
+        for i, start in enumerate(starts):
+            end = starts[i + 1] if i + 1 < len(starts) else off + size
+            with sw.bounded(start, end - start):
+                raw.extend(fmt_sequence(sw, start, end - start, ctx + '/' + name))
     return raw
 
 
@@ -892,6 +1005,10 @@ def fmt_smx(sw, off, size, ctx):
             sw.f32s(work, 13)  # phase/amplitude/frequency/time/base rotation
             if any(sw.data[work + 52:work + 116]):
                 raw.append('SMX%d extra swing work' % i)
+        elif kind == 0 and ctx.startswith('st1/r120.arc#'):
+            # r120.cpp never installs a scroll callback or reads object work;
+            # obj02::moveNormal is empty. Preserve opaque unused authoring bytes.
+            pass
         elif any(sw.data[work:work + 116]):
             # Type zero's normal mover ignores work, but room callbacks may
             # consume it. Do not guess its scalar layout from nonzero bytes.
@@ -899,6 +1016,9 @@ def fmt_smx(sw, off, size, ctx):
     return raw
 
 TAG_FORMATS = {
+    b"SHD\0": fmt_shd,
+    b"TEX\0": fmt_tex,
+    b"FSE\0": fmt_fse,
     b"CAM\0": fmt_cam,
     b"LIT\0": fmt_lit,
     b"BIN\0": fmt_bin,

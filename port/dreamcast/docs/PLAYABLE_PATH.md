@@ -50,22 +50,20 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D301, 2026-09-21)
+## Current boot frontier (D302, 2026-09-21)
 
-D295 cleared the captured scheduler stalls and reached missing r120 data. D296
-extracted that source file and added an offline recovered-code YZ2 decoder,
-checked against r100/r101/r120 archives. D297 adds decoded mirror sidecars plus CNS and source-layout SAT/EAT conversion.
-D298 converts SMD registration metadata and known SMX display/mover data.
-D299 converts known ModelData/BIN arrays, palettes and morph deltas. Remaining
-room/animation formats, unresolved callback work and native loading are next.
-D300 completes known room camera/light layouts and core brightness paths;
-D301 replaces the native room decode call with qualified `.dar` loading,
-preserving sound dispatch. Its replay reaches the explicit missing-qualified-
-r120-package error; all current rooms still fail full conversion coverage.
-Finish required SHD/EFF/TEX/FSE/callback data before successful room loading. See [R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md). See
-[R4_OFFLINE_ROOM_DECODE_CHECKPOINT.md](R4_OFFLINE_ROOM_DECODE_CHECKPOINT.md).
-Do not repeat scheduler or archive-location work. No visible menu or playable
-room acceptance is implied by these data-preparation results.
+D302 loads a qualified source-layout r120 archive through the native DVD path
+and enters recovered gameRoomInit. SHD/TEX/FSE and known effect sequences now
+convert; r120 opaque normal-mover work has a scoped source contract. The first
+failure is source ObjMgr pool allocation (433,952 requested, 110,816 free),
+followed by effects/lights and the event table. The 6,086,688-byte archive occupies
+most of the 7,120,800-byte room heap. Resolve residency/source initialization
+needs next; trace the authorized cinematic skip/completion path before retaining
+r120's large cinematic working set. r100/r101 conversion remains incomplete.
+Do not repeat decoder, scheduler, or prepared-room transport implementation.
+See [R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md) for exact replay,
+asset qualification and load-memory evidence. This is not completed room init,
+visible-menu, manual-play or physical-hardware acceptance.
 
 ## Binding correction
 

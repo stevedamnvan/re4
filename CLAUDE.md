@@ -51,7 +51,18 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D301 (2026-09-21)
+## Latest bounded result: D302 (2026-09-21)
+
+The recovered game loads the qualified 6,086,688-byte r120 archive through its
+own ReadAreaData/gameRoomInit path. Next failure is source-pool memory demand:
+ObjMgr's 433,952-byte request sees only 110,816 free, followed by effect/light
+and event-table failures. All 13 r120 entries qualify; r100/r101 remain rejected.
+See [R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md)
+for exact evidence and limitations. Next: source initialization residency and
+source cutscene completion adaptation; do not arbitrarily shrink gameplay pools.
+Last build/replay D302. No playable-room or rendering acceptance yet.
+
+## Historical bounded result: D301 (2026-09-21)
 
 Native ReadAreaData now consumes qualified `.dar` DVD containers directly,
 with source sound dispatch and final-buffer allocation. The builder's

@@ -1,5 +1,73 @@
 # D297: decoded room mirror and source collision layout
 
+## D302: recovered game consumes the prepared r120 room (2026-09-21)
+
+The existing offline decoder and mirror are retained. Added source-layout SHD
+placement/model, TEX texture-table, FSE area/BGM and EFF sequence conversion.
+SHD reuses fmt_bin and TEX reuses fmt_tpl. Unknown nonzero effect parameter
+unions remain explicitly incomplete without rolling back already handled EFF
+fields. r120 FSE is the source's zero-header sentinel. Its two type-0 SMX work
+blocks remain opaque: obj02::moveNormal does nothing and r120 installs no scroll
+callback or work reader. This contract applies only to r120; other rooms retain
+callback rejection. Native SstList byte-id order now agrees with numeric no;
+PPC member order is unchanged.
+
+All 13 r120 tagged entries and its archive qualify. r100/r101 still reject
+incomplete formats. A 55-second replay through the existing title/New Game
+fixture logs:
+
+```
+DVD: Read File: st1/r120.dar
+DVD: Mem Alloc: 8c8cfa40 Size:005ce020
+DVD: Trans MRAM addr: 8c8cfa40 size:005ce020
+DVD: Read Ok 801
+Native room: st1/r120.dar bytes=6086688 read_us=0
+alloc[69f20]:free[1b0e0] main_mem.cpp(646)
+...
+cDatTbl::init : memory failed
+EventMgr::init : memory failed
+```
+
+This establishes actual prepared-archive transport and entry into the recovered
+`gameRoomInit` consumers (constants/scene metadata and manager initialization).
+It does not establish completed initialization, rendering or manual gameplay.
+The first failed allocation matches ObjMgr: 241 SMD objects + 200 default extra
+objects, each 0x3d8 bytes, rounded request 0x69f20 (433,952), while reported free
+heap is 0x1b0e0 (110,816). Subsequent sprite/controller/light pools fail, the
+source primitive buffer repeatedly shrinks, and DatTbl::init's 0x4b00 request
+fails with 0x840 free. Do not count these failing consumers as working systems.
+
+Heap 4 spans 8c8cfa20..8cf9a1c0 = 7,120,800 bytes. The room consumes 6,086,688
+payload bytes once, plus allocator overhead; at most 1,034,112 remain before
+subsequent allocations. Compressed geometry is retained only on disc, never in
+the heap. This is a measured load footprint/exhaustion boundary, not a complete
+loading/restart peak certification. The printed read_us=0 is invalid timing:
+shared stopwatch/layout behavior needs correction before using it as a metric.
+The queue's elapsed counter is supporting evidence only.
+
+Sound dispatch remains the original DVD path. This r120 container has only a
+type-0 room entry and no sound blocks; the replay still dispatches earlier
+player/core/title sound loads. Nested room-sound semantics have structural
+fixture coverage, not an r120 sound claim. A room containing sound must exercise
+that path later. Retry, GPU retirement and peak residency remain open. The
+existing room/ arena, transient texture upload and GPU fence implementations
+were inspected and remain the reuse reference; source archives keep source heap
+ownership and are not replaced by viewer package formats.
+
+Checks: 22 room-format, 9 mirror and 2 native-loader tests pass; game build
+passes (six pre-existing stubs). KOS/GCC/Flycast identities unchanged from D301.
+Private evidence: `C:\Flycast-Evidence\re4-dreamcast\d302-qualified-room`
+contains boot log, ELF/disc, qualified archive, full asset manifest, hashes and
+build/conversion logs. The source comparison here preserves guarded PPC member
+layout; no new full ProDG comparison or physical-hardware run is claimed.
+
+Next main work: resolve the source initialization memory demand, preserving
+required systems. r120 is cinematic staging, so trace the authorized source
+cutscene-skip/completion path before committing a large cinematic working set.
+Do not reduce default gameplay pools arbitrarily or import PS2 gameplay.
+
+ELF SHA256 `63c17a503d33ccd5fe3c53eebaa028d4372c17273397d4f1a3bedf553c4baa7e`; archive SHA256 `870a05c972ce00ec197fcac227ca8f710c2598b0273cd308a68ea764b57c0457`.
+
 ## D301: native room loading boundary (2026-09-21)
 
 The non-PPC `ReadAreaData` now reads prepared `stX/rNNN.dar` containers with

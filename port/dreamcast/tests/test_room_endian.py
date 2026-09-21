@@ -75,6 +75,86 @@ class RoomFormats(unittest.TestCase):
             self.assertIn('error', entry)
             self.assertEqual(out, raw)
 
+    def test_shadow_relative_model_and_placement(self):
+        model=self.model_fixture()
+        data=bytearray(128)+model
+        data[0]=0x40
+        struct.pack_into('>HI',data,2,1,96)
+        struct.pack_into('>9f',data,16,*range(9))
+        struct.pack_into('>I',data,96,32)
+        out,entry=self.convert(data,le.fmt_shd)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(struct.unpack_from('<9f',out,16),tuple(range(9)))
+        expected,_=self.convert(model,le.fmt_bin)
+        self.assertEqual(out[128:],expected)
+        struct.pack_into('>I',data,96,len(data))
+        out,entry=self.convert(data,le.fmt_shd)
+        self.assertFalse(entry['complete'])
+        self.assertEqual(out,data)
+
+    def test_room_texture_nested_payloads(self):
+        from test_le_mirror import make_tpl, make_anm
+        tpl=make_tpl([(8,8,5,bytes(range(128)))])
+        anm=make_anm(8,8,4,4,1)
+        data=bytearray(96)+tpl+anm
+        struct.pack_into('>4I',data,0,3,32,64,80)
+        struct.pack_into('>IHHI',data,32,1,17,0,0)
+        struct.pack_into('>2I',data,64,1,32)
+        struct.pack_into('>2I',data,80,1,16+len(tpl))
+        out,entry=self.convert(data,le.fmt_tex)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(struct.unpack_from('<IHHI',out,32),(1,17,0,0))
+        expected,_=self.convert(tpl,le.fmt_tpl)
+        self.assertEqual(out[96:96+len(tpl)],expected)
+        self.assertEqual(struct.unpack_from('<5H',out,96+len(tpl)),(8,8,4,4,1))
+
+    def test_floor_empty_sentinel_and_bgm_area(self):
+        sentinel = bytes(16) + bytes([0xcd])*16
+        out, entry = self.convert(sentinel, le.fmt_fse)
+        self.assertTrue(entry['complete'])
+        self.assertEqual(out, sentinel)
+        data = bytearray(16+132)
+        data[:4] = b'FSE\0'
+        struct.pack_into('>HH', data, 4, 0x103, 1)
+        data[17] = 2
+        data[37] = 1
+        struct.pack_into('>11f', data, 40, *range(11))
+        struct.pack_into('>2i2Hi', data, 88, -10, 200, 3, 4, 90)
+        out, entry = self.convert(data, le.fmt_fse)
+        self.assertTrue(entry['complete'])
+        self.assertEqual(struct.unpack_from('<11f', out, 40), tuple(range(11)))
+        self.assertEqual(struct.unpack_from('<2i2Hi', out, 88), (-10,200,3,4,90))
+
+    def test_sequence_scalars_keep_byte_colors_and_unknown_union_incomplete(self):
+        data=bytearray(48+300)
+        struct.pack_into('>H',data,0,1)
+        struct.pack_into('>6f',data,12,*range(6))
+        p=48
+        struct.pack_into('>H',data,p+4,259)
+        struct.pack_into('>36f',data,p+12,*range(36))
+        data[p+156:p+160]=bytes([11,22,33,44])
+        struct.pack_into('>6H',data,p+176,*range(100,106))
+        struct.pack_into('>4h',data,p+272,-1,2,-3,4)
+        out,entry=self.convert(data,le.fmt_sequence)
+        self.assertTrue(entry['complete'])
+        self.assertEqual(struct.unpack_from('<H',out,p+4)[0],259)
+        self.assertEqual(struct.unpack_from('<36f',out,p+12),tuple(range(36)))
+        self.assertEqual(out[p+156:p+160],bytes([11,22,33,44]))
+        self.assertEqual(struct.unpack_from('<4h',out,p+272),(-1,2,-3,4))
+        data[p+205]=123
+        out,entry=self.convert(data,le.fmt_sequence)
+        self.assertFalse(entry['complete'])
+        self.assertNotIn('error',entry)  # preserve already-qualified EFF fields
+        self.assertEqual(out[p+204:p+212],data[p+204:p+212])
+
+    def test_r120_unused_normal_work_contract_is_scoped(self):
+        data=bytearray(16+144); data[1]=1; data[16+20]=17
+        for ctx,complete in [('st1/r120.arc#9',True),('st1/r100.arc#9',False)]:
+            out=bytearray(data);sw=le.Swapper(out,ctx);entry={}
+            le.guarded(sw,le.fmt_smx,0,len(out),ctx,entry)
+            self.assertEqual(entry['complete'],complete)
+            self.assertEqual(out[32:148],data[32:148])
+
     def test_native_room_preserves_sound_and_requires_complete_coverage(self):
         # A native sound table and bytes retain their absolute/relative offsets;
         # the replacement room becomes the only top-level MRAM allocation.
