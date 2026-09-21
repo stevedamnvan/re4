@@ -140,6 +140,5 @@ of accepted work to `origin` on `dreamcast-port`. Inspect the staged diff and
 verify remote SHA after push. Documentation-only checkpoints do not accept dirty
 runtime changes. Keep Soulcalibur/Flycast reference code read-only unless asked.
 
-The persistent-goal tool may still display the old room-120 objective because
-its API cannot edit an active goal. The user's menu-plus-three-room scope is the
-completion standard. Do not complete the goal merely upon reaching room init.
+The active persistent goal now covers the full menu-plus-three-room scope.
+Do not complete it merely upon reaching room init or a successful boot trace.

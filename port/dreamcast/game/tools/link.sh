@@ -26,6 +26,12 @@ if ! kos-c++ $OPT -Wl,--unresolved-symbols=ignore-all -o obj/pass1.elf $OBJS obj
     cat obj/pass1.log; exit 1
 fi
 sh-elf-nm obj/pass1.elf | grep -E " [Uw] " | awk '{print $2}' | sort -u > obj/missing.txt
+# Registered stage entry points must never become generated trap stubs.
+if grep -Eq '^_st[0-9]+_[0-9]+_(prolog|epilog)$' obj/missing.txt; then
+    echo "stage module entry points missing after partial link:" >&2
+    grep -E '^_st[0-9]+_[0-9]+_(prolog|epilog)$' obj/missing.txt >&2
+    exit 1
+fi
 python3 tools/gen_missing.py obj/missing.txt obj/missing.cpp
 kos-c++ $KOS_CFLAGS $OPT -Iplatform/include -c obj/missing.cpp -o obj/missing.o
 kos-c++ $OPT -o $TARGET $OBJS obj/missing.o obj/aliases-all.ld

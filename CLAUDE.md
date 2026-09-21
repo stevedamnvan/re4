@@ -51,7 +51,40 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Frontier and unaccepted work
+## Latest bounded implementation result: D291 (2026-09-21)
+
+The current dirty game target now links real stage entry points. The generator
+uses `--force-group-allocation` during the partial link before symbol localization;
+otherwise duplicate C++ COMDAT selection discarded a module-local definition.
+`OSLink` now propagates registry failure; an unknown module clears its entry
+pointers and fails instead of executing a placeholder. The link script rejects
+missing registered stage prolog/epilog symbols before generating stubs.
+
+Fresh Flycast replay in `C:\Flycast-Evidence\re4-dreamcast\d291-static-stage`
+reached `module: id 74 -> st1_0 (static)`, followed by `prolog...`, then read
+`etc/emleon00.esl`. The previous raw-REL execution crash was not reproduced.
+The new frontier is `TASK DON'T EXEC : level 4` after heap-4 creation; vblank
+continues to 3000 without further progress in the 55-second capture. Investigate
+DVD/background-task slot ownership and termination before changing scheduler
+behavior. Room init/update, light-path correctness and visible gameplay remain
+unproved. Title ID-unit-not-found messages remain open too.
+
+Build passed; the nine focused little-endian mirror tests passed. The mirror
+reported 779 up-to-date files, with LIT/CAM/SAT/BIN and other raw coverage still
+open. Final ELF SHA-256:
+`1bee895481958c037e21a5202da481aeb50fd9629613cada81ad076c01841888`.
+Disc SHA-256:
+`9e5e6b04e440ebf3d0b6a485515e6608a1355fe9daad721ecfb1524ff19a2beb`.
+The evidence folder retains the log, ELF, disc, symbols, tracked worktree patch
+and module generator/registry snapshots. Runtime integration edits remain dirty;
+this is not three-room, visual, manual or hardware acceptance.
+
+Source `src/st1/r120.cpp` confirms r120 is opening cinematic staging and jumps
+to r100 through `SceAtExecRoomJump(0x100, ...)`. Do not count r120 as one of three
+playable rooms. Preserve the source completion effects when implementing the
+user-authorized cinematic skip. Module reload/BSS/constructor limitations remain.
+
+## Frontier and unaccepted work (prior snapshot)
 
 The current tree is deliberately dirty across recovered source, platform shims,
 module/build tooling, fixtures and endian conversion. Preserve it. New files
