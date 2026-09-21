@@ -304,7 +304,7 @@ not source archive recovery from that upload. All textures in D320c use the
 uncompressed native reference; D319 VQ is separately selectable, not promoted.
 
 The same fixture shows the source title menu at 640x480 with corrected readback.
-At the matched snapshot: source frame 1236, Rno0=3, System=0xc00; 86 processed
+At the captured snapshot: source frame 1236, Rno0=3, System=0xc00; 86 processed
 parts, 28,107 input triangles, 435 output triangles, peak copied packet bytes
 8,512, zero invalid/overflow counts, 40 resource rejections, and **zero model
 presentations**. This advances D318's zero-output frontier, but the source hold
@@ -383,3 +383,18 @@ complete component semantics, deformation, visual/CPU/native-memory costs remain
 unqualified. Do not promote PS2 motions/effects merely to claim archive savings.
 Prioritize render texture backing and equivalent motion-storage reuse; selective
 mesh changes remain candidates where a native working-set/timing gain is proven.
+
+
+A follow-up bounded source-codec measurement (/root/probe/d321-motion-cost.json)
+retains all153 original FCV clips: within-clip exact key-block deduplication saves
+only14,208 bytes; global identical-key reuse has a22,667-byte upper bound before
+additional alignment. Do not build that adapter as the route to a1.22 MB saving.
+Per-clip zlib level9 pricing is1,386,112 aligned bytes versus1,823,552 source bytes
+(a437,440-byte storage reduction); the largest uncompressed clip is32,416.
+This is an offline cost experiment, not encoded assets installed in the game,
+a native decoder/cache design, target memory recovery or CPU acceptance. Even
+this saving plus488,960 potentially externalizable single-level/nonpalette texel
+bytes falls short of the34% target before metadata/buffers. A66%-size enemy body
+still would not fit the current147,360-byte free region. Continue source-backed
+resource recovery across the actual working set; do not turn a mesh substitution
+or a compressed file size into a claim that the allocation now fits.

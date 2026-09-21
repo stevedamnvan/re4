@@ -17,7 +17,7 @@ constexpr std::size_t kReadChunkBytes = 64U * 1024U;
 constexpr std::size_t kSectorBytes = 2048U;
 
 // Deliberately not 32-byte aligned: that is what steers KOS away from its
-// streaming path. Only ever holds one package smaller than kReadChunkBytes.
+// streaming path. Holds at most one bounded chunk or one small package.
 alignas(32) std::uint8_t g_small_file_bounce[kReadChunkBytes + 32U];
 bool bounce_busy = false;
 std::uint8_t* small_file_buffer() { return g_small_file_bounce + 16U; }

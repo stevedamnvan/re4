@@ -63,7 +63,7 @@ acceptance: D318's zero-output scheduler frontier remains. PAL4/PAL8 stay invent
 proposals. Read the D319 addendum in R4A_TEXTURE_INVENTORY_CHECKPOINT.md and
 C:/Flycast-Evidence/re4-dreamcast/d319-existing-vq. Preserve the uncompressed fixture.
 
-D320c now directly loads r100 at3,812,576 versus4,669,568 bytes, recovering
+Implementation bf85bd2 is committed/pushed; D320c now directly loads r100 at3,812,576 versus4,669,568 bytes, recovering
 856,992 real source-heap bytes. The required1,126,272-byte block pool ALLOCATES;
 blocks0-2 load/create. First enemy3,577,728 still fails with147,360 free (shortfall
 3,430,368 before overhead). 97 offline identities replace upload-only source
@@ -88,6 +88,11 @@ reach it: all GC meshes are415,040 bytes (11.60%), PS2 top-level BINs are slight
 larger. FCV/SEQ dominate at1,864,928 bytes; texture backing remains another lead.
 Structural skeleton correspondence is promising but not deformation acceptance.
 Keep source hold/enemy/event requirements visible while pursuing these savings.
+The follow-up source-codec check /root/probe/d321-motion-cost.json rejects key-block
+dedup as a major win (14,208 within-clip;22,667 global upper-bound bytes). Zlib
+per-clip pricing saves437,440 on disc only, with no native cache/CPU acceptance.
+Do not implement a new decoder on that estimate alone or drop authored motion.
+
 
 **Immediate frontier:** bring the existing native cabin mechanisms into the
 recovered-game executable. Connect commonModelTrans/ModelRender source-owned
