@@ -453,6 +453,14 @@ void* mem_alloc(u32 size, const char* file, int line, int flag, int heap)
             strcpy((char*) tag + 4, str);
         }
     }
+#if !defined(__PPC__)
+    // Opt-in boot diagnostics: report room allocations without changing the
+    // source allocator or its lifetime. Small successes remain in free totals.
+    if (re4dc_diag && heap == 4 && (size >= 1024 || p == NULL)) {
+        OSReport("Native room alloc: size=%u addr=%08x free=%d at=%s\n",
+                 size, p, OSCheckHeap(Heap[heap].handle), file ? str : "untagged");
+    }
+#endif
     if (flag == 1 && p == NULL) {
         pLog->err(0, 0, "alloc[%x]:free[%x] %s", size, OSCheckHeap(Heap[heap].handle), str);
     }
