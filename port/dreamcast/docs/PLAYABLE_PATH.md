@@ -92,6 +92,105 @@ Use it to enter the following call paths, then inspect the implementations:
 Paths without a directory above are in `src/game/`. This is a navigation map,
 not a claim that every listed dependency is needed at once.
 
+## Development fixtures: the recovered debug tooling
+
+Two paths, kept distinct:
+
+* **Acceptance** is cold boot -> normal title/new game -> normal game
+  initialization -> normal events and gameplay -> normal room transition ->
+  the next playable section. Only this path proves progression.
+* **Development acceleration** is a source-authored debug fixture -> the
+  selected stage / room / jump point / relevant source state -> the normal
+  room initialization and gameplay systems -> exercise and debug that section.
+  A debug jump proves a section can run from a valid source-authored state; it
+  does not prove the preceding gameplay reaches it. Both are required.
+
+The recovered debug build already carries Capcom's mechanisms for starting and
+advancing gameplay at controlled points. They are first-class tooling of this
+port. Invented spawn constants, diagnostic sweeps and per-room executables are
+no longer the default way to bring a section up.
+
+1. **`cRoomJmp` / `CRoomInfo` / `RoomJump`** (`include/room_jmp.h`,
+   `src/game/room_jmp.cpp`) is the authoritative room-position fixture. The
+   table `debug/roominfo.dat` (loaded by `systemRestartInit`, on disc 1 at
+   10,790 bytes: 5 stages, 4/52/83/67/16 points) holds per point
+   `flag` (bit 0: position valid), `roomNo` (stage << 8 | room), `pos`, `angle`
+   and the authored name, screen and programmer strings.
+   `CRoomInfo::setNextPos()` writes exactly the state the game consumes on a
+   room change: `NextPos`, `NextY`, `room_id_prev`, `Part_old`, `next_room`,
+   `next_point = 0`. The tool exits through `roomJumpExit`, which sets
+   `pG->Rno0 = 4`, i.e. the normal door-demo room-change routine
+   (`gameDoordemo` -> `gameStageInit` -> `gameRoomInit`); it never teleports
+   a player inside an already-running scene. The Dreamcast adaptation keeps
+   that semantic: a fixture enters through the room-change path. Do not
+   invent `kSpawn*` values where an authored jump point exists (stage 1 has
+   "MORI" for r100, "MURA" (-51510, 165, 21834), angle 2.33 for r101, and
+   named points for every village room). The AEV door destination remains
+   the natural-progression entry; the jump point is the fixture entry; both
+   are source-authored, and a report says which one a capture used.
+2. **Title debug-start path** (`titleDebugMenu`, `titleExit` in
+   `src/game/title.cpp`). Before `titleExit` chains into `GameTask` the menu
+   edits, in `pG`/`pSys` and the title work: player type (`pl_type` 0..6),
+   load number, stage / room / jump point through `cRoomJmp`, the enemy list
+   (`em_list_no`, with the `Scenario_flg[0]` bits for lists > 2/3), debug
+   page (`debug_mode`), enemy on/off (`Debug_flg[2]` 0x00200000), scenario
+   on/off (`Debug_flg[3]` 0x800), sound mode, BGM (`Debug_flg[2]`
+   0x04000000), a `Debug_flg[3]` 0x00200000 switch, shooting mode,
+   Ashley costume, language/region, game mode and one more `Debug_flg[2]`
+   0x400 switch; then `getRoomInfo(...)->setNextPos()`, `System_flg |=
+   0x2000` (new game) and the normal `GameTask` start. This is the preferred
+   way to start at a source-defined location. The exact original UI is not
+   required at first: a Dreamcast developer interface or configuration file
+   that drives the same fields with the same initialization semantics is
+   acceptable.
+3. **`debug/config.txt` / `ConfigSet()`** (`src/game/debug.cpp`, read in
+   `systemRestartInit`) is the source-authored precedent for deterministic
+   fixtures: `[USER]`, `[BRIGHTNESS]`, `[STAGE]`, `[ROOM]`, `[JUMP_POINT]`,
+   `[PRINT_PAGE]`, `[PLAYER]`, `[BGM]`, `[SE]` and further switches (the disc
+   copy sets STAGE 0x01, ROOM 0x20, PLAYER 0, GAME_MODE NORMAL, TITLE_CUT OFF).
+   Plan a small Dreamcast-side developer configuration selecting at least
+   STAGE, ROOM, JUMP_POINT, PLAYER, SCENARIO on/off, enemy on/off and the
+   relevant source debug/start flags, consuming `roominfo.dat` and the source
+   fields rather than duplicating positions into build-time constants. One
+   executable, data-selected rooms.
+4. **Debug camera** (`src/game/db_cam.cpp`, `CamDbg` from `CameraMove` on pad
+   1: orbit / dolly / zoom, target the selected enemy, object or player,
+   B returns control to the gameplay camera) is a visual-inspection tool for
+   geometry, materials, collision and matched-reference captures. It is not a
+   substitute for `CamCtrl`, room CAM data or gameplay-camera acceptance.
+5. **Near-term audit of the remaining tools**, recovering the smallest useful
+   semantics and data paths, not whole editors: FLAG EDIT
+   (`src/game/t_flag.cpp`, pages of the flag words with per-bit names),
+   EVENT TOOL (`src/t_event/t_event.cpp`), SCENARIO ATARI
+   (`src/tools/t_sce_at.cpp`), ROUTE CHECK (`src/Tools/t_rck.cpp`),
+   BLOCK AREA TOOL (`src/t_sce/t_block.cpp`), ITEM SET TOOL
+   (`src/t_sce/t_sce_item.cpp`) and EM INFO TOOL (`src/Tools/t_eminfo.cpp`,
+   with the ESL editor `src/t_emlist/t_emlist.cpp`). Decide per tool whether it
+   accelerates source-state reproduction, event testing, enemy set-up, room
+   progression, collision/trigger inspection or later-room debugging.
+
+The workflow for new content is:
+
+1. identify the next real gameplay section from the source;
+2. create a reproducible fixture with the room/jump/state tooling;
+3. run it through the normal room / player / camera / scenario systems;
+4. implement the missing dependencies until the section works;
+5. iterate and regress on the fixture;
+6. return to the preceding natural gameplay path;
+7. prove normal progression reaches the same state;
+8. move the playable frontier forward.
+
+The tooling accelerates development and does not redefine gameplay. The
+GameCube decompilation stays authoritative for progression, scenario/event
+state, player placement, camera behaviour, collision, enemies, object state
+and room transitions. A fixture may initialize those values directly where the
+original tool does; it must not fabricate a state the game could never produce.
+When a fixture bypasses prior progression, the report labels which state was
+injected and which systems actually executed. The same fixtures are the
+comparison harness for the GameCube/PS2 render-asset experiment: compare
+candidates at the same authored room, jump point, player/camera state and
+scenario state, never from free-camera screenshots or unrelated positions.
+
 ## Continuous playable milestones
 
 These are integration slices, not a requirement to finish every subsystem in
@@ -140,7 +239,8 @@ Recover game state before optimizing the workload:
 
 For r101, trace the actual incoming door/AEV destination, orientation, room part,
 initialization, and relevant flags. RTP point 0 is a navigation fixture, not
-proof of player entry. Read `.CAM` with its consuming routines; recover the
+proof of player entry; the authored development entry is the `roominfo.dat`
+jump point (see the fixture track above). Read `.CAM` with its consuming routines; recover the
 resulting camera, collision pull-in, interpolation, FOV, viewport, near/far/fog,
 and coordinate conventions rather than transcribing one attractive shot.
 

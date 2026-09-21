@@ -69,6 +69,14 @@ shorten the horizon, hide buildings/interiors, reduce enemy activation, or skip
 script work to make a graph look faster. Alternative render assets are separately
 reviewed under [R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md).
 
+Representative performance fixtures increasingly use the source-authored
+jump/state configurations of the recovered debug tooling (`roominfo.dat` jump
+points through `CRoomInfo::setNextPos` and the normal room change, the title
+debug-start fields, a `config.txt`-style developer configuration; see the
+fixture track in [PLAYABLE_PATH.md](PLAYABLE_PATH.md)) rather than cabin-only
+autoplay or invented sweeps. A timing run names its stage, room, jump point,
+player/camera state and scenario state.
+
 Grow the fixture set from the opening sequence: title/new game, movement and
 camera turns, aim extremes, fire/reload, enemy contact, interaction/inventory,
 event transitions, death/retry, and room changes. Exercise both quiet and busy

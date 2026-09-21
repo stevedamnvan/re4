@@ -162,6 +162,14 @@ do not fit; do not pretend the source supplied a target-specific streaming plan.
 Run this as a secondary, isolated task. It must not block the main boot-forward
 integration path or expand into a campaign-wide extraction database.
 
+Room/jump fixtures are the standard controlled context for testing alternate
+GameCube/PS2 representations and room-resource behaviour: the same authored
+stage, room and `roominfo.dat` jump point entered through the normal room
+change, the same player/camera state and the same scenario state for every
+candidate (see the fixture track in [PLAYABLE_PATH.md](PLAYABLE_PATH.md)).
+Memory, loading peak, batch counts, frame times and appearance are compared
+there, not from free-camera screenshots or unrelated positions.
+
 1. **Pick equivalent content.** Start with corresponding village environment
    geometry and one representative enemy. Inspect available GameCube gameplay/LOD
    variants and their selectors first or alongside PS2. Do not assume the current
