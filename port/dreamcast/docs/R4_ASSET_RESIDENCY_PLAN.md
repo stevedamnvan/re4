@@ -1,402 +1,247 @@
-# R4: Dreamcast asset residency and streaming
+# R4: resource lifetimes and render-asset adaptation for playable RE4
 
-Status: open. Deliverable 1 is done and is recorded in
-[R4A_TEXTURE_INVENTORY_CHECKPOINT.md](R4A_TEXTURE_INVENTORY_CHECKPOINT.md);
-its measured findings have already corrected two assumptions in this plan, and
-the corrections are folded in below.
+Updated 2026-09-21; reconciled against `b7d29e3`.
+This policy supports the authoritative [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
+R4 is not an independent prerequisite project that must be perfected before
+boot-forward game integration can start. [REALTIME_PATH.md](REALTIME_PATH.md)
+defines measurement and fidelity/performance qualification.
 
-## Goal
+## Current decision
 
-Convert RE4 resources offline into Dreamcast-native representations and keep
-only the active and prefetched working set in main RAM, VRAM and AICA memory.
-Use the original GameCube RE4 block, room and connection relationships to
-decide residency; use DCA3's Dreamcast streaming architecture as
-implementation prior art; use the PS2 RE4 assets as a reference for
-Capcom-authored reductions only where the GameCube representation cannot meet
-the Dreamcast budget.
+**Keep source-controlled gameplay and make its resources fit the target.**
+Preserve the working lifecycle and asset pipeline. Use GameCube source variants
+and compatible PS2 render assets as measured candidate representations, rather
+than insisting on the largest GameCube mesh in every context or cutting game
+behavior to satisfy a diagnostic scene budget.
 
-The renderer work of R3 is approaching the point where the next problem is not
-drawing the room faster but entering the next room without keeping the previous
-rooms, every texture and every character resource resident. R4 is that
-problem.
+The previous rule that the PS2 disc is only an oracle and no PS2 asset may enter
+a package is **superseded for private candidate builds**. Extraction, conversion,
+and one bounded comparison experiment are authorized. A materially different
+presentation is not automatically accepted: retain the GameCube reference,
+report visual differences, and obtain explicit review/user acceptance before
+making a fidelity tradeoff the default. No copyrighted game assets are committed
+or redistributed; work from locally supplied private images.
 
-## Three references, three roles
+## Three authorities with distinct roles
 
-| Reference | Role | What it decides |
+| Reference | Role | Boundary |
 |---|---|---|
-| GameCube RE4 (decompilation and disc) | behavioural and visual authority | what the correct result is whenever the Dreamcast can afford it |
-| PS2 RE4 (retail disc) | Capcom's constrained-memory reference | which assets and effects Capcom itself judged reducible, and by how much |
-| DCA3 (GTA III/VC on KallistiOS) | Dreamcast implementation reference | how a shipped-scale Dreamcast port prepares assets offline and streams a working set on 16 MB / 8 MB / 2 MB |
+| Matching GameCube decompilation and private source build | Gameplay, scheduling, collision, camera, event/progression and object-state authority; original visual reference. | Do not replace behavior with a viewer approximation or assume another release has identical state/layout. |
+| Compatible GameCube variants and PS2 render assets | Candidate meshes, textures, materials/prelit attributes, and evidence of alternate authored representations. | Not a PS2 gameplay-engine switch. Verify compatibility and total target cost per asset; filenames do not prove identity. |
+| DCA3 / KallistiOS / community ports | Mechanism-level prior art for offline conversion, native texture handling, bounded working sets and target I/O. | No borrowed world policy, unsupported FPS claim, or code reuse without a license check. |
 
-DCA3 is a port of the reversed `re3` codebase; its value here is its structure,
-not its code. Its build converts the original assets into the Dreamcast
-representation and repacks the archives offline (`texconv` and the repacking
-tools), and its runtime keeps the GTA `Streaming`/`TxdStore` systems with a
-Dreamcast-specific `CdStreamDC` path. Study the mechanisms; do not copy source
-without a licence check, and never its game data. Reference:
-[DCA3 on GitLab](https://gitlab.com/skmp/dca3-game).
+Use [DCA3_SOURCE_AUDIT.md](DCA3_SOURCE_AUDIT.md) for pinned source leads, not its
+historical task ordering. Preserve source room/transition rules; do not invent a
+GTA loading radius or assume that GameCube ARAM can map onto AICA sample memory.
 
-The PS2 disc is used only as a measurement oracle for its asset choices. No
-PS2 asset enters a package. A retail PS2 disc image is now present in the
-workspace and has been surveyed read-only; nothing was extracted. What it
-contains, so the manifest work starts from fact rather than assumption:
+## Implemented infrastructure and evidence limits
 
-- Plain unencrypted ISO9660, eight files. The assets are three CRI AFS
-  archives: `BIO4DAT.AFS` (1.54 GB, 2,628 entries), `BIO4MOV.AFS` (1.96 GB,
-  cutscenes) and `BIO4MOV2.AFS` (910 MB, Separate Ways).
-- AFS is trivially parseable: magic, entry count, offset and size pairs, and a
-  trailing 48-bytes-per-entry metadata block carrying plain-text filenames.
-- The PS2 build keeps the GameCube naming. `BIO4DAT.AFS` holds 965 `.dat`, 564
-  `.tpl`, 358 `.snd`, 252 `.bin`, 214 `.adx` and 207 `.rel` entries. 753 entries
-  are zero-size stubs, including 272 of the `.tpl` names, leaving 292 real
-  texture files.
-- Rooms are addressable by the same `rNNN` scheme, 166 of them. r100 is present
-  as `r100.dat` (5.2 MB) plus five `r100_NN.dat` parts and a `r100.snd`.
-  `r100.dat` is a chunk archive of 49 entries whose magics include `B404`,
-  `AEV`, `PTR2`, `FSE`, `BLK` and six TPL chunks holding 25 textures.
-- The TPL header is `magic 0x00001000`, texture count, table offset, then
-  48-byte descriptors carrying width, height, a format enum, the pixel-data
-  offset, the palette offset and PS2 GS register words. All 292 non-empty
-  files parse: 1,078 textures, no failures, all power-of-two dimensions.
+- Room-owned packages can be read into owned storage, validated, retired and
+  reloaded. The fence must protect completed rendering, not merely submitted
+  commands; retirement must also honor audio and outstanding transfers.
+- Texture payloads are offline-native/twiddled; repeated compatible descriptors
+  share allocations within a package. Explicit successful-upload state precedes
+  payload release. CPU texels are transient while metadata and GPU ownership
+  survive. `a00d967` proved real main-memory recovery only after shrinking the
+  reservation, not merely setting a released flag.
+- The room format omits duplicate triangle connectivity where strip order and
+  winding equivalence are certified (`8a44852`). Some batches still legitimately
+  retain two representations; do not call all duplication eliminated.
+- Derived accelerators have bounded coverage and correct uncovered paths as the
+  intended contract. Boundary fixes and full-width global indices are recorded
+  in `70e77e3` / `d14a2c8`. Do not enlarge all whole-room arrays by default.
+- `fbd0012` runs Leon in r101 at 640x480 without the cabin enemy. Reported minimum
+  free main RAM is 1,757,184 bytes in that diagnostic configuration. This is not
+  an inventory of all enemies, events, or a qualified village working set.
+- `b7d29e3` corrected exact-tick snapshot selection. The tested fallback/local
+  batches match at equivalent states. Older mismatched-tick pixel ratios do not
+  establish an outstanding resource/rendering defect.
 
-So the per-texture side of the manifest is a small job. Two things make it
-medium. Material identity is not in the TPL descriptors, so binding a texture
-slot to a mesh material means reading the model chunks, which is reverse
-engineering rather than parsing; skip it if the oracle only needs "what does
-r100 use, at what size and format". And the format enum's high bits and the mip
-count are inferred rather than confirmed, so they need cross-checking against
-actual data-region lengths before any number derived from them is quoted. Match assets by validated scene, material and content identity
-rather than filename or ordinal, record what fails to match, and do not infer
-transfer rate or residency from image dimensions. This does not gate any other
-deliverable.
+Retain [R4_5A_ROOM_LIFECYCLE_CHECKPOINT.md](R4_5A_ROOM_LIFECYCLE_CHECKPOINT.md),
+[R4_TRANSIENT_TEXTURE_PAYLOAD_CHECKPOINT.md](R4_TRANSIENT_TEXTURE_PAYLOAD_CHECKPOINT.md),
+and [R4_ONE_REPRESENTATION_CHECKPOINT.md](R4_ONE_REPRESENTATION_CHECKPOINT.md).
+These are historical measured checkpoints with their corrections, not claims
+that the same sizes and timing apply to every new configuration.
 
-A source audit of DCA3, reconciled against this branch, is in
-[DCA3_SOURCE_AUDIT.md](DCA3_SOURCE_AUDIT.md). It pins the source regions behind
-each mechanism named here and carries the lifetime, fragmentation and evidence
-rules the remaining deliverables must satisfy.
+The earlier D4 r101 estimate missed embedded textures and substantially
+underestimated the converted room. Later geometry/source-metadata/player
+changes also changed its cost. Do not reuse the 4-6 MB estimate, the 13.79 MB
+ceiling, the actor-free village budget, or an older package's counts as the
+current complete working set. The inventory checkpoint remains source evidence
+with historical assumptions; current generated manifests and simultaneous
+allocation measurements decide the budget.
 
-### What DCA3 actually does, and what RE4DC takes from it
+## Resource ownership and transition policy
 
-Read from the beta source tree the user supplied. Only the four mechanisms
-below are borrowed, restated in RE4DC's own terms; no DCA3 code, asset or
-generated file is copied into this repository. The tree carries licences for
-its vendored dependencies (librw, miniLZO, OpenAL Soft, the emulator shim) but
-no licence of its own for `src/`, and its base `re3` has a contested licence
-history, so the source stays a reference and nothing more.
+Keep the source hierarchy of persistent game/stage/room state and an explicit
+owner for each CPU package, derived view, GPU allocation, and audio sample.
+Name resources through validated source identity such as `(archive, tag,
+ordinal)` plus format/content identity as required; filenames are locations.
+Cross-platform substitution requires an explicit mapping and version evidence.
 
-**Textures are converted by a separate offline program, not by the game.**
-`src/tools/texconv.cpp` repacks a whole archive at a time, taking a target
-width, height, a downsample flag and a choice of PVR encoder (`pvrtool` or the
-vendored `pvrtex`). RE4DC's equivalent is `tools/convert_tpl.py`, which already
-runs at build time; the missing half was that its output was still a linear
-16-bit blob the runtime had to reorder. R4b closed that for twiddled payloads
-and measured it: one second of load time.
+For the normal transition path, trace `gameRoomInit()`, `gameRoomMemInit()` and
+`ReadAreaData()` alongside the door/fade code. Do not attribute all freeing to
+`gameDoordemo()` or assume that all transitions have identical overlap. Preserve
+the selected source load-stop behavior. One active room with bounded staging is
+the initial implementation; two complete simultaneously resident rooms are not
+a blanket requirement.
 
-**The payload is read, not interpreted, and its PVR flags travel with it.**
-`vendor/librw/src/dc/tex-util.h` reads the offline `.PVR` file (skipping a
-`GBIX` block when present), derives the `PVR_TXRFMT_*` bits from the stored
-data format, and `fread`s the body straight into texture memory. It asserts the
-format is one it can consume and that the size is a multiple of 256, or 32 for
-small textures. That is exactly the contract R4b adds to `re4tex`: a payload
-format field per texture, a raw copy at upload, and a converter that refuses to
-emit anything the PVR cannot consume directly.
+Track states including unloaded, reading, validated CPU data, uploading,
+resident, retiring, and failed. Publish a resource to gameplay only when required
+validation/install is complete. Handle short reads, EOF, malformed offsets,
+allocation failures, partial uploads and cancellation without leaking or leaving
+visible half-loaded state. Arm fault tests after adoption when adoption clears
+test state; report reached aborts rather than requests.
 
-**A small VQ codebook costs less VRAM than a full one, addressed by an
-offset.** `vendor/librw/src/dc/vq.cpp` builds codebooks whose first entry is
-`256 - codebookSize`, and the raster carries a `texoffs` that biases the
-texture address backwards so the hardware still indexes a nominal 256-entry
-book. RE4DC can use the same trick once VQ payloads exist; the r100 inventory
-already shows which textures would take them. Related: DCA3's VRAM allocator
-(`vendor/librw/src/dc/alloc.cpp`) hands out 2 KB-aligned blocks specifically so
-a texture does not straddle a 2 KB boundary and so a 2 KB codebook lands on its
-own page. RE4DC uses `pvr_mem_malloc()` today and has not measured that effect.
+Keep persistent player/inventory state across a door; do not call the cabin's
+`reset_encounter()` as room progression. Honor source room flags, enemy death and
+object state. Invalidate package views, material headers with texture addresses,
+lighting/visibility caches, collision/navigation references and pending work at
+retirement. Rebuild only what the incoming state requires. Free shared allocations
+once, after their last owner and in-flight user has finished.
 
-**Reads happen on their own thread behind semaphores.**
-`src/liberty/core/CdStreamDC.cpp` keeps the GTA `CdStream` queue shape and
-supplies a Dreamcast reader thread with `pthread` and semaphores, with an
-explicit thread priority step and an abort state. Deliverable 5 needs the same
-shape; the queue depth and buffer sizing are RE4DC's to measure, not to inherit.
+Source/display activation is not a residency heuristic: offscreen enemies,
+collision, scripts or persistent flags may remain required. Conversely, loaded
+assets need not all be drawn. Recover the source decisions before choosing
+working-set policy.
 
-What RE4DC does **not** take: GTA's arbitrary-radius world streaming. RE4's
-authored block and connection sets make residency a discrete problem, and
-deliverable 4 starts from those sets rather than from a loading radius.
+## Memory accounting and bounded execution
 
-## Lesson one: the SH-4 must not interpret GameCube assets at play time
+Maintain a single current ledger tied to exact build and package hashes:
 
-The current slice already converts offline into `re4room`, `re4chr`, `re4tex`,
-`re4sat`, `re4rtp`, `re4hud` and WAV packages, so the conversion principle is
-in place. What is missing is the rest of the pipeline shape:
+| Category | Include |
+|---|---|
+| Disc/container bytes | Archives and package files; not automatically resident bytes. |
+| Persistent CPU resources | Live models, motion, collision, routes, game/state data and retained metadata. |
+| Temporary installation | Read/upload buffers, validator scratch, decompression, table construction and audio conversion. |
+| Derived state and reservations | Cached lighting, bounds, local mappings, packet buffers, fixed arrays, heap and stack high water. |
+| VRAM | Unique compatible payloads, mip/palette needs, framebuffers and parameter/TA resources, largest contiguous free block. |
+| AICA | Samples/streams, code and buffers, with playback lifetime accounted for. |
+| Reserve | An explicit safety margin for the selected gameplay configuration and future required systems. |
 
-    BUILD TIME
-    GC RE4 assets + source metadata
-      -> Dreamcast asset compiler
-         room geometry   -> native strips, cells, batch-local vertex tables (R3v)
-         textures        -> native PVR twiddled 565/1555/4444, VQ, PAL4/PAL8
-         animation       -> pose palettes (package v6)
-         collision       -> SAT hierarchy (re4sat)
-         audio           -> AICA-ready samples
-         materials       -> precompiled PVR header state
-      -> Dreamcast room/resource archive
+Report simultaneous loading/transition peak and gameplay peak, not only arena
+occupancy. Moving bytes out of `.rodata` into a same-size arena is not a saving.
+A reservation must actually become reusable/reduced before claiming recovered
+main RAM. Moving a runtime table into a resident package saves setup work only
+unless redundant storage is also eliminated. Do not enlarge a heap and count
+its internal free blocks plus the original outside-heap space twice.
 
-    RUNTIME
-    GD-ROM / GDEMU -> asynchronous reads -> staging arena
-      -> 16 MB main RAM working set (active room, actors, animation)
-      -> 8 MB VRAM (active textures) and 2 MB AICA (active cues)
+Transient texture loading should read/validate/upload, retain descriptors and
+handles, then reclaim backing bytes before the largest persistent allocations
+when possible. Measure overlap and alignment/allocator overhead. Releasing CPU
+texels must not destroy VRAM ownership or permit an incomplete upload to appear
+complete. Compare target image and bindings, not only free-memory counts.
 
-Today the slice embeds every package in the executable's ROM disk and maps it
-with `fs_mmap()`. Post-load free main RAM is 5,357,568 bytes with one room
-(2.2 MB package), Leon (1.7 MB), Ganado (1.16 MB), their textures, the HUD
-and the audio cues resident. That is a demo image, not a residency model.
+Bound transformation/clipping/packet scratch by processing units. Use 32-bit
+global identities where required and validated narrower indices inside bounded
+units. Consider offline-native mappings or reusable caches only when their net
+resident cost and runtime effect are demonstrated. Do not rebuild all tables
+every frame, copy whole geometry into another representation, or silently omit
+work when a capacity is exceeded. Verify view/light/room-generation invalidation.
 
-Runtime work that still interprets rather than reads: texture upload from
-the package layout into VRAM, the R3v batch-local table pass at load, and
-any decode of texture payloads. Each is a candidate to move to build time.
+## I/O and streaming are conditional, not ceremonial gates
 
-## Lesson two: streaming is a subsystem, and RE4 makes it an easy one
+Use the existing synchronous path behind source transitions first. Required
+loading work must complete before exposing the room; intentional pauses must
+not accumulate simulation debt or replay queued gameplay controls.
 
-RE4 already divides content into rooms, blocks, connections and transitions,
-and the decompilation shows authored active/staged block sets and
-`checkBlockMemory`. RE4DC therefore does not need GTA-style arbitrary world
-streaming. The residency unit is the room, with these sets:
+Add bounded asynchronous reads, staging, cancellation and generation checks when
+actual I/O/response requirements justify them. A fast read does not hide expensive
+validation or main-thread installation; measure each. Retain validation when
+optimizing it. Verify the actual deployment medium and KOS path on hardware.
 
-    always resident      room gameplay state, SAT and routes, Leon, common
-                         weapon resources, common effects
-    active set           visible room cells, active enemies, active room
-                         textures, current animations
-    prefetch set         connected room geometry, upcoming textures, upcoming
-                         enemy types, transition resources
-    evictable            previous room, distant or inactive resources, unused
-                         animation and material banks
+Intra-room residency/streaming is permitted when the corrected working set still
+requires it. It is not the same as processing a fully resident scene in bounded
+batches. Show the measured deficit or stall before introducing a larger system,
+then reuse the existing ownership/reader/upload/retirement code. Use authored
+relationships and conservatively derived target policy where source assumptions
+do not fit; do not pretend the source supplied a target-specific streaming plan.
 
-Start from the authored sets and recompute the largest active set and the
-transition overlap with converted sizes and shared resource identities. Do not
-introduce a guessed loading radius. Preserve original load-stop behaviour where
-the source has it; seamless loading everywhere is not a source requirement.
-GameCube ARAM is not spare AICA memory.
+## Bounded GameCube/PS2 render-asset experiment
 
-Those sets are now measured rather than assumed, in
-[R4_D4_RESIDENCY_MODEL_CHECKPOINT.md](R4_D4_RESIDENCY_MODEL_CHECKPOINT.md), and
-three of the assumptions above need correcting. The active and prefetch sets are
-**derived at run time, not stored**: `cBlock::checkBlockConnect` takes the
-area's own block plus its link neighbours as the active set and everything one
-hop beyond as the staged set, and the per-area arrays are overrides on the
-staged set whose names invert their effect. r100 leaves every override unset.
-**r100 is also the only room on the disc with block files at all**, five of them
-totalling 1,537,344 bytes, against which `cBlock::checkBlockMemory()` sizes a
-single 1,126,272-byte pool; every other room is one block. And the load-stop is
-not merely preserved but total: `gameDoordemo` frees the room heap and then
-loads the next room, so **transition overlap in the source is zero**. The
-prefetch tier therefore has no Dreamcast counterpart to build, and the residency
-unit is one room at a time.
+Run this as a secondary, isolated task. It must not block the main boot-forward
+integration path or expand into a campaign-wide extraction database.
 
-## Lesson three: choose a texture representation per texture
+1. **Pick equivalent content.** Start with corresponding village environment
+   geometry and one representative enemy. Inspect available GameCube gameplay/LOD
+   variants and their selectors first or alongside PS2. Do not assume the current
+   converted mesh is the required quality tier in every source situation.
+2. **Extract from supplied private images.** Preserve manifests, source build,
+   archive/chunk/model/material identities and converter/tool revisions. Reuse
+   established tooling where compatible; verify supported format/version and
+   license before relying on it. Keep extracts and derived assets private.
+3. **Retain semantics during conversion.** Preserve positions/transforms, source
+   group/material binding, UVs, alpha/depth/culling, normals or authored vertex
+   color, and the distinction between a model and its instances. For characters,
+   verify skeleton, bind pose, weights, attachments, motion compatibility, event
+   markers and alignment with source hit volumes. A matching name is not enough.
+4. **Keep gameplay authoritative.** Retain source collision, interaction points,
+   door/ladder anchors, navigation and event/activation logic unless a separate
+   source correction is demonstrated. Reject an attractive mesh that creates
+   invisible walls or misaligned hits. Do not import PS2 progression or difficulty
+   as an accidental side effect of changing a rendering asset.
+5. **Convert and run one real candidate.** Feed the alternative through the
+   existing Dreamcast package/renderer path with a selectable manifest and the
+   GameCube reference retained. No direct PS2 display-list execution or new
+   renderer. Evaluate baked/prelit attributes without double-applying lighting.
+6. **Measure the full trade.** Compare target-converted vertices, triangles,
+   strip/batch/material/pass counts, skinning and lighting cost, CPU/VRAM/AICA
+   residency, loading peak, and frame-time distributions from matching gameplay
+   cameras. Compare silhouettes, faces, alpha edges, nearby architecture and
+   animation in motion. Smaller disc files or source polygon counts alone are
+   not proof of a faster native port.
 
-DCA3's authors describe RAM and VRAM as their main constraint and their early
-conversion as brute force. RE4DC's texture compiler should decide per texture:
+Candidate tooling to verify and pin for the actual PS2 image:
 
-    GC texture
-      lossless-enough at 16 bpp   -> PVR 565 / 1555 / 4444, twiddled offline
-      VQ-friendly                 -> PVR VQ (pvrtex), codebook chosen per texture
-      low-colour                  -> PAL4 / PAL8
-      fidelity-sensitive          -> native uncompressed
+- [JADERLINK_DATUDAS_TOOL](https://github.com/JADERLINK/JADERLINK_DATUDAS_TOOL)
+- [RE4-PS2-SCENARIO-SMD-TOOL](https://github.com/JADERLINK/RE4-PS2-SCENARIO-SMD-TOOL)
+- [RE4-PS2-BIN-TOOL](https://github.com/JADERLINK/RE4-PS2-BIN-TOOL)
+- [RE4-PS2-TPL-TOOL](https://github.com/JADERLINK/RE4-PS2-TPL-TOOL)
 
-and the runtime deals only in Dreamcast-ready payloads: read, allocate VRAM,
-transfer. No PNG decode, no GameCube texture decode, no runtime VQ encoding,
-no runtime twiddling.
+These are investigation entry points, not evidence that extraction, rig matching,
+or savings have already succeeded in this checkout. AFS/archive access and
+model/material mapping may require additional verified adapters.
 
-## The PS2 disc as a second oracle
+Allow a hybrid result: suitable GameCube variants, retained high-detail player
+assets, selected PS2 environment/enemy representations, and native Dreamcast
+textures. Select per validated resource, not by blanket platform preference.
+PS2-derived geometry is a potential fidelity trade, not a pure lossless
+optimization. Report exact benefits and visual costs; stop a nonpaying candidate.
+Explicit review/user acceptance is required before promoting material visual
+changes. Do not further reduce texture resolution merely because an old plan
+assumed it was the only available lever.
 
-For every corresponding asset, measure automatically what Capcom changed
-between GameCube and PS2: resolution, pixel format and colour depth, mipmap
-count, texture count, geometry count, material and pass count, animation
-representation, effect and material differences. The result is a database that
-replaces guessing ("can this wall be 256x256?") with evidence ("Capcom shipped
-it at 256x256 on PS2").
+## Texture formats and sharing
 
-The Dreamcast does not inherit the PS2 downgrade. Decide per asset:
+Use target-native payloads with explicit dimensions, encoding, aligned sizes,
+mips/palette/codebook metadata and compatible sampler/material state. Reuse
+mature encoders where appropriate. VQ is a candidate, not a free/lossless default;
+review its moving image, alpha and close-detail behavior. HUD and faces need
+separate judgment. Preserve a suitable uncompressed reference/fallback.
 
-    GC original
-      can DC keep it directly?         yes -> native format
-      no -> try VQ                     visually acceptable? yes -> VQ
-      no -> inspect the PS2 reduction  acceptable on DC?    yes -> PS2-sized, GC-sourced
-                                                            no  -> escalate
+Within-package sharing is already implemented. Cross-package sharing requires
+validated content identity and descriptor compatibility, lifetime references and
+collision checks. Ninety-three distinct payload hashes in an earlier build do
+not prove that another room shares nothing. Different actor ids also do not
+prove all their assets are unique.
 
-This is now measured rather than assumed, on the r100 textures: a 256x512
-GameCube wall the build had reduced to 128x256 costs 65,536 B as shipped and
-34,848 B at full resolution under VQ, with 5.7 dB better PSNR. The
-higher-resolution GameCube artwork is genuinely cheaper than the reduction, on
-this room, for every texture that was reduced. It is not cheaper in quality
-terms for textures that were not reduced; see the checkpoint.
+Authored enemy-list rows are not simultaneous live actors. Trace source
+activation, variants and waves, then budget shared immutable resources and
+per-instance pose/AI/state separately. The old roughly 1.5 MB enemy estimate is
+not a measured complete village budget and must not be promoted as one.
 
-PS2 teaches what can be reduced; DCA3 teaches how to manage it; GameCube says
-what the correct result is.
+## Completion and evidence
 
-## Deliverables and order
+R4 succeeds by enabling the next playable sequence under PLAYABLE_PATH, not by
+completing every possible texture, streaming or allocator feature. Deliver
+reviewable code, lifecycle/failure evidence, current memory peaks and a runnable
+integration result. Keep storage/hardware, visual fidelity and gameplay status
+separate. Do not claim local asset availability or physical testing without
+checking it in the actual execution environment.
 
-1. **Asset inventory tool** — **done**, `tools/asset_residency_report.py`, with
-   `texture-r100-production` added to reproduce the previously untracked r100
-   texture package. Run it with
-   `make -C port/dreamcast -f Makefile.host asset-residency-r100`. Its first
-   findings, in
-   [R4A_TEXTURE_INVENTORY_CHECKPOINT.md](R4A_TEXTURE_INVENTORY_CHECKPOINT.md):
-   six r100 textures that the build reduced to meet a 256-pixel limit can be
-   restored to their authored resolution under vector quantisation for 46% less
-   VRAM and 5.7 to 7.3 dB more PSNR, so that change has no trade-off to review;
-   and vector quantisation applied to textures that were *not* reduced costs 3
-   to 13 dB, so it is not a default and is reserved for a residency budget that
-   requires it. The default candidate plan is 1,732,608 B against the shipped
-   1,978,368 B, with six textures gaining detail; the all-VQ floor is
-   472,576 B. No PS2 disc is present in this workspace, so that column reads
-   "no PS2 source" until one is supplied to `--ps2-manifest`. Meshes are not
-   yet inventoried; extend the tool when the residency model needs them.
-2. **Native texture layout** — **half done**, recorded in
-   [R4B_NATIVE_TEXTURE_LAYOUT_CHECKPOINT.md](R4B_NATIVE_TEXTURE_LAYOUT_CHECKPOINT.md).
-   The `re4tex` record now carries a payload format, the converters write
-   twiddled payloads offline, and the runtime copies them raw instead of
-   reordering every texel during `pvr_txr_load_ex()`. Texture upload fell from
-   1,022,663 us to 16,945 us with the frame, VRAM, main RAM and framebuffers
-   unchanged. Sharing then landed in
-   [R4E_TEXTURE_SHARING_CHECKPOINT.md](R4E_TEXTURE_SHARING_CHECKPOINT.md):
-   one PVR allocation per distinct payload rather than one per descriptor,
-   recovering 1,509,728 bytes, 36.7% of texture memory, with the framebuffers
-   byte-identical. Leon's package was 84% redundant and the Ganado's 73%; the
-   room and HUD packages had no duplicates. Cross-package sharing was measured
-   and is worth nothing today: the four packages hold 93 payloads with 93
-   distinct content hashes.
-
-   Still open: the VQ payloads themselves, and promoting the sharing key from
-   an in-package offset to a validated content identity with reference counting
-   once packages load and unload independently.
-
-   The sharing description below is retained because the residency work still
-   needs its cross-package form; what landed in R4e is the in-package case.
-   Its native texture reader
-   consults a raster cache, takes a reference and skips a duplicate payload
-   instead of uploading it again, and frees the allocation only after the last
-   reference; dictionary lifetime is tracked separately from payload lifetime.
-   RE4DC allocates per descriptor and still requires
-   `data_size == width * height * 2`, which VQ and palette payloads break. The
-   schema needs encoding and layout, logical dimensions, the actual aligned
-   allocation size, mip and palette metadata where supported, a texture-address
-   offset where the format needs one, and a validated content identity: a
-   content digest with descriptor compatibility and collision validation, not a
-   bare 32-bit identifier. Per-material sampler and blend state stay separate,
-   since identical texels may share storage while material state differs.
-
-   A texture is not renderable until its upload completes, GPU references
-   outlive CPU submission, and retirement waits for the relevant render rather
-   than for submission return or the next tick. Report unique resident payload
-   bytes, total and largest-contiguous VRAM free, staging peaks, upload time and
-   loading p95, and test partial upload failure and rollback.
-
-   Then the six VQ candidates deliverable 1 already found. Fewer bytes and
-   higher PSNR make them promising, not automatically lossless: review close
-   views, motion, filter behaviour, alpha edges and the original-resolution
-   source. Unreduced textures stay uncompressed unless their own evidence says
-   otherwise. The palette paths follow the KOS formats, not DCA3's, whose reader
-   asserts one mip level and leaves palette locking unimplemented.
-3. **Package-resident batch-local tables**: emit the R3v local strip indices
-   and batch vertex tables from the converter, preserving the R3v/R3x
-   local-index semantics, the oversized-batch fallback, source identity,
-   selected-light context and strip order. Do not promise to recover all 413,696
-   bytes by moving them into a mapped ROM disk, because package bytes are
-   resident too: remove redundant forms where safe or quantify the real
-   temporary and persistent reduction, and keep startup work removed separate
-   from any frame change. Test round-trip, corrupted offsets, index-width
-   limits, historical package behaviour, oversized batches and byte-identical
-   packets.
-4. **Residency model from the authored block sets** — **done**, in
-   [R4_D4_RESIDENCY_MODEL_CHECKPOINT.md](R4_D4_RESIDENCY_MODEL_CHECKPOINT.md).
-   r100 connects to exactly one room, r101, through a symmetric unlocked door
-   pair decoded from the authored `AEV` tables, and r100 is a leaf of the
-   stage-1 graph. The active, staged and evict sets are tabulated per trigger
-   area from the `BLK` link table. Always-resident content is 2,599,070 romdisk
-   bytes, 508,928 of VRAM and 357,952 of AICA; r100's room-specific content is
-   5,836,118, 2,093,056 and 164,256, so 69.2% of the romdisk and 80.4% of unique
-   VRAM payload leaves with the room.
-
-   Two findings change the following deliverables. **Nothing is reclaimable
-   today**: all six package classes `fs_mmap` a romdisk linked into `.rodata`
-   and never copy or free, so the transition is blocked architecturally rather
-   than by budget. And once the romdisk leaves the image the arena ceiling is
-   13,790,208 bytes against 2,599,070 always-resident, leaving 11,191,138 for
-   room content; r100 uses 52% of that and r101 is estimated at 4.0 to 6.0 MB
-   from its source chunks and r100's measured conversion ratios. So one room at
-   a time fits with about 5.1 MB spare, while holding both complete rooms is
-   marginal to over. Main RAM is the binding limit; VRAM and AICA are not.
-
-   Resource identity in the source is `(archive, three-letter tag, ordinal)` via
-   `GetDataExt`, not a filename, and the heap model nests system, game, stage,
-   DLL and room so that a room change re-carves the room heap in one operation.
-   Both carry straight into the model below.
-5. **Asynchronous reads and a staging arena**: bounded read buffers, active
-   room blocks, immutable shared resources, texture handles and reclaimable
-   upload staging for GD-ROM/GDEMU, replacing the embedded ROM disk and
-   mandatory `fs_mmap()`. Deliverable 4 fixes its shape: **size the arena for
-   one room, not two**, release the outgoing room's region in a single operation
-   behind the authored fade as `gameDoordemo` does, key resources by
-   `(archive, tag, ordinal)` plus a content digest, and do not build the ARAM
-   staged tier, which has no Dreamcast counterpart and covers only 1,537,344
-   bytes that the port already holds resident. Removing the romdisk from
-   `.rodata` comes first: until it does, no room byte is reclaimable and no
-   transition measurement means anything. A path change from `/rd/` alone is insufficient;
-   closing a mapped file does not remove its payload from the executable.
-   Model explicit states, `unloaded -> reading -> CPU-ready -> uploading ->
-   resident -> retiring`, with stable identifiers, dependency references,
-   in-flight frame pins and cancellation generations. Budget the completed-load
-   processing and the VRAM uploads, not only the reads: an asynchronous read
-   followed by an unbounded main-thread install still stutters. Treat DCA3's
-   64 KiB read chunk and its between-chunk audio servicing as a starting
-   experiment to measure on the intended storage path, and do not copy its error
-   handling, which makes no progress on a zero-length read. Measure the largest
-   free VRAM allocation as well as the total; because RE4DC caches compiled
-   material headers that encode texture addresses, any relocation must update or
-   regenerate every affected header and wait for in-flight users, so a moving
-   allocator stays optional until fragmentation evidence justifies it.
-6. **Second room transition**: the first end-to-end proof, entering **r101**
-   from r100 with the previous room evicted, measured for load time, peak RAM,
-   VRAM and AICA high-water marks, and frame-time impact during prefetch. The
-   target is not a choice: r101 is r100's only authored neighbour, and the
-   reverse direction comes almost free because the door pair is symmetric and
-   unlocked. Expected peak is always-resident plus the larger of the two rooms
-   plus one bounded read buffer, about 8.6 MB against a 13.79 MB ceiling.
-
-Items 1-3 can proceed alongside the remaining R3 frame work; items 4-6 need
-the residency model first. Memory high-water records precede any acceptance.
-
-## Boundaries
-
-R4 does not change the accepted r100 presentation, camera, geometry, lighting,
-transparency, collision, timing or audio. Startup and load-time work is never
-credited as a per-frame saving. Physical Dreamcast timing, GD-ROM read rates
-and VRAM allocation behaviour must be measured on hardware before residency
-sizes are fixed; Flycast can validate correctness and memory arithmetic only.
-
-## What 5A changed about these assumptions
-
-Measured while building the r100 load/retire/reload lifecycle
-(`R4_5A_ROOM_LIFECYCLE_CHECKPOINT.md`):
-
-* **The 13.79 MB ceiling does not apply while persistent assets stay embedded.**
-  Room-owned bytes leaving the linked romdisk buys nothing in resident RAM on
-  its own, because the arena that replaces them is statically reserved. Moving
-  5,836,118 bytes out of the romdisk and adding a 5,767,168-byte arena left the
-  resident image 5,256 bytes *larger* (10,908,585 to 10,913,841). What it buys
-  is that those bytes are now reclaimable rather than permanent, and that the
-  executable read at boot is 5.8 MB smaller. The ceiling arithmetic only
-  becomes available once the persistent packages leave the romdisk too.
-* **r100's room content needs 5,671,772 bytes**, measured, arriving as six
-  packages, with the arena high water at 5,671,872 after alignment padding.
-  The room-owned share of the disc is 5,836,118 bytes including four enemy
-  samples that AICA owns rather than the arena.
-* **Install, not read, dominates a load.** Under Flycast a full load is roughly
-  45 ms of reading, 1.16 s of validation and 1.67 s of install (header
-  compilation, static lighting, primitive bounds, batch locals); retirement is
-  1.3 ms. Item 5's warning that an asynchronous read followed by an unbounded
-  main-thread install still stutters is confirmed with numbers: the read is the
-  small part. These are emulator timings.
-* **Storage path.** KOS mounts `/cd` from the low-density table of contents, so
-  the image is a single-session CD-R rather than a GD-ROM, and its
-  `1ST_READ.BIN` must be scrambled. KOS's streaming read also does not return
-  for a package smaller than one read chunk. Both are documented in the 5A
-  checkpoint; both constrain how item 5's asynchronous reads can be built.
+The previous PS2-oracle-only policy, D4 estimates, R4 deliverable ordering and
+historical measurement ledger remain accessible in the
+[pre-amendment R4 plan](https://github.com/stevedamnvan/re4/blob/b7d29e3fe9ba58b807ef2146776b09caf1acbaea/port/dreamcast/docs/R4_ASSET_RESIDENCY_PLAN.md).
+Separate checkpoint evidence and source-audit documents are unchanged. Their
+obsolete restrictions are not a reason to stop boot-forward integration or this
+bounded private asset experiment.
