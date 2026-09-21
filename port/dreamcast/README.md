@@ -24,11 +24,14 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D317 shares the existing native clipping and packet implementation between the
-room and recovered-game targets. Source title/menu output is preserved; the
-source model/world adapter is still pending. See the D317 section of
-[the lifetime checkpoint](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
-
+D319 verifies compact VQ upload through the shared texture path using an existing
+D258 candidate:18,432 payload bytes versus131,072 uncompressed, with18,464 actual
+VRAM allocation including overhead. PAL4/PAL8 remain analysis; moving-scene VQ
+quality is unaccepted. See [D319](docs/R4A_TEXTURE_INVENTORY_CHECKPOINT.md).
+D318's opt-in source-model diagnostic reuses shared clipping, packets and frame
+ownership, but emits zero triangles in the captured state; it is not visible
+room acceptance. Source title/menu remains working. Continue source archive
+recovery and the room connection; see [the lifetime checkpoint](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
 
 D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
 buffer after synchronous consumption, retaining full per-frame capacity. The

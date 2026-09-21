@@ -147,3 +147,69 @@ owner, and honor source presentation holds. Avoid beginning an immediate world
 scene that Render_swap can then leave unfinished when its hold flag is set.
 Required resource backing recovery and block/enemy creation remain part of that
 integration; this is not the cabin restored.
+
+## D318: source model transport diagnostic, not visible 3D acceptance
+
+The optional /cd/dc/model-diagnostic.flag enables the narrow adapter in the
+recovered-game executable. Normal packages without that flag retain D317 UI.
+No source state, camera, model placement, event or allocation failure is bypassed.
+
+Connection: commonModelTrans supplies source-prepared rigid/skinned positions,
+separate normal identity, BE primitive indices, its actual model-view matrix,
+source camera projection and cull/depth state. materialSetup supplies the actual
+base texture after source animation/swap selection. New model_bridge.cpp and
+platform/native_model.cpp only adapt those inputs to the existing shared clipper,
+packet helpers and native_ui texture/frame owner. No second skinning, AI loop,
+PVR instance or frame is added. This diagnostic uses base textures without
+lighting/fog/material-color parity; separate-alpha/complex materials are rejected.
+It is not a fidelity candidate or complete-character claim.
+
+The existing texture builder now accepts source .arc selectors through
+le_mirror.prepare_room_archive and the recovered offline decoder. r100 produces
+155 unique images with no qualification errors, plus one valid empty SMD palette
+at archive offset 451200 (pAddTpl source behavior). The initial exporter error
+was zero descriptors, not shared-header conversion; that speculative change was
+removed. Existing player/weapon sources produce 36 images. No new encoder or
+room decoder was written, and no reference asset/evidence was overwritten.
+
+A 65,536-byte, 32-aligned KOS-owned diagnostic packet queue keeps copied output
+valid across source primitive reuse and room-heap resets. Overflow rolls back a
+whole part. It is allocated only with the flag, not from the source room heap.
+The initial failed run used source-heap scratch; that lifetime hazard was fixed
+before this candidate. No source archive backing is reclaimed.
+
+D318d evidence: C:/Flycast-Evidence/re4-dreamcast/d318d-source-model.
+ELF SHA-256: 80b4cbbf7e16a999bbdf02ac9ec4e4c896e474b82a9498bf5604da80f8abff54.
+Disc SHA-256: fbff3505782592875753d64b5c66a1f9e9173ea4afd09569e109c64bff358949.
+The validated manifest includes assets, fixture, dirty patch/new source files,
+compiler, emulator and capture identities. Same source title/menu remains visible;
+three room textures upload (131072, 16384, 65536 VRAM bytes), freeing their
+131232/16544/65696-byte upload allocations. Source heap is 344416 before/after
+those uploads. Title cache resources share the existing 4 MiB budget; no new
+world cache exists. ELF text/data/bss=2263204/75428/672120, total3010752
+(+8404 versus D317). Required block/enemy failures remain 1126272/3577728 with
+427008/416704 free: both fail, combined lower-bound deficit still4276992.
+
+D318e uses the same ELF/disc and the existing RAM/frame reader. Snapshot frame
+1223 has Rno0=3, System=0x800, three processed parts/1344 input triangles but
+ZERO emitted triangles, four resource/material rejections and zero overflows.
+Do not describe this as a presented world. Main is parked with gate/suspend1
+at OSWakeupThread -> TaskSchedulerMain -> TaskScheduler; last source timing
+entries reach LightMove. The exact snapshot/symbols/analysis are retained in
+C:/Flycast-Evidence/re4-dreamcast/d318e-model-boundary. The run ends at its
+65-second harness deadline, not a native exception. This scheduling frontier
+and source camera/visibility need tracing before visible 3D acceptance. Missing
+required block/enemy memory remains independent; Rno0=3 is not room success.
+
+Host sanitizer fixture covers mixed endian indices/CPU arrays, rigid and source
+skinned strides, perspective/depth, both cull directions, strips/fans/quads,
+near clipping, malformed bounds, whole-part queue rollback and copied-packet
+lifetime. Four existing/extended native UI tests pass. trans.cpp PPC tokens
+match the pre-slice working source; full ProDG not rerun. Five known stubs remain.
+
+Keep this opt-in transport diagnostic as an integration aid, not an accepted
+replacement scene. Next bounded user-directed work reuses the existing D258 VQ
+candidate and extends this same texture path, verifying actual compact VRAM.
+PAL proposals, encoded files and runtime-supported formats must stay distinct.
+Source archive recovery, required room creation, source lighting/material parity,
+visible moving 3D/audio/manual play and all three-room gates remain open.

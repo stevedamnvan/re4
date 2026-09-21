@@ -100,17 +100,36 @@ bool Package::validate() {
     }
     for(std::uint32_t index = 0; index < header_->texture_count; ++index) {
         const Texture& texture = textures()[index];
-        if(texture.width == 0 || texture.height == 0 ||
-           texture.data_size != texture.width * texture.height * 2U ||
-           texture.format > kArgb4444 ||
+        const bool dimensions = texture.width >= 8 && texture.width <= 1024 &&
+            texture.height >= 8 && texture.height <= 1024 &&
+            (texture.width & (texture.width - 1U)) == 0 &&
+            (texture.height & (texture.height - 1U)) == 0;
+        // Full 256-entry VQ codebook, no mipmaps or small-codebook pointer bias.
+        // Unknown layouts must not fall through as a raw 16-bit upload.
+        const std::uint64_t pixels = std::uint64_t(texture.width) * texture.height;
+        const std::uint64_t expected = texture.payload == kPayloadVq
+            ? 2048U + pixels / 4U : pixels * 2U;
+        if(!dimensions || texture.payload > kPayloadVq || texture.reserved_0 != 0 ||
+           texture.data_size != expected || texture.format > kArgb4444 ||
+           texture.data_offset < header_->data_offset ||
+           std::uint64_t(texture.data_offset) + texture.data_size >
+               std::uint64_t(header_->data_offset) + header_->data_size ||
            !range_valid(texture.data_offset, texture.data_size)) {
-            error_ = "invalid texture descriptor";
+            error_ = "invalid texture dimensions, format, layout or payload size";
             close();
             return false;
         }
     }
     error_ = nullptr;
     return true;
+}
+
+std::uint32_t pvr_format(const Texture& texture) {
+    const std::uint32_t formats[] = {
+        PVR_TXRFMT_RGB565, PVR_TXRFMT_ARGB1555, PVR_TXRFMT_ARGB4444
+    };
+    return formats[texture.format] |
+        (texture.payload == kPayloadVq ? PVR_TXRFMT_VQ_ENABLE : 0U);
 }
 
 bool Package::upload() {

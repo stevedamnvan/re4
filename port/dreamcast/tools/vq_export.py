@@ -14,6 +14,11 @@ Comparing -now and -vq against -gc answers the question the R4 plan asks: does
 vector quantisation at the authored resolution beat the reduced uncompressed
 texture we ship today, measured against the same ground truth?
 
+The separate --pack-existing FILE --package FILE mode wraps a previously encoded
+DcTx candidate for the shared native Package loader without calling an encoder.
+It preserves compact VQ bytes and refuses unsupported layouts; it does not imply
+quality acceptance or PAL4/PAL8 runtime support.
+
 Pure Python: WSL has no PIL, so the PNG writer here is minimal (8-bit RGBA,
 filter type 0). Reading back is done on the Windows side.
 """
@@ -85,13 +90,29 @@ def upscale(pixels, width, height, target_width, target_height):
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tpl", type=pathlib.Path, required=True)
-    parser.add_argument("--mtl", type=pathlib.Path, required=True)
-    parser.add_argument("--out", type=pathlib.Path, required=True)
-    parser.add_argument("--pvrtex", type=pathlib.Path, required=True)
+    parser.add_argument("--tpl", type=pathlib.Path)
+    parser.add_argument("--mtl", type=pathlib.Path)
+    parser.add_argument("--out", type=pathlib.Path)
+    parser.add_argument("--pvrtex", type=pathlib.Path)
     parser.add_argument("--max-dimension", type=int, default=256)
     parser.add_argument("--only", help="comma-separated material names")
+    parser.add_argument("--pack-existing", type=pathlib.Path, help="wrap an existing DcTx VQ candidate; no encoder run")
+    parser.add_argument("--package", type=pathlib.Path)
+    parser.add_argument("--material", default="source")
     args = parser.parse_args(argv)
+    if args.pack_existing:
+        if not args.package or any((args.tpl,args.mtl,args.out,args.pvrtex)):
+            parser.error("--pack-existing requires --package and excludes export/encoder arguments")
+        package,metadata=convert_tpl.package_existing_vq(args.pack_existing.read_bytes(),args.material)
+        import json,hashlib
+        metadata['encoded_sha256']=hashlib.sha256(args.pack_existing.read_bytes()).hexdigest()
+        args.package.parent.mkdir(parents=True,exist_ok=True)
+        # Refuse to overwrite an accepted or differently selected candidate.
+        with args.package.open('xb') as f:f.write(package)
+        args.package.with_suffix(args.package.suffix+'.json').write_text(json.dumps(metadata,indent=2)+'\n')
+        print(json.dumps(metadata,sort_keys=True));return 0
+    if not all((args.tpl,args.mtl,args.out,args.pvrtex)):
+        parser.error("export requires --tpl, --mtl, --out and --pvrtex")
 
     images = convert_tpl.parse_tpl(args.tpl.read_bytes())
     bindings = convert_tpl.parse_mtl(

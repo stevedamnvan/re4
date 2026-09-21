@@ -450,6 +450,42 @@ def downsample_box(
     return result, new_width, new_height
 
 
+def package_existing_vq(encoded: bytes, material: str = "source") -> tuple[bytes, dict]:
+    """Wrap a pinned pvrtex DcTx candidate without decoding or re-encoding.
+
+    Bounded support: 16-bit RGB565/ARGB1555/ARGB4444, full 256-entry VQ,
+    power-of-two dimensions, no mipmaps, strides or partial/small codebooks.
+    DcTx layout authority: pinned KOS utils/pvrtex/file_dctex.h/.c.
+    """
+    if len(encoded)<32 or encoded[:4]!=b'DcTx':
+        raise ValueError('expected pvrtex DcTx header')
+    size,=struct.unpack_from('<I',encoded,4)
+    version,units,book,colors=encoded[8:12]
+    width,height,mode=struct.unpack_from('<HHI',encoded,12)
+    fmt=(mode>>27)&7
+    dimensions=all(8<=n<=1024 and n&(n-1)==0 for n in (width,height))
+    if (size!=len(encoded) or size%32 or version!=0 or units!=0 or book!=255 or
+        not dimensions or fmt>2 or not mode&(1<<30) or mode&((1<<31)|(1<<26)|(1<<25)|(1<<11)) or
+        any(encoded[20:32])):
+        raise ValueError('unsupported DcTx version, layout, size or codebook')
+    if (8<<((mode>>3)&7),8<<(mode&7))!=(width,height):
+        raise ValueError('DcTx dimensions disagree with PVR size flags')
+    expected=2048+width*height//4
+    if len(encoded)!=((32+expected+31)&~31):
+        raise ValueError('VQ payload must be the full codebook plus compact block indices')
+    native_format={0:FORMAT_ARGB1555,1:FORMAT_RGB565,2:FORMAT_ARGB4444}[fmt]
+    flags=0 if fmt==1 else FLAG_ALPHA | (FLAG_BINARY_ALPHA if fmt==0 else 0)
+    payload=encoded[32:32+expected] # DcTx transport padding is not texture data.
+    start=HEADER.size+TEXTURE.size
+    descriptor=TEXTURE.pack(_name_bytes(material),width,height,native_format,start,len(payload),flags,PAYLOAD_VQ,0)
+    body=descriptor+payload
+    header=HEADER.pack(MAGIC,VERSION,HEADER.size,TEXTURE.size,1,HEADER.size,start,len(payload),zlib.crc32(body)&0xffffffff,1,0)
+    return header+body,{'width':width,'height':height,'payload':'vq','format':native_format,
+                        'encoded_file_bytes':len(encoded),'vram_bytes':len(payload),
+                        'uncompressed_16bit_bytes':width*height*2,
+                        'candidate_only':True,'reencoded':False}
+
+
 def build_package(
     images: list[TplImage], bindings: list[MaterialBinding],
     max_dimension: int | None = None, twiddle: bool = False,

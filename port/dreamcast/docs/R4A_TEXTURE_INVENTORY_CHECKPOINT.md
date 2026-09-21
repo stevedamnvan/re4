@@ -2,6 +2,9 @@
 
 Date: 2026-09-20
 
+Historical D258 measurements below are retained. See the D319 addendum for the
+current encoded-file/runtime distinction and corrected VQ byte accounting.
+
 Decision: **the inventory tool is accepted and its first finding is recorded.
 No package or runtime change is made yet.** R4 deliverable 1 exists as
 `tools/asset_residency_report.py`, the accepted r100 texture package now has a
@@ -130,3 +133,60 @@ exists for them. The runtime still twiddles on upload through
 Dreamcast VQ path needs the texture header to carry the format, which the
 current `re4tex` header does not. The PS2 oracle is unavailable. Nothing here
 has been measured on physical hardware.
+
+## D319: existing VQ candidate stays compressed in native VRAM
+
+Inspected 9369db2, asset_residency_report.py, vq_export.py and the retained
+C:/Flycast-Evidence/re4-dreamcast/d258-r4-texture-inventory evidence before this
+change. No inventory/encoder campaign was repeated. The inventory's PAL4/PAL8
+rows and 832-entry palette budget are proposals: no native PAL package/upload/
+sampling support is accepted. Ten actual pvrtex DcTx files remain at /root/vqtest.
+
+The selectable candidate uses existing ROOM_MATERIAL_001.dt (SHA-256
+7a38f3d8aed2cf9e20c1794dfb4b5cf07d87171dc790587f63f3cbb1917d1675), matched offline
+to source image key 9544fbb0-cb9b3876. vq_export.py --pack-existing FILE --package
+FILE wraps it without decoding/re-encoding, using the pinned KOS pvrtex DcTx
+header definition (804b3195ebd1a06a27cc2b3a5eacf7a2429040a3). It is not DTEX.
+Only this fresh fixture's matching .re4tex was replaced; the uncompressed
+D318d fixture and original encoder files remain intact.
+
+Shared Package::adopt/upload/release_payload/close, storage::read_file/Arena,
+and the existing fenced UI/model cache are reused. Validation now accepts full
+256-entry VQ codebooks with compact block indices and rejects unknown layouts.
+The shared pvr_format helper supplies VQ sampling flags in room, actor, HUD,
+source UI and source-model headers. Runtime formats are RGB565/ARGB1555/ARGB4444
+in linear, twiddled or full-codebook VQ layouts. Palette formats, mipmaps and
+partial codebooks remain unsupported; there is no runtime expansion to 16-bit.
+
+Flycast D319 evidence: C:/Flycast-Evidence/re4-dreamcast/d319-existing-vq.
+The recovered commonModelTrans material request selects the candidate naturally.
+It logs 18432 payload bytes at a441b1c0, format48000000 and readback FNV1a
+c804e363, matching the existing encoded payload. The actual pvr_mem_available
+change is18464 bytes:18432 payload plus32 allocator overhead. Versus131072
+uncompressed payload bytes, the payload saving is112640 (85.94%). The18592-byte
+source-heap upload allocation is freed;144 metadata bytes remain. Source heap
+returns to344416. This is not source-archive recovery (zero bytes reclaimed).
+
+Historical D258 VQ table sizes included each32-byte DcTx file header. For example,
+18464 is the encoded file size, not texture payload; the six restoration payloads
+total167936 rather than168128 bytes. D319's identical18464-byte allocator delta
+has a different cause:32 bytes of VRAM allocator overhead, not an uploaded header.
+
+ELF SHA-256:227f84dce2b24eb11717ddfad695cbd3e54ef1f27d13e06c17bb36f71a491ece.
+Disc SHA-256:be6508adc23286d6d91dbf1ad293618cc3f6be578422c5ccbad974ff33ee6995.
+The validated evidence manifest pins assets, fixture, dirty source/new files,
+KOS, compiler, emulator and capture tools. Source title/menu is still visible.
+Snapshot has three processed parts/1344 input triangles, zero emitted triangles,
+four material/resource rejections, and the same scheduler frontier. The65-second
+harness ends at its deadline. No visible VQ world sampling, moving-scene quality,
+frame-time improvement, manual room gameplay or physical hardware is accepted.
+Both block/enemy allocations still fail at the D316 heap values.
+
+Keep shared format support and the selectable diagnostic; do not promote001's
+quality loss (-3.40dB in D258) over the full-resolution uncompressed reference.
+Five native UI/texture tests include byte-preserving VQ wrapping, exact raw upload
+allocation, no linear expansion, backing reuse and unsupported-layout rejection;
+15 converter tests pass. The native model sanitizer fixture passes, both game
+and existing room translation units compile, and trans.cpp PPC tokens are
+unchanged. Remaining source archive memory work now targets verified upload-only
+texels with offline identities; VQ savings do not replace that work.

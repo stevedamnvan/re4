@@ -15,9 +15,9 @@ inline constexpr std::uint32_t kArgb1555 = 1;
 inline constexpr std::uint32_t kArgb4444 = 2;
 inline constexpr std::uint32_t kAlpha = 1U << 0U;
 inline constexpr std::uint32_t kBinaryAlpha = 1U << 1U;
-// How the payload is laid out. The runtime never converts a payload; it only
-// copies it, so anything the PVR cannot consume directly must be produced by
-// the converter.
+// Linear 16-bit payloads use the existing upload-time twiddler. Twiddled and
+// full-codebook VQ payloads are copied unchanged and sampled in their native
+// format. PAL4/PAL8, mipmaps and partial VQ codebooks are not supported here.
 inline constexpr std::uint32_t kPayloadLinear = 0;
 inline constexpr std::uint32_t kPayloadTwiddled = 1;
 inline constexpr std::uint32_t kPayloadVq = 2;
@@ -47,6 +47,10 @@ struct Texture {
     std::uint32_t payload;
     std::uint32_t reserved_0;
 };
+
+// The sampling flags must match the resident representation. Every room,
+// character and source UI/model header uses this shared mapping.
+std::uint32_t pvr_format(const Texture& texture);
 
 static_assert(sizeof(Header) == 48);
 static_assert(sizeof(Texture) == 96);

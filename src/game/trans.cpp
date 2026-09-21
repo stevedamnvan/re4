@@ -5,6 +5,7 @@
 #include "atari.h"
 #if defined(RE4DC_GAME) && !defined(__PPC__)
 #include "native_primitive.h"
+#include "native_model.h"
 #endif
 #include "light.h"
 #include "ctrl.h"
@@ -1283,6 +1284,9 @@ void commonModelTrans(cModel* m, cModelInfo* info, Mtx viewMat, int flag)
         }
         for (i = 0; i < nParts; i++) {
             u8* p;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+            re4dc_model_material(0, 0, 0, 0);
+#endif
             shaderSetup(m, info, part, mv);
             GXSetBlendMode(bl[info->blend_mode][0], bl[info->blend_mode][1], bl[info->blend_mode][2], bl[info->blend_mode][3]);
             if (flag & 1) {
@@ -1301,6 +1305,9 @@ void commonModelTrans(cModel* m, cModelInfo* info, Mtx viewMat, int flag)
 #line 2044 "D:/Bio4/Prog/trans.cpp"
                 HALT();
             }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+            re4dc_draw_model_part(m, info, part, mv, flag);
+#endif
             GXCallDisplayList(p, part->size);
             part = (ModelPart*) (p + part->size);
             if (IND_STAGE_ID() != 0) {
@@ -1814,6 +1821,9 @@ static void materialSetup(ModelPart* part, cModelInfo* info, int colIn, int alph
         texId = tbl[t->frame];
     }
     org_LoadTexObj(texId, map);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_model_material(texId <= 0xF7 ? &GXWORK()->texObj[texId] : 0, t->u, t->v, t->flags);
+#endif
     if (t->flags & 1) {
         u32 mtx = getTexMtx();
         Mtx m;

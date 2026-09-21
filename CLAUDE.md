@@ -13,7 +13,7 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D317 shared drawing, source-model adapter remains
+## Current resumption point - D319 compact VQ proven; source archive recovery next
 
 D314 remains the first verified source-driven warning/main-menu UI presentation
 checkpoint. Adapter 4123a85 and focused capture/interaction validation 8f1578b
@@ -44,6 +44,32 @@ uses the shared packets; the new source menu image and boot-forward replay pass.
 The clipper matches the pinned original in 40,000 host comparisons; no source
 model/world draw is connected yet. Evidence and limits are in the D316 checkpoint's
 D317 section. Current ELF is +128 bytes, with unchanged heap/frontier values.
+
+D318 adds an opt-in commonModelTrans source-model transport adapter using the
+shared clipper, texture cache and UI frame owner. Three source-selected room
+textures upload and staging is freed, but the matched snapshot has zero emitted
+triangles: no visible 3D acceptance. Main parks in the existing scheduler at
+OSWakeupThread/TaskSchedulerMain (frame1223, Rno0=3, System0x800); both required
+room allocations still fail. Read the D318 section of the lifetime checkpoint
+and d318d-source-model / d318e-model-boundary evidence. Scratch is 64 KiB KOS-owned
+only with model-diagnostic.flag; unlit/base-material output is explicitly diagnostic.
+
+D319 reuses existing D258 ROOM_MATERIAL_001.dt, with no new encoder run. Shared
+Package validation/upload and all material-header consumers now retain native VQ.
+Flycast proves18432 resident payload bytes (18464 actual allocation including32
+allocator overhead), byte identity c804e363 and VQ sampling flag48000000. Upload
+staging18592 is freed; source archives are unchanged. No visible world/VQ quality
+acceptance: D318's zero-output scheduler frontier remains. PAL4/PAL8 stay inventory
+proposals. Read the D319 addendum in R4A_TEXTURE_INVENTORY_CHECKPOINT.md and
+C:/Flycast-Evidence/re4-dreamcast/d319-existing-vq. Preserve the uncompressed fixture.
+
+Current user-directed memory task: compact the qualified r100 source archive by
+externalizing verified upload-only textures, with offline descriptor/resource
+identities and direct smaller final allocation. Retain all CPU readers, mip and
+palette/animation semantics, original source slot identities and sound dispatch.
+Keep unsupported payloads resident. Measure actual heap at the same block/enemy
+requests; first target is successful required block pool allocation. Do not call
+VQ or cleared pointers source-archive recovery. Keep moving the room adapter.
 
 **Immediate frontier:** bring the existing native cabin mechanisms into the
 recovered-game executable. Connect commonModelTrans/ModelRender source-owned

@@ -6796,11 +6796,7 @@ bool compile_room_material_headers() {
         const pvr_list_t list = material_alpha[material]
                                     ? PVR_LIST_TR_POLY
                                     : PVR_LIST_OP_POLY;
-        const int format = texture->format == re4dc::texture::kRgb565
-                               ? PVR_TXRFMT_RGB565
-                               : texture->format == re4dc::texture::kArgb1555
-                                     ? PVR_TXRFMT_ARGB1555
-                                     : PVR_TXRFMT_ARGB4444;
+        const int format = re4dc::texture::pvr_format(*texture);
         pvr_poly_cxt_txr(&context, list, format, texture->width,
                          texture->height, textures.pvr_texture(texture_index),
                          PVR_FILTER_BILINEAR);
@@ -6858,11 +6854,7 @@ bool compile_character_headers_for(
             }
             const std::uint32_t texture_index = static_cast<std::uint32_t>(
                 texture - character_textures.textures());
-            const int format = texture->format == re4dc::texture::kRgb565
-                                   ? PVR_TXRFMT_RGB565
-                                   : texture->format == re4dc::texture::kArgb1555
-                                         ? PVR_TXRFMT_ARGB1555
-                                         : PVR_TXRFMT_ARGB4444;
+            const int format = re4dc::texture::pvr_format(*texture);
             alpha[batch_index] =
                 (texture->flags & re4dc::texture::kAlpha) != 0;
             const pvr_list_t list = alpha[batch_index]
@@ -7383,11 +7375,7 @@ int main() {
         texture_index < source_hud_textures.header().texture_count;
         ++texture_index) {
         const auto& texture = source_hud_textures.textures()[texture_index];
-        const int format = texture.format == re4dc::texture::kRgb565
-                               ? PVR_TXRFMT_RGB565
-                               : texture.format == re4dc::texture::kArgb1555
-                                     ? PVR_TXRFMT_ARGB1555
-                                     : PVR_TXRFMT_ARGB4444;
+        const int format = re4dc::texture::pvr_format(texture);
         pvr_poly_cxt_txr(
             &context, PVR_LIST_TR_POLY, format, texture.width, texture.height,
             source_hud_textures.pvr_texture(texture_index),
