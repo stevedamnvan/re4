@@ -24,6 +24,12 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
+D317 shares the existing native clipping and packet implementation between the
+room and recovered-game targets. Source title/menu output is preserved; the
+source model/world adapter is still pending. See the D317 section of
+[the lifetime checkpoint](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+
+
 D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
 buffer after synchronous consumption, retaining full per-frame capacity. The
 source menu remains visible; required block/enemy allocations still fail.

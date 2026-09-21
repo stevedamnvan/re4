@@ -10,7 +10,7 @@ room renderer and the UI-owned PVR frame. See
 [D316](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
 
 
-Updated 2026-09-21; current integration candidate D316 (D314 UI and D315 stack fix retained; primitive storage reduced).
+Updated 2026-09-21; current integration candidate D317 (shared native geometry/packets; source world adapter remains open).
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first

@@ -125,7 +125,7 @@ but choose the slice by the combined gameplay, memory and presentation result.
 | Existing implementation to reuse | Connection still required |
 |---|---|
 | `src/game/trans.cpp` model eligibility, selected lights, pose/normal preparation and material setup | Feed source-authoritative current models/camera/material state into native rendering; preserve gameplay/event updates. |
-| `room/main.cpp` clipping, PVR packets/strips, lighting helpers and submission | Reuse applicable helpers with recovered-game inputs. Its `render_scene` currently takes prototype Player/Enemy/package state; copying that gameplay loop would be a regression. |
+| `room/pvr_geometry.*` clipping/packets (D317), remaining strips/lighting in `room/main.cpp` | Reuse applicable helpers with recovered-game inputs. Its `render_scene` currently takes prototype Player/Enemy/package state; copying that gameplay loop would be a regression. |
 | `tools/convert_tpl.py` and `room/texture_package.*` native layout, sharing, upload and payload release | Maintain source texture/material identity and CPU users; connect upload success and handles to source-owned resources. Do not invent another converter. |
 | `room/room_storage.*`, `load_room_texture`, `room_gpu_quiesced`, `retire_room` | Adapt these ownership/failure/fence contracts to core, player, weapon, room, block and event lifetimes; avoid a second full resident copy or an unreclaimed reservation. |
 | Recovered source collision, streaming selection, actor/event/module logic; existing native input/audio mechanisms | Keep source behavior, identify adapters and actual missing consumers together. ARAM staging is not AICA memory; current no-copy/audio stubs remain missing functionality. |

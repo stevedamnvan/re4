@@ -101,3 +101,49 @@ consumer so source render payload can actually leave its resident allocation.
 Required block/enemy creation, event/ARAM/audio storage, inventory qualification
 and native module binding remain open. This checkpoint does not defer those
 costs or establish archive-loaded == initialized == rendered == playable.
+
+## D317 follow-on: extract the existing native draw mechanism
+
+The subsequent recovered-game build uses room/pvr_geometry.hpp/.cpp, extracted
+from the existing room/main.cpp rather than a second backend. The room target
+uses the same shared implementation and retains its profiler/digest wrapper.
+
+- Existing begin_pvr_packet and submit_pvr now serve source-driven native UI
+  packets as well as the room renderer. UI submits the same header and four
+  vertices in one contiguous packet; its scene/fence/hold/black semantics remain.
+- Existing clip_projected_triangle, interpolation and shade_color are shared.
+  Clip limits and the point-projection callback are explicit caller inputs so
+  the recovered camera/model transform can supply them. No actor skinning,
+  animation selection, world resource lookup or simulation is imported.
+- Existing source prepared positions/normals remain the intended consumer inputs
+  at commonModelTrans. That source-model adapter is NOT connected by D317.
+  Native world/actor material, selected lighting, fog and ordering remain open.
+
+The actual extracted clipper matches the pinned be32de7 implementation across
+10,000 generated triangles times four cull modes (40,000 comparisons), including
+near crossings, exact near points, far rejection, degenerates, and output guards.
+Packet copy lifetime is checked; three existing native texture/identity checks
+also pass. The r100 room main/helper objects compile with its source-scene/480p
+profile, without replacing any accepted reference executable or private assets.
+The recovered game links with the same five known stubs.
+
+D317 evidence: C:/Flycast-Evidence/re4-dreamcast/d317-shared-native-geometry.
+The validated evidence-manifest.json pins executable, disc, fixtures, dirty
+source patch, extracted source files, compiler/KOS, emulator and capture tools.
+ELF SHA-256: 4741f86a8751210b691078bbe4bf9d67b149b740f439e24ba5e602095855c0e7.
+Disc SHA-256: 4da91bdc967b2ab0b0179c0af8229e1ad84509d0bde9e31e1d9c8650f89557ed.
+
+The sampled menu-readback/frames/fb0.png visibly retains the source title/menu;
+it is not an exact-tick image comparison. Source START follows the same fixture
+and the run reaches the same r100 failures. It ends at the 75.004-second harness
+deadline, not a guest fault. UI frame-1200 counters match D316; block/enemy free
+values remain 427,008/416,704. ELF text+data+bss is 3,002,348 bytes (+128 versus
+D316), BSS and source heap reservation unchanged. No source archive bytes are
+reclaimed by this extraction; no gameplay or physical-hardware frame time claim.
+
+Keep the shared extraction as the implementation base. The next connection must
+consume source-prepared geometry once, reuse the same texture cache and PVR
+owner, and honor source presentation holds. Avoid beginning an immediate world
+scene that Render_swap can then leave unfinished when its hold flag is set.
+Required resource backing recovery and block/enemy creation remain part of that
+integration; this is not the cabin restored.

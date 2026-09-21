@@ -1,5 +1,5 @@
 TARGET = re4dc-room-viewer.elf
-OBJS = main.o gpu_lifecycle.o room_storage.o room_package.o collision_package.o character_package.o texture_package.o route_package.o source_hud_package.o romdisk.o
+OBJS = main.o pvr_geometry.o gpu_lifecycle.o room_storage.o room_package.o collision_package.o character_package.o texture_package.o route_package.o source_hud_package.o romdisk.o
 ROOM_PACKAGE ?= ../build/private/r10d.re4room
 COLLISION_PACKAGE ?= ../build/private/r10d.re4sat
 CHARACTER_PACKAGE ?= ../build/private/leon.re4chr

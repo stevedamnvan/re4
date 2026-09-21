@@ -10,6 +10,7 @@
 #include "../../room/texture_package.hpp"
 #include "../../room/room_storage.hpp"
 #include "../../room/gpu_lifecycle.hpp"
+#include "../../room/pvr_geometry.hpp"
 
 namespace {
 constexpr unsigned kQuadCount=256, kTextureCount=48, kVramBudget=4*1024*1024;
@@ -144,12 +145,14 @@ extern "C" void re4dc_ui_present(){
         const pvr_blend_mode_t src[]={PVR_BLEND_SRCALPHA,PVR_BLEND_SRCALPHA,PVR_BLEND_ONE,PVR_BLEND_DESTCOLOR,PVR_BLEND_DESTCOLOR};
         const pvr_blend_mode_t dst[]={PVR_BLEND_INVSRCALPHA,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ZERO};
         c.blend.src=src[q.blend];c.blend.dst=dst[q.blend];c.txr.env=PVR_TXRENV_MODULATEALPHA;c.txr.uv_clamp=PVR_UVCLAMP_UV;
-        pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);pvr_prim(&header,sizeof(header));
-        pvr_vertex_t v[4]{};const unsigned order[]={0,1,3,2};
+        pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);
+        alignas(32) pvr_vertex_t commands[5]{};std::uint32_t count;
+        re4dc::render::begin_pvr_packet(commands,count,header);
+        pvr_vertex_t* v=commands+count;const unsigned order[]={0,1,3,2};
         for(unsigned n=0;n<4;++n){unsigned j=order[n];v[n].flags=n==3?PVR_CMD_VERTEX_EOL:PVR_CMD_VERTEX;
             v[n].x=q.xy[2*j];v[n].y=q.xy[2*j+1];v[n].z=1.0f;
             v[n].u=q.uv[2*j]*q.image.width/t.width;v[n].v=q.uv[2*j+1]*q.image.height/t.height;v[n].argb=q.color;}
-        pvr_prim(v,sizeof(v));++drawn;
+        re4dc::render::submit_pvr(commands,sizeof(commands));++drawn;
     }
     pvr_list_finish();pvr_scene_finish();
     if(frame%120==0) re4dc_log("native UI: frame=%u quads=%u drawn=%u missing=%u unsupported=%u drops=%u vram=%u peak=%u staging=%u loads=%u freed=%u culled=%u fb=%08x,%08x black=%d\n",frame,nquad,drawn,missing,unsupported,dropped,used,peak,staging_peak,loads,reclaimed,culled,(unsigned)pvr_get_front_buffer(),(unsigned)pvr_get_back_buffer(),re4dc_vi_black());

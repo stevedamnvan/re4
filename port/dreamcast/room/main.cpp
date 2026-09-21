@@ -20,6 +20,7 @@
 #include "room_package.hpp"
 #include "room_storage.hpp"
 #include "gpu_lifecycle.hpp"
+#include "pvr_geometry.hpp"
 #include "route_package.hpp"
 #include "source_hud_package.hpp"
 #include "texture_package.hpp"
@@ -723,7 +724,7 @@ std::uint32_t measure_timer_probe_ns_x100() {
 void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
 #if defined(RE4DC_SUBMIT_PROFILE)
     const std::uint64_t copy_start = timer_ns_gettime64();
-    pvr_prim(data, byte_count);
+    re4dc::render::submit_pvr(data, byte_count);
     const std::uint64_t copy_end = timer_ns_gettime64();
     if(g_submit_phase_room) {
         stats.room_copy_ns += copy_end - copy_start;
@@ -734,7 +735,7 @@ void submit_pvr(FrameStats& stats, const void* data, std::size_t byte_count) {
         stats.actor_copy_ns += copy_end - copy_start;
     }
 #else
-    pvr_prim(data, byte_count);
+    re4dc::render::submit_pvr(data, byte_count);
 #endif
     ++stats.pvr_submit_calls;
     stats.pvr_submit_bytes += static_cast<std::uint32_t>(byte_count);
@@ -847,42 +848,21 @@ void digest_packet(DigestRecord* record, const pvr_vertex_t* vertices,
 }
 #endif
 
-void begin_pvr_packet(pvr_vertex_t* commands, std::uint32_t& command_count,
-                      const pvr_poly_hdr_t& header) {
-    static_assert(sizeof(pvr_vertex_t) == sizeof(pvr_poly_hdr_t));
-    std::memcpy(commands, &header, sizeof(header));
-    command_count = 1U;
-}
+using re4dc::render::begin_pvr_packet;
 
 std::uint32_t saturate_u32(std::uint64_t value) {
     return static_cast<std::uint32_t>(
         std::min<std::uint64_t>(value, 0xffffffffU));
 }
 
-struct ProjectedVertex {
-    float x;
-    float y;
-    float z;
-    float world_x;
-    float world_y;
-    float world_z;
-    float depth;
-};
+using re4dc::render::ProjectedVertex;
 
 struct PreparedPoseMatrix {
     float linear[9];
     float translation[3];
 };
 
-struct RenderVertex {
-    ProjectedVertex position;
-    float u;
-    float v;
-    float light_red;
-    float light_green;
-    float light_blue;
-    std::uint32_t offset_color;
-};
+using re4dc::render::RenderVertex;
 
 float analog_axis(std::int8_t value) {
     constexpr int dead_zone = 18;
@@ -2919,15 +2899,7 @@ void update_combat(Player& player, Enemy& enemy, const Input& input,
     }
 }
 
-std::uint32_t shade_color(float red, float green, float blue) {
-    const std::uint32_t r = static_cast<std::uint32_t>(
-        std::clamp(red * 255.0f, 0.0f, 255.0f));
-    const std::uint32_t g = static_cast<std::uint32_t>(
-        std::clamp(green * 255.0f, 0.0f, 255.0f));
-    const std::uint32_t b = static_cast<std::uint32_t>(
-        std::clamp(blue * 255.0f, 0.0f, 255.0f));
-    return 0xff000000U | (r << 16U) | (g << 8U) | b;
-}
+using re4dc::render::shade_color;
 
 #if defined(RE4DC_SOURCE_SCENE)
 struct SourceLightingBasis {
@@ -3841,32 +3813,8 @@ float camera_depth(float reciprocal_depth) {
     return 1.0f / reciprocal_depth;
 }
 
-RenderVertex interpolate_vertex(const RenderVertex& a, const RenderVertex& b,
-                                float t) {
-    RenderVertex result{};
-    result.position.world_x = a.position.world_x +
-                              (b.position.world_x - a.position.world_x) * t;
-    result.position.world_y = a.position.world_y +
-                              (b.position.world_y - a.position.world_y) * t;
-    result.position.world_z = a.position.world_z +
-                              (b.position.world_z - a.position.world_z) * t;
-    result.position.depth = a.position.depth +
-                            (b.position.depth - a.position.depth) * t;
-    result.u = a.u + (b.u - a.u) * t;
-    result.v = a.v + (b.v - a.v) * t;
-    result.light_red = a.light_red + (b.light_red - a.light_red) * t;
-    result.light_green =
-        a.light_green + (b.light_green - a.light_green) * t;
-    result.light_blue = a.light_blue + (b.light_blue - a.light_blue) * t;
-    result.offset_color = a.offset_color;
-    float x = result.position.world_x;
-    float y = result.position.world_y;
-    float z = result.position.world_z;
+void project_clip_point(float& x, float& y, float& z, void*) {
     mat_trans_single(x, y, z);
-    result.position.x = x;
-    result.position.y = y;
-    result.position.z = z;
-    return result;
 }
 
 #if defined(RE4DC_CULL_AUDIT)
@@ -4251,107 +4199,18 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
                                        pvr_vertex_t* output,
                                        std::uint8_t cull_mode,
                                        FrameStats* stats = nullptr) {
-    RenderVertex clipped[4]{};
-    unsigned clipped_count = 0;
-    unsigned inside_count = 0;
-    for(unsigned corner = 0; corner < 3; ++corner) {
-        inside_count +=
-            source[corner].position.depth >= kNearClipDistance ? 1U : 0U;
+    const re4dc::render::ClipParameters parameters{
+        kNearClipDistance, kFarClipDistance, kScreenWidth, kScreenHeight,
+        project_clip_point, nullptr};
+    re4dc::render::ClipStats counts;
+    const auto triangles = re4dc::render::clip_projected_triangle(
+        source, output, cull_mode, parameters, stats ? &counts : nullptr);
+    if(stats) {
+        stats->room_near_trivial_accepts += counts.accepts;
+        stats->room_near_trivial_rejects += counts.rejects;
+        stats->room_near_crossings += counts.crossings;
     }
-    if(inside_count == 3U) {
-        if(stats != nullptr) {
-            ++stats->room_near_trivial_accepts;
-        }
-        clipped[0] = source[0];
-        clipped[1] = source[1];
-        clipped[2] = source[2];
-        clipped_count = 3U;
-    } else if(inside_count == 0U) {
-        if(stats != nullptr) {
-            ++stats->room_near_trivial_rejects;
-        }
-        return 0;
-    } else {
-        if(stats != nullptr) {
-            ++stats->room_near_crossings;
-        }
-        RenderVertex previous = source[2];
-        bool previous_inside =
-            previous.position.depth >= kNearClipDistance;
-        for(unsigned corner = 0; corner < 3; ++corner) {
-            const RenderVertex current = source[corner];
-            const bool current_inside =
-                current.position.depth >= kNearClipDistance;
-            if(current_inside != previous_inside) {
-                const float t =
-                    (kNearClipDistance - previous.position.depth) /
-                    (current.position.depth - previous.position.depth);
-                clipped[clipped_count++] =
-                    interpolate_vertex(previous, current, t);
-            }
-            if(current_inside) {
-                clipped[clipped_count++] = current;
-            }
-            previous = current;
-            previous_inside = current_inside;
-        }
-    }
-    if(clipped_count < 3) {
-        return 0;
-    }
-
-    std::uint32_t triangle_count = 0;
-    for(unsigned fan = 1; fan + 1 < clipped_count; ++fan) {
-        const RenderVertex triangle[3] = {clipped[0], clipped[fan],
-                                          clipped[fan + 1]};
-        const float signed_area =
-            (triangle[1].position.x - triangle[0].position.x) *
-                (triangle[2].position.y - triangle[0].position.y) -
-            (triangle[1].position.y - triangle[0].position.y) *
-                (triangle[2].position.x - triangle[0].position.x);
-        const bool beyond_far =
-            triangle[0].position.depth > kFarClipDistance &&
-            triangle[1].position.depth > kFarClipDistance &&
-            triangle[2].position.depth > kFarClipDistance;
-        const bool left = triangle[0].position.x < 0.0f &&
-                          triangle[1].position.x < 0.0f &&
-                          triangle[2].position.x < 0.0f;
-        const bool right = triangle[0].position.x > kScreenWidth &&
-                           triangle[1].position.x > kScreenWidth &&
-                           triangle[2].position.x > kScreenWidth;
-        const bool above = triangle[0].position.y < 0.0f &&
-                           triangle[1].position.y < 0.0f &&
-                           triangle[2].position.y < 0.0f;
-        const bool below = triangle[0].position.y > kScreenHeight &&
-                           triangle[1].position.y > kScreenHeight &&
-                           triangle[2].position.y > kScreenHeight;
-        const bool culled =
-            cull_mode == kCullAll ||
-            (cull_mode == kCullBack && signed_area >= 0.0f) ||
-            (cull_mode == kCullFront && signed_area <= 0.0f) ||
-            (cull_mode == kCullNone &&
-             std::fabs(signed_area) < 0.0001f);
-        if(beyond_far || left || right || above || below || culled) {
-            continue;
-        }
-        pvr_vertex_t* destination = output + triangle_count * 3U;
-        for(unsigned corner = 0; corner < 3; ++corner) {
-            destination[corner] = {
-                .flags = corner == 2 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-                .x = triangle[corner].position.x,
-                .y = triangle[corner].position.y,
-                .z = triangle[corner].position.z,
-                .u = triangle[corner].u,
-                .v = triangle[corner].v,
-                .argb = shade_color(triangle[corner].light_red,
-                                    triangle[corner].light_green,
-                                    triangle[corner].light_blue),
-                .oargb = triangle[corner].offset_color,
-            };
-        }
-        ++triangle_count;
-    }
-    return triangle_count;
+    return triangles;
 }
 
 void fill_room_entry(const re4dc::room::Vertex* source,

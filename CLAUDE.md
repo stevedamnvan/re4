@@ -13,7 +13,7 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D316 primitive lifetime, source-to-native world connection
+## Current resumption point - D317 shared drawing, source-model adapter remains
 
 D314 remains the first verified source-driven warning/main-menu UI presentation
 checkpoint. Adapter 4123a85 and focused capture/interaction validation 8f1578b
@@ -37,6 +37,13 @@ The source menu remains visible; both required room allocations still fail:
 block pool 1,126,272 versus 427,008 free; em12 3,577,728 versus 416,704.
 Both failed, so the combined lower-bound deficit is 4,276,992 before allocator
 overhead/intervening allocations. This is not source-archive reclamation.
+
+D317 extracts room/main.cpp clipping/interpolation/color packing and packet
+helpers into room/pvr_geometry.hpp/.cpp, compiled into both targets. Native UI
+uses the shared packets; the new source menu image and boot-forward replay pass.
+The clipper matches the pinned original in 40,000 host comparisons; no source
+model/world draw is connected yet. Evidence and limits are in the D316 checkpoint's
+D317 section. Current ELF is +128 bytes, with unchanged heap/frontier values.
 
 **Immediate frontier:** bring the existing native cabin mechanisms into the
 recovered-game executable. Connect commonModelTrans/ModelRender source-owned
