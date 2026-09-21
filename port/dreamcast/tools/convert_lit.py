@@ -146,7 +146,6 @@ def emit_header(cut, name, scale, source):
                       index, light["enable_mask"]))
     out.append("};")
     out.append("")
-    out.append("} // namespace re4dc::lit::%s" % name.lower())
     out.append("")
     return "\n".join(out)
 

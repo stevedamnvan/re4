@@ -2794,7 +2794,7 @@ std::uint32_t shade_color(float red, float green, float blue) {
     return 0xff000000U | (r << 16U) | (g << 8U) | b;
 }
 
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
 struct SourceLightingBasis {
     float right_x = 1.0f;
     float right_y = 0.0f;
@@ -2828,7 +2828,12 @@ constexpr std::size_t kSourceLightCount =
 PreparedSourceLight g_prepared_source_lights[kSourceLightCount]{};
 std::uint32_t g_source_dynamic_light_mask = 0U;
 bool g_room_dynamic_light_fast_path = false;
+#if defined(RE4DC_ROOM_STATIC_LIGHTING_CAPACITY)
+constexpr std::uint32_t kRoomStaticLightingVertexCapacity =
+    RE4DC_ROOM_STATIC_LIGHTING_CAPACITY;
+#else
 constexpr std::uint32_t kRoomStaticLightingVertexCapacity = 45000U;
+#endif
 float g_room_static_lighting[kRoomStaticLightingVertexCapacity * 3U]{};
 std::uint16_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
 constexpr std::uint16_t kRoomLightingConflicted = 0xfffeU;
@@ -3247,7 +3252,7 @@ void evaluate_source_lighting(float px, float py, float pz,
 #endif
 
 bool group_visible(const re4dc::room::Group& group) {
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     // Reject complete source groups in world/view space before transforming
     // their triangles. Projected AABB corners are not conservative when a long
     // wall crosses the frustum without placing a corner inside it, so use the
@@ -3369,7 +3374,15 @@ RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
 std::uint32_t g_room_vertex_cache_generation = 0;
 // R3r: one bounding sphere per native strip. The accepted r100 package has
 // 15,066 strips; the capacity is the bound for that package.
+// Overridable so a diagnostic build can put r100 on the far side of a
+// capacity boundary and the fallback paths can be rendered rather than argued
+// about. Never overridden in an accepted build.
+#if defined(RE4DC_ROOM_PRIMITIVE_BOUNDS_CAPACITY)
+constexpr std::uint32_t kRoomPrimitiveBoundsCapacity =
+    RE4DC_ROOM_PRIMITIVE_BOUNDS_CAPACITY;
+#else
 constexpr std::uint32_t kRoomPrimitiveBoundsCapacity = 16384U;
+#endif
 struct RoomPrimitiveBounds {
     float center_x;
     float center_y;
@@ -3389,9 +3402,25 @@ std::uint32_t g_room_primitive_bounds_count = 0;
 // stamped with a per-call serial, so the direct-strip path needs no hash, no
 // key compare and no eviction check. Batches with more distinct vertices than
 // the slot array take the hashed cache path unchanged.
+#if defined(RE4DC_ROOM_LOCAL_INDEX_CAPACITY)
+constexpr std::uint32_t kRoomLocalIndexCapacity =
+    RE4DC_ROOM_LOCAL_INDEX_CAPACITY;
+#else
 constexpr std::uint32_t kRoomLocalIndexCapacity = 65536U;
+#endif
+#if defined(RE4DC_ROOM_BATCH_VERTEX_CAPACITY)
+constexpr std::uint32_t kRoomBatchVertexCapacity =
+    RE4DC_ROOM_BATCH_VERTEX_CAPACITY;
+#else
 constexpr std::uint32_t kRoomBatchVertexCapacity = 57344U;
+#endif
+#if defined(RE4DC_ROOM_BATCH_TABLE_CAPACITY)
+constexpr std::uint32_t kRoomBatchTableCapacity =
+    RE4DC_ROOM_BATCH_TABLE_CAPACITY;
+#else
 constexpr std::uint32_t kRoomBatchTableCapacity = 4096U;
+#endif
+
 // Local vertices held for *one* batch at a time, not a count of the room's
 // batches -- that is kRoomBatchTableCapacity. A batch with more local vertices
 // than this is counted in g_room_batch_local_oversize and falls back; it does
@@ -3416,6 +3445,9 @@ std::uint16_t g_room_local_indices[kRoomLocalIndexCapacity];
 // 65,535 vertices and this is the identity of a vertex, not a position within
 // a batch.
 std::uint32_t g_room_batch_vertices[kRoomBatchVertexCapacity];
+// A global vertex index is stored whole; 16 bits would alias vertex 65,536
+// onto vertex 0 and r101 has 177,032 of them.
+static_assert(sizeof(g_room_batch_vertices[0]) >= 4U);
 std::uint32_t g_room_batch_first_vertex[kRoomBatchTableCapacity];
 std::uint16_t g_room_batch_vertex_count[kRoomBatchTableCapacity];
 RoomBatchSlot g_room_batch_slots[kRoomBatchSlotCapacity];
@@ -3439,7 +3471,7 @@ constexpr std::uint8_t kCullFront = 1U;
 constexpr std::uint8_t kCullBack = 2U;
 constexpr std::uint8_t kCullAll = 3U;
 
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
 bool source_light_hits_group(const re4dc::room::SourceGroup& group,
                              const SourceLight& light) {
     if((group.metadata_flags & re4dc::room::kSourceGroupHasLightVolume) == 0U ||
@@ -3709,7 +3741,7 @@ float g_cull_audit_y_ratio = 0.0f;
 #endif
 
 bool primitive_visible(std::uint32_t primitive_index) {
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     // Same conservative view-space support test as group_visible(), applied to
     // one strip. Rejecting a whole strip before any vertex work removes
     // transform and lighting without reordering the triangles that remain, so
@@ -3882,8 +3914,10 @@ void run_flycast_calibration() {
 // the strips that were prepared are used and the rest are drawn unculled.
 bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
     const auto& header = room.header();
-    g_room_primitive_bounds_count =
-        std::min(header.primitive_count, kRoomPrimitiveBoundsCapacity);
+    // Nothing is covered until the fill has run. Publishing the count first
+    // would let a frame between here and the end cull against stale bounds.
+    g_room_primitive_bounds_ready = false;
+    g_room_primitive_bounds_count = 0U;
     const auto* primitives = room.primitives();
     const auto* primitive_indices = room.primitive_indices();
     const auto* vertices = room.vertices();
@@ -3891,8 +3925,10 @@ bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
        vertices == nullptr) {
         return false;
     }
+    const std::uint32_t covered =
+        std::min(header.primitive_count, kRoomPrimitiveBoundsCapacity);
     for(std::uint32_t primitive_index = 0U;
-        primitive_index < header.primitive_count; ++primitive_index) {
+        primitive_index < covered; ++primitive_index) {
         const auto& primitive = primitives[primitive_index];
         float minimum[3] = {0.0f, 0.0f, 0.0f};
         float maximum[3] = {0.0f, 0.0f, 0.0f};
@@ -3920,8 +3956,12 @@ bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
         bounds.radius = std::sqrt(extent_x * extent_x + extent_y * extent_y +
                                   extent_z * extent_z);
     }
-    g_room_primitive_bounds_ready = true;
-    return true;
+    g_room_primitive_bounds_count = covered;
+    g_room_primitive_bounds_ready = covered != 0U;
+    // False means the room has strips this table does not reach, which are
+    // drawn unculled. It is not a failure, and the strips that were prepared
+    // are used.
+    return covered == header.primitive_count;
 }
 
 // Builds the per-batch local vertex tables the direct-strip path indexes into.
@@ -4203,7 +4243,7 @@ inline void light_room_vertex(const re4dc::room::Vertex& input,
     light_red = 0.0f;
     light_green = 0.0f;
     light_blue = 0.0f;
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     if(vertex_index < g_room_static_lighting_count &&
        g_room_static_lighting_owner[vertex_index] <
            kRoomLightingConflicted) {
@@ -4257,7 +4297,7 @@ void fill_room_entry(const re4dc::room::Vertex* source,
     float light_blue = 0.0f;
     light_room_vertex(input, vertex_index, light_selection,
                       light_red, light_green, light_blue);
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     ++stats.room_light_evaluations;
 #endif
     entry.generation = g_room_vertex_cache_generation;
@@ -4350,8 +4390,11 @@ void submit_room_strips(const re4dc::room::Package& room,
         g_room_batch_locals_ready &&
         batch_index < g_room_batch_locals_count &&
         g_room_batch_vertex_count[batch_index] <= kRoomBatchSlotCapacity;
+    // Only a covered batch has a first-vertex entry. An uncovered one must
+    // reach the hashed-cache path without touching either table.
     const std::uint32_t* batch_vertices =
-        g_room_batch_vertices + g_room_batch_first_vertex[batch_index];
+        use_locals ? g_room_batch_vertices + g_room_batch_first_vertex[batch_index]
+                   : nullptr;
     const std::uint32_t batch_serial = ++g_room_batch_serial;
     std::uint32_t submit_count = 0U;
     begin_pvr_packet(submit_vertices, submit_count, header);
@@ -4489,7 +4532,7 @@ void submit_room_strips(const re4dc::room::Package& room,
                 stats.room_cache_misses += strip_misses;
                 stats.room_cache_hits += processed - strip_misses;
                 stats.transformed_vertices += strip_misses;
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
                 stats.room_light_evaluations += strip_misses;
 #endif
                 if(direct_strip) {
@@ -5950,7 +5993,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
         visible.group_index = group_index;
         visible.cull_mode = source_groups != nullptr
             ? source_groups[group_index].cull_mode
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
             : kCullNone;
 #else
             : kCullBack;
@@ -6069,10 +6112,10 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #endif
         ganado_headers, ganado_alpha, false,
         character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
-#if !defined(RE4DC_SCENE_R100)
+#if !defined(RE4DC_SOURCE_SCENE)
     draw_goal(enemy.state == EnemyState::Dead);
 #endif
-#if !defined(RE4DC_SCENE_R100)
+#if !defined(RE4DC_SOURCE_SCENE)
     draw_hud(player);
 #endif
     stats.opaque_actor_us = timer_us_gettime64() - opaque_actor_start;
@@ -6769,7 +6812,7 @@ bool retire_room(DemoAudio& audio) {
 
     // Everything below is keyed by indices into the package that has just gone,
     // so none of it means anything for the next one.
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     std::memset(g_room_static_lighting_owner, 0xff,
                 sizeof(g_room_static_lighting_owner));
 #endif
@@ -6783,7 +6826,7 @@ bool retire_room(DemoAudio& audio) {
     g_room_batch_serial = 0;
     g_room_primitive_bounds_ready = false;
     g_room_batch_locals_ready = false;
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     g_room_normals_are_unit = false;
 #endif
 
@@ -6896,7 +6939,7 @@ bool load_room(DemoAudio& audio) {
                                       ganado_alpha.get(), "Ganado")) {
         return false;
     }
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     if(!prepare_room_static_lighting(room)) {
         std::printf("re4dc-room: room static lighting failed on load\n");
         return false;
@@ -6941,7 +6984,7 @@ int main() {
     // Match the source SMX alpha-omit reference used by the binary cutout path.
     PVR_SET(PVR_PT_ALPHA_REF, 0x80U);
     g_re4dc_demo_telemetry.flags = 0x10000025U;
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
     // r100_002.LIT cut 0 supplies the background/fog colour and distances.
     pvr_set_bg_color(kBackgroundRed, kBackgroundGreen, kBackgroundBlue);
     pvr_fog_table_color(1.0f, kBackgroundRed, kBackgroundGreen,
@@ -7675,7 +7718,7 @@ int main() {
                 player.z + fz * 2.0f, 1.0f};
 #endif
         }
-#if defined(RE4DC_SCENE_R100)
+#if defined(RE4DC_SOURCE_SCENE)
         set_source_lighting_camera(eye, target, half_fov);
 #endif
         mat_identity();

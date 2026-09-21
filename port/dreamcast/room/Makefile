@@ -74,14 +74,31 @@ ROOM_OPT ?= -O3 -fno-predictive-commoning
 ROOM_LTO ?= 1
 ROOM_LTO_FLAGS := $(if $(ROOM_LTO),-flto=1 -ffat-lto-objects,)
 CPPFLAGS += -std=c++20 $(ROOM_OPT) $(ROOM_LTO_FLAGS) -Wall -Wextra -Werror -I../include
+# Two responsibilities, two defines. RE4DC_SOURCE_SCENE turns on the shared
+# source-authored rendering support: source-group metadata, the room's own LIT
+# lighting and fog, its cull modes and the conservative source culling.
+# RE4DC_SCENE_R100 is the opening cabin only -- its autoplay script, its Ganado,
+# its HUD, its spawn and its encounter markers. A second room takes the first
+# and none of the second.
 ifeq ($(DEMO_SCENE),r100)
-CPPFLAGS += -DRE4DC_SCENE_R100
+CPPFLAGS += -DRE4DC_SOURCE_SCENE -DRE4DC_SCENE_R100
+endif
+ifeq ($(DEMO_SCENE),r101)
+CPPFLAGS += -DRE4DC_SOURCE_SCENE -DRE4DC_SCENE_R101
 endif
 ifeq ($(DEMO_RESOLUTION),480p)
 CPPFLAGS += -DRE4DC_480P
 endif
 ifneq ($(DEMO_YAW),)
 CPPFLAGS += -DRE4DC_DEMO_YAW=$(DEMO_YAW)
+endif
+# Diagnostic capacity overrides, so a build can put r100 on the far side of a
+# derived-table boundary and the fallback paths render rather than being argued
+# about. e.g. ROOM_CAPS="-DRE4DC_ROOM_PRIMITIVE_BOUNDS_CAPACITY=12624".
+# Never set in an accepted build.
+ROOM_CAPS ?=
+ifneq ($(ROOM_CAPS),)
+CPPFLAGS += $(ROOM_CAPS)
 endif
 # Diagnostic submission profiling. Not part of any accepted build.
 ifneq ($(SUBMIT_PROFILE),)
