@@ -241,17 +241,18 @@ def compact_room(source_file, textures, destination):
     return report
 
 
-def compact_core(source_file, textures, destination):
-    """Externalize only the already-qualified core HUD EFF #25 texture table.
+def compact_core(source_file, textures, destination, include_effects=False):
+    """Externalize core HUD #25 and optionally the qualified effect #1 table.
 
-    Other core families retain their exact converted bytes and qualification
-    status. This neither enables nor qualifies the unrelated incomplete EFF
-    path list, VIB or SAT consumers. Special/procedural/paletted images stay.
+    Other families retain exact converted bytes and qualification status.
+    The optional effect family requires its Path/PathVtx conversion as well;
+    it never qualifies VIB/SAT. CPU noise, palettes and mip chains stay resident.
     """
     source_file,textures,destination=map(Path,(source_file,textures,destination))
     if source_file.name.lower()!='core.das':raise ValueError('expected core.das')
     if destination.exists():raise FileExistsError(destination)
-    rel='etc/core.das';family=rel+':0#25'
+    rel='etc/core.das';slots=(1,25) if include_effects else (25,)
+    families=[rel+':0#'+str(i) for i in slots]
     source=source_file.read_bytes();container=bytearray(source);references=[];palettes=[]
     old_tpl,old_offsets=mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER
     start=len(mirror.REPORT)
@@ -262,7 +263,7 @@ def compact_core(source_file, textures, destination):
     coverage=mirror.REPORT[start:]
     import tempfile
     with tempfile.NamedTemporaryFile(mode='w') as required:
-        required.write(family+'\n');required.flush()
+        required.write('\n'.join(families)+'\n');required.flush()
         bad=mirror.check_required(coverage,required.name)
     # Sound semantics stay on the original DVD queue, with the converted nested
     # container retained verbatim. Require its existing conversion to succeed.
@@ -274,15 +275,19 @@ def compact_core(source_file, textures, destination):
     decoded=container[base:base+size]
     n=struct.unpack_from('<I',decoded)[0]
     offsets=struct.unpack_from('<%dI'%n,decoded,16)
-    if n!=36 or decoded[16+4*n+25*4:20+4*n+25*4]!=b'EFF\0':
+    if n!=36 or any(decoded[16+4*n+i*4:20+4*n+i*4]!=b'EFF\0' for i in slots):
         raise ValueError('core layout differs from reviewed contract')
-    eff=offsets[25];ids_at=eff+struct.unpack_from('<I',decoded,eff+4)[0]
-    count=struct.unpack_from('<I',decoded,ids_at)[0]
-    ids=[struct.unpack_from('<H',decoded,ids_at+4+i*8)[0] for i in range(count)]
+    ids_by_family={}
+    for slot,family in zip(slots,families):
+        eff=offsets[slot];ids_at=eff+struct.unpack_from('<I',decoded,eff+4)[0]
+        count=struct.unpack_from('<I',decoded,ids_at)[0]
+        ids_by_family[family]=[struct.unpack_from('<H',decoded,ids_at+4+i*8)[0] for i in range(count)]
     def allowed(ctx):
-        if not ctx.startswith(family+'/tpl'):return False
-        index=int(ctx.rsplit('tpl',1)[1])
-        return index<len(ids) and ids[index]!=0xfe
+        for family,ids in ids_by_family.items():
+            if ctx.startswith(family+'/tpl'):
+                index=int(ctx.rsplit('tpl',1)[1])
+                return index<len(ids) and ids[index]!=0xfe
+        return False
     refs=[(f-base,b-base,v) for f,b,v in references if base<=f<base+size]
     palettes=[(o-base,d,c) for o,d,c in palettes if base<=o<base+size]
     out,stats=_compact_upload_only(decoded,refs,palettes,textures,allowed)
@@ -292,15 +297,15 @@ def compact_core(source_file, textures, destination):
         num=struct.unpack_from('<I',data)[0];ofs=struct.unpack_from('<%dI'%num,data,16)
         return data[ofs[i]:min([o for o in ofs if o>ofs[i]]+[len(data)])]
     for i in range(n):
-        if i!=25 and offsets[i] and body(decoded,i)!=body(out,i):
+        if i not in slots and offsets[i] and body(decoded,i)!=body(out,i):
             raise ValueError('unselected core family changed: '+str(i))
     packaged=mirror.replace_native_payload(container,out)
-    report={'contract':'core-hud-upload-only-v1','source_file':str(source_file),
+    report={'contract':'core-effects-hud-upload-only-v1' if include_effects else 'core-hud-upload-only-v1','source_file':str(source_file),
         'source_sha256':hashlib.sha256(source).hexdigest(),**stats,
-        'qualification':coverage,'qualified_selection':family,
+        'qualification':coverage,'qualified_selection':families,
         'retained_unqualified':[e for e in coverage if e.get('complete') is False or not e.get('handled')],
         'loading':'compact type-0 reads directly into matching fixed core reservation; original sound blocks retained',
-        'limits':'Only existing qualified HUD texture consumers; other core coverage unchanged. Target savings require a smaller actual reservation.'}
+        'limits':'Only selected qualified texture consumers; other core coverage unchanged. Target savings require a smaller actual reservation.'}
     destination.mkdir();(destination/'core.das').write_bytes(packaged)
     (destination/'core.arc').write_bytes(out)
     (destination/'compact-core-report.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -314,11 +319,13 @@ if __name__=='__main__':
         choice=parser.add_mutually_exclusive_group(required=True)
         choice.add_argument('--compact-room',type=Path)
         choice.add_argument('--compact-core',type=Path)
+        parser.add_argument('--core-effects',action='store_true',help='also externalize qualified core EFF #1 upload-only images')
         parser.add_argument('--textures',type=Path,required=True)
         parser.add_argument('--output',type=Path,required=True)
         args=parser.parse_args()
         fn,source=(compact_room,args.compact_room) if args.compact_room else (compact_core,args.compact_core)
-        report=fn(source,args.textures,args.output)
+        if args.core_effects and not args.compact_core:parser.error('--core-effects requires --compact-core')
+        report=fn(source,args.textures,args.output,include_effects=True) if args.core_effects else fn(source,args.textures,args.output)
         print('compact archive:',report['original_archive_bytes'],'->',report['resident_archive_bytes'],
               'recovery',report['archive_recovery_bytes'],'identities',len(report['selected']))
     else:

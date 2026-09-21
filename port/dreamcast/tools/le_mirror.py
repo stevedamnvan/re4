@@ -44,6 +44,7 @@ The tree and the mirror are private game data; only this tool is committed.
 """
 import fnmatch
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -867,6 +868,33 @@ def fmt_sequence(sw, off, size, ctx):
     return raw
 
 
+def fmt_eff_path(sw, off, size, ctx):
+    """path.h Path/PathVtx used by EspGetPathAddr and PathGetPos[Em].
+
+    Keep the 12 byte-sized part/weight/padding lanes unchanged. These are
+    distance poly-lines, not id_sys FuncPath spline data or EST/SST sequences.
+    """
+    count = sw.u16(off)
+    if count < 2:
+        raise ValueError('effect path needs at least two vertices')
+    sw._check(off + 4, count * 40)
+    previous = 0.0
+    for i in range(count):
+        p = off + 4 + i * 40
+        values = struct.unpack_from('>7f', sw.data, p)
+        if not all(math.isfinite(v) for v in values):
+            raise ValueError('non-finite effect path vertex')
+        distance = values[6]
+        if distance < previous or (i == 0 and distance != 0):
+            raise ValueError('invalid effect path distances')
+        if sw.data[p + 31] > 3:
+            raise ValueError('effect path weight count exceeds source arrays')
+        sw.f32s(p, 7)
+        previous = distance
+    if previous <= 0:
+        raise ValueError('effect path has no positive length')
+
+
 def fmt_eff(sw, off, size, ctx):
     """Effect data file, version 0xB (src/game/eff_sys.cpp EffData; the ID
     layout system reads the same block through src/game/id_tex.cpp
@@ -882,7 +910,8 @@ def fmt_eff(sw, off, size, ctx):
         u32 from the entry, model / TPL / motion bodies relative to it) whose
         BIN/TPL/motion bodies use the existing source codecs; shape extras
         remain explicit incomplete coverage,
-      - the est / sst / path lists and data blocks, raw when present (recorded).
+      - EST/SST sequences and Path/PathVtx distance paths through their
+        source-specific codecs (unsupported sequence records stay explicit).
     Image and palette data keep their GameCube encoding (fmt_tpl contract)."""
     hdr = [sw.u32(off)] + [sw.offset32(off + 4*i, off) for i in range(1, 12)]
     (version, ofs_tex_id, ofs_est_list, ofs_sst_list, ofs_path_list, ofs_efm_id,
@@ -975,9 +1004,6 @@ def fmt_eff(sw, off, size, ctx):
                                  ("path", ofs_path_list, ofs_path_data)):
         if not o_list:
             continue
-        if name == 'path' and sw.peek32(off + o_list):
-            raw.append('path list and data')
-            continue
         ids = id_table(off + o_list)
         if not ids:
             continue
@@ -987,10 +1013,16 @@ def fmt_eff(sw, off, size, ctx):
         if len(blocks) != len(ids):
             raise ValueError('effect sequence table counts differ')
         starts = sorted(set(blocks))
+        section_end = min([off + value for value in hdr[1:] if value > o_data] + [off + size])
         for i, start in enumerate(starts):
-            end = starts[i + 1] if i + 1 < len(starts) else off + size
+            end = starts[i + 1] if i + 1 < len(starts) else section_end
+            if start < off + o_data + 4 + 4 * len(blocks) or end > section_end:
+                raise ValueError('effect data overlaps table or next section')
             with sw.bounded(start, end - start):
-                raw.extend(fmt_sequence(sw, start, end - start, ctx + '/' + name))
+                if name == 'path':
+                    fmt_eff_path(sw, start, end - start, ctx + '/path')
+                else:
+                    raw.extend(fmt_sequence(sw, start, end - start, ctx + '/' + name))
     return raw
 
 

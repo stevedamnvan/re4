@@ -1,14 +1,13 @@
 # RE4 Dreamcast: boot-forward playable integration
 
-Current measured candidate D322 retains the visible source menu and D320's
-856,992-byte r100 archive recovery. The required1,126,272-byte block pool now
-allocates. Compact qualified core HUD backing and a smaller fixed reservation
-recover another335,136 source-heap bytes. First em12 still needs3,577,728 with
-482,496 free:3,095,232 short before overhead. Source model packets are emitted,
-but the sampled source presentation hold yields zero model presentations.
-Continue actual resource backing recovery and the source-driven native scene/
-actor/event connection. This is not room/gameplay acceptance. See
-[D322 and historical checkpoints](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+Current measured candidate D324 keeps the visible source menu, compact r100
+archive and required 1,126,272-byte block pool. Qualifying core effect paths and
+extending existing upload-only texture externalization reduces the actual core
+reservation to 1,501,312 bytes: another 473,696 source-heap bytes beyond D322.
+First em12 still requests 3,577,728 with 956,192 free (2,621,536 short before
+overhead). Source frame1234 still holds model presentation; no room/playability
+acceptance. Continue large resource-lifetime recovery with the source-driven
+native scene/actor/event connection. See [D324](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
 
 Updated 2026-09-21. **This is the authoritative execution plan.** It supersedes
 previous instructions to finish or optimize an isolated scene before integrating
@@ -70,7 +69,7 @@ See [D315](R4_SUBSCREEN_BOOT_CHECKPOINT.md) for stack/memory costs and precise
 subscreen dependencies. Preload control flow is restored; ARAM storage, archive
 qualification and Sscrn binding still prevent inventory acceptance. Continue
 source-selected native resource ownership and visible output without dropping
-content. D320/D322 subsequently reclaim selected source backing as recorded above;
+content. D320/D322/D324 subsequently reclaim selected source backing as recorded above;
 3D/audio/manual play stay open.
 
 ## Historical D312-D313 boot frontier (D312 integration / D313 storage candidate, 2026-09-21)

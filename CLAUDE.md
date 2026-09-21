@@ -13,28 +13,37 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D322 core recovery; enemy and source presentation remain
+## Current resumption point - D324 core recovery; 2.50 MiB enemy gap remains
 
-D322 extends the existing compact texture identity path to the already-qualified
-core HUD EFF #25 only. Actual fixed core reservation2,310,144 ->1,975,008;
-source heap grows335,136 to9,002,272 bytes. Required block pool still allocates,
-leaving492,800; first enemy3,577,728 still fails with482,496 free (shortfall
-3,095,232 before overhead). Title/menu remains visible; sampled model packets
-still have zero presentations under source hold. No room/gameplay acceptance.
+D324 source-menu replay passes with core EFF #1 Path conversion and selectable
+externalized effect/HUD texture backing. Actual core reservation 1,501,312;
+source heap 9,475,968. Required 1,126,272-byte block pool succeeds, leaving
+966,496. First enemy 3,577,728 still fails with 956,192 free: 2,621,536 short
+before overhead. Gain vs D322 is 473,696 actual heap bytes. Core identities 59;
+CPU noise/palette/mips and unreviewed readers remain. VIB #3 and SAT #9/#10
+remain explicitly unqualified. Prior effect-path error absent from this replay;
+no claim of full effect behavior/presentation. Source frame1234/Rno0=3/System0x800
+still has zero model presentations. Do not clear hold or call room accepted.
 
-Read D322 in R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md. Candidate mirror
-/root/probe/d322-mirror, disc /root/probe/d322-disc, core/report /root/probe/d322-core;
-unchanged fixtures /root/probe/d318d-fixtures. Build with CORE_RESIDENT_BYTES=1975008.
-Default remains full core0x234000. A full asset paired with the smaller profile
-is proven to halt BEFORE copying; profile switching rebuilds mem.o correctly.
-Evidence: C:/Flycast-Evidence/re4-dreamcast/d322-compact-core and
-/d322-core-budget-rejection. The persistent core identity view survives room
-retirement; shared native cache/uploads/fences are unchanged. All26 textures
-were already present, no generation/resizing/VQ/PS2 promotion. Core EFF #1 path,
-VIB #3 and SAT #9/#10 remain explicitly unqualified and byte-identical.
-ELF grows656 text/data/BSS bytes; no gameplay CPU/peak-memory/hardware acceptance.
-Continue enemy/resource backing recovery alongside the source render/event
-connection. Do not reopen stack, readback, decoder or native-backend work.
+Read D324 in R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md and current memory targets
+in R4_ASSET_RESIDENCY_PLAN.md. Candidate /root/probe/d324-mirror,
+core /root/probe/d324-core, disc /root/probe/d324-disc-kos,
+fixtures /root/probe/d324-fixtures. Build CORE_RESIDENT_BYTES=1501312.
+Evidence C:/Flycast-Evidence/re4-dreamcast/d324-core-effects, validated manifest
+and exact dirty-source/executable/assets. D322/full-core references retained;
+default still full0x234000 with existing pre-transfer guard. Runtime native backend
+unchanged in D324. No physical-hardware or full peak/performance acceptance.
+
+Large next memory task is motion/resource residency, not another generic asset
+inventory: em12 FCV backing 1,823,552; existing eligible texture estimate 488,960.
+Preserve active/blending clip lifetime, headers/direct source readers/events and
+complete enemy components. Room/player/weapon native backing can supply the rest;
+calculate net metadata/scratch/VRAM costs, don't promise a fit from raw ceilings.
+The isolated Blender task lives in /root/work/re4-environment-blender, branch
+experiment/r100-environment-blender, private Windows re4_helpers/experiments/
+r100-environment-d323. Main branch/assets untouched by that subagent. Coordinate
+emulator windows. Geometry savings are secondary to the measured multi-megabyte
+gap; preserve failed reduction candidates and their reasons without promotion.
 
 D314 remains the first verified source-driven warning/main-menu UI presentation
 checkpoint. Adapter 4123a85 and focused capture/interaction validation 8f1578b

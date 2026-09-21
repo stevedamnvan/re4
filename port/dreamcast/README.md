@@ -30,17 +30,17 @@ block pool now allocates** and blocks0-2 load/create. Source title/menu remains
 visible. The shared texture path uses the existing64 KiB storage buffer for
 bounded native uploads; no full package is staged on the source heap.
 
-D322 also reduces the persistent core reservation from2,310,144 to1,975,008,
-recovering another **335,136 source-heap bytes** through the same native resource
-path. Existing26 HUD texture packages replace upload-only core backing; other
-families stay unchanged. This is selectable; an oversized original is rejected
-before copying into the smaller reservation.
+D322 and D324 extend the same native path to qualified persistent core HUD/effect
+textures. The actual core reservation is now **1,501,312 bytes**, down from
+2,310,144: **808,832 cumulative source-heap bytes recovered**, including another
+473,696 since D322. Core paths now convert through their source layout; palette,
+mip, CPU-noise and unreviewed backing remain. The full reference is selectable.
 
-The enemy still needs3,577,728 bytes with482,496 free at the first request
-(**3,095,232-byte shortfall** before overhead).
-Source 3D preparation emits packets, but the captured source presentation hold
-produces zero model presentations. This is not a restored cabin or gameplay.
-Read [D322's evidence and current limits](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+The enemy still needs 3,577,728 bytes with 956,192 free at its first request
+(**2,621,536-byte / 2.50 MiB shortfall** before overhead). Source 3D emits diagnostic
+packets, but source hold still yields zero model presentations. This is not a
+restored cabin or gameplay. Read [D324](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+
 ARAM/event/audio, inventory, full manual controls, transitions/retry and physical
 hardware remain open. The first three source rooms remain the objective.
 

@@ -1,26 +1,46 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
-buffer after synchronous consumption, retaining full per-frame capacity. The
-source menu remains visible; required block/enemy allocations still fail.
-Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
-4,276,992 before overhead/intervening allocations. Continue the source-to-native
-world/actor connection and actual resource backing recovery, using the existing
-room renderer and the UI-owned PVR frame. See
-[D316](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+Current measured candidate D324 keeps the visible source menu, compact r100
+archive and required 1,126,272-byte block pool. Qualifying core effect paths and
+extending existing upload-only texture externalization reduces the actual core
+reservation to 1,501,312 bytes: another 473,696 source-heap bytes beyond D322.
+First em12 still requests 3,577,728 with 956,192 free (2,621,536 short before
+overhead). Source frame1234 still holds model presentation; no room/playability
+acceptance. Continue large resource-lifetime recovery with the source-driven
+native scene/actor/event connection. See [D324](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
 
+Updated 2026-09-21; current integration reference D324. Historical budgets below
+retain their named checkpoints. This supports PLAYABLE_PATH and REALTIME_PATH;
+it is not a competing prerequisite roadmap.
 
-Updated 2026-09-21; current integration reference D316 (source menu retained; primitive storage reduced; block/enemy allocations still fail).
-Historical resource measurements retain their original revision identities.
-This policy supports the authoritative [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
-R4 is not an independent prerequisite project that must be perfected before
-boot-forward game integration can start. [REALTIME_PATH.md](REALTIME_PATH.md)
-defines measurement and fidelity/performance qualification.
+### Where the remaining memory can come from
 
-D313's selectable static-module compaction reclaims 46,464 live heap bytes and
-reduces em12 demand by 428,288; neither required allocation fits yet. Source
-base-texture inventory is a next capacity lead, not a measured active set or
-license to upload everything. See [the exact checkpoint](R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
+The current **2,621,536-byte gap is only the first enemy archive request**.
+Enemy instance work, events/audio, loading/retry peaks and fragmentation still
+need headroom. There is no verified complete-fit budget yet. Do not count the
+already recovered room/core/static-REL/primitive bytes again.
+
+| Existing measured backing | Bytes | Proposed lever and acceptance limit |
+|---|---:|---|
+| em12 FCV bank (153 clips) | 1,823,552 | Keep compact headers/identities, load and pin active/blending clips via source motion boundaries. Largest clip32,416. A hypothetical256–512KiB cache leaves1,299,264–1,561,408 gross bytes before new metadata/scratch; not an accepted cache size or net saving. Preserve direct header readers, events, actor sharing, release/retry and source timing. |
+| em12 eligible nonpalette/nonmip texture estimate | 488,960 | Extend current source identity/native upload ownership to the enemy archive, then remove actual backing. CPU readers and whole-family qualification still required; retained token/table costs reduce the saving. No whole-archive load before discarding. |
+| Remaining r100 base-level source texels | 968,736 | Existing D313 inventory1,830,048 minus D320 removed861,312; not a fresh inventory or all safe-to-remove bytes. Primarily pending mip/palette/unreviewed families. Preserve actual mip/filter/alpha/CPU semantics and native compact VRAM representation; shared cache has finite capacity. |
+| Current player/handgun fixed-reservation slack | 295,648 | Present loads0x101a20/0x3e300 versus reservations0x118000/0x70000. Only a candidate ceiling: audit other required weapons/costumes, moduleBSS, second transfers and overlap before shrinking or adapting ownership. |
+| Player + handgun source base textures | 247,808 | Existing inventory209,920+37,888; same qualified texture ownership strategy, no double-counting with reservation slack. Future native copies must fit VRAM and preserve complete actors. |
+
+The motion working set is the main architectural lever. Existing zlib pricing
+saves437,440 on disc only and key-block dedup is low yield; neither is a runtime
+solution. Do not delete unused-in-one-capture clips or replace source animation.
+Motion preparation must consume one qualified representation per active clip,
+with bounded installation and measured simultaneous pins. General campaign
+streaming is unnecessary for proving this encounter's working set.
+
+The Blender candidate selected shared room BIN0..10 because their actual room
+archive backing is529,344 bytes (an impossible-delete ceiling). Enemy meshes
+are415,040 total; the inspected PS2 top-level set is slightly larger. Neither
+can close the gap. Replacing block0 alone also frees no pool because blocks1/2/3
+set the1,126,272 maximum. Keep the isolated experiment secondary and selectable;
+never count a small repack file or rejected appearance as source-heap recovery.
 
 ## Current decision
 
@@ -65,9 +85,9 @@ r100 and dispatches its sound blocks; D306 measures the ensuing pool exhaustion.
 D307 reclaims a duplicate platform reservation, returning 458,752 bytes without
 cutting gameplay pools or render capacity. Collision/event allocations succeed;
 D309 qualifies player/weapon data and D311 repairs cloth scratch addressing.
-D312 now qualifies required EVD files and binds em12, but its 4,006,016-byte body
+Historically, D312 qualified required EVD files and binds em12, but its 4,006,016-byte body
 fails with 409,152 bytes free; the source's 1,126,272-byte block-model pool also
-fails. Account for both before accepting room initialization. See
+failed then. D320/D324 supersede those memory measurements as above. See
 [R4_EVENT_ENEMY_CHECKPOINT.md](R4_EVENT_ENEMY_CHECKPOINT.md). This is a measured
 resource blocker, not justification for arbitrary source-pool or content cuts.
 Custom `.re4room`/`.re4sat` and native textures serve the scene renderer and are

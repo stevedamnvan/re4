@@ -125,4 +125,55 @@ class CompactCore(unittest.TestCase):
             source.write_bytes(container)
             with self.assertRaises(FileExistsError):ui.compact_core(source,textures,root/'out')
 
+
+    def test_opt_in_core_effect_paths_relocate_and_noise_stays_resident(self):
+        from test_le_mirror import make_eff, make_anm, make_tpl
+        image=tpl.TplImage(16,16,1,bytes(range(256)))
+        texture=make_tpl([(image.width,image.height,image.format,image.data)])
+        # Source texel spans are 32-byte aligned, as required by compact.
+        texture=bytearray(texture);texture[84:84]=bytes(12);struct.pack_into('>I',texture,28,96)
+        eff,_=make_eff([(7,bytes(texture),make_anm(16,16,0,0,1)),
+                        (0xfe,bytes(texture),make_anm(16,16,0,0,1))])
+        eff=bytearray(eff);li=struct.unpack_from('>I',eff,16)[0]
+        struct.pack_into('>IHHI',eff,li,1,9,0,0)
+        table=len(eff);struct.pack_into('>I',eff,40,table)
+        eff+=struct.pack('>2I',1,32)+bytes(24)+struct.pack('>H2x',2)
+        for distance in (0.,10.):eff+=struct.pack('>7f12B',distance,1.,2.,0.,1.,0.,distance,2,3,0,2,40,0,0,0,0,0,0,0)
+        eff+=bytes((-len(eff))%32)
+        archive=bytearray(320);struct.pack_into('>I',archive,0,36)
+        for i in range(36):
+            struct.pack_into('>I',archive,16+4*i,len(archive))
+            archive[160+4*i:164+4*i]=b'EFF\0' if i in (1,25) else b'CNS\0'
+            archive+=eff if i in (1,25) else bytes(32)
+        container=bytearray(ui.mirror.CONTAINER_MAGIC+bytes(1024-32))+archive
+        struct.pack_into('>4I',container,32,0,len(archive),0,1024)
+        struct.pack_into('>I',container,64,ui.mirror.END_OF_TABLE)
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'core.das';source.write_bytes(container);textures=root/'tex';textures.mkdir()
+            key,_=ui.image_identity(image)
+            package,_=tpl.build_package([image],[tpl.MaterialBinding('source',0,None)],twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
+            (textures/(key+'.re4tex')).write_bytes(package)
+            report=ui.compact_core(source,textures,root/'effects',include_effects=True)
+            self.assertEqual(len(report['selected']),2) # one ID7 each; CPU ID FE retained
+            data=(root/'effects/core.arc').read_bytes()
+            for i in (1,25):
+                e=struct.unpack_from('<I',data,16+4*i)[0]
+                t=e+struct.unpack_from('<I',data,e+40)[0]
+                path=t+struct.unpack_from('<I',data,t+4)[0]
+                self.assertEqual(struct.unpack_from('<H',data,path)[0],2)
+                self.assertEqual(struct.unpack_from('<7f',data,path+44),(10.,1.,2.,0.,1.,0.,10.))
+                self.assertEqual(data[path+32:path+44],bytes([2,3,0,2,40,0,0,0,0,0,0,0]))
+                t=e+struct.unpack_from('<I',data,e+24)[0]
+                palette=t+struct.unpack_from('<I',data,t+8)[0] # noise ID FE, second palette
+                desc=palette+struct.unpack_from('<I',data,palette+8)[0]
+                hdr=palette+struct.unpack_from('<I',data,desc)[0]
+                pixels=palette+struct.unpack_from('<I',data,hdr+8)[0]
+                self.assertEqual(data[pixels:pixels+256],image.data)
+            # A missing qualified-path conversion cannot be waved through.
+            bad=bytearray(container);e=1024+struct.unpack_from('>I',bad,1024+20)[0]
+            t=e+struct.unpack_from('>I',bad,e+40)[0];path=t+struct.unpack_from('>I',bad,t+4)[0]
+            struct.pack_into('>H',bad,path,0);source.write_bytes(bad)
+            with self.assertRaisesRegex(ValueError,'unqualified selected'):
+                ui.compact_core(source,textures,root/'bad',include_effects=True)
+
 if __name__=='__main__':unittest.main()

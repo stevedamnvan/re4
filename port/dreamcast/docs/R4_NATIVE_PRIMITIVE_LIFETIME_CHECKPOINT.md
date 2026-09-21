@@ -525,3 +525,103 @@ Keep this selectable equivalent backing reduction. Continue recovering the
 actual enemy/active resource working set and completing source-controlled native
 presentation. Smaller reviewed render assets remain authorized where measured
 cost justifies them; whole-room/source-system requirements are not waived.
+
+
+## D324 - core effect paths qualified and more backing externalized
+
+D324 continues D322's existing native resource connection. `le_mirror.fmt_eff`
+now converts the distance paths consumed by `EspGetPathAddr` -> `PathGetLength` /
+`PathGetPos[Em]`, using `include/path.h` (u16 count, 4-byte header, 40-byte vertices:
+seven floats plus twelve byte lanes). This is not the ID-system spline format.
+IDs and table-relative offsets retain identity, shared paths convert once, and
+invalid lengths, bounds, weights or non-finite scalars reject with rollback.
+Eleven real core paths / 344 vertices preserve every scalar bit and byte lane
+through endian conversion AND archive compaction. The previous repeated
+`ESP_CTRL02 : OUT OF RANGE.` message is absent from the 90-second replay; this
+alone does not establish all effect behavior or native effect presentation.
+
+`prepare_native_ui.compact_core(..., include_effects=True)` / `--core-effects`
+adds the now-qualified core EFF #1 upload-only table to HUD #25. Reuses
+`_compact_upload_only`, `replace_native_payload`, source `CoreDataRead` identity
+binding, `SourceIdentityTable`, shared `Package::open_streamed/upload`, bounded
+storage and existing GPU retirement. No new loader/cache/backend or runtime
+source change. CPU noise ID FE, palette/mip data, effect sequences/paths/models,
+and unselected families remain resident. VIB #3 and SAT #9/#10 are still explicitly
+unqualified, with their converted/raw bodies unchanged. Sound containers remain
+on the original DVD path.
+
+### Measured allocation result
+
+| Same allocation point | D322 | D324 |
+|---|---:|---:|
+| Actual persistent core reservation | 1,975,008 | 1,501,312 |
+| Source heap capacity | 9,002,272 | 9,475,968 |
+| Required block pool | 1,126,272, succeeds | 1,126,272, succeeds |
+| Free after block pool | 492,800 | 966,496 |
+| First enemy request | 3,577,728, fails | 3,577,728, fails |
+| Free at first enemy request | 482,496 | 956,192 |
+| Sampled native room upload heap before/after | 410,208 / 410,208 | 883,904 / 883,904 |
+
+**473,696 additional real source-heap bytes recovered**; enemy shortfall is now
+**2,621,536 bytes (2.50009 MiB) before overhead**. The original core payload was
+2,295,616; cumulative payload recovery is 794,304. Relative to the original
+2,310,144 reservation, cumulative source-heap recovery is 808,832. Final core
+includes 1,888 token bytes and 768 identity-table bytes (59 descriptors). No full
+original core is loaded first. DVD staging, shared 64 KiB upload bounce and 144
+bytes per installed texture metadata are unchanged; no RAM saving is credited
+from disc-only append transport. ELF text/data/BSS sizes are unchanged from D322.
+
+33 newly externalized source image descriptors reuse eight existing packages;
+25 missing packages were produced with the existing deterministic converter in
+private fixtures. No new encoder, resize, PAL/VQ promotion or default asset
+change. Source pattern tables and per-frame texture identities remain. The shared
+native cache retains its existing 4 MiB policy, with menu peak 4,192,256 bytes.
+Ten room uploads succeed. This does not measure all core/enemy textures resident
+simultaneously, moving effect quality, full loading/retry peaks or gameplay CPU.
+The added cold identity work is 59 records instead of 26; hot caches are unchanged.
+
+Source menu capture remains visible at 640x480. The sampled model snapshot is
+again source frame1234/Rno0=3/System0x800: 16 parts, 5,507 input / 87 output
+triangles, 8,512 peak packet bytes, zero invalid/overflow, eight rejected resources,
+**zero model presentations**. Source hold is preserved. This is not room acceptance;
+enemy creation, full model/material/event/ARAM/audio/inventory and route/retry
+requirements remain. The capture ends at its deadline, not a claimed game fault.
+
+### Selection, checks and identities
+
+```sh
+python3 port/dreamcast/tools/prepare_native_ui.py \
+  --compact-core /root/re4data/etc/core.das --core-effects \
+  --textures /root/probe/d324-fixtures/tex --output <fresh-core-output>
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/game -j4 CORE_RESIDENT_BYTES=1501312
+```
+
+Default full-core budget and the HUD-only selection remain available. Existing
+pre-transfer overflow guard remains; its D322 negative test is not a new D324
+run. Current paths: `/root/probe/d324-core`, `/root/probe/d324-mirror`,
+`/root/probe/d324-disc-kos`, `/root/probe/d324-fixtures`. The first packaging attempt
+without kos-env exited before creating an image; the fresh `-kos` directory is the
+actual packaged result. Prior assets/evidence are retained.
+
+Checks: 27 mirror, 3 compact archive, 40 room-endian and 5 shared native UI/package
+checks pass, plus real path bit/byte comparison. Tests cover weighted/shared paths,
+invalid input rollback, compaction relocation, CPU-noise retention and rejection
+of an unqualified selected family. No recovered C++ source was changed in this
+slice; no new PowerPC matching claim. Same five known missing stubs remain.
+
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d324-core-effects` includes validated
+manifest, exact dirty build source, executable/disc/assets/fixtures, toolchain,
+launcher/readback/symbol identities, logs, snapshot and inspected menu image.
+ELF SHA256 `f83e0a70a79603cf9fcae45497034c3b3a2994835663a94fd311110875943732`.
+Disc SHA256 `b9eee0faa9c1e097175bc7e62bbc696e72e0669bb76f18f2eb7ec543c30ce118`.
+KOS `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`, SH GCC15.2.0,
+Flycast `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`.
+Keep selectable equivalent backing reduction; no physical-hardware acceptance.
+
+The next large memory lever is enemy motion working-set residency, alongside
+qualified native texture externalization. Do not count all bank bytes as a saving:
+active/blending clips, source header readers, events, per-instance pins, loading
+scratch and retry/retire ownership must be measured. Blender is secondary; the
+isolated static roundtrip/geometry experiment is not a main-branch runtime change.
+See the current allocation-backed priorities in R4_ASSET_RESIDENCY_PLAN.md.

@@ -176,6 +176,59 @@ class EffHandlerTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", data, 0)[0], 0xB)
 
 
+class EffectPathTest(unittest.TestCase):
+    def fixture(self, shared=False):
+        blob, _ = make_eff([])
+        data = bytearray(blob)
+        # Reuse the path list's 32-byte reservation; append table-relative
+        # path data. The two IDs may intentionally resolve one shared path.
+        li = struct.unpack_from('>I', data, 16)[0]
+        struct.pack_into('>IHHIHHI', data, li, 2 if shared else 1,
+                         3, 0x1234, 0x12345678, 9, 0, 0)
+        table = len(data)
+        struct.pack_into('>I', data, 40, table)
+        data += be32(2, 32, 32) + bytes(20) if shared else be32(1, 32) + bytes(24)
+        path = len(data)
+        data += struct.pack('>H2s', 2, b'PQ')
+        for position, normal, distance in [((1.,2.,3.), (0.,1.,0.), 0.), ((4.,5.,6.), (0.,1.,0.), 9.25)]:
+            data += struct.pack('>7f12B', *position, *normal, distance,
+                                4, 7, 9, 3, 25, 50, 0, 11, 22, 33, 44, 55)
+        data += bytes((-len(data)) % 32)
+        return bytes(data), li, table, path
+
+    def convert(self, blob):
+        data = bytearray(blob); entry = {}
+        LE.guarded(LE.Swapper(data, 'effect-path'), LE.fmt_eff, 0, len(data), 'effect-path', entry)
+        return data, entry
+
+    def test_source_polyline_values_weights_and_shared_offset_identity(self):
+        for shared in (False, True):
+            original, li, table, path = self.fixture(shared)
+            data, entry = self.convert(original)
+            self.assertTrue(entry['complete'], entry)
+            self.assertEqual(struct.unpack_from('<HHI', data, li+4), (3, 0x1234, 0x12345678))
+            self.assertEqual(struct.unpack_from('<I', data, table+4)[0]+table, path)
+            self.assertEqual(struct.unpack_from('<H', data, path)[0], 2)
+            self.assertEqual(data[path+2:path+4], b'PQ')
+            for i in range(2):
+                p = path+4+i*40
+                self.assertEqual(struct.unpack_from('<7f', data, p), struct.unpack_from('>7f', original, p))
+                self.assertEqual(data[p+28:p+40], original[p+28:p+40])
+            # PathGetLength and PathGetPos inputs retain exact source values.
+            self.assertEqual(struct.unpack_from('<f', data, path+4+40+24)[0], 9.25)
+            if shared:self.assertEqual(struct.unpack_from('<I', data, table+8)[0]+table, path)
+
+    def test_invalid_path_rejected_without_partial_conversion(self):
+        original, li, table, path = self.fixture()
+        for field, fmt, value in [(path, '>H', 500), (path+4+31, 'B', 4),
+                                  (path+4+40+24, '>f', -1), (path+4, '>f', float('nan')),
+                                  (table+4, '>I', 4)]:
+            data = bytearray(original);struct.pack_into(fmt, data, field, value)
+            out, entry = self.convert(bytes(data))
+            self.assertFalse(entry['handled'], entry)
+            self.assertEqual(out, data)
+
+
 class IsolationTest(unittest.TestCase):
     def test_child_cannot_reach_a_neighbour_through_a_bad_offset(self):
         tpl = make_tpl([(16, 16, 5, IMAGE)])
