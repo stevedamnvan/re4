@@ -288,13 +288,18 @@ constexpr float kEnemySpawnY = 0.860f;
 constexpr float kEnemySpawnZ = -38.890f;
 constexpr float kEnemySpawnYaw = -1.39f;
 #elif defined(RE4DC_SCENE_R101)
-// Point 0 of r101_016.RTP, the village's own authored route table. A route
-// point is where the source walks its own actors, so it is a position the room
-// is built around rather than one picked off a bounding box.
-constexpr float kSpawnX = -51.1649f;
-constexpr float kSpawnY = 0.500f;
-constexpr float kSpawnZ = 22.1509f;
-constexpr float kSpawnYaw = 0.0f;
+// The source enters r101 through r100's village-gate door: r100_016.AEV
+// record 0 (DOOR, dstStage 1, dstRoom 0x01, dstPart 0). sceAtFunc_door copies
+// its dstPos/dstAngle into NextPos/NextY and gameDoordemo places the player
+// there with sub_angle = NextY, Part = next_point. Yaw is the source ang.y
+// unchanged, as r100's r100_Sce_look value above. Position in metres.
+// State fixture: first visit (Item_find_flg 0x2000 clear, Rsf 6/7 clear), so
+// R101Init's evt00 encounter, obj00 placement and enemy set are the source
+// path; none of those actors or events exist in this runtime yet.
+constexpr float kSpawnX = -52.1444023f;
+constexpr float kSpawnY = 0.0905708008f;
+constexpr float kSpawnZ = 22.5242734f;
+constexpr float kSpawnYaw = 2.12202168f;
 constexpr float kGoalX = kSpawnX;
 constexpr float kGoalY = kSpawnY;
 constexpr float kGoalZ = kSpawnZ;
@@ -8109,6 +8114,36 @@ int main() {
             // CameraQuasiFPS::hitCheck, not an extra visible target.
             constexpr re4dc::collision::Vec3 close =
                 {0.0f, 1.800f, -0.090f};
+            const re4dc::collision::Vec3 camera =
+                {camera_x, camera_y, camera_z};
+            const re4dc::collision::Vec3 target_offset =
+                {target_x, target_y, target_z};
+            const auto corrected_camera = correct_source_camera_walls(
+                collision, player, camera, close, target_offset, 50.0f);
+            const auto eye_world = player_offset_to_world(
+                player, corrected_camera);
+            const auto target_world = player_offset_to_world(
+                player, target_offset);
+            eye = {eye_world.x, eye_world.y, eye_world.z, 1.0f};
+            target = {target_world.x, target_world.y, target_world.z, 1.0f};
+            half_fov = 50.0f * kPi / 360.0f;
+#elif defined(RE4DC_SCENE_R101)
+            // r101_000.CAM has no area containing the door entry point
+            // (CameraCtrl::areaHitCheck finds nothing), so
+            // CameraQuasiFPS::bindDefaultCamera binds g_transOfs[0] for
+            // Leon (checkCameraType: pl_type 0 -> m_trans_type 0) and
+            // calcOffset picks the middle site [1] with no C-stick pitch.
+            // Entry: Campos, campos2 (the hitCheck close point), target, fovy.
+            // Position-dependent area cuts (areas 2/3/6/7 carry type-8 cuts
+            // elsewhere in the village) are not evaluated yet.
+            constexpr float camera_x = -0.500f;
+            constexpr float camera_y = 1.765f;
+            constexpr float camera_z = -1.190f;
+            constexpr float target_x = 0.0f;
+            constexpr float target_y = 1.340f;
+            constexpr float target_z = 1.480f;
+            constexpr re4dc::collision::Vec3 close =
+                {-0.180f, 1.700f, -0.110f};
             const re4dc::collision::Vec3 camera =
                 {camera_x, camera_y, camera_z};
             const re4dc::collision::Vec3 target_offset =
