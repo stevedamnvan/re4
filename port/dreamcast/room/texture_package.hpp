@@ -61,6 +61,20 @@ public:
     bool open(const char* path);
     bool adopt(const std::uint8_t* data, std::size_t size);
     bool upload();
+    // After a successful upload the texels are in texture memory and nothing
+    // reads them from the CPU again, so the backing store can go. This keeps
+    // the header, the descriptors, the material names, the VRAM pointers and
+    // the ownership flags, and copies the metadata into its own allocation so
+    // the caller is free to reuse or release the bytes it adopted. It is not
+    // close(), which would also free the texture memory.
+    //
+    // False means nothing changed and the payload is still live and valid.
+    bool release_payload();
+    bool payload_released() const { return payload_released_; }
+    // Bytes of adopted storage that release_payload() made reusable, and the
+    // metadata copy that replaced them. The difference is the real saving.
+    std::size_t released_bytes() const { return released_bytes_; }
+    std::size_t metadata_bytes() const { return metadata_bytes_; }
     void close();
 
     const Header& header() const { return *header_; }
@@ -87,6 +101,12 @@ private:
     // texture memory it points at, false when it borrowed an earlier
     // descriptor's. Only an owner may free.
     bool* owns_texture_ = nullptr;
+    // The metadata copy that outlives the adopted bytes, and what the trade
+    // cost. Null while the package still points at the caller's storage.
+    std::uint8_t* metadata_ = nullptr;
+    std::size_t metadata_bytes_ = 0;
+    std::size_t released_bytes_ = 0;
+    bool payload_released_ = false;
     std::size_t vram_bytes_ = 0;
     std::uint32_t shared_textures_ = 0;
     const char* error_ = "not opened";

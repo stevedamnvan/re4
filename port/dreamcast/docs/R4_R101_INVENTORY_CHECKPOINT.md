@@ -61,16 +61,50 @@ Against the budget D4 established — 11,191,138 bytes for room content, with th
 persistent packages still embedded in the romdisk — **r101's room content is
 836,765 bytes over on its own**, before a single enemy.
 
-Two further hard limits in the current runtime:
+That budget mixes categories that behave differently, and the rest of this
+document is easier to read against them kept apart:
 
+| category | what it is | r100 today |
+|---|---|---:|
+| disc bytes | what the image carries; costs no RAM | 4,393,620 room-owned |
+| persistent CPU bytes | package bytes resident for the room's life | 3,572,256 in the arena |
+| temporary installation bytes | read and released during loading | 2,099,616 texture texels |
+| derived state | `.bss` and heap compiled from packages | 630,000 static lighting + headers |
+| VRAM | texture memory | 2,604,984 of 5,635,840 |
+| AICA | sound memory | 1,378,336 free |
+| safety margin | arena slack over the measured high water | 97,760 |
+
+Two things that follow, and that earlier drafts got wrong: moving a persistent
+package out of the executable's romdisk and into RAM **is not a RAM saving** --
+it is the same bytes in a different place, and 5A measured exactly that
+(resident image 10,908,585 to 10,913,841, parity). What it buys is
+reclaimability, which is a different property. And temporary installation bytes
+only stop costing RAM once the reservation that holds them shrinks; until then
+they are reclaimed on paper only.
+
+Vertex-count limits in the current runtime. An earlier draft of this section
+read two of them wrongly; corrected:
+
+* **A 65,535 global-vertex restriction**, independent of everything else.
+  `prepare_room_batch_locals()` refuses a room whose `vertex_count` exceeds
+  `0xffff`, because `g_room_batch_vertices` stores global vertex indices as
+  `std::uint16_t`. r101's 177,032 vertices are 2.7x over it. This is the
+  binding limit on r101's geometry and no constant raises it: the array's
+  element type would have to widen. The refusal is a refusal rather than a
+  failure -- the renderer keeps working through the hashed-cache fallback, so
+  the cost is the direct-strip path, not correctness.
 * `kRoomStaticLightingVertexCapacity` is **45,000** (`main.cpp:2821`), and
-  `prepare_room_static_lighting()` refuses any room above it. r101 has 177,032
-  vertices, 3.9x over. Raising the cap to fit r101 costs 14 bytes per vertex in
-  `.bss`: 2,478,448 instead of 630,000, another 1,848,448 bytes against the same
-  budget.
-* `kRoomBatchSlotCapacity` is 1,024 against r101's 3,811 batches and
-  `kRoomVertexCacheCapacity` 2,048 against 177,032 vertices. Both are caches, so
-  they degrade rather than fail, but they would thrash.
+  `prepare_room_static_lighting()` refuses any room above it. Growing it to
+  177,032 costs 14 bytes per vertex in `.bss`, 2,478,448 instead of 630,000, a
+  further 1,848,448 bytes. That is **an option with a price, not a mandatory
+  cost**: whether whole-room static-light arrays are the right representation
+  for a room this size is exactly the question the geometry and residency work
+  has to answer, and bounding them by a working set instead would cost less.
+* `kRoomBatchSlotCapacity` is **1,024 local vertices within one batch**, not a
+  count of the room's batches. The room's batch count is bounded by
+  `kRoomBatchTableCapacity`, which is 4,096 and **does** fit r101's 3,811
+  batches. `kRoomVertexCacheCapacity` (2,048) is a cache over 177,032 vertices
+  and would thrash, which degrades rather than fails.
 
 VRAM and AICA are not the constraint, as D4 said. r101's texture payload is
 2,981,888 against 5,635,840 usable, leaving room for the always-resident
@@ -89,12 +123,31 @@ D4 left r101's enemies as an open 1.5 to 3.5 MB range. The authored list is in
 | r100 (0x0100) | 25 | em12 x12, em21 x1, em23 x5, em2a x7 |
 | r101 (0x0101) | **46** | **em15 x43**, em26 x1, em28 x2 |
 
+These are **authored entries in the enemy list**, which is not the same thing
+as simultaneous live actors. Four distinct quantities are involved and this
+document should not conflate them:
+
+* *authored entries* -- rows in `emleon00.esl` for the room: 46 for r101.
+* *source-controlled live instances* -- how many the room's own code has alive
+  at once. `R101Work` tracks ten reset slots and `r101_checkEmNum` gates
+  spawning, so the authored 43 em15 rows are a pool the room draws from over
+  the fight, not a simultaneous population. What the real ceiling is has not
+  been read out of the source yet and is not claimed here.
+* *shared resource variants* -- one converted em15 model and texture set serves
+  every em15 instance, so resource cost scales with distinct ids (three), not
+  with entries.
+* *per-instance state* -- pose palettes, transforms and AI state, which do
+  scale with live instances.
+
+**No claim of 43 simultaneous em15 actors is made or supported by the ESL
+count.**
+
 r101 and r100 share **no** enemy id, so nothing carries over. The archives are
 `em15.drs` 5,970,784, `em26.drs` 363,712 and `em28.drs` 228,928 on disc; at
 r100's own em12 conversion ratio (5,664,736 archive to 1,278,152 converted
-model plus textures) that is roughly 1.5 MB converted, the bottom of D4's range
-— but only for one model each, and r101's fight is 43 simultaneous em15
-entries with reset waves.
+model plus textures) that is roughly 1.5 MB converted for one model each. Since
+instances share their model, that figure is close to the whole resource cost;
+what it does not cover is per-instance state.
 
 It is also worth recording that **the accepted r100 build runs a slice, not the
 room**: r100 is authored with 25 enemies of four types and the port ships one
@@ -121,8 +174,9 @@ it. The ways forward are materially different and the choice is not mine to
 make:
 
 1. **Take the persistent packages out of the romdisk as well.** 5A deliberately
-   left them embedded. Removing them frees about 2.6 MB of `.text` and raises
-   the budget toward the 13,790,208 ceiling. r101's 12.03 MB plus 1.85 MB of
+   left them embedded. Removing them moves about 2.6 MB out of the executable
+   and into reclaimable storage. Note that this is a move, not a saving: it
+   does not reduce the resident image, it makes those bytes releasable. r101's 12.03 MB plus 1.85 MB of
    extra static-lighting arrays plus enemies still exceeds it.
 2. **Reduce r101's fidelity.** A 128-pixel texture limit takes 2.99 MB to about
    0.9 MB. Geometry has no equivalent lever short of partitioning.

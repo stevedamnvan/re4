@@ -176,6 +176,60 @@ bool Package::upload() {
     return true;
 }
 
+// Copies the header and the descriptor array out of the adopted bytes and
+// points the package at the copy. Everything the runtime asks a texture package
+// for after upload -- header(), textures(), find(), pvr_texture() -- reads only
+// that prefix, so the texels behind it are free.
+//
+// Refuses, changing nothing, if the package has not uploaded, if any payload
+// would fall inside the prefix (so dropping the rest could not be safe), or if
+// the copy cannot be allocated.
+bool Package::release_payload() {
+    if(payload_released_) {
+        return true;
+    }
+    if(header_ == nullptr || pvr_textures_ == nullptr) {
+        error_ = "payload release before a successful upload";
+        return false;
+    }
+    const std::uint64_t descriptor_end =
+        static_cast<std::uint64_t>(header_->texture_offset) +
+        static_cast<std::uint64_t>(header_->texture_count) *
+            header_->texture_stride;
+    if(descriptor_end > size_) {
+        error_ = "descriptor range outside the package";
+        return false;
+    }
+    const std::size_t prefix = static_cast<std::size_t>(descriptor_end);
+    // Every payload must lie beyond the prefix, or the prefix is not a
+    // self-contained metadata block and nothing may be dropped.
+    for(std::uint32_t index = 0; index < header_->texture_count; ++index) {
+        if(textures()[index].data_offset < prefix) {
+            error_ = "payload overlaps the metadata prefix";
+            return false;
+        }
+    }
+    std::uint8_t* copy = new(std::nothrow) std::uint8_t[prefix];
+    if(copy == nullptr) {
+        error_ = "metadata copy allocation failed";
+        return false;
+    }
+    std::memcpy(copy, data_, prefix);
+    metadata_ = copy;
+    metadata_bytes_ = prefix;
+    released_bytes_ = size_;
+    payload_released_ = true;
+    data_ = copy;
+    size_ = prefix;
+    header_ = reinterpret_cast<const Header*>(copy);
+    // The mapping, if there was one, backed the bytes just copied away.
+    if(file_ != FILEHND_INVALID) {
+        fs_close(file_);
+        file_ = FILEHND_INVALID;
+    }
+    return true;
+}
+
 void Package::close() {
     if(pvr_textures_ != nullptr) {
         if(header_ != nullptr) {
@@ -200,6 +254,11 @@ void Package::close() {
         fs_close(file_);
     }
     file_ = FILEHND_INVALID;
+    delete[] metadata_;
+    metadata_ = nullptr;
+    metadata_bytes_ = 0;
+    released_bytes_ = 0;
+    payload_released_ = false;
     data_ = nullptr;
     size_ = 0;
     header_ = nullptr;

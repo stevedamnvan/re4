@@ -3376,6 +3376,10 @@ bool g_room_primitive_bounds_ready = false;
 constexpr std::uint32_t kRoomLocalIndexCapacity = 65536U;
 constexpr std::uint32_t kRoomBatchVertexCapacity = 57344U;
 constexpr std::uint32_t kRoomBatchTableCapacity = 4096U;
+// Local vertices held for *one* batch at a time, not a count of the room's
+// batches -- that is kRoomBatchTableCapacity. A batch with more local vertices
+// than this is counted in g_room_batch_local_oversize and falls back; it does
+// not refuse the room.
 constexpr std::uint32_t kRoomBatchSlotCapacity = 1024U;
 // R3x: the direct-strip path reads exactly these seven words per vertex, so
 // the slot holds only them (32 bytes). The fallback and triangle paths, which
@@ -3852,6 +3856,22 @@ bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
     return true;
 }
 
+// Builds the per-batch local vertex tables the direct-strip path indexes into.
+//
+// Three separate limits refuse a room here, and they are not the same limit:
+//
+//  * kRoomBatchTableCapacity (4,096) bounds the room's *batch count*.
+//  * kRoomLocalIndexCapacity (65,536) bounds its primitive index count.
+//  * 0xffff bounds the room's *global vertex count*, because
+//    g_room_batch_vertices stores global vertex indices as std::uint16_t. This
+//    is a restriction on the room as a whole and is independent of both the
+//    per-batch slot capacity and the static-lighting capacity; a room of more
+//    than 65,535 vertices cannot use this path at all, whatever those are set
+//    to. Widening it means widening that array's element type, not raising a
+//    constant.
+//
+// Returning false is a refusal, not a failure: the caller keeps rendering
+// through the hashed-cache fallback. Nothing is truncated.
 bool prepare_room_batch_locals(const re4dc::room::Package& room) {
     const auto& header = room.header();
     if(header.batch_count > kRoomBatchTableCapacity ||
@@ -6232,11 +6252,18 @@ void restart_snapshots(std::uint32_t tick) {
 // this checkpoint.
 // ---------------------------------------------------------------------------
 
-// Sized from the measured high water of r100's six packages, 5,671,872 bytes
-// once each is padded to the arena's alignment, plus a little under 100 KB of
-// slack. Reported usage and high water say how much of it is real, so this is
-// a measurement rather than a guess.
-constexpr std::size_t kRoomArenaCapacity = 5U * 1024U * 1024U + 512U * 1024U;
+// Sized from the measured high water of r100's packages, plus a little under
+// 100 KB of slack. Reported usage and high water say how much of it is real, so
+// this is a measurement rather than a guess.
+//
+// It was 5.5 MB while the texture texels lived here for as long as the room
+// did. They no longer do: the two room texture packages are read, uploaded and
+// released back before the persistent packages allocate, so the high water is
+// the persistent set alone, 3,572,256 bytes. A capacity below the old high
+// water is also the proof that the release is real rather than bookkeeping --
+// the room cannot load out of 3.5 MB unless the texel bytes genuinely come
+// back.
+constexpr std::size_t kRoomArenaCapacity = 3U * 1024U * 1024U + 512U * 1024U;
 alignas(32) std::uint8_t g_room_arena_memory[kRoomArenaCapacity];
 re4dc::storage::Arena g_room_arena;
 
@@ -6352,6 +6379,52 @@ bool load_room_resource(PackageType& package, const RoomResourceId& id) {
     (void) began;
     return true;
 }
+
+// Reads a texture package, uploads it, and hands the texel bytes straight back
+// to the arena. What survives is the header, the descriptors, the material
+// names, the texture memory and the ownership flags -- everything the runtime
+// asks a texture package for after upload, and everything retirement needs to
+// give the texture memory back. Deliberately not close(), which would also free
+// the texture memory this is trying to keep.
+//
+// On failure the arena is left alone: the caller's retirement path owns the
+// cleanup, and rewinding under a package that still points into the arena would
+// take that decision away from it.
+bool load_room_texture(re4dc::texture::Package& package,
+                       const RoomResourceId& id,
+                       std::uint64_t* upload_us) {
+    const std::size_t mark = g_room_arena.mark();
+    if(!load_room_resource(package, id)) {
+        return false;
+    }
+    const std::uint64_t began = timer_us_gettime64();
+    if(!package.upload()) {
+        std::printf("re4dc-room: %s upload failed: %s\n", id.label,
+                    package.error());
+        return false;
+    }
+    const std::uint64_t took = timer_us_gettime64() - began;
+    if(upload_us != nullptr) {
+        *upload_us += took;
+    }
+    if(!package.release_payload()) {
+        std::printf("re4dc-room: %s payload release failed: %s\n", id.label,
+                    package.error());
+        return false;
+    }
+    const std::size_t after_release = g_room_arena.used();
+    g_room_arena.rewind(mark);
+    std::printf(
+        "re4dc-room: %s transient payload read=%lu reclaimed=%lu "
+        "metadata=%lu arena=%lu->%lu\n",
+        id.label, static_cast<unsigned long>(after_release - mark),
+        static_cast<unsigned long>(package.released_bytes()),
+        static_cast<unsigned long>(package.metadata_bytes()),
+        static_cast<unsigned long>(after_release),
+        static_cast<unsigned long>(g_room_arena.used()));
+    return true;
+}
+
 
 
 // Compiling a polygon header bakes its texture address into the header words,
@@ -6578,18 +6651,30 @@ bool load_room(DemoAudio& audio) {
         (void) load_room_resource(room, missing);
         return false;
     }
+    // Textures first, and transiently. Their texels are the largest thing the
+    // load touches that nothing keeps, so they go through the arena before the
+    // persistent packages claim it rather than on top of them.
+    g_room_lifecycle.upload_us = 0;
+    std::uint64_t upload_us = 0;
+    if(!load_room_texture(textures, kRoomTextures, &upload_us) ||
+       !load_room_texture(ganado_textures, kRoomEnemyTex, &upload_us)) {
+        return false;
+    }
+    g_room_lifecycle.upload_us = static_cast<std::uint32_t>(upload_us);
+    // Room texture memory is now owned; retirement has to give it back.
+    if(room_failure_injected(kFailAfterTextureUpload,
+                             "after the room texture upload")) {
+        return false;
+    }
     if(!load_room_resource(room, kRoomGeometry) ||
        !load_room_resource(collision, kRoomCollision) ||
-       !load_room_resource(route, kRoomRoute)) {
+       !load_room_resource(route, kRoomRoute) ||
+       !load_room_resource(ganado, kRoomEnemy)) {
         return false;
     }
-    // Arena occupied and three packages adopted, no VRAM or AICA memory yet.
+    // Texture memory owned and the persistent packages adopted, so retirement
+    // now has to unwind both halves.
     if(room_failure_injected(kFailAfterCpuPackages, "after the CPU packages")) {
-        return false;
-    }
-    if(!load_room_resource(ganado, kRoomEnemy) ||
-       !load_room_resource(textures, kRoomTextures) ||
-       !load_room_resource(ganado_textures, kRoomEnemyTex)) {
         return false;
     }
     // The shape checks main() makes on the first load apply to every load: the
@@ -6609,25 +6694,6 @@ bool load_room(DemoAudio& audio) {
         std::printf("re4dc-room: reloaded actor exceeds transform capacity\n");
         return false;
     }
-
-    const std::uint64_t upload_began = timer_us_gettime64();
-    if(!textures.upload()) {
-        std::printf("re4dc-room: room texture upload failed: %s\n",
-                    textures.error());
-        return false;
-    }
-    // Room texture memory is now owned; retirement has to give it back.
-    if(room_failure_injected(kFailAfterTextureUpload,
-                             "after the room texture upload")) {
-        return false;
-    }
-    if(!ganado_textures.upload()) {
-        std::printf("re4dc-room: Ganado texture upload failed: %s\n",
-                    ganado_textures.error());
-        return false;
-    }
-    g_room_lifecycle.upload_us =
-        static_cast<std::uint32_t>(timer_us_gettime64() - upload_began);
 
     const std::uint64_t install_began = timer_us_gettime64();
     material_headers =
@@ -6689,6 +6755,52 @@ bool load_room(DemoAudio& audio) {
 int main() {
     g_re4dc_demo_telemetry.flags = 0x10000001U;
     g_room_arena.init(g_room_arena_memory, kRoomArenaCapacity);
+    // The PVR comes up before the first package is read so the room textures
+    // can be uploaded and released before the geometry claims the arena. It
+    // depends on nothing that is loaded below.
+    g_re4dc_demo_telemetry.flags = 0x10000022U;
+#if defined(RE4DC_480P)
+    vid_set_mode(DM_640x480, PM_RGB565);
+#else
+    vid_set_mode(DM_320x240, PM_RGB565);
+#endif
+    g_re4dc_demo_telemetry.flags = 0x10000023U;
+    pvr_init_params_t pvr_params = pvr_default_params;
+    pvr_params.opb_sizes[PVR_LIST_PT_POLY] = PVR_BINSIZE_16;
+    g_re4dc_demo_telemetry.flags = 0x10000024U;
+    if(pvr_init(&pvr_params) < 0) {
+        std::printf("re4dc-room: PVR initialization failed\n");
+        return 1;
+    }
+    // Match the source SMX alpha-omit reference used by the binary cutout path.
+    PVR_SET(PVR_PT_ALPHA_REF, 0x80U);
+    g_re4dc_demo_telemetry.flags = 0x10000025U;
+#if defined(RE4DC_SCENE_R100)
+    // r100_002.LIT cut 0 supplies the background/fog colour and distances.
+    pvr_set_bg_color(kBackgroundRed, kBackgroundGreen, kBackgroundBlue);
+    pvr_fog_table_color(1.0f, kBackgroundRed, kBackgroundGreen,
+                        kBackgroundBlue);
+    // GX accepts r100's negative fog start. The PVR table helper does not;
+    // clamp it to the visible near plane, which is equivalent for submitted
+    // geometry and avoids saturating the entire Dreamcast fog table.
+    pvr_fog_table_linear(
+        std::max(kSourceFogStartDistance, kNearClipDistance),
+        kFogEndDistance);
+#else
+    pvr_set_bg_color(0.16f, 0.15f, 0.13f);
+    pvr_fog_table_color(1.0f, 0.16f, 0.15f, 0.13f);
+    pvr_fog_table_linear(14.0f, 48.0f);
+#endif
+    g_re4dc_demo_telemetry.flags = 0x10000003U;
+    const std::size_t vram_before_textures = pvr_mem_available();
+    std::uint64_t texture_upload_us_total = 0;
+    // The two room-owned texture packages, transiently: read, upload, release,
+    // rewind, before anything persistent takes the space.
+    if(!load_room_texture(textures, kRoomTextures, &texture_upload_us_total) ||
+       !load_room_texture(ganado_textures, kRoomEnemyTex,
+                          &texture_upload_us_total)) {
+        return 1;
+    }
     if(!load_room_resource(room, kRoomGeometry)) {
         return 1;
     }
@@ -6713,16 +6825,10 @@ int main() {
     if(!load_room_resource(ganado, kRoomEnemy)) {
         return 1;
     }
-    if(!load_room_resource(textures, kRoomTextures)) {
-        return 1;
-    }
     re4dc::texture::Package leon_textures;
     if(!leon_textures.open("/rd/leon.re4tex")) {
         std::printf("re4dc-room: Leon texture load failed: %s\n",
                     leon_textures.error());
-        return 1;
-    }
-    if(!load_room_resource(ganado_textures, kRoomEnemyTex)) {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
@@ -6801,54 +6907,13 @@ int main() {
     }
 #endif
 
-    g_re4dc_demo_telemetry.flags = 0x10000022U;
-#if defined(RE4DC_480P)
-    vid_set_mode(DM_640x480, PM_RGB565);
-#else
-    vid_set_mode(DM_320x240, PM_RGB565);
-#endif
-    g_re4dc_demo_telemetry.flags = 0x10000023U;
-    pvr_init_params_t pvr_params = pvr_default_params;
-    pvr_params.opb_sizes[PVR_LIST_PT_POLY] = PVR_BINSIZE_16;
-    g_re4dc_demo_telemetry.flags = 0x10000024U;
-    if(pvr_init(&pvr_params) < 0) {
-        std::printf("re4dc-room: PVR initialization failed\n");
-        return 1;
-    }
-    // Match the source SMX alpha-omit reference used by the binary cutout path.
-    PVR_SET(PVR_PT_ALPHA_REF, 0x80U);
-    g_re4dc_demo_telemetry.flags = 0x10000025U;
-#if defined(RE4DC_SCENE_R100)
-    // r100_002.LIT cut 0 supplies the background/fog colour and distances.
-    pvr_set_bg_color(kBackgroundRed, kBackgroundGreen, kBackgroundBlue);
-    pvr_fog_table_color(1.0f, kBackgroundRed, kBackgroundGreen,
-                        kBackgroundBlue);
-    // GX accepts r100's negative fog start. The PVR table helper does not;
-    // clamp it to the visible near plane, which is equivalent for submitted
-    // geometry and avoids saturating the entire Dreamcast fog table.
-    pvr_fog_table_linear(
-        std::max(kSourceFogStartDistance, kNearClipDistance),
-        kFogEndDistance);
-#else
-    pvr_set_bg_color(0.16f, 0.15f, 0.13f);
-    pvr_fog_table_color(1.0f, 0.16f, 0.15f, 0.13f);
-    pvr_fog_table_linear(14.0f, 48.0f);
-#endif
-    g_re4dc_demo_telemetry.flags = 0x10000003U;
-    const std::size_t vram_before_textures = pvr_mem_available();
+    // The persistent romdisk-backed packages. These are mapped out of .rodata
+    // rather than adopted from the arena, so releasing their payload would buy
+    // a heap copy and nothing else.
     const std::uint64_t texture_upload_begin = timer_us_gettime64();
-    if(!textures.upload()) {
-        std::printf("re4dc-room: texture upload failed: %s\n", textures.error());
-        return 1;
-    }
     if(!leon_textures.upload()) {
         std::printf("re4dc-room: Leon texture upload failed: %s\n",
                     leon_textures.error());
-        return 1;
-    }
-    if(!ganado_textures.upload()) {
-        std::printf("re4dc-room: Ganado texture upload failed: %s\n",
-                    ganado_textures.error());
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
@@ -6858,8 +6923,8 @@ int main() {
         return 1;
     }
 #endif
-    g_re4dc_demo_telemetry.texture_upload_us =
-        static_cast<std::uint32_t>(timer_us_gettime64() - texture_upload_begin);
+    g_re4dc_demo_telemetry.texture_upload_us = static_cast<std::uint32_t>(
+        texture_upload_us_total + (timer_us_gettime64() - texture_upload_begin));
     g_re4dc_demo_telemetry.flags = 0x10000004U;
     pvr_poly_cxt_t context{};
     pvr_poly_hdr_t untextured_header{};
