@@ -13,7 +13,7 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D315 stack correction, opening-room memory frontier
+## Current resumption point - D316 primitive lifetime, source-to-native world connection
 
 D314 remains the first verified source-driven warning/main-menu UI presentation
 checkpoint. Adapter 4123a85 and focused capture/interaction validation 8f1578b
@@ -30,11 +30,23 @@ Read [R4_SUBSCREEN_BOOT_CHECKPOINT.md](port/dreamcast/docs/R4_SUBSCREEN_BOOT_CHE
 Evidence: C:/Flycast-Evidence/re4-dreamcast/d315d-stack-budget, 90-second
 harness deadline; no native fault, sampled guards intact, 9,272-byte peak use.
 
-**Immediate frontier:** required r100 block pool 1,126,272 bytes versus 107,520
-free; em12 body 3,577,728 versus 97,216 free initially. Continue source-selected
-native resource/renderer ownership and real backing reclamation. Preserve all
-required content. Do not restart the old capture campaign or treat the room's
-sleeping source tasks as complete initialization.
+D316 reuses one native source primitive buffer after synchronous draw consumption,
+retaining full per-frame capacity. Actual r100 heap recovery: 319,488 bytes.
+See [D316](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+The source menu remains visible; both required room allocations still fail:
+block pool 1,126,272 versus 427,008 free; em12 3,577,728 versus 416,704.
+Both failed, so the combined lower-bound deficit is 4,276,992 before allocator
+overhead/intervening allocations. This is not source-archive reclamation.
+
+**Immediate frontier:** bring the existing native cabin mechanisms into the
+recovered-game executable. Connect commonModelTrans/ModelRender source-owned
+pose, camera, selected lights, materials and model identity; extract applicable
+room/main.cpp helpers into shared units. Extend the existing UI PVR frame owner,
+with no second scene/backend, copied prototype gameplay or duplicate preparation.
+Join that consumer to real resource backing recovery so required block/enemy
+creation fits. The single primitive buffer requires synchronous source-array
+consumption; future deferred/DMA readers must finish before reset or select two.
+Do not restart the resolved stack/subscreen crash or a historical capture campaign.
 
 Subscreen preload control flow passes; inventory does not. Existing ARAM calls
 still copy nothing, FNT #0 in ss_cmmn and the ss_pzzl file fail qualification,

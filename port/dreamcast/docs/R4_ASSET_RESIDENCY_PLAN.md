@@ -1,6 +1,16 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-Updated 2026-09-21; current integration reference D313 (compact module storage; block/enemy allocations still fail).
+D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
+buffer after synchronous consumption, retaining full per-frame capacity. The
+source menu remains visible; required block/enemy allocations still fail.
+Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
+4,276,992 before overhead/intervening allocations. Continue the source-to-native
+world/actor connection and actual resource backing recovery, using the existing
+room renderer and the UI-owned PVR frame. See
+[D316](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+
+
+Updated 2026-09-21; current integration reference D316 (source menu retained; primitive storage reduced; block/enemy allocations still fail).
 Historical resource measurements retain their original revision identities.
 This policy supports the authoritative [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
 R4 is not an independent prerequisite project that must be perfected before

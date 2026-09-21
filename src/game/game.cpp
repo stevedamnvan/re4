@@ -2,6 +2,9 @@
 // save data front end (cGameSave), the died demo, difficulty points, the primitive buffer and
 // the debug displays (D:/Bio4/Prog/game.cpp).
 #include "types.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_primitive.h"
+#endif
 #include "light.h"
 #include "atari.h"
 #include "ctrl.h"
@@ -1604,17 +1607,33 @@ void GamePointBossReset()
 // allocation succeeds, and registers it with the draw code.
 void primInit()
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    const int buffer_count = RE4DC_PRIMITIVE_BUFFERS;
+#endif
     S32Set(pG->prim_cnt, 0);
     pG->nPrim *= 2;
     do {
         S32Set(pG->nPrim, pG->nPrim / 2);
 #line 2215 "D:/Bio4/Prog/game.cpp"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        S32Set(pG->prim_cnt, (s32) MEM_ALLOC(pG->nPrim * buffer_count, 1, 13));
+#else
+#line 2215 "D:/Bio4/Prog/game.cpp"
         S32Set(pG->prim_cnt, (s32) MEM_ALLOC(pG->nPrim * 2, 1, 13));
+#endif
         if ((u32) pG->prim_cnt < 0x80000000 || (u32) pG->prim_cnt > 0x82FFFFFF) {
             pLog->err(0, 0, "workInit() PRIM BUFFER SIZE WAS REDUCE %08X", pG->nPrim);
         }
     } while (pG->prim_cnt == 0);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    memclr_asm((void*) pG->prim_cnt, pG->nPrim * buffer_count);
+#else
     memclr_asm((void*) pG->prim_cnt, pG->nPrim * 2);
+#endif
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    OSReport("native prim: capacity=%u buffers=%u resident=%u\n",
+             pG->nPrim, buffer_count, pG->nPrim * buffer_count);
+#endif
     SetPrimBuffPtr();
 }
 

@@ -3,6 +3,9 @@
 // set up the TEV stages of every material and submit the display lists.
 
 #include "atari.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_primitive.h"
+#endif
 #include "light.h"
 #include "ctrl.h"
 #include "global.h"
@@ -2469,7 +2472,13 @@ void SetPrimBuffPtr()
     if (pG->prim_cnt == 0) {
         return;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_PRIMITIVE_BUFFERS == 1
+    // Render() has consumed the old OT and its source arrays synchronously.
+    // Preserve the full per-frame capacity; reuse only the dead frame's bytes.
+    U32Set(pG->vtx_buf_no, 0);
+#else
     U32Set(pG->vtx_buf_no, pG->vtx_buf_no ^ 1);
+#endif
     gx->prim = (u8*) pG->prim_cnt + pG->nPrim * pG->vtx_buf_no;
 }
 

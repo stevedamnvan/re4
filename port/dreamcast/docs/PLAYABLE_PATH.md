@@ -1,5 +1,15 @@
 # RE4 Dreamcast: boot-forward playable integration
 
+D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
+buffer after synchronous consumption, retaining full per-frame capacity. The
+source menu remains visible; required block/enemy allocations still fail.
+Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
+4,276,992 before overhead/intervening allocations. Continue the source-to-native
+world/actor connection and actual resource backing recovery, using the existing
+room renderer and the UI-owned PVR frame. See
+[D316](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+
+
 Updated 2026-09-21. **This is the authoritative execution plan.** It supersedes
 previous instructions to finish or optimize an isolated scene before integrating
 the game. [REALTIME_PATH.md](REALTIME_PATH.md) is the supporting performance and

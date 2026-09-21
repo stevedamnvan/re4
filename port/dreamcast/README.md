@@ -1,5 +1,6 @@
 # Resident Evil 4 Dreamcast port
 
+
 This directory contains the native SH-4/KallistiOS target. The GameCube build is
 the behavioral and authored-presentation authority; Dreamcast-native data,
 precomputation, visibility, math, texture, and PVR paths determine how that work
@@ -22,6 +23,16 @@ See the root [AGENTS.md](../../AGENTS.md) and [CLAUDE.md](../../CLAUDE.md) for
 shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
+
+D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
+buffer after synchronous consumption, retaining full per-frame capacity. The
+source menu remains visible; required block/enemy allocations still fail.
+Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
+4,276,992 before overhead/intervening allocations. Continue the source-to-native
+world/actor connection and actual resource backing recovery, using the existing
+room renderer and the UI-owned PVR frame. See
+[D316](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+
 
 D314 connects recovered ID layout/animation/menu code to the existing native
 texture, storage and PVR implementation. Warning/logo screens and

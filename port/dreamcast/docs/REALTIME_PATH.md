@@ -1,6 +1,16 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Updated 2026-09-21; current integration candidate D315 (D314 source UI retained; native stack correction restores r100 initialization).
+D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
+buffer after synchronous consumption, retaining full per-frame capacity. The
+source menu remains visible; required block/enemy allocations still fail.
+Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
+4,276,992 before overhead/intervening allocations. Continue the source-to-native
+world/actor connection and actual resource backing recovery, using the existing
+room renderer and the UI-owned PVR frame. See
+[D316](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+
+
+Updated 2026-09-21; current integration candidate D316 (D314 UI and D315 stack fix retained; primitive storage reduced).
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first
