@@ -768,6 +768,10 @@ struct DigestTable {
     std::uint32_t count;
     std::uint32_t overflow;
     std::uint32_t state[26];
+    // The first ticks of the route: per tick, player x/z/yaw/clip/frame,
+    // enemy x/z/yaw/state/clip/frame, wall hits, fire edge, and the
+    // autoplay's turn input. Written from the simulation loop.
+    std::uint32_t tick_trace[64][16];
     DigestRecord records[kDigestRecordCapacity];
 };
 extern "C" {
@@ -6594,6 +6598,17 @@ void snapshot_tick_reached(std::uint32_t tick, std::uint64_t now_us) {
                 static_cast<unsigned long>(g_fb_snapshot_generation));
 }
 
+// True when this tick is the next one to be photographed. The simulation loop
+// stops stepping here so the frame rendered next is exactly this tick's state
+// however many ticks the frame had time for.
+bool snapshot_tick_due(std::uint32_t tick) {
+    if(g_fb_snapshot_next >= kSnapshotTickCount ||
+       g_fb_snapshot_thaw_at_us != 0U || tick < g_fb_snapshot_tick_base) {
+        return false;
+    }
+    return tick - g_fb_snapshot_tick_base >= kSnapshotTicks[g_fb_snapshot_next];
+}
+
 // A reload restarts the route, so the same tick set is captured again and the
 // two sets compare pixel for pixel.
 void restart_snapshots(std::uint32_t tick) {
@@ -7916,6 +7931,10 @@ int main() {
                 }
             }
 #endif
+#if defined(RE4DC_SUBMIT_DIGEST)
+            const float trace_turn = input.turn;
+            const float trace_move = input.move;
+#endif
             update_player(player, collision, input, player_move_speed,
                           kSimulationDeltaSeconds);
             if(kSceneHasPlayer) {
@@ -7928,6 +7947,32 @@ int main() {
                 update_enemy(enemy, player, ganado, leon, collision, route_ptr,
                              audio, kSimulationDeltaSeconds);
             }
+#if defined(RE4DC_SUBMIT_DIGEST)
+            if(simulation_tick < 64U) {
+                const auto bits = [](float value) {
+                    std::uint32_t word;
+                    std::memcpy(&word, &value, sizeof(word));
+                    return word;
+                };
+                std::uint32_t* row = g_digest_table.tick_trace[simulation_tick];
+                row[0] = bits(player.x);
+                row[1] = bits(player.z);
+                row[2] = bits(player.yaw);
+                row[3] = player.animation_clip;
+                row[4] = bits(player.animation_frame);
+                row[5] = bits(enemy.x);
+                row[6] = bits(enemy.z);
+                row[7] = bits(enemy.yaw);
+                row[8] = static_cast<std::uint32_t>(enemy.state);
+                row[9] = enemy.animation_clip;
+                row[10] = bits(enemy.animation_frame);
+                row[11] = player.wall_hits;
+                row[12] = fire_pressed ? 1U : 0U;
+                row[13] = bits(trace_turn);
+                row[14] = bits(trace_move);
+                row[15] = bits(player.y);
+            }
+#endif
             const float goal_dx = player.x - kGoalX;
             const float goal_dz = player.z - kGoalZ;
             if(enemy.state == EnemyState::Dead && !player.dead &&
@@ -7949,6 +7994,11 @@ int main() {
             simulation_wall_time_us = tick_input_time_us;
             ++simulation_tick;
             ++catchup_ticks;
+#if defined(RE4DC_FB_SNAPSHOT)
+            if(snapshot_tick_due(static_cast<std::uint32_t>(simulation_tick))) {
+                break;
+            }
+#endif
         }
         if(exit_requested) {
             if(autoplay.enabled) {
