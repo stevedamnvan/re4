@@ -60,7 +60,19 @@ public:
 
     bool open(const char* path);
     bool adopt(const std::uint8_t* data, std::size_t size);
+    // Uploads every descriptor's payload into texture memory. Succeeds only
+    // by finishing: a package whose earlier attempt stopped part way is
+    // refused rather than reported complete, because the allocations it did
+    // make are indistinguishable from a whole upload by pointer alone. The
+    // caller closes it and loads it again.
     bool upload();
+    bool upload_complete() const { return upload_complete_; }
+    // Test hook: stop the next upload after this many real allocations, zero
+    // for never. Bounded and per-package, so the partial-upload path is
+    // exercised rather than assumed. close() clears it.
+    void inject_upload_failure_after(std::uint32_t uploads) {
+        inject_failure_after_ = uploads;
+    }
     // After a successful upload the texels are in texture memory and nothing
     // reads them from the CPU again, so the backing store can go. This keeps
     // the header, the descriptors, the material names, the VRAM pointers and
@@ -107,6 +119,10 @@ private:
     std::size_t metadata_bytes_ = 0;
     std::size_t released_bytes_ = 0;
     bool payload_released_ = false;
+    // Set only when upload() ran to the end of the descriptor array. Distinct
+    // from pvr_textures_ != nullptr, which is true from the first allocation.
+    bool upload_complete_ = false;
+    std::uint32_t inject_failure_after_ = 0;
     std::size_t vram_bytes_ = 0;
     std::uint32_t shared_textures_ = 0;
     const char* error_ = "not opened";

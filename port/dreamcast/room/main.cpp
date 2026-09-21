@@ -6324,15 +6324,18 @@ RoomLifecycle g_room_lifecycle{};
 // Set to make the next load fail on purpose, so the cleanup and retry paths are
 // exercised rather than assumed.
 // Which bounded failure point the next load should take, 0 for none. The
-// points sit at the stages that own progressively more: nothing yet, CPU
-// packages adopted, room texture memory uploaded, derived state allocated.
+// points sit at the stages that own progressively more: nothing yet, room
+// texture memory uploaded, CPU packages adopted, derived state allocated --
+// plus one inside the texture upload itself, where texture memory is partly
+// allocated and no package has completed.
 enum RoomFailurePoint : std::uint32_t {
     kFailNone = 0U,
     kFailBeforeAnyResource = 1U,
     kFailAfterCpuPackages = 2U,
     kFailAfterTextureUpload = 3U,
     kFailAfterDerivedAllocations = 4U,
-    kFailPointCount = 5U,
+    kFailDuringTextureUpload = 5U,
+    kFailPointCount = 6U,
 };
 std::uint32_t g_room_inject_failure_point = kFailNone;
 
@@ -6651,6 +6654,13 @@ bool load_room(DemoAudio& audio) {
         (void) load_room_resource(room, missing);
         return false;
     }
+    // Arm a stop part way through the room texture upload. The failure lands
+    // inside load_room_texture(), so it also proves the payload is not
+    // released from a package that never finished uploading.
+    if(room_failure_injected(kFailDuringTextureUpload,
+                             "during the room texture upload")) {
+        textures.inject_upload_failure_after(8U);
+    }
     // Textures first, and transiently. Their texels are the largest thing the
     // load touches that nothing keeps, so they go through the arena before the
     // persistent packages claim it rather than on top of them.
@@ -6658,6 +6668,12 @@ bool load_room(DemoAudio& audio) {
     std::uint64_t upload_us = 0;
     if(!load_room_texture(textures, kRoomTextures, &upload_us) ||
        !load_room_texture(ganado_textures, kRoomEnemyTex, &upload_us)) {
+        return false;
+    }
+    // A completed upload is the precondition for the release the loader just
+    // did; assert it rather than trusting the ordering to stay this way.
+    if(!textures.payload_released() || !ganado_textures.payload_released()) {
+        std::printf("re4dc-room: room textures resident after a load\n");
         return false;
     }
     g_room_lifecycle.upload_us = static_cast<std::uint32_t>(upload_us);

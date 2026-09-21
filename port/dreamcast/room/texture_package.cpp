@@ -118,8 +118,15 @@ bool Package::upload() {
         error_ = "package is not open";
         return false;
     }
-    if(pvr_textures_ != nullptr) {
+    if(upload_complete_) {
         return true;
+    }
+    if(pvr_textures_ != nullptr) {
+        // A previous attempt allocated but did not finish. Retrying in place
+        // would have to know which descriptors already moved their texels,
+        // which nothing records, so the only honest answer is to refuse.
+        error_ = "previous upload did not complete; close and load again";
+        return false;
     }
     pvr_textures_ = new(std::nothrow) pvr_ptr_t[header_->texture_count]{};
     if(pvr_textures_ == nullptr) {
@@ -131,6 +138,7 @@ bool Package::upload() {
         error_ = "texture ownership allocation failed";
         return false;
     }
+    std::uint32_t uploaded = 0;
     for(std::uint32_t index = 0; index < header_->texture_count; ++index) {
         const Texture& texture = textures()[index];
 
@@ -160,6 +168,11 @@ bool Package::upload() {
             return false;
         }
         owns_texture_[index] = true;
+        if(inject_failure_after_ != 0U && uploaded >= inject_failure_after_) {
+            error_ = "injected mid-upload failure";
+            return false;
+        }
+        ++uploaded;
         if(texture.payload == kPayloadLinear) {
             // Legacy layout: the PVR cannot consume it, so it is reordered
             // here during upload.
@@ -172,6 +185,7 @@ bool Package::upload() {
         }
         vram_bytes_ += texture.data_size;
     }
+    upload_complete_ = true;
     error_ = nullptr;
     return true;
 }
@@ -188,8 +202,8 @@ bool Package::release_payload() {
     if(payload_released_) {
         return true;
     }
-    if(header_ == nullptr || pvr_textures_ == nullptr) {
-        error_ = "payload release before a successful upload";
+    if(header_ == nullptr || !upload_complete_) {
+        error_ = "payload release before a completed upload";
         return false;
     }
     const std::uint64_t descriptor_end =
@@ -259,6 +273,8 @@ void Package::close() {
     metadata_bytes_ = 0;
     released_bytes_ = 0;
     payload_released_ = false;
+    upload_complete_ = false;
+    inject_failure_after_ = 0;
     data_ = nullptr;
     size_ = 0;
     header_ = nullptr;
