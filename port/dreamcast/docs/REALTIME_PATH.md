@@ -1,6 +1,6 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Updated 2026-09-21; current integration candidate D314 (visible source UI; boot-forward regression remains).
+Updated 2026-09-21; current integration candidate D315 (D314 source UI retained; native stack correction restores r100 initialization).
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first
@@ -11,8 +11,11 @@ verified warning/title/menu images. Peak aligned staging is 1,048,736 bytes;
 each measured upload restores source heap free bytes. Source archive storage
 is not reclaimed. UI VRAM peaks at 4,192,256 bytes. ELF grows 129,776 bytes;
 source arena loses 262,144 versus D313. This is integration cost, not a
-performance win. Normal boot-forward reboots; held menu is stable.
-See [D314](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md). Diagnose that failure next;
+performance win. D315 corrects the native file-I/O stack underrun (+96,256 resident bytes)
+and returns to required block/enemy allocation failures. Subscreen preload is
+not working inventory; native ARAM storage and data/module qualification remain.
+See [D314](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md) and
+[D315](R4_SUBSCREEN_BOOT_CHECKPOINT.md). Continue measured resource integration;
 no gameplay FPS/hardware acceptance is claimed.
 
 D313's selectable static-module compaction reclaims 46,464 live heap bytes and

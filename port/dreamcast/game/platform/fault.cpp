@@ -36,6 +36,10 @@ static dbgio_handler_t g_ringHandler = {
 static void onFault(irq_t code, irq_context_t* ctx, void* data)
 {
     (void) data;
+    re4dc_log("fault context: expevt=%08lx inside=%08lx thread=%p tid=%d stack=%p bytes=%u\n",
+              *(volatile unsigned long*)0xff000024, (unsigned long)irq_inside_int(),
+              thd_current, thd_current ? thd_current->tid : -1,
+              thd_current ? thd_current->stack : NULL, thd_current ? thd_current->stack_size : 0);
     re4dc_log("FAULT code=%03x pc=%08lx pr=%08lx sp=%08lx sr=%08lx\n", (unsigned) code, (unsigned long) ctx->pc,
               (unsigned long) ctx->pr, (unsigned long) ctx->r[15], (unsigned long) ctx->sr);
     for (int i = 0; i < 16; i += 4) {
@@ -56,5 +60,6 @@ extern "C" void re4dc_fault_init(void)
         re4dc_log_console = 0;  // stdout now lands in the ring itself
     }
     irq_set_handler(EXC_UNHANDLED_EXC, onFault, NULL);
+    irq_set_handler(EXC_DOUBLE_FAULT, onFault, NULL);
     re4dc_log("re4dc_fault_init: dbgio -> ring, unhandled-exception handler set\n");
 }

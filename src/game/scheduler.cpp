@@ -62,6 +62,9 @@ void TaskSchedulerInit()
     }
 #line 48 "D:/Bio4/Prog/scheduler.cpp"
     stack = (u8*) MEM_ALLOC(total, 1, 13);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    OSReport("Native task stacks: slots=%u bytes=%u floor=%u\n", TASK_NUM, total, 0x3000);
+#endif
     memset_asm(stack, 0xB3, total);
     for (i = 0; i < TASK_NUM; i++) {
         Task[i].Task_no = i;
@@ -89,6 +92,15 @@ void TaskAllClear()
 // Stack bytes for slot `no`: 0x3000 for slot 2 (the main game task), 0x2000 for 0..4, 0x1800 above.
 u32 GetStackSize(int no)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // KOS fs_hnd_open -> fs_normalize_path retains two PATH_MAX=4096
+    // arrays at once (8248 bytes including their saved registers). Source
+    // 6/8 KiB stacks cannot hold that call chain. Keep the existing owned
+    // stack pool; give every native task a 12 KiB floor for callers/IRQs.
+    // High-water telemetry, not successful I/O alone, qualifies this floor.
+    (void) no;
+    return 0x3000;
+#else
     if (no == 2) {
         return 0x3000;
     }
@@ -96,6 +108,7 @@ u32 GetStackSize(int no)
         return 0x1800;
     }
     return 0x2000;
+#endif
 }
 
 // Once per frame from the main thread: runs every slot except the ISR one in order (slot 2 first

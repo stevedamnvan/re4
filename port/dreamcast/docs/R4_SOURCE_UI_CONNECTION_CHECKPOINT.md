@@ -42,6 +42,11 @@ TaskChain(GameTask, 0) leads to SubScreenGameInit/SubScreenAramRead. Full manual
 menu interaction is still unaccepted. No additional historical capture campaign
 was needed.
 
+D315 follow-up: [the native stack correction](R4_SUBSCREEN_BOOT_CHECKPOINT.md)
+restores this boot-forward control flow and identifies the remaining subscreen
+storage/qualification/binding limits. D314 retains its original executable and
+first-presentation status; the historical failure above is not silently erased.
+
 ## Existing implementation connected, minimum new adapter
 
 | Recovered producer / consumer | Existing native mechanism reused | New adapter |

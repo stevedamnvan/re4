@@ -50,15 +50,17 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## D314 current connection and regression
+## D314 presentation checkpoint; D315 current initialization frontier
 
-Source UI renders through existing native packages/PVR; see
-[R4_SOURCE_UI_CONNECTION_CHECKPOINT.md](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md).
-Held-menu images are verified; staging is actually freed. Source backing remains
-resident and RAM cost rises. Normal boot-forward subsequently reboots after
-subscreen requests, cause unresolved. Diagnose that before claiming the earlier
-room frontier on this candidate. Common ID output does not accept fonts/effects/
-audio/manual menu or room play. The b303de1 integration correction still applies.
+D314 is the first verified source-to-native warning/main-menu presentation;
+[its checkpoint](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md) pins corrected captures
+and input evidence. D315 repairs the native task-stack underrun and the same
+New Game fixture returns to r100's required block/enemy allocation failures.
+See [D315](R4_SUBSCREEN_BOOT_CHECKPOINT.md) for stack/memory costs and precise
+subscreen dependencies. Preload control flow is restored; ARAM storage, archive
+qualification and Sscrn binding still prevent inventory acceptance. Continue
+source-selected native resource ownership and visible output without dropping
+content. Source archives remain resident; 3D/audio/manual play stay open.
 
 ## Historical D312-D313 boot frontier (D312 integration / D313 storage candidate, 2026-09-21)
 

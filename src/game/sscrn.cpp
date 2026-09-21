@@ -41,6 +41,9 @@
 
 extern "C" {
 void OSReport(const char* fmt, ...);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+void re4dc_threads_stack_report(void);
+#endif
 void* memset(void* dst, int c, unsigned int n);
 char* strchr(const char* s, int c);
 char* strrchr(const char* s, int c);
@@ -128,18 +131,30 @@ void SubScreenAramRead()
     req = DVD_READ_N("rel/Sscrn.rel", 0, SS_ARAM, 0, 0, 9);
     wk->pPreplfOffs = wk->aramSize;
     Dvd.ReadCheck(req, &stat, &size, (void**) &wk->p_module);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    OSReport("Native subscreen preload: req=%d stat=%d bytes=%d offset=%08x (ARAM storage still unimplemented)\n",
+             req, stat, size, wk->aramSize);
+#endif
     wk->aramSize += size;
     sscrnDataFilename(wk, "ss_cmmn.dat");
 #line 130 "D:/Bio4/Prog/sscrn.cpp"
     req = DVD_READ_N(wk->path, 0, SS_ARAM + wk->aramSize, 0, 0, 9);
     wk->pCommonOffs = wk->aramSize;
     Dvd.ReadCheck(req, &stat, &size, 0);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    OSReport("Native subscreen preload: req=%d stat=%d bytes=%d offset=%08x (ARAM storage still unimplemented)\n",
+             req, stat, size, wk->aramSize);
+#endif
     wk->aramSize += size;
     sscrnDataFilename(wk, "ss_pzzl.dat");
 #line 140 "D:/Bio4/Prog/sscrn.cpp"
     req = DVD_READ_N(wk->path, 0, SS_ARAM + wk->aramSize, 0, 0, 9);
     wk->pzzlOfs = wk->aramSize;
     Dvd.ReadCheck(req, &stat, &size, 0);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    OSReport("Native subscreen preload: req=%d stat=%d bytes=%d offset=%08x (ARAM storage still unimplemented)\n",
+             req, stat, size, wk->aramSize);
+#endif
     wk->aramSize += size;
     OSReport("SubScrn Data: 0x%08x\n", wk->aramSize);
     OSReport("SubScrn Free: 0x%08x\n", SS_ARAM_SIZE - wk->aramSize);
@@ -200,6 +215,10 @@ void SubScreenGameInit()
     memset(&pG->ope_x82E8, 0, 0x44);
     pG->ope_mdt_no = 0x18;
     SubScreenRoomInit();
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    OSReport("Native subscreen: SubScreenGameInit complete; REL unbound, no archive consumer yet\n");
+    re4dc_threads_stack_report();
+#endif
 }
 
 // Room start: sub screen closed and armed (Status_flg[0] 0x02000000 = may open), attache case

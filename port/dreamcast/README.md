@@ -29,11 +29,13 @@ START / LOAD / OPTIONS render at 640x480. See
 [the source UI checkpoint](docs/R4_SOURCE_UI_CONNECTION_CHECKPOINT.md)
 for images, ownership reuse, memory costs and acceptance limits.
 
-The held menu is stable; **boot-forward currently reboots after subscreen
-requests** and has not re-established D313's r100 frontier. Diagnose this next
-while preserving visible output. Native staging is freed; source archives
-remain resident. Block/enemy/event residency, 3D/audio, full UI effects,
-manual gameplay and the three-room route remain open.
+D314 is the first verified source-to-native UI presentation checkpoint. D315
+fixes a native task-stack underrun and reaches r100 initialization again; see
+[the subscreen boot checkpoint](docs/R4_SUBSCREEN_BOOT_CHECKPOINT.md). The stack
+correction costs 96,256 bytes. Required block/enemy allocations still fail.
+Subscreen reads complete but ARAM storage, inventory module/data qualification,
+3D/audio, manual gameplay and the three-room route remain open. Native upload
+staging is freed; original source archives remain resident.
 
 ## Preserved scene-runtime visual and performance references
 

@@ -13,28 +13,34 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D314 source UI connection
+## Current resumption point - D315 stack correction, opening-room memory frontier
 
-D314 connects source ID quads and selected texture identities to the existing
-Package/storage/PVR implementation. Warning/logo/title layers and START / LOAD /
-OPTIONS are visible at 640x480. Read
-[R4_SOURCE_UI_CONNECTION_CHECKPOINT.md](port/dreamcast/docs/R4_SOURCE_UI_CONNECTION_CHECKPOINT.md)
-for the connection map, hashes, checked contracts and remaining quality limits.
+D314 remains the first verified source-driven warning/main-menu UI presentation
+checkpoint. Adapter 4123a85 and focused capture/interaction validation 8f1578b
+are committed/pushed. Corrected images and exact identities are linked from
+[R4_SOURCE_UI_CONNECTION_CHECKPOINT.md](port/dreamcast/docs/R4_SOURCE_UI_CONNECTION_CHECKPOINT.md).
+Blue D314e captures are invalid. Original archives remain resident; only native
+upload staging was reclaimed. No full manual menu/audio/room acceptance.
 
-Browse C:/Flycast-Evidence/re4-dreamcast/d314f-menu-visible/frames-corrected.
-Blue images in d314e/frames are invalid readback, not visual evidence. Corrected
-capture reverses KOS's framebuffer pointer conversion before the existing reader.
+D315 fixes the boot-forward failure: KOS file opening uses >8 KiB of stack,
+exceeding source 6/8 KiB task slots. Native tasks now use the existing stack pool
+with a 12 KiB floor (+96,256 resident bytes). The same fixture completes
+SubScreenGameInit and returns to r100's block/enemy allocation failures.
+Read [R4_SUBSCREEN_BOOT_CHECKPOINT.md](port/dreamcast/docs/R4_SUBSCREEN_BOOT_CHECKPOINT.md).
+Evidence: C:/Flycast-Evidence/re4-dreamcast/d315d-stack-budget, 90-second
+harness deadline; no native fault, sampled guards intact, 9,272-byte peak use.
 
-Forty uploads restore source-heap free bytes after freeing native staging.
-Aligned peak staging: 1,048,736 bytes. Retained/peak UI VRAM:
-3,946,496 / 4,192,256 bytes. Original source archives remain resident.
-ELF integration adds 129,776 bytes; arena granularity loses 262,144 versus D313.
-No overall memory win is claimed.
+**Immediate frontier:** required r100 block pool 1,126,272 bytes versus 107,520
+free; em12 body 3,577,728 versus 97,216 free initially. Continue source-selected
+native resource/renderer ownership and real backing reclamation. Preserve all
+required content. Do not restart the old capture campaign or treat the room's
+sleeping source tasks as complete initialization.
 
-**Immediate next work:** diagnose the boot-forward reboot after requests for
-rel/Sscrn.rel and SS/eng/ss_cmmn.dat in d314e-ui-framebuffer. Cause is unresolved.
-The held-menu fixture is stable but does not re-establish D313's later room
-frontier. Preserve visible source UI and reconnect normal New Game.
+Subscreen preload control flow passes; inventory does not. Existing ARAM calls
+still copy nothing, FNT #0 in ss_cmmn and the ss_pzzl file fail qualification,
+and Sscrn module ID 71 is unbound (not invoked during preload). Keep these
+requirements explicit before enabling inventory consumers. The new checkpoint
+records each request, read/conversion result, ownership and last consumer.
 
 Follow b303de1's whole resource/render correction. Reuse texture_package.*,
 room_storage.*, extracted gpu_lifecycle.* and existing draw mechanisms.

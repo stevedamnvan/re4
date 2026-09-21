@@ -593,6 +593,23 @@ void re4dc_threads_dump(void)
     }
 }
 
+// Source TaskSchedulerInit paints the owned stack pool with B3. Report the
+// lowest untouched prefix across the slot's lifetime, once per unique slot.
+void re4dc_threads_stack_report(void)
+{
+    for (int i = 0; i < g_threadCount; ++i) {
+        OSThread* t = g_threads[i];
+        bool seen = false;
+        for (int j = 0; j < i; ++j) if (g_threads[j] == t) seen = true;
+        if (seen || !t->stackEnd || !t->stackBase) continue;
+        const u32* p = t->stackEnd + 1;
+        while ((const u8*)p < t->stackBase && *p == 0xB3B3B3B3) ++p;
+        re4dc_log("native stack: slot=%p bytes=%lu untouched=%lu guard=%08lx\n", t,
+                  (u32)(t->stackBase - (u8*)t->stackEnd), (u32)((u8*)p - (u8*)t->stackEnd),
+                  *t->stackEnd);
+    }
+}
+
 u32 OSGetConsoleType(void)
 {
     return 0x00000003;  // retail-class console: no dev mode (bits 0xF0000000 clear)
