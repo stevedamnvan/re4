@@ -1,5 +1,47 @@
 # D297: decoded room mirror and source collision layout
 
+## D299: original model arrays and morph deltas (2026-09-21)
+
+The mirror now converts source ModelData/BIN versions 0x20010801 and 0x20030818:
+section offsets, joint centers, compact position/normal arrays, weight palettes,
+texture coordinates, part lengths/statistics, motion blend/flip tables and morph
+delta lists. Byte joint identities, ordinary weights, RGBA8 colors, signed-byte
+normals and GX command streams remain bytes. Original position, normal, UV,
+weight, part and primitive identities remain separate. No mesh reduction,
+flattening or baked-pose replacement is introduced.
+
+SMD invokes the model converter within each resource's own bounds, including
+referenced textures. All nine available SMD regions now report complete for the
+known data layouts. Of 422 tagged BIN regions, 421 convert; one legacy core BIN
+(`etc/core.das:0#11`, version word 0x2c020202) remains rejected and raw. The two
+legacy core SAT errors remain. SMX callback work and other room formats still
+block full archive qualification. Model/morph data conversion does not implement
+missing animation runtime or native GX draw integration.
+
+Do not bound an attached model's weight joint IDs by its local nParts: these IDs
+can address the owning model's rig. Influence counts remain checked. Source
+morph lists preserve every vertex index and signed delta; animation curves that
+select/blend them are separate FCV/shape-animation coverage work.
+
+Evidence: `C:\Flycast-Evidence\re4-dreamcast\d299-model-data` contains
+converted room archive identities/copies, conversion report, comparison script
+and results. An independent field/byte comparison of all 421 successfully
+converted tagged BINs verified 230,385 positions, 218,257 normals and 1,401
+material/draw streams against original data. It checks numeric array equality
+and unchanged command/material bytes; it is not a rendered-image or skeletal
+behavior comparison. Nested SMD models passed bounded conversion but were not
+included in that independent tagged-BIN count.
+
+Twelve room-endian, nine mirror and two offline decoder tests pass. This change
+is offline tooling only; the most recent game build is D298 and the most recent
+Flycast replay is D295. No new frame/input/performance or manual acceptance.
+
+Next: remaining room formats (especially LIT/CAM), source animation/FCV data,
+and the native loading boundary. Preserve nested sound reads from the original
+DVD container when replacing only its compressed room payload. A `.arc` with
+unhandled tags must continue to fail the required-dependency check. Keep the
+r120 source-completion skip and full menu/three-room backlog active.
+
 ## D298: scene registration metadata (2026-09-21)
 
 The normal mirror now converts SMD headers, placement transforms, source IDs,

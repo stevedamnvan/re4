@@ -104,6 +104,61 @@ class RoomFormats(unittest.TestCase):
             problems=le.check_required(le.REPORT, deps)
         self.assertTrue(any('CAM' in x for x in problems))
 
+    def model_fixture(self, byte_normals=False):
+        data=bytearray(320)
+        struct.pack_into('>I',data,0,80)
+        struct.pack_into('>3I',data,12,148,136,128)
+        data[24:26]=bytes([1,1])
+        struct.pack_into('>H3I',data,26,1,160,0xA0000000 if byte_normals else 0x80000000,1)
+        data[40]=8
+        struct.pack_into('>H3I2H3I',data,42,0,0,96,120,3,1,0x20030818,224,240)
+        data[80:84]=bytes([0,255,7,8]);struct.pack_into('>3f',data,84,1.5,-2,3)
+        struct.pack_into('>12h',data,96,-12,23,-34,0,56,67,78,0,90,-101,112,0)
+        if byte_normals: data[120:124]=bytes([127,128,1,0])
+        else: struct.pack_into('>4h',data,120,-16384,123,16384,0)
+        # Joint 9 refers to the owner's rig, not this attached model's nParts.
+        data[128:136]=bytes([9,0,0,1,100,0,0,0])
+        struct.pack_into('>6h',data,136,-1,2,3,-4,5,6)
+        data[148:160]=bytes(range(12))
+        data[171:176]=bytes([4,2,3,4,5])
+        struct.pack_into('>2I',data,184,32,1)
+        data[192:195]=bytes([0x90,0,3])
+        for i in range(3): struct.pack_into('>4H',data,195+8*i,i,0,i,i)
+        struct.pack_into('>I4H',data,224,1,0,9,4,50)
+        struct.pack_into('>IH',data,240,1,9)
+        return data
+
+    def test_bin_keeps_distinct_arrays_and_gx_bytes(self):
+        for byte_normals in [False,True]:
+            raw=self.model_fixture(byte_normals)
+            out,entry=self.convert(raw,le.fmt_bin)
+            self.assertTrue(entry['complete'],entry)
+            self.assertEqual(out[80:84],raw[80:84])
+            self.assertEqual(struct.unpack_from('<3f',out,84),(1.5,-2,3))
+            self.assertEqual(struct.unpack_from('<12h',out,96),struct.unpack_from('>12h',raw,96))
+            if byte_normals: self.assertEqual(out[120:124],raw[120:124])
+            else: self.assertEqual(struct.unpack_from('<4h',out,120),struct.unpack_from('>4h',raw,120))
+            self.assertEqual(out[128:136],raw[128:136])
+            self.assertEqual(struct.unpack_from('<6h',out,136),(-1,2,3,-4,5,6))
+            self.assertEqual(out[148:184],raw[148:184])
+            self.assertEqual(out[192:224],raw[192:224])
+            self.assertEqual(struct.unpack_from('<I4H',out,224),(1,0,9,4,50))
+            self.assertEqual(struct.unpack_from('<IH',out,240),(1,9))
+
+    def test_bin_rejects_bad_draw_refs_and_preserves_morphs(self):
+        raw=self.model_fixture();struct.pack_into('>H',raw,195,3)
+        out,entry=self.convert(raw,le.fmt_bin)
+        self.assertIn('index outside',entry['error']);self.assertEqual(out,raw)
+        raw=self.model_fixture();struct.pack_into('>I',raw,44,272)
+        struct.pack_into('>3I8h',raw,272,1,8,2,0,-1,2,-3,2,4,-5,6)
+        out,entry=self.convert(raw,le.fmt_bin)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(struct.unpack_from('<3I8h',out,272),(1,8,2,0,-1,2,-3,2,4,-5,6))
+        struct.pack_into('>H',raw,284,3)
+        out,entry=self.convert(raw,le.fmt_bin)
+        self.assertIn('morph vertex outside',entry['error'])
+        self.assertEqual(out,raw)
+
     def test_smd_groups_reserve_slots_not_extra_records(self):
         # nModel=1, group has 100 deferred block slots. Only one work lives here.
         data=bytearray(116)
@@ -114,9 +169,10 @@ class RoomFormats(unittest.TestCase):
         struct.pack_into('>I', data, 92, 0x12340008)
         struct.pack_into('>I', data, 104, 4)
         data[108:116]=b'RAW BIN!'
-        out, entry=self.convert(data, le.fmt_smd)
+        with mock.patch.object(le, 'fmt_bin', return_value=['fixture payload']):
+            out, entry=self.convert(data, le.fmt_smd)
         self.assertFalse(entry['complete'])
-        self.assertEqual(entry['raw_parts'], ['BIN0 payload'])
+        self.assertEqual(entry['raw_parts'], ['BIN0 fixture payload'])
         self.assertEqual(struct.unpack_from('<2I', out,16), (1,100))
         self.assertEqual(struct.unpack_from('<9f', out,24), tuple(range(9)))
         self.assertEqual(struct.unpack_from('<I',out,92)[0],0x12340008)

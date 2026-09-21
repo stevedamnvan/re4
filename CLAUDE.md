@@ -51,7 +51,17 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D298 (2026-09-21)
+## Latest bounded result: D299 (2026-09-21)
+
+Source ModelData/BIN arrays, palettes, draw identities and morph deltas now
+convert; 421 tagged BINs and all nine SMD regions pass. Original numeric arrays
+and byte draw streams were independently compared for those tagged models.
+One legacy core BIN remains rejected. See [R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md).
+Next: remaining room LIT/CAM and other coverage, FCV animation, and native loading
+while preserving original sound-container handling. Entire room sidecars remain
+incomplete. Most recent game build D298; most recent target replay D295.
+
+## Historical bounded result: D298 (2026-09-21)
 
 SMD registration metadata and referenced textures now convert across all nine
 available regions. SMX masks/colors/UV and known mover layouts convert; two r120

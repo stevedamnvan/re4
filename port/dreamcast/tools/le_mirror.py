@@ -574,6 +574,118 @@ def _fmt_sat_file(sw, off, size):
     if len(visited) != nb:
         raise ValueError('SAT block count does not match graph')
 
+def fmt_bin(sw, off, size, ctx):
+    """ModelData CPU arrays in source layout; GX command streams stay BE bytes.
+
+    Positions, normals and UV identities stay separate. No flattening, skinning,
+    quantization change or geometry reduction takes place here.
+    """
+    sw._check(off, 64)
+    version = sw.peek32(off + 60)
+    if version not in (0x20010801, 0x20030818):
+        raise ValueError('unsupported ModelData version %#x' % version)
+    head = sw.u32(off)
+    color, tex, weight = sw.u32s(off + 12, 3)
+    nw, nj = sw.data[off + 24:off + 26]
+    nd = sw.u16(off + 26)
+    parts, flags, ntex = sw.u32s(off + 28, 3)
+    ext = sw.u16(off + 42)
+    shape, vertices, normals = sw.u32s(off + 44, 3)
+    nv, nn = sw.u16s(off + 56, 2)
+    sw.u32(off + 60)
+    blend, flip = sw.u32s(off + 64, 2) if version == 0x20030818 else (0, 0)
+    raw = []
+    for i in range(nj):
+        # Joint identity/parent bytes are not the numeric ModelDataHead union.
+        sw.f32s(off + head + i * 16 + 4, 3)
+    sw.u16s(off + vertices, nv * 4)
+    if flags & 0x20000000:
+        sw._check(off + normals, nn * 4)  # signed-byte normal and byte palette id
+    else:
+        sw.u16s(off + normals, nn * 4)
+    if ext > 0xFF:
+        for i in range(ext):
+            p = off + weight + 12 * i
+            ids = sw.u16s(p, 3)
+            n = sw.u16(p + 6)
+            sw._check(p + 8, 4)
+            if not 1 <= n <= 3:
+                raise ValueError('invalid extended weight record')
+    else:
+        sw._check(off + weight, nw * 8)
+        for i in range(nw):
+            p = off + weight + i * 8
+            n = sw.data[p + 3]
+            if not 1 <= n <= 3:
+                raise ValueError('invalid weight record')
+    # Material header is bytes except its size/statistics words. Parse only the
+    # established indexed GX primitives; the stream itself remains unchanged.
+    cursor = off + parts
+    max_tex = max_color = -1
+    stride = 8 if flags & 0x80000000 else 6
+    for i in range(nd):
+        sw._check(cursor, 32)
+        length = sw.u32(cursor + 24)
+        sw.u32(cursor + 28)
+        start, end = cursor + 32, cursor + 32 + length
+        sw._check(start, length)
+        p = start
+        while p < end:
+            opcode = sw.data[p]; p += 1
+            if opcode == 0:
+                continue
+            if opcode not in (0x80, 0x90, 0x98, 0xA0, 0xA8, 0xB0, 0xB8):
+                raise ValueError('unsupported model GX opcode %#x' % opcode)
+            if p + 2 > end:
+                raise ValueError('truncated GX count')
+            count = sw.peek16(p); p += 2
+            if p + count * stride > end:
+                raise ValueError('GX primitive exceeds part')
+            for _ in range(count):
+                vi, ni = sw.peek16(p), sw.peek16(p + 2)
+                if vi >= nv or ni >= nn:
+                    raise ValueError('GX position/normal index outside array')
+                max_tex = max(max_tex, sw.peek16(p + stride - 2))
+                if stride == 8:
+                    max_color = max(max_color, sw.peek16(p + 4))
+                p += stride
+        cursor = end
+    sw.u16s(off + tex, (max_tex + 1) * 2)
+    if max_color >= 0:
+        sw._check(off + color, (max_color + 1) * 4)  # RGBA8 bytes, not words
+    if blend:
+        count = sw.u32(off + blend)
+        sw.u16s(off + blend + 4, count * 4)
+    if flip:
+        count = sw.u32(off + flip)
+        sw.u16s(off + flip + 4, count)
+    if shape:
+        # shape.cpp CalculateShape_new: entries are {offset,count} relative to
+        # the entry table (four bytes after the shape-count header), followed by
+        # {vertex index,s16 dx,dy,dz}. Keep every authored shape and delta.
+        count = sw.u32(off + shape)
+        table = off + shape + 4
+        sw._check(table, count * 8)
+        entries = [sw.u32s(table + i * 8, 2) for i in range(count)]
+        converted = {}
+        for relative, number in entries:
+            target = table + relative
+            if relative < count * 8:
+                raise ValueError('morph delta list overlaps entries')
+            sw._check(target, number * 8)
+            if not number:
+                continue
+            if target in converted:
+                if converted[target] != number:
+                    raise ValueError('shared morph list has inconsistent size')
+                continue
+            converted[target] = number
+            for i in range(number):
+                values = sw.u16s(target + i * 8, 4)
+                if values[0] >= nv:
+                    raise ValueError('morph vertex outside source position array')
+    return raw
+
 def fmt_smd(sw, off, size, ctx):
     """scroll.h cSmd/SmdWork: source instances and table-relative resources.
 
@@ -619,9 +731,15 @@ def fmt_smd(sw, off, size, ctx):
             target = base + relative
             if relative < 4 * n or target >= off + size:
                 raise ValueError('SMD resource offset outside file')
-            if kind == 'TPL':
+            limits = [off + size] + [off + t for t in tables if off + t > target]
+            limits += [base + value for value in offsets if base + value > target]
+            end = min(limits)
+            if kind in ('TPL', 'BIN'):
                 if not sw.swapped(target):
-                    fmt_tpl(sw, target, off + size - target, ctx + '/tpl%d' % ident)
+                    with sw.bounded(target, end - target):
+                        pending = (fmt_tpl if kind == 'TPL' else fmt_bin)(
+                            sw, target, end - target, ctx + '/%s%d' % (kind, ident))
+                    raw.extend('%s%d %s' % (kind, ident, item) for item in (pending or []))
             else:
                 raw.append('%s%d payload' % (kind, ident))
     return raw
@@ -655,6 +773,7 @@ def fmt_smx(sw, off, size, ctx):
     return raw
 
 TAG_FORMATS = {
+    b"BIN\0": fmt_bin,
     b"SMD\0": fmt_smd,
     b"SMX\0": fmt_smx,
     b"CNS\0": fmt_cns,
