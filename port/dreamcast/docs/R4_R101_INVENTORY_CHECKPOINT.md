@@ -133,9 +133,26 @@ make:
    in favour of a pair that fits, which contradicts the D4 instruction to use
    the authored relationships.
 
-Option 2 alone is the only one that fits without new machinery, and it buys
-2.1 MB against a 0.84 MB overshoot plus 1.85 MB of lighting arrays — that is,
-it is close but needs measuring rather than assuming.
+Option 2 was the only one that needed no new machinery, so it was measured
+rather than assumed. At a 128-pixel limit r101's textures convert to 1,608,272
+bytes instead of 2,990,672, saving 1,382,400:
+
+| | bytes |
+|---|---:|
+| room content at 128 px | 10,645,503 |
+| extra static lighting arrays for 177,032 vertices | +1,848,448 |
+| **total against an 11,191,138 budget** | **12,493,951** |
+
+**It does not fit either**, by 1,302,813, and that is still before the enemy
+set. Options 1 and 2 together raise the budget toward 13,790,208 and leave
+about 12.5 MB of room plus roughly 1.5 MB of converted enemy, near 14 MB —
+marginal to over again.
+
+So the honest position is that no combination of the levers available to this
+checkpoint lands r101 comfortably. Either the room is partitioned and loaded in
+parts, which is the intra-room streaming this checkpoint was told not to make a
+prerequisite, or its fidelity is cut further than a 128-pixel texture limit.
+That is the scope decision.
 
 ## What was built
 
