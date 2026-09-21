@@ -170,6 +170,13 @@ candidate (see the fixture track in [PLAYABLE_PATH.md](PLAYABLE_PATH.md)).
 Memory, loading peak, batch counts, frame times and appearance are compared
 there, not from free-camera screenshots or unrelated positions.
 
+Candidate categories: room/environment meshes, character/enemy model variants,
+texture resolutions/formats, vertex/prelit colour, materials/pass reductions,
+collision representation (for comparison only), effect simplifications, UI
+representations, audio encodings and prerecorded cinematics. Preserve original
+assets alongside every alternative so the comparison is reversible; select per
+validated resource, and do not match assets by filename alone.
+
 1. **Pick equivalent content.** Start with corresponding village environment
    geometry and one representative enemy. Inspect available GameCube gameplay/LOD
    variants and their selectors first or alongside PS2. Do not assume the current
@@ -199,16 +206,78 @@ there, not from free-camera screenshots or unrelated positions.
    animation in motion. Smaller disc files or source polygon counts alone are
    not proof of a faster native port.
 
-Candidate tooling to verify and pin for the actual PS2 image:
+### The PS2 adaptation toolchain, by asset category
 
-- [JADERLINK_DATUDAS_TOOL](https://github.com/JADERLINK/JADERLINK_DATUDAS_TOOL)
-- [RE4-PS2-SCENARIO-SMD-TOOL](https://github.com/JADERLINK/RE4-PS2-SCENARIO-SMD-TOOL)
-- [RE4-PS2-BIN-TOOL](https://github.com/JADERLINK/RE4-PS2-BIN-TOOL)
-- [RE4-PS2-TPL-TOOL](https://github.com/JADERLINK/RE4-PS2-TPL-TOOL)
+Candidate tooling to verify and pin for the actual PS2 image (exact tool,
+version and format compatibility are checked before any output is relied on):
 
-These are investigation entry points, not evidence that extraction, rig matching,
-or savings have already succeeded in this checkout. AFS/archive access and
-model/material mapping may require additional verified adapters.
+| category | tools | Dreamcast use |
+|---|---|---|
+| Archive / container extraction | [JADERLINK_DATUDAS_TOOL](https://github.com/JADERLINK/JADERLINK_DATUDAS_TOOL); AFS extraction/parsing for `BIO4DAT.AFS`, `BIO4MOV.AFS`, `BIO4MOV2.AFS` | private inventory of the PS2 content with archive/chunk identities |
+| Environment / scenario geometry | [RE4-PS2-SCENARIO-SMD-TOOL](https://github.com/JADERLINK/RE4-PS2-SCENARIO-SMD-TOOL) | candidate room meshes, instance placement, prelit/vertex colour |
+| Character / object models | [RE4-PS2-BIN-TOOL](https://github.com/JADERLINK/RE4-PS2-BIN-TOOL) | candidate enemy/object variants (rig-validated) |
+| Textures | [RE4-PS2-TPL-TOOL](https://github.com/JADERLINK/RE4-PS2-TPL-TOOL) | authored lower-resolution/format candidates |
+| Collision | [RE4-SAT-EAT-TOOL](https://github.com/JADERLINK/RE4-SAT-EAT-TOOL) | comparison of the PS2 SAT/EAT against the authoritative GameCube collision (never a replacement) |
+| Text / UI data | [RE4-MDT-TOOL](https://github.com/JADERLINK/RE4-MDT-TOOL), FNT/UI inspectors where applicable | UI representation reference |
+| Audio | [vgmstream](https://github.com/vgmstream/vgmstream) | inspection/conversion of the PS2 audio encodings as candidates for the AICA |
+| Prerecorded movies | SofdecVideoTools, SFDExtractor, other validated SFD demux/extraction utilities | inventory and manifest of the PS2 cinematics (below) |
+
+The list is not exhaustive. If the PS2 content exposes another established
+RE4-specific tool that materially accelerates the current slice, evaluate it
+rather than rebuilding a parser; but "find every PS2 tool" is not a project of
+its own. These are investigation entry points, not evidence that extraction,
+rig matching or savings have already succeeded in this checkout; AFS/archive
+access and model/material mapping may require additional verified adapters.
+
+### Compare authored platform strategies, not file sizes
+
+When a GameCube scene or asset is costly, record what Capcom changed for PS2
+in the equivalent content: geometry complexity, model LOD, texture dimensions
+and count, material/pass count, prelit/vertex-colour usage, effect count and
+type, enemy representation, animation representation, realtime versus
+prerecorded presentation. The objective is not "make Dreamcast look like PS2"
+but to use the evidence of Capcom's constrained-platform adaptation to identify
+cheaper authored representations that preserve RE4's intended experience. Where
+a cheaper GameCube LOD already exists and is compatible, prefer the simpler
+same-version integration unless the PS2 alternative shows a measured advantage.
+
+### Prerecorded PS2 movies and realtime-to-prerendered substitutions
+
+Audit `BIO4MOV.AFS` and `BIO4MOV2.AFS`: extract and inventory their SFD
+contents privately and build a manifest mapping
+
+```text
+PS2 movie <-> corresponding GameCube event/cutscene <-> duration <-> frame rate
+<-> dimensions <-> audio <-> gameplay state before/after <-> whether the
+GameCube performs it in realtime
+```
+
+Capcom's PS2 version may already give an authored answer for the sequences they
+considered acceptable to prerender on a more constrained target; the manifest
+identifies the Dreamcast candidates. A prerecorded substitution is appropriate
+only when the PS2 version demonstrably uses one for the equivalent sequence,
+branching/input/QTE/state semantics remain correct, the transition into and out
+of playback matches source state, storage and streaming cost is acceptable, and
+the resulting presentation passes review. Never replace every realtime
+GameCube cutscene with PS2 video by default. The PS2 SFD is an authored
+source/reference, not necessarily the Dreamcast runtime format: evaluate an
+offline Dreamcast movie pipeline with bounded buffers and target-appropriate
+audio/video representation. The GameCube Sofdec implementation (`sofdec.cpp`,
+`mwPly*`) is source evidence for semantics and timing; its ARAM assumptions are
+not copied onto the Dreamcast.
+
+### Bounded scope and the shape of a result
+
+The PS2 track is parallel and bounded: an isolated worktree, separate private
+generated-asset/evidence directories, and representative cases before any wider
+extraction: one costly village/environment comparison, one representative
+enemy/model comparison, one representative prerecorded-cinematic mapping. A
+useful result reads like "PS2 environment candidate: -35% converted geometry
+bytes, -28% submitted vertices, +X ms frame benefit, documented appearance
+differences, collision/camera compatibility verified", or "rejected:
+conversion/material/rig incompatibility removes the expected benefit". Weeks
+spent building a complete PS2 asset database before testing whether the
+approach helps the Dreamcast are not a result.
 
 Allow a hybrid result: suitable GameCube variants, retained high-detail player
 assets, selected PS2 environment/enemy representations, and native Dreamcast

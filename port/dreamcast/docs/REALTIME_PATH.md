@@ -77,6 +77,20 @@ fixture track in [PLAYABLE_PATH.md](PLAYABLE_PATH.md)) rather than cabin-only
 autoplay or invented sweeps. A timing run names its stage, room, jump point,
 player/camera state and scenario state.
 
+Alternate representations (a lower-detail GameCube variant, a converted PS2
+mesh, texture or prelit attribute, a prerecorded cinematic in place of a
+realtime one) are benchmarked only under equivalent gameplay state: the same
+stage, room, `CRoomInfo` jump point, player state, camera state,
+scenario/event state, resolution and, where practical, the same gameplay tick,
+against the unchanged GameCube-derived baseline in the same sitting. For each
+pair record package bytes, persistent RAM, loading peak, VRAM, triangles,
+transformed vertices, batches/material changes, skinning/lighting work, the CPU
+frame distribution and the visual differences. A comparison from free-camera
+screenshots, from different positions or from different scenario states is not
+evidence. The same fixture layer serves later-room bring-up, event debugging,
+enemy testing, camera and collision validation, resource residency, GC-vs-PS2
+asset comparisons and performance stress cases.
+
 Grow the fixture set from the opening sequence: title/new game, movement and
 camera turns, aim extremes, fire/reload, enemy contact, interaction/inventory,
 event transitions, death/retry, and room changes. Exercise both quiet and busy

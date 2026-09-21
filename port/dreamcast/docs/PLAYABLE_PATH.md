@@ -92,6 +92,62 @@ Use it to enter the following call paths, then inspect the implementations:
 Paths without a directory above are in `src/game/`. This is a navigation map,
 not a claim that every listed dependency is needed at once.
 
+## Three sources of leverage, used together
+
+The port draws on three complementary sources, and they are used together
+rather than queued as separate research projects:
+
+```text
+GameCube decompilation      = behavioral / state authority
+GameCube debug tooling      = development acceleration, reproducible fixtures
+GameCube + PS2 render assets = candidate visual / resource representations
+Dreamcast runtime           = target-native implementation
+```
+
+The decompilation decides gameplay behaviour, progression, state machines,
+camera, collision, events, object activation, scheduling, room transitions and
+the original visual target. The recovered debug systems are the preferred way to
+reach and exercise a section without inventing scene fixtures. The PS2 release
+and its established extraction tools are an authored constrained-platform
+reference: alternative geometry, textures, materials, collision representations,
+model variants, effects, audio/video presentation and other reductions Capcom
+actually shipped. PS2 gameplay logic never replaces GameCube gameplay; a
+diagnostic viewer never replaces source state; the most expensive GameCube
+render asset is not insisted on where an authored compatible lower-cost
+representation demonstrably preserves the intended result.
+
+Since `cb0d60a` the game's own `main()`, scheduler, title, `GameTask` and room
+initialization compile for SH-4 (`port/dreamcast/game`, see
+[R4_GAME_TARGET_CENSUS.md](R4_GAME_TARGET_CENSUS.md)); the fixtures below drive
+that executable, not a viewer.
+
+### The standard toolbox
+
+**Recovered debug systems** (source-authored acceleration; recover the useful
+semantics, not necessarily the original UI): `cRoomJmp` / `CRoomInfo` /
+`RoomJump`, the title debug-start menu, `debug/config.txt` / `ConfigSet()`, the
+debug camera, FLAG EDIT, EVENT TOOL, SCENARIO ATARI, ROUTE CHECK, BLOCK AREA
+TOOL, ITEM SET TOOL and EM INFO TOOL (details in the numbered list below).
+Prefer `stage + room + authored jump point -> source NextPos / NextY /
+next_room / next_point -> normal room and game initialization` over hard-coded
+spawn constants, an arbitrary camera and a diagnostic sweep.
+
+**PS2 extraction / adaptation toolchain** (candidate tools, applied to the
+supplied private PS2 image; verify the exact tool, version and format
+compatibility before relying on output): JADERLINK_DATUDAS_TOOL and AFS
+parsing for `BIO4DAT.AFS` / `BIO4MOV.AFS` / `BIO4MOV2.AFS` (archives),
+RE4-PS2-SCENARIO-SMD-TOOL (environment/scenario geometry), RE4-PS2-BIN-TOOL
+(character/object models), RE4-PS2-TPL-TOOL (textures), RE4-SAT-EAT-TOOL
+(collision), RE4-MDT-TOOL and FNT/UI inspectors (text/UI data), vgmstream
+(audio), SofdecVideoTools / SFDExtractor and other validated SFD demuxers
+(prerecorded movies). The list is not exhaustive: an established RE4-specific
+tool that materially accelerates the current slice is evaluated before a parser
+is rebuilt, and "find every PS2 tool" is not a project of its own. The policy
+for using the output is in
+[R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md); the PS2 track runs
+in an isolated worktree with private generated-asset and evidence directories,
+bounded to representative cases, and never interrupts boot-forward integration.
+
 ## Development fixtures: the recovered debug tooling
 
 Two paths, kept distinct:
@@ -190,6 +246,14 @@ injected and which systems actually executed. The same fixtures are the
 comparison harness for the GameCube/PS2 render-asset experiment: compare
 candidates at the same authored room, jump point, player/camera state and
 scenario state, never from free-camera screenshots or unrelated positions.
+
+After every coherent integration slice the question is: how far does the real
+game now execute from normal startup before the next missing dependency stops
+it? The substantive report answers, in this order: what executes from normal
+boot; what later state a source-authored fixture reaches; which recovered
+systems were integrated; whether any PS2 or alternate representation was
+actually tested; measured memory/performance at the representative state; the
+next precise missing dependency blocking natural progression.
 
 ## Continuous playable milestones
 
