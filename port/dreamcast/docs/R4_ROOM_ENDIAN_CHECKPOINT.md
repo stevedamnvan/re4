@@ -1,5 +1,43 @@
 # D297: decoded room mirror and source collision layout
 
+## D298: scene registration metadata (2026-09-21)
+
+The normal mirror now converts SMD headers, placement transforms, source IDs,
+flags, group reservation counts and table-relative resource offsets, plus the
+referenced TPL palettes through the existing handler. BIN and FCV payloads stay
+explicitly incomplete. All nine available SMD regions pass metadata conversion
+without handler errors. Do not equate this with a complete renderable model.
+
+A real-data correction matters: r100's grouped SMD has 13 inline placements;
+the five group counts reserve 297 additional runtime slots for separately loaded
+blocks. They are not 297 extra records in that SMD. cSmd::getWorkNum and
+getWorkPtr distinguish these meanings; the converter preserves both.
+
+SMX conversion covers display/light masks, numeric colors, UV scrolling and
+source obj02 rotate/swing work. r100/r101 SMX records convert completely for the
+current fixture. Two r120 type-zero records carry nonzero callback work with an
+unestablished layout; they remain explicit raw coverage debt. No guess or silent
+zeroing is used. SMD's low-byte flag union and SMX's packed 0xRRGGBBAA writes are
+adapted on native builds so their byte views match the source meanings. PowerPC
+preprocessing is unchanged for these new source/header changes. Existing dirty
+pointer-range adaptations in scroll.cpp are preserved but not staged here.
+
+Ten room-endian tests and nine mirror tests pass, and the recovered game target
+builds. Tests include deferred group counts, preserved raw model payloads,
+rotate/swing floats and byte flags, unresolved callback reporting, and compiled
+native flag/color views. Private evidence is at
+`C:\Flycast-Evidence\re4-dreamcast\d298-scene-metadata` (mirror report,
+converted archive identities/copies and build log). No new Flycast replay;
+last runtime evidence is D295. Core legacy SAT errors remain unchanged.
+
+Next: source ModelData/BIN conversion including original position/normal,
+weight/part and display-list identities, then FCV/remaining room formats and
+the native loading boundary. Inspect mixed byte/word unions and GX byte streams
+rather than swapping every 32-bit word. Reuse the existing native draw backend.
+The unconverted resources still prevent claiming room or gameplay acceptance.
+
+## D297 historical checkpoint
+
 2026-09-21. Asset preparation/build checkpoint; last Flycast replay remains D295.
 
 The existing `le_mirror.py --decode-rooms` now extracts the single type-0 YZ2

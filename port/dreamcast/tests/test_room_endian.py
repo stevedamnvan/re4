@@ -104,6 +104,57 @@ class RoomFormats(unittest.TestCase):
             problems=le.check_required(le.REPORT, deps)
         self.assertTrue(any('CAM' in x for x in problems))
 
+    def test_smd_groups_reserve_slots_not_extra_records(self):
+        # nModel=1, group has 100 deferred block slots. Only one work lives here.
+        data=bytearray(116)
+        struct.pack_into('>BBH3I', data, 0, 64, 1, 1, 104, 116, 116)
+        struct.pack_into('>2I', data, 16, 1, 100)
+        struct.pack_into('>9f', data, 24, *range(9))
+        data[60:64]=bytes([0, 255, 255, 7])
+        struct.pack_into('>I', data, 92, 0x12340008)
+        struct.pack_into('>I', data, 104, 4)
+        data[108:116]=b'RAW BIN!'
+        out, entry=self.convert(data, le.fmt_smd)
+        self.assertFalse(entry['complete'])
+        self.assertEqual(entry['raw_parts'], ['BIN0 payload'])
+        self.assertEqual(struct.unpack_from('<2I', out,16), (1,100))
+        self.assertEqual(struct.unpack_from('<9f', out,24), tuple(range(9)))
+        self.assertEqual(struct.unpack_from('<I',out,92)[0],0x12340008)
+        self.assertEqual(out[108:],b'RAW BIN!')
+        self.assertEqual(out[60:64],data[60:64])
+
+    def test_smx_movers_keep_byte_flags_and_report_unknown_work(self):
+        data=bytearray(16+3*144); data[1]=3
+        for i,kind in enumerate([1,2,0]):
+            p=16+i*144; data[p:p+4]=bytes([i,kind,5,2])
+            struct.pack_into('>3I',data,p+4,0x12345678,0x10,0x11223344)
+            struct.pack_into('>I2f',data,p+132,0x55667788,0.5,-0.25)
+        struct.pack_into('>3f',data,32,1,2,3);data[44]=1
+        struct.pack_into('>13f',data,176,*range(13))
+        data[320]=9
+        out,entry=self.convert(data,le.fmt_smx)
+        self.assertEqual(entry['raw_parts'],['SMX2 type0 callback work'])
+        self.assertEqual(struct.unpack_from('<3f',out,32),(1,2,3))
+        self.assertEqual(out[44],1)
+        self.assertEqual(struct.unpack_from('<13f',out,176),tuple(range(13)))
+        self.assertEqual(out[320],9)
+        self.assertEqual(struct.unpack_from('<3I',out,20),(0x12345678,0x10,0x11223344))
+        self.assertEqual(struct.unpack_from('<I2f',out,148),(0x55667788,0.5,-0.25))
+
+    @unittest.skipUnless(shutil.which('g++'), 'host compiler required')
+    def test_native_scene_flag_and_color_views(self):
+        header=(ROOT/'include/scroll.h').read_text()
+        work=header[header.index('struct SmdWork {'):header.index('class cSmd {')]
+        source=(ROOT/'src/game/scroll.cpp').read_text()
+        begin=source.index('static void NativeStoreSourceColor(')
+        helper=source[begin:source.index('#endif',begin)]
+        fixture='#include <cassert>\nusing u8=unsigned char; using u32=unsigned; struct Vec {float x,y,z;};\n'+work+helper
+        fixture+='int main(){ SmdWork w{}; w.flags=0x12345678; assert(w.b.x47==0x78); static_assert(sizeof(SmdWork)==72); u8 c[4]; NativeStoreSourceColor(c,0x11223344); assert(c[0]==0x11 && c[1]==0x22 && c[2]==0x33 && c[3]==0x44); }'
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp);(p/'test.cpp').write_text(fixture)
+            subprocess.run(['g++',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+            subprocess.run([str(p/'test')],check=True)
+
     @unittest.skipUnless(shutil.which('g++'), 'host compiler required')
     def test_native_attribute_word_and_halves_agree(self):
         header = (ROOT/'include/at_sub.h').read_text()

@@ -51,7 +51,17 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D297 (2026-09-21)
+## Latest bounded result: D298 (2026-09-21)
+
+SMD registration metadata and referenced textures now convert across all nine
+available regions. SMX masks/colors/UV and known mover layouts convert; two r120
+callback work records remain unresolved. Native source flags/colors retain their
+GameCube byte meanings. See [R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md)
+for tests, real-data group-count correction and limits. Next: ModelData/BIN
+payload conversion, then remaining room data and the native loading boundary.
+Sidecars are still incomplete. Last target replay remains D295.
+
+## Historical bounded result: D297 (2026-09-21)
 
 The existing mirror now writes decoded `.arc` sidecars with `--decode-rooms`.
 CNS and full source-layout SAT/EAT (including block hierarchy) convert for all

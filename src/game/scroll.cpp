@@ -303,6 +303,17 @@ void smxInit(cObj* obj, u8 id)
     }
 }
 
+#if !defined(__PPC__)
+// Source packed colors are numeric 0xRRGGBBAA, while GX-facing arrays are bytes.
+static void NativeStoreSourceColor(u8* dst, u32 color)
+{
+    dst[0] = (u8) (color >> 24);
+    dst[1] = (u8) (color >> 16);
+    dst[2] = (u8) (color >> 8);
+    dst[3] = (u8) color;
+}
+#endif
+
 // Applies an SMX record: type / ot_type / cull mode / light mask / flags, the model colours
 // (colour 0 alpha = blend mode), UV scroll, and the 0x78-byte work copied into the object; a
 // non-zero type makes the object a moving one (be_flag 0x20).
@@ -327,14 +338,22 @@ void smxInit(cObj* obj, SmxWork* w)
     mi = obj->pModelInfo;
     if (mi != NULL) {
         col = w->color;
+#if defined(__PPC__)
         *(u32*) mi->color = col;
+#else
+        NativeStoreSourceColor(mi->color, col);
+#endif
         if ((col & ~0xFF) == 0) {
             mi->color[0] = 0xFF;
             mi->color[1] = 0xFF;
             mi->color[2] = 0xFF;
         }
         col = w->color2;
+#if defined(__PPC__)
         *(u32*) mi->color2 = col;
+#else
+        NativeStoreSourceColor(mi->color2, col);
+#endif
         if ((col & ~0xFF) == 0) {
             mi->color2[3] = 0;
         } else {

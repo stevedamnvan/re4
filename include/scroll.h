@@ -18,8 +18,13 @@ struct SmdWork {
     union {
         u32 flags;   // 0x44  bit4: bin/tpl come from the common SMD, bit6: motion too
         struct {
+#if defined(__PPC__)
             u8 pad_44[3];
             u8 x47;  // 0x47  low byte of flags -> cObj::x3D0
+#else
+            u8 x47;  // numeric low byte of native flags
+            u8 pad_44[3];
+#endif
         } b;
     };
 };

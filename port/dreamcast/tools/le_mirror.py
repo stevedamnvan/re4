@@ -574,7 +574,89 @@ def _fmt_sat_file(sw, off, size):
     if len(visited) != nb:
         raise ValueError('SAT block count does not match graph')
 
+def fmt_smd(sw, off, size, ctx):
+    """scroll.h cSmd/SmdWork: source instances and table-relative resources.
+
+    Model and motion payloads remain explicit coverage debt; textures use the
+    existing TPL handler. Do not report the full SMD as ready from metadata alone.
+    """
+    sw._check(off, 16)
+    flag = sw.data[off + 1]
+    count = sw.u16(off + 2)
+    tables = sw.u32s(off + 4, 3)
+    work = off + 16
+    total = count
+    if flag & 1:
+        groups = sw.u32(work)
+        sizes = sw.u32s(work + 4, groups)
+        # Group counts reserve runtime slots for separately loaded blocks;
+        # this file still contains exactly nModel placement records.
+        work += 4 + 4 * groups
+    sw._check(work, total * 72)
+    local_ids = [set(), set(), set()]
+    for i in range(total):
+        p = work + i * 72
+        sw.f32s(p, 9)
+        flags = sw.u32(p + 68)
+        ids = sw.data[p + 36:p + 39]
+        # Retain every placement, including unused records. Resource references
+        # with common-model flags resolve from the other SMD at runtime.
+        for j, common in enumerate((0x10, 0x10, 0x40)):
+            if not flags & common and ids[j] != 0xFF:
+                local_ids[j].add(ids[j])
+    raw = []
+    for kind, table, ids in zip(('BIN', 'TPL', 'FCV'), tables, local_ids):
+        if not ids:
+            continue
+        if not 16 <= table < size:
+            raise ValueError('SMD referenced table outside file')
+        # Count comes from source references, not padding before the first body.
+        n = max(ids) + 1
+        base = off + table
+        offsets = sw.u32s(base, n)
+        for ident in sorted(ids):
+            relative = offsets[ident]
+            target = base + relative
+            if relative < 4 * n or target >= off + size:
+                raise ValueError('SMD resource offset outside file')
+            if kind == 'TPL':
+                if not sw.swapped(target):
+                    fmt_tpl(sw, target, off + size - target, ctx + '/tpl%d' % ident)
+            else:
+                raw.append('%s%d payload' % (kind, ident))
+    return raw
+
+
+def fmt_smx(sw, off, size, ctx):
+    """scroll.h SmxWork plus obj02.cpp's rotate/swing work layouts."""
+    sw._check(off, 16)
+    count = sw.data[off + 1]
+    sw._check(off + 16, count * 144)
+    raw = []
+    for i in range(count):
+        p = off + 16 + i * 144
+        kind = sw.data[p + 1]
+        sw.u32s(p + 4, 3)  # selection mask, flags, packed numeric RGBA
+        sw.u32(p + 132)    # packed numeric color2
+        sw.f32s(p + 136, 2)
+        work = p + 16
+        if kind == 1:
+            sw.f32s(work, 3)  # rotation speed; byte flag at +12 stays byte
+            if any(sw.data[work + 13:work + 116]):
+                raw.append('SMX%d extra rotate work' % i)
+        elif kind == 2:
+            sw.f32s(work, 13)  # phase/amplitude/frequency/time/base rotation
+            if any(sw.data[work + 52:work + 116]):
+                raw.append('SMX%d extra swing work' % i)
+        elif any(sw.data[work:work + 116]):
+            # Type zero's normal mover ignores work, but room callbacks may
+            # consume it. Do not guess its scalar layout from nonzero bytes.
+            raw.append('SMX%d type%d callback work' % (i, kind))
+    return raw
+
 TAG_FORMATS = {
+    b"SMD\0": fmt_smd,
+    b"SMX\0": fmt_smx,
     b"CNS\0": fmt_cns,
     b"SAT\0": fmt_sat,
     b"EAT\0": fmt_sat,
