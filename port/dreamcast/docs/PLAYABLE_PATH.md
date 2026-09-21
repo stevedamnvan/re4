@@ -50,14 +50,17 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D305 replay, 2026-09-21)
+## Current boot frontier (3ca3d32 / D306 replay, 2026-09-21)
 
 D305 qualifies r100 and loads its 4,669,568-byte archive through the recovered
 ReadAreaData/gameRoomInit path, retaining ROOM/FOOT sound-container dispatch.
 Source initialization then exhausts the room heap at collision-manager arrays
-and the event table. Next work is allocation/lifetime accounting and a measured
-native memory correction, without arbitrary gameplay-pool reductions. r101
-remains explicitly rejected for incomplete EVS conversion.
+and the event table. D306 logs allocation sizes: the source primitive buffer
+takes 638,976 bytes, leaving 4,384 before required collision/event pools fail.
+Next work is a measured target reservation/lifetime correction without arbitrary
+gameplay-pool reductions or dropped render work. See
+[R4_ROOM_MEMORY_CHECKPOINT.md](R4_ROOM_MEMORY_CHECKPOINT.md). r101 remains
+explicitly rejected for incomplete EVS conversion.
 
 D303's source-derived first-play opening skip still reaches r100 through normal
 stage initialization; r120 is cinematic staging, not a playable room. Its D302
@@ -69,6 +72,15 @@ output, performance or physical-hardware acceptance is implied by these logs.
 
 After first-room manual acceptance, package the proven approach as an Astra
 light skill according to AGENTS.md; keep the three-room goal and wider backlogs.
+
+## Opening-route evidence (partial; third room and exit gates open)
+
+| Position | Room | Entry/progression evidence | Required exit / acceptance |
+|---|---|---|---|
+| Cinematic staging; not counted | r120 | `src/st1/r120.cpp::R120Event` first-play skip/completion reaches r100; D303 implements persistent effects. | Presentation skipped; required gameplay effects retained. |
+| First playable room | r100 | Source r120 jump, normal stage/load entry verified in D305/D306. | Authored AEV door targets r101; event/unlock conditions and manual completion remain unverified. |
+| Next connected room | r101 | r100 AEV destination is r101; gameplay qualification remains open. | Verify normal entry, required village combat/events and onward exit. |
+| Third playable room | Unresolved | Trace matching opening event/door data, not numerical order. | Record ID and required completion/transition conditions once verified. |
 
 ## Binding correction
 
@@ -252,16 +264,17 @@ no longer the default way to bring a section up.
    edits, in `pG`/`pSys` and the title work: player type (`pl_type` 0..6),
    load number, stage / room / jump point through `cRoomJmp`, the enemy list
    (`em_list_no`, with the `Scenario_flg[0]` bits for lists > 2/3), debug
-   page (`debug_mode`), enemy on/off (`Debug_flg[2]` 0x00200000), scenario
-   on/off (`Debug_flg[3]` 0x800), sound mode, BGM (`Debug_flg[2]`
-   0x04000000), a `Debug_flg[3]` 0x00200000 switch, shooting mode,
+   page (`debug_mode`), ENEMY SET (`Debug_flg[2]` 0x00200000 set = OFF),
+   ETC SET (`Debug_flg[3]` 0x00000800 set = OFF), sound mode, SCENARIO
+   (`Debug_flg[2]` 0x04000000 set = OFF), USE DBMEM (`Debug_flg[3]`
+   0x00200000 set = ON), shooting mode,
    Ashley costume, language/region, game mode and one more `Debug_flg[2]`
    0x400 switch; then `getRoomInfo(...)->setNextPos()`, `System_flg |=
    0x2000` (new game) and the normal `GameTask` start. This is the preferred
    way to start at a source-defined location. The exact original UI is not
    required at first: a Dreamcast developer interface or configuration file
    that drives the same fields with the same initialization semantics is
-   acceptable.
+   acceptable. The title menu has SOUND MODE, not a BGM enable switch.
 3. **`debug/config.txt` / `ConfigSet()`** (`src/game/debug.cpp`, read in
    `systemRestartInit`) is the source-authored precedent for deterministic
    fixtures: `[USER]`, `[BRIGHTNESS]`, `[STAGE]`, `[ROOM]`, `[JUMP_POINT]`,
@@ -271,7 +284,13 @@ no longer the default way to bring a section up.
    STAGE, ROOM, JUMP_POINT, PLAYER, SCENARIO on/off, enemy on/off and the
    relevant source debug/start flags, consuming `roominfo.dat` and the source
    fields rather than duplicating positions into build-time constants. One
-   executable, data-selected rooms.
+   executable, data-selected rooms. ConfigSet BGM OFF sets `Debug_flg[2]`
+   0x00100000; SCENARIO OFF sets word 2 mask 0x04000000; ENEMY_SET OFF
+   sets word 2 mask 0x00200000; ETC_SET OFF sets word 3 mask 0x00000800.
+   NO_ENEMY uses inverse wording: ON disables enemies, OFF enables them.
+   Evidence must record the effective scenario, enemy and object-setup switches
+   after configuration/title choices, so disabled behavior is not misdiagnosed
+   as missing implementation. This does not change runtime flags.
 4. **Debug camera** (`src/game/db_cam.cpp`, `CamDbg` from `CameraMove` on pad
    1: orbit / dolly / zoom, target the selected enemy, object or player,
    B returns control to the gameplay camera) is a visual-inspection tool for
@@ -345,13 +364,13 @@ isolation. Maintain a runnable build and continue after each milestone.
 4. **Complete the verified three-room opening route.** Prove consecutive manual
    play from the main menu through all three rooms and both transitions, including
    required events/combat, audio, death/retry and allowed re-entry. Cutscene
-   presentation is deferred under the explicit policy above. Room IDs remain
-   unverified until traced from the matching original New Game path.
-5. **Deferred: representative village play and the opening chapter.** Integrate the
-   required enemy variants, source-controlled activation/waves, objects,
-   inventory/items, events, and progression. Exercise the inventory and
-   death/retry/save paths when required by the sequence. Continue toward the
-   next chapter/Disc 1; do not establish another indefinite village-only gate.
+   presentation is deferred under the explicit policy above. The complete
+   three-room sequence remains open; use the source/data evidence table above.
+5. **Deferred: content beyond the verified three-room route.** Continue into
+   the rest of the opening chapter and Disc 1 afterward. Any village enemies,
+   objects, interactions, combat, events, inventory, audio and exit conditions
+   needed to complete the three-room route remain in the current milestone.
+   Entering or rendering a room is not completing its gameplay.
 
 The completion measure is the longest repeatable, normally controllable sequence
 reached from boot, with required systems classified as source-integrated,

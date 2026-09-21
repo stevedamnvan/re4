@@ -1,6 +1,7 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Updated 2026-09-21; reconciled against `b7d29e3`.
+Updated 2026-09-21; current integration reference `3ca3d32` / D306.
+Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first
 roadmap. Historical R0-R4 experiment labels do not determine the next task.
@@ -35,7 +36,25 @@ A speculative sub-millisecond lighting/compiler/cache experiment is not the
 primary task while source progression, scheduling, camera, and events are still
 missing. Keep rejected branches closed absent new workload evidence.
 
-## Current evidence and necessary corrections
+## Component status versus gameplay integration
+
+| Status | Current meaning and evidence |
+|---|---|
+| Implemented in native scene runtime | `port/dreamcast/room/` owns measured visibility, prepared lighting, strips, texture sharing/upload, transient payload and retirement work. Reuse these components. |
+| Connected to recovered game | `port/dreamcast/game/` uses qualified source-layout DAR through the DVD queue/source heap and reaches r100 allocation. This does not connect every scene-runtime optimization. |
+| Validated in normal gameplay | Not yet established: the game still links GX/audio placeholders, and D306 repeats initialization heap exhaustion. Viewer timings are not its gameplay frame budget. |
+
+Qualified `.dar` -> source DVD queue/heap ownership -> recovered initialization
+and behavior differs from native scene/texture packages -> existing rendering
+and resource mechanisms. Adapt those through explicit interfaces; never replace
+the archive behind `pG->pRoom` with a viewer `.re4room` package.
+
+Latest primary evidence is D306's allocation trace after D305 archive/sound-block
+consumption. Sound dispatch is not playback; `read_us=0` is not valid timing.
+Diagnose current memory demand, then measure integrated rendering when connected.
+Historical workload measurements below remain component-reuse references.
+
+## Historical evidence and necessary corrections
 
 | Revision / evidence | Planning consequence |
 |---|---|
@@ -77,19 +96,22 @@ fixture track in [PLAYABLE_PATH.md](PLAYABLE_PATH.md)) rather than cabin-only
 autoplay or invented sweeps. A timing run names its stage, room, jump point,
 player/camera state and scenario state.
 
-Alternate representations (a lower-detail GameCube variant, a converted PS2
-mesh, texture or prelit attribute, a prerecorded cinematic in place of a
-realtime one) are benchmarked only under equivalent gameplay state: the same
-stage, room, `CRoomInfo` jump point, player state, camera state,
-scenario/event state, resolution and, where practical, the same gameplay tick,
-against the unchanged GameCube-derived baseline in the same sitting. For each
-pair record package bytes, persistent RAM, loading peak, VRAM, triangles,
-transformed vertices, batches/material changes, skinning/lighting work, the CPU
-frame distribution and the visual differences. A comparison from free-camera
-screenshots, from different positions or from different scenario states is not
-evidence. The same fixture layer serves later-room bring-up, event debugging,
-enemy testing, camera and collision validation, resource residency, GC-vs-PS2
-asset comparisons and performance stress cases.
+Alternate representations have two evidence levels:
+
+- Early diagnostic comparison: one equivalent static environment object/small
+  group in the existing native scene runtime, with exactly matched camera,
+  lighting, render state and resolution. This may establish asset compatibility
+  and preliminary cost before full source-fixture integration.
+- Gameplay qualification: representative recovered-game source-controlled state,
+  including room/jump, player/camera, scenario/events and actual tick. Required
+  before claiming a route-level benefit or promoting an alternative selection.
+
+Keep the GameCube reference selectable. Record converted bytes, persistent/load
+RAM, VRAM, geometry/batches/materials, lighting work, frame distributions and
+appearance differences. Unrelated views or altered states are not a comparison.
+Early viewer results are not village FPS claims. Character substitution and movie
+mapping are later/separately assigned work, not the current helper's scope. See
+[R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md) for conversion requirements.
 
 Grow the fixture set from the opening sequence: title/new game, movement and
 camera turns, aim extremes, fire/reload, enemy contact, interaction/inventory,

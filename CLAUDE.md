@@ -13,6 +13,37 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
+## Current resumption point - 3ca3d32 / D306
+
+Branch `dreamcast-port`; implementation `c325c41` qualifies r100, and `3ca3d32`
+adds the measured allocation diagnostic. Latest completed target replay is D306:
+normal first-play opening completion -> r100 stage -> qualified archive and
+ROOM/FOOT sound dispatch -> collision/event allocation failure. The source
+638,976-byte primitive allocation leaves 4,384 bytes; required later pools fail.
+
+Next primary task: remove demonstrated target reservation/lifetime overhead,
+preserving source gameplay pool capacity and render work. Trace primitive-buffer
+consumers and native backend ownership before changing its representation.
+See [R4_ROOM_MEMORY_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_MEMORY_CHECKPOINT.md)
+for exact allocation evidence/build hashes and the D305 endian checkpoint for
+qualified data contracts. Do not return to missing YZ2, r120 or EFF work.
+
+Current limits: the game target still links `platform/gx_stub.cpp` and
+`platform/audio_stub.cpp`; source execution does not establish visible menus,
+native room rendering or audible output. Static module reload/BSS behavior,
+remaining core/player coverage, title ID lookup failures and manual gameplay
+remain open. Preserve inherited dirty source/platform/module/build edits; inspect
+live Git before staging. Earlier raw-REL execution and scheduler failures are
+historical corrected issues, not the active dependency.
+
+The assigned Astra light helper uses `/root/work/re4-ps2-experiment` for one
+static environment object: geometry, UVs, textures, authored shading, material
+and instance correspondence. No candidate is promoted. Coordinate emulator
+ownership; keep the primary task on recovered-game integration.
+
+Once the first room is fully working, create the proven Astra light skill under
+AGENTS.md's acceptance requirement. Archive loading alone does not trigger it.
+
 ## Working paths
 
 | Purpose | Path |
@@ -29,12 +60,13 @@ sequence from source/data. The room-120 debug start is only a dependency fixture
 | Read-only Soulcalibur/Flycast reference | `C:\Game Dev\Emulators\flycast` |
 
 Branch is `dreamcast-port`; origin is `https://github.com/stevedamnvan/re4.git`,
-upstream is `https://github.com/adonis-singh/re4.git`. At inspection the latest
-implementation commit was `7d03ad5` (title screens after card check), following
-`2420a80` (game frame loop) and `cb0d60a` (SH-4 source compile). Recheck live Git;
-these are evidence anchors, not instructions to reset the branch.
+upstream is `https://github.com/adonis-singh/re4.git`. Recheck live Git; the current
+resumption point above takes precedence over every historical checkpoint below.
 
-## Last committed boot evidence
+## Historical boot evidence - old next steps superseded
+
+All historical "next" directions below describe that checkpoint's state, not
+today's queue. Preserve their hashes and measurements with the original artifact.
 
 The user's completion report for `7d03ad5` matches the inspected 14-file commit:
 Dreamcast DVD staging-buffer fix (PowerPC address retained), sound MRAM mirror
@@ -45,13 +77,11 @@ this documentation update and does not qualify subsequent dirty source edits.
 The reported clean tree was immediately after that commit, not the current tree.
 No source assets or evidence were included; launcher changes stayed private.
 
-That committed checkpoint names EFF conversion as its next dependency. The
-subsequently committed `le_mirror.py` defines `fmt_eff` and `fmt_rel`. Inspect
-those handlers and `test_le_mirror.py`, validate real ID data, then replay the
-same boot before deciding whether EFF remains the blocker. Do not write a second
-handler or treat uncommitted room-120 progress as accepted solely from the report.
+At that checkpoint EFF was the next dependency. Subsequent conversion, module,
+scheduler and archive-loading work superseded it; use the current resumption
+point above. This remains historical boot evidence, not a current task assignment.
 
-## Latest bounded result: D305 (2026-09-21)
+## Historical bounded result: D305 (2026-09-21)
 
 The qualified r100 archive now passes the existing mirror gate and is consumed
 by recovered ReadAreaData/gameRoomInit. The 55-second scripted Flycast capture
@@ -238,9 +268,9 @@ to r100 through `SceAtExecRoomJump(0x100, ...)`. Do not count r120 as one of thr
 playable rooms. Preserve the source completion effects when implementing the
 user-authorized cinematic skip. Module reload/BSS/constructor limitations remain.
 
-## Frontier and unaccepted work (prior snapshot)
+## Historical pre-D291 working-tree report - superseded
 
-The current tree is deliberately dirty across recovered source, platform shims,
+At that inspection the tree was dirty across recovered source, platform shims,
 module/build tooling, fixtures and endian conversion. Preserve it. New files
 include `game/platform/modules.cpp`, `game/tools/gen_modules.py`,
 `fixtures/boot-deps.txt`, and `tests/test_le_mirror.py`, under `port/dreamcast`.
@@ -260,10 +290,9 @@ not infer that the recovered game's menu or room is visibly playable from a
 frame-loop trace or from the separate room viewer's graphics. Inspect current
 adapters and integrate the existing renderer/audio paths as needed.
 
-Next bounded slice: follow the D295 missing-room-archive frontier above;
-the D291 stage-entry failure has already been cleared. Record real room init/update execution as an
-intermediate checkpoint. Subsequently return to normal menu/New Game entry,
-verify the opening route, and advance through its three rooms.
+That report's instruction to resume at the D295 missing archive is superseded
+by D296-D306. Follow the single current resumption point above. The remaining
+normal menu, gameplay and transition acceptance requirements still apply.
 
 ## Existing backlog map
 
@@ -286,17 +315,40 @@ to implementing every small opening-route dependency.
 
 ## Build and evidence workflow
 
-Run from WSL; these commands target the recovered game, not the scene viewer:
+Run from WSL. This is the bounded D305/D306 diagnostic route, not a qualified
+three-room presentation build. Its actual input directory is
+`/root/probe/d292-fixtures` (`padscript.txt` plus `diag.txt`). Scripted New Game
+still confirms the source title debug menu defaults; it is not manual acceptance.
+
+The real `port/dreamcast/fixtures/boot-deps.txt` is the cold-boot/title manifest
+and remains an untracked local integration file. It does not require a room.
+Copy it and append the r100 ARC/DAR dependencies for this bounded fixture as
+below. The saved D305 report passes these combined requirements. This is not a
+declaration that all future native core/player/room consumers are qualified.
 
 ```bash
+set -e
 cd /root/work/re4-dreamcast
 source port/dreamcast/kos-env.sh
+test -f port/dreamcast/fixtures/boot-deps.txt
+test -f /root/probe/d292-fixtures/padscript.txt
+required=$(mktemp /root/probe/re4-r100-required.XXXXXX)
+cat port/dreamcast/fixtures/boot-deps.txt > "$required"
+printf '\nst1/r100.arc\nst1/r100.dar\n' >> "$required"
+mirror_out=$(mktemp -d /root/probe/re4-le-r100.XXXXXX)
+python3 port/dreamcast/tools/le_mirror.py /root/re4data "$mirror_out" --native-rooms --require "$required"
 make -C port/dreamcast/game -j4
-python3 -m unittest discover -s port/dreamcast/tests -p 'test_*.py'
-python3 port/dreamcast/tools/le_mirror.py /root/re4data /root/re4data-le
-# Choose an unused absolute output directory: mkdisc.sh replaces its output.
-bash port/dreamcast/tools/mkdisc.sh port/dreamcast/game/re4dc-game.elf /root/re4data-le /root/probe/UNUSED-RUN-DIRECTORY port/dreamcast/fixtures
+disc_out=$(mktemp -d /root/probe/re4-disc-r100.XXXXXX)
+bash port/dreamcast/tools/mkdisc.sh port/dreamcast/game/re4dc-game.elf "$mirror_out" "$disc_out" /root/probe/d292-fixtures
 ```
+
+Record the generated paths, manifest contents and hashes in evidence. A fresh
+mirror avoids stale output. `--native-rooms` emits only qualified DARs and removes
+a rejected room's old DAR. Without `--require`, conversion exit zero can coexist
+with explicit handler errors: that is inventory, not qualification. Intentional
+rejection tests require an incomplete room and expect failure; never package
+that as a successful build. Use focused tests for the boundary being changed.
+This recipe was inspected, not rerun to rebuild assets for this doc amendment.
 
 Inspect the mirror inputs/output and active processes before rebuilding shared
 private data. Choose a new capture folder for each candidate. Existing launcher

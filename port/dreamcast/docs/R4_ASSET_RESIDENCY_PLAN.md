@@ -1,6 +1,7 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-Updated 2026-09-21; reconciled against `b7d29e3`.
+Updated 2026-09-21; current integration reference `3ca3d32` / D306.
+Historical resource measurements retain their original revision identities.
 This policy supports the authoritative [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
 R4 is not an independent prerequisite project that must be perfected before
 boot-forward game integration can start. [REALTIME_PATH.md](REALTIME_PATH.md)
@@ -35,6 +36,22 @@ historical task ordering. Preserve source room/transition rules; do not invent a
 GTA loading radius or assume that GameCube ARAM can map onto AICA sample memory.
 
 ## Implemented infrastructure and evidence limits
+
+The bullets below describe `port/dreamcast/room/`, not blanket integration into
+`port/dreamcast/game/`. Track three states: implemented in the native scene
+runtime; explicitly connected through recovered-game interfaces; validated in
+normal gameplay including relevant transitions/retry. Existing readers, texture
+and package classes, upload/sharing, transient backing and retirement are reuse
+references. Viewer tests do not prove the latter two states.
+
+Current recovered-game ownership is qualified source-layout `.dar` -> source
+DVD queue and source heap -> recovered initialization/behavior. D305 consumes
+r100 and dispatches its sound blocks; D306 measures the ensuing pool exhaustion.
+Custom `.re4room`/`.re4sat` and native textures serve the scene renderer and are
+not interchangeable with the source archive behind `pG->pRoom`. The recovered
+target still links GX/audio placeholders; explicit connection and normal
+transition/retry validation remain open. Historical budgets below belong to the
+named scene builds, not the current recovered-game target.
 
 - Room-owned packages can be read into owned storage, validated, retired and
   reloaded. The fence must protect completed rendering, not merely submitted
@@ -162,23 +179,39 @@ do not fit; do not pretend the source supplied a target-specific streaming plan.
 Run this as a secondary, isolated task. It must not block the main boot-forward
 integration path or expand into a campaign-wide extraction database.
 
-Room/jump fixtures are the standard controlled context for testing alternate
-GameCube/PS2 representations and room-resource behaviour: the same authored
-stage, room and `roominfo.dat` jump point entered through the normal room
-change, the same player/camera state and the same scenario state for every
-candidate (see the fixture track in [PLAYABLE_PATH.md](PLAYABLE_PATH.md)).
-Memory, loading peak, batch counts, frame times and appearance are compared
-there, not from free-camera screenshots or unrelated positions.
+The immediate assigned experiment is one equivalent static environment object
+or small group: geometry, UVs, textures, authored vertex colors or normals,
+materials and original instance transforms/identities. Characters, full-room
+substitution and movie mapping remain later or separately assigned work. The
+Astra light helper uses `/root/work/re4-ps2-experiment` and private extraction,
+build/evidence paths; it does not edit the primary checkout/shared assets.
 
-Candidate categories: room/environment meshes, character/enemy model variants,
+Two acceptance levels apply:
+
+- Early diagnostics use the existing native runtime with precisely matched
+  object, camera, lighting, render state and resolution. They may establish
+  compatibility and preliminary asset-specific savings before full source
+  fixtures work. Preserve failed comparisons and limitations.
+- Gameplay qualification uses the recovered game's representative source state,
+  normal ownership and activation rules. Required for route-level benefit claims
+  or promotion to accepted asset selection. A viewer comparison is not village FPS.
+
+Preserve exporter companion metadata, source identities and instance status.
+Verify coordinate transforms, color range/channel/alpha meaning, materials,
+filter/wrap/depth/cull behavior and any quantization. Avoid applying dynamic
+lighting twice to prelit geometry. Retain selectable GC assets; measure total
+memory/rendering cost and appearance differences, not polygon count alone.
+Do not overlap timed runs; coordinate the single host capture window.
+
+Broader backlog categories (not the current assignment): room/environment meshes, character/enemy model variants,
 texture resolutions/formats, vertex/prelit colour, materials/pass reductions,
 collision representation (for comparison only), effect simplifications, UI
 representations, audio encodings and prerecorded cinematics. Preserve original
 assets alongside every alternative so the comparison is reversible; select per
 validated resource, and do not match assets by filename alone.
 
-1. **Pick equivalent content.** Start with corresponding village environment
-   geometry and one representative enemy. Inspect available GameCube gameplay/LOD
+1. **Pick equivalent content.** Start with one corresponding static environment
+   object or small group. Inspect available GameCube gameplay/LOD
    variants and their selectors first or alongside PS2. Do not assume the current
    converted mesh is the required quality tier in every source situation.
 2. **Extract from supplied private images.** Preserve manifests, source build,
@@ -243,7 +276,7 @@ same-version integration unless the PS2 alternative shows a measured advantage.
 
 ### Prerecorded PS2 movies and realtime-to-prerendered substitutions
 
-Audit `BIO4MOV.AFS` and `BIO4MOV2.AFS`: extract and inventory their SFD
+Later/separately assigned work: audit `BIO4MOV.AFS` and `BIO4MOV2.AFS`, inventory their SFD
 contents privately and build a manifest mapping
 
 ```text
@@ -268,16 +301,12 @@ not copied onto the Dreamcast.
 
 ### Bounded scope and the shape of a result
 
-The PS2 track is parallel and bounded: an isolated worktree, separate private
-generated-asset/evidence directories, and representative cases before any wider
-extraction: one costly village/environment comparison, one representative
-enemy/model comparison, one representative prerecorded-cinematic mapping. A
-useful result reads like "PS2 environment candidate: -35% converted geometry
-bytes, -28% submitted vertices, +X ms frame benefit, documented appearance
-differences, collision/camera compatibility verified", or "rejected:
-conversion/material/rig incompatibility removes the expected benefit". Weeks
-spent building a complete PS2 asset database before testing whether the
-approach helps the Dreamcast are not a result.
+The current task is bounded to that one static environment comparison. Report
+exact correspondence, interpretation/compatibility checks, selectable build
+identity, paired costs, appearance differences, keep/reject recommendation and
+limits. Later character and cinematic studies need separate assignment; the
+tool inventory above does not authorize them automatically. Do not build a
+campaign-wide database or another renderer to answer this question.
 
 Allow a hybrid result: suitable GameCube variants, retained high-detail player
 assets, selected PS2 environment/enemy representations, and native Dreamcast
@@ -296,7 +325,7 @@ mature encoders where appropriate. VQ is a candidate, not a free/lossless defaul
 review its moving image, alpha and close-detail behavior. HUD and faces need
 separate judgment. Preserve a suitable uncompressed reference/fallback.
 
-Within-package sharing is already implemented. Cross-package sharing requires
+Within-package sharing is implemented in the native scene runtime. Cross-package sharing requires
 validated content identity and descriptor compatibility, lifetime references and
 collision checks. Ninety-three distinct payload hashes in an earlier build do
 not prove that another room shares nothing. Different actor ids also do not
