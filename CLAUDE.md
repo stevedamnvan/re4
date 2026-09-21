@@ -51,7 +51,19 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D295 (2026-09-21)
+## Latest bounded result: D296 (2026-09-21)
+
+The missing r120 archive is now extracted from the source disc. The new offline
+`port/dreamcast/tools/decode_yz2.py` executes the recovered PowerPC decoder during
+asset preparation; r100, r101 and r120 decode with structurally valid archives.
+See [R4_OFFLINE_ROOM_DECODE_CHECKPOINT.md](port/dreamcast/docs/R4_OFFLINE_ROOM_DECODE_CHECKPOINT.md)
+for exact outputs, tool identities, tests, limitations and the next implementation.
+The runtime YZ2 path is still a stub; decoded archives need endian conversion and
+an explicit native loading contract. The last target replay is D295. Do not
+rerun the now-present compressed archive and mistake the decoder stub for data
+conversion. Working extracted/mirror data changed; preserve D295's exact disc.
+
+## Historical bounded result: D295 (2026-09-21)
 
 The native scheduler now resolves self-directed entry, sleep, chain and exit from
 OSGetCurrentThread rather than the mutable pCTask scheduling cursor, and retains
