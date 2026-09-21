@@ -97,26 +97,28 @@ def emit_header(cut, name, scale, source):
     out.append("// scaled from source units to metres; colours, intensity,")
     out.append("// direction and type are carried through unchanged.")
     out.append("")
-    out.append("namespace re4dc::lit::%s {" % name.lower())
+    out.append("// Included inside main.cpp's anonymous namespace, so the names are the")
+    out.append("// ones the scene machinery already uses. One scene's header is included")
+    out.append("// per build; they never coexist.")
     out.append("")
-    out.append("inline constexpr float kFogStartDistance = %.6ff;"
+    out.append("constexpr float kSourceFogStartDistance = %.6ff;"
                % (env["fog_start"] * scale))
-    out.append("inline constexpr float kFogEndDistance = %.6ff;"
+    out.append("constexpr float kFogEndDistance = %.6ff;"
                % (env["fog_end"] * scale))
     # cLightMgr shortens the gameplay far plane to fogEnd * (1 - ratio) + 1 in
     # source units.
     far = (env["fog_end"] * (1.0 - env["far_play_ratio"]) + 1.0) * scale
-    out.append("inline constexpr float kFarClipDistance = %.6ff;" % far)
-    out.append("inline constexpr float kFarPlayRatio = %.6ff;"
+    out.append("constexpr float kFarClipDistance = %.6ff;" % far)
+    out.append("constexpr float kSourceFarPlayRatio = %.6ff;"
                % env["far_play_ratio"])
     r, g, b, _ = env["bg"]
-    out.append("inline constexpr float kBackgroundRed = %d.0f / 255.0f;" % r)
-    out.append("inline constexpr float kBackgroundGreen = %d.0f / 255.0f;" % g)
-    out.append("inline constexpr float kBackgroundBlue = %d.0f / 255.0f;" % b)
+    out.append("constexpr float kBackgroundRed = %d.0f / 255.0f;" % r)
+    out.append("constexpr float kBackgroundGreen = %d.0f / 255.0f;" % g)
+    out.append("constexpr float kBackgroundBlue = %d.0f / 255.0f;" % b)
     ar, ag, ab, _ = env["ambient_screen"]
-    out.append("inline constexpr float kAmbientRed = %d.0f / 255.0f;" % ar)
-    out.append("inline constexpr float kAmbientGreen = %d.0f / 255.0f;" % ag)
-    out.append("inline constexpr float kAmbientBlue = %d.0f / 255.0f;" % ab)
+    out.append("constexpr float kSourceRoomAmbientRed = %d.0f / 255.0f;" % ar)
+    out.append("constexpr float kSourceRoomAmbientGreen = %d.0f / 255.0f;" % ag)
+    out.append("constexpr float kSourceRoomAmbientBlue = %d.0f / 255.0f;" % ab)
     out.append("")
     live = [l for l in cut["lights"] if not l["empty"]]
     out.append("// %d authored lights in this cut, of %d slots. Empty slots are"
@@ -124,7 +126,7 @@ def emit_header(cut, name, scale, source):
     out.append("// dropped; nothing else is filtered, so the reach of a light is")
     out.append("// decided by the runtime's own radius and volume tests rather")
     out.append("// than by a judgement made here.")
-    out.append("inline constexpr SourceLight kLights[] = {")
+    out.append("constexpr SourceLight kSourceLights[] = {")
     for index, light in enumerate(cut["lights"]):
         if light["empty"]:
             continue

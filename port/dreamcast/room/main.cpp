@@ -274,18 +274,10 @@ constexpr float kEnemySpawnX = -79.116f;
 constexpr float kEnemySpawnY = 0.860f;
 constexpr float kEnemySpawnZ = -38.890f;
 constexpr float kEnemySpawnYaw = -1.39f;
-// r100_002.LIT cut 0: fog end 106857 and far-play ratio 0.6. Room
-// coordinates use the source 0.001 metre scale; cLightMgr shortens the gameplay
-// far plane to fogEnd * (1 - farPlayRatio) + 1 in source coordinates.
-constexpr float kSourceFogStartDistance = -1.089f;
-constexpr float kFogEndDistance = 106.857f;
-constexpr float kFarClipDistance = 42.7438f;
-constexpr float kBackgroundRed = 141.0f / 255.0f;
-constexpr float kBackgroundGreen = 135.0f / 255.0f;
-constexpr float kBackgroundBlue = 117.0f / 255.0f;
-// r100_002.LIT, cut 0. These are the source-authored lights that can affect
-// the opening cabin. Positions/radii are converted from source units to
-// metres; directions, colours, intensity and type are preserved.
+// The scene's lighting environment -- fog, background, ambient and the light
+// table -- comes from the room's own .LIT. Room coordinates use the source
+// 0.001 metre scale; cLightMgr shortens the gameplay far plane to
+// fogEnd * (1 - farPlayRatio) + 1 in source coordinates.
 struct SourceLight {
     std::uint8_t type;
     bool view_space;
@@ -304,6 +296,21 @@ struct SourceLight {
     std::uint8_t source_index;
     std::uint8_t enable_mask;
 };
+#if defined(RE4DC_SCENE_R101)
+// r101_002.LIT cut 0, read by tools/convert_lit.py. The village's own fog,
+// background, ambient and fifteen lights.
+#include "r101_lit.hpp"
+#else
+// r100_002.LIT cut 0, transcribed by hand before the reader existed. Kept
+// verbatim because it is the accepted environment: the generated table carries
+// one further light (slot 17) that this transcription left out, so switching
+// r100 over is a change to its image and belongs in its own checkpoint.
+constexpr float kSourceFogStartDistance = -1.089f;
+constexpr float kFogEndDistance = 106.857f;
+constexpr float kFarClipDistance = 42.7438f;
+constexpr float kBackgroundRed = 141.0f / 255.0f;
+constexpr float kBackgroundGreen = 135.0f / 255.0f;
+constexpr float kBackgroundBlue = 117.0f / 255.0f;
 constexpr SourceLight kSourceLights[] = {
     {5, false, 0.0f, 0.0f, 0.0f, 179.7135f, 199.0f / 255.0f,
      197.0f / 255.0f, 188.0f / 255.0f, 0.84f, -49568.6875f,
@@ -339,6 +346,9 @@ constexpr SourceLight kSourceLights[] = {
 constexpr float kSourceRoomAmbientRed = 2.0f / 255.0f;
 constexpr float kSourceRoomAmbientGreen = 2.0f / 255.0f;
 constexpr float kSourceRoomAmbientBlue = 2.0f / 255.0f;
+#endif
+// The actor ambient is the cLightEnv model ambient. r101's is read with the
+// rest of its environment; r100's stays here with the transcription.
 constexpr float kSourceActorAmbientRed = 26.0f / 255.0f;
 constexpr float kSourceActorAmbientGreen = 26.0f / 255.0f;
 constexpr float kSourceActorAmbientBlue = 24.0f / 255.0f;
