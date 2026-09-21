@@ -1,5 +1,55 @@
 # D297: decoded room mirror and source collision layout
 
+## D303: first-play cinematic completion reaches r100 (2026-09-21)
+
+The native game now handles the authorized first-play opening skip before
+r120 room allocation, after normal New Game initialization, costume choice,
+stage setup and REL loading. This is a bounded completion adaptation of the
+source opening-movie skip path: R120Event's Sofdec bit 0x20 sets Scenario[0]
+0x10, skips both car events, then sets System 0x400 and requests r100 at
+(-109450,-515,820), yaw0/part0. No EVD commands execute on that source branch.
+
+The native helper preserves the persistent completion/transition state:
+r120 passed marker, previous room/part, intro skip flag, authored next/current
+room and player position, transition counters, and cleared entry flags. It
+returns to gameStageInit, so r100 uses normal stage/module/enemy-list/save and
+prepared-room loading. It never creates r120 scene objects, event nesting,
+locked controls or temporary camera/light state, so it does not invoke teardown
+on absent objects. GameCube code is unchanged behind the target guard. Health,
+inventory and pesetas remain with normal gameInit; no gameplay system is stubbed.
+
+Scope guard: room120, first play (game_cnt0), New Game flag0x2000, Leon. New
+Game Plus's preceding merchant interaction and existing-save entry are unchanged
+and remain outside this adaptation. These paths are not newly accepted. D302's
+frozen ELF remains the direct qualified-r120 transport/initialization reference.
+
+D303 55-second Flycast fixture confirms:
+
+```
+-- R120 ----------
+module: id 74 -> st1_0 (static)
+Native opening skip: r120 -> r100 at (-109450,-515,820); source completion
+-- R100 ----------
+Native room load failed: st1/r100.dar status=-1
+RE4DC MISSING: qualified native room container missing or invalid called; halting
+```
+
+No r120 archive is read in this run. The next dependency is r100's remaining
+source-format conversion (not a new loader or another r120 allocation fix).
+Its incomplete archive is still rejected before use. The route has not reached
+completed playable initialization, visible output, combat or retry acceptance.
+
+Two focused tests execute the actual helper, test nonmatching room/NG+/load/
+character guards, repeated-call behavior, persistent handoff and untouched
+player values, plus pin the source skip/position contract. Game build passes
+with the same six pre-existing stubs. This is not a dual-emulator state oracle
+or a full ProDG comparison. Source cutscene completion beyond this opening
+still needs individual contracts.
+
+Evidence: `C:\Flycast-Evidence\re4-dreamcast\d303-opening-skip`, with boot log,
+ELF/disc hashes, build log and unchanged D302 asset manifest. Toolchain/Flycast
+identities remain those of D301/D302. ELF SHA256 `433d91447da686745f09b1892897b2c83c20df5c64519f0d0f8925f27f96cc16`.
+
 ## D302: recovered game consumes the prepared r120 room (2026-09-21)
 
 The existing offline decoder and mirror are retained. Added source-layout SHD

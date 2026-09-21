@@ -51,7 +51,18 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D302 (2026-09-21)
+## Latest bounded result: D303 (2026-09-21)
+
+First-play New Game now follows the source opening-movie skip effects into
+r100 before allocating r120 cinematic resources. Flycast confirms normal stage
+entry and the explicit rejection of still-unqualified r100.dar. D302 remains
+the successful full r120 prepared-archive consumption reference. Next main work:
+finish r100 required conversions, emit its qualified container, and replay
+normal gameRoomInit. No arbitrary gameplay-pool reduction or alternate assets.
+See [R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md).
+Last build/replay D303; no playable/rendering acceptance yet.
+
+## Historical bounded result: D302 (2026-09-21)
 
 The recovered game loads the qualified 6,086,688-byte r120 archive through its
 own ReadAreaData/gameRoomInit path. Next failure is source-pool memory demand:

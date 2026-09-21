@@ -382,6 +382,43 @@ void gameStageInit()
     pG->Rno0 = 2;
 }
 
+#if !defined(__PPC__)
+// First-play opening skip, before any cinematic room resources are created.
+// R120Event's Sofdec skip bit sets Scenario[0].0x10, bypasses both car events,
+// then sets System.0x400 and jumps to r100. Carry the persistent effects of
+// room completion / sceAtFunc_door / gameDoordemo into the normal stage loader.
+// NG+ has a merchant interaction before the movie and must retain that path.
+static bool nativeSkipOpeningRoom()
+{
+    if (pG->room_id != 0x120 || pG->game_cnt != 0 ||
+        !(pG->System_flg & 0x2000) || pG->pl_type != 0) {
+        return false;
+    }
+    RoomData.setPassed(0x120, pG->Part);
+    pG->Scenario_flg[0] |= 0x10;
+    pG->System_flg |= 0x400;
+    pG->System_flg &= ~(0x2000 | 0x100 | 0x80000 | 0x400000 | 0x40);
+    pG->room_id_prev = 0x120;
+    pG->Part_old = pG->Part;
+    pG->NextPos.x = -109450.0f;
+    pG->NextPos.y = -515.0f;
+    pG->NextPos.z = 820.0f;
+    pG->NextY = 0.0f;
+    pG->sub_pos = pG->NextPos;
+    pG->sub_angle = pG->NextY;
+    pG->next_room = 0x100;
+    pG->next_point = 0;
+    pG->room_id = 0x100;
+    pG->Part = 0;
+    pG->JumpPoint = 0;
+    pG->r_continue_cnt = 0;
+    pG->Rno0 = 1;
+    pG->Rno1 = pG->Rno2 = pG->Rno3 = 0;
+    OSReport("Native opening skip: r120 -> r100 at (-109450,-515,820); source completion\n");
+    return true;
+}
+#endif
+
 // Rno0 == 2: room set-up after the room archive is loaded: player/area data, every manager's room
 // init + array allocation sized by the room "CNS" counts (models, parts, enemies, objects, sprites,
 // controllers, ctrl, lights, damage, SAT/EAT collision, events), the room data blocks (SMD/SMX
@@ -393,6 +430,11 @@ void gameRoomInit()
     int n;
     void* p;
 
+#if !defined(__PPC__)
+    if (nativeSkipOpeningRoom()) {
+        return;
+    }
+#endif
     DC.m_nblock_read_stop = 1;
     SndReadAddrInit();
     gameRoomMemInit();

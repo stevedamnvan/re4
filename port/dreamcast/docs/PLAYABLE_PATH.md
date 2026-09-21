@@ -50,20 +50,19 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D302, 2026-09-21)
+## Current boot frontier (D303, 2026-09-21)
 
-D302 loads a qualified source-layout r120 archive through the native DVD path
-and enters recovered gameRoomInit. SHD/TEX/FSE and known effect sequences now
-convert; r120 opaque normal-mover work has a scoped source contract. The first
-failure is source ObjMgr pool allocation (433,952 requested, 110,816 free),
-followed by effects/lights and the event table. The 6,086,688-byte archive occupies
-most of the 7,120,800-byte room heap. Resolve residency/source initialization
-needs next; trace the authorized cinematic skip/completion path before retaining
-r120's large cinematic working set. r100/r101 conversion remains incomplete.
-Do not repeat decoder, scheduler, or prepared-room transport implementation.
-See [R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md) for exact replay,
-asset qualification and load-memory evidence. This is not completed room init,
-visible-menu, manual-play or physical-hardware acceptance.
+D302 proved full qualified r120 archive transport into recovered gameRoomInit,
+then source pool exhaustion. D303 implements the authorized first-play opening
+skip using R120Event's movie-skip branch completion effects before cinematic
+allocation. The existing normal stage path reaches r100 and explicitly rejects
+its still-incomplete `.dar`. Finish r100 source-format qualification next, then
+replay initialization and measure its representative gameplay working set.
+D302 stays the full r120 reference; no source gameplay pools were cut. Existing
+save entry and NG+ merchant behavior are unchanged and not accepted by D303.
+See [R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md) for exact source
+contract, tests, capture identities and limitations. No completed-room, visible
+menu, manual-play, performance or physical-hardware acceptance is implied.
 
 ## Binding correction
 
