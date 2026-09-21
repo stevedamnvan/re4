@@ -453,6 +453,7 @@ def downsample_box(
 def build_package(
     images: list[TplImage], bindings: list[MaterialBinding],
     max_dimension: int | None = None, twiddle: bool = False,
+    pad_to_power_of_two: bool = False, source_intensity_alpha: bool = False,
 ) -> tuple[bytes, dict[str, object]]:
     decoded: dict[int, list[tuple[int, int, int, int]]] = {}
     packed: dict[tuple[int, int | None], tuple[int, int, int, int, int, int]] = {}
@@ -462,6 +463,11 @@ def build_package(
             raise ValueError(f"MTL references missing TPL image {index}")
         if index not in decoded:
             decoded[index] = decode_image(images[index])
+            if source_intensity_alpha and images[index].format in (GX_TF_I4, GX_TF_I8):
+                # GX intensity formats replicate intensity into alpha as well.
+                # Opt in for recovered consumers; legacy viewer candidates are
+                # not silently regenerated with changed alpha classification.
+                decoded[index] = [(r, g, b, r) for r, g, b, _ in decoded[index]]
         return images[index], decoded[index]
 
     texture_offset = HEADER.size
@@ -475,7 +481,7 @@ def build_package(
         if key not in packed:
             source, pixels = get_image(binding.color_image)
             pixels = list(pixels)
-            has_alpha = any(pixel[3] < 128 for pixel in pixels)
+            has_alpha = any(pixel[3] < 255 for pixel in pixels)
             if binding.alpha_image is not None:
                 alpha_source, alpha_pixels = get_image(binding.alpha_image)
                 if (alpha_source.width, alpha_source.height) != (source.width, source.height):
@@ -489,6 +495,16 @@ def build_package(
             height = source.height
             while max_dimension is not None and max(width, height) > max_dimension:
                 pixels, width, height = downsample_box(pixels, width, height)
+            if pad_to_power_of_two:
+                # Keep every source texel; replicate the border into padding.
+                # The source adapter scales UVs by source/native dimensions.
+                padded_w = max(8, 1 << (width - 1).bit_length())
+                padded_h = max(8, 1 << (height - 1).bit_length())
+                if padded_w > 1024 or padded_h > 1024:
+                    raise ValueError("texture exceeds native PVR dimensions")
+                pixels = [pixels[min(y, height-1)*width + min(x, width-1)]
+                          for y in range(padded_h) for x in range(padded_w)]
+                width, height = padded_w, padded_h
             # The source's default room/model blend mode is SRCALPHA /
             # INVSRCALPHA. Preserve mask gradients in the Dreamcast's bounded
             # 16-bit format instead of turning them into opaque punch-through

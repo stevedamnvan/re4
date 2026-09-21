@@ -1,12 +1,11 @@
-// GX interface, first stage: every call is accepted and recorded, nothing is
-// drawn. This lets the game's boot, title and room initialisation execute over
-// the real control flow before the Dreamcast renderer is bound to these calls
-// (the next slice replaces the bodies family by family: vertex descriptors and
-// GXBegin/WGPipe into the renderer's batches, texture objects into VRAM,
-// matrices, TEV state into materials, copies into presentation).
+// GX compatibility state for recovered source consumers. Common ID quads now
+// connect directly to native_ui and the shared Package/storage/PVR mechanisms.
+// Remaining GX primitives, 3D materials and effects are still unbound; accepting
+// a GX call here is not evidence that its output has been rendered.
 #include <string.h>
 
 #include "re4dc_platform.h"
+#include "native_ui.h"
 
 typedef signed char s8;
 typedef unsigned char u8;
@@ -37,7 +36,7 @@ static u32 g_stat_begin, g_stat_verts;
 
 extern "C" {
 
-void* GXInit(void* base, u32 size) { (void) size; re4dc_log("GXInit (stub renderer)\n"); return base; }
+void* GXInit(void* base, u32 size) { (void) size; re4dc_ui_init(); re4dc_log("GXInit: native ID UI; 3D remains unbound\n"); return base; }
 void* GXSetCurrentGXThread(void) { return 0; }
 
 u32 re4dc_gx_begin_count(void) { return g_stat_begin; }

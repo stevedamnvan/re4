@@ -5,7 +5,7 @@
 #include <fcntl.h>
 
 #include <cstring>
-#include <new>
+#include <cstdlib>
 
 namespace re4dc::texture {
 namespace {
@@ -128,12 +128,12 @@ bool Package::upload() {
         error_ = "previous upload did not complete; close and load again";
         return false;
     }
-    pvr_textures_ = new(std::nothrow) pvr_ptr_t[header_->texture_count]{};
+    pvr_textures_ = static_cast<pvr_ptr_t*>(std::calloc(header_->texture_count, sizeof(pvr_ptr_t)));
     if(pvr_textures_ == nullptr) {
         error_ = "texture pointer allocation failed";
         return false;
     }
-    owns_texture_ = new(std::nothrow) bool[header_->texture_count]{};
+    owns_texture_ = static_cast<bool*>(std::calloc(header_->texture_count, sizeof(bool)));
     if(owns_texture_ == nullptr) {
         error_ = "texture ownership allocation failed";
         return false;
@@ -223,7 +223,7 @@ bool Package::release_payload() {
             return false;
         }
     }
-    std::uint8_t* copy = new(std::nothrow) std::uint8_t[prefix];
+    std::uint8_t* copy = static_cast<std::uint8_t*>(std::malloc(prefix));
     if(copy == nullptr) {
         error_ = "metadata copy allocation failed";
         return false;
@@ -257,9 +257,9 @@ void Package::close() {
                 }
             }
         }
-        delete[] pvr_textures_;
+        std::free(pvr_textures_);
     }
-    delete[] owns_texture_;
+    std::free(owns_texture_);
     owns_texture_ = nullptr;
     pvr_textures_ = nullptr;
     vram_bytes_ = 0;
@@ -268,7 +268,7 @@ void Package::close() {
         fs_close(file_);
     }
     file_ = FILEHND_INVALID;
-    delete[] metadata_;
+    std::free(metadata_);
     metadata_ = nullptr;
     metadata_bytes_ = 0;
     released_bytes_ = 0;

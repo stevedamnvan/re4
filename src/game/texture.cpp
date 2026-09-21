@@ -11,6 +11,9 @@
 #include "db_log.h"
 #include "main_mem.h"
 #include "texture.h"
+#if !defined(__PPC__)
+extern "C" void re4dc_ui_invalidate_sources();
+#endif
 
 #line 20 "D:/Bio4/Prog/texture.cpp"
 
@@ -200,6 +203,9 @@ int cTexSys::TexRegist(TEXPalette* tpl, TexAnm* anm, u8 id, u32 owner, int clamp
         }
         return 0;
     }
+#if !defined(__PPC__)
+    re4dc_ui_invalidate_sources();
+#endif
     CalcTplAddr(tpl);
     desc = TEXGet(tpl, 0);
     w->nTexObj = anm->numTex;

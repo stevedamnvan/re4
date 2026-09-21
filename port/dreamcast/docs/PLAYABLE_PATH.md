@@ -50,7 +50,17 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D312 integration / D313 storage candidate, 2026-09-21)
+## D314 current connection and regression
+
+Source UI renders through existing native packages/PVR; see
+[R4_SOURCE_UI_CONNECTION_CHECKPOINT.md](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md).
+Held-menu images are verified; staging is actually freed. Source backing remains
+resident and RAM cost rises. Normal boot-forward subsequently reboots after
+subscreen requests, cause unresolved. Diagnose that before claiming the earlier
+room frontier on this candidate. Common ID output does not accept fonts/effects/
+audio/manual menu or room play. The b303de1 integration correction still applies.
+
+## Historical D312-D313 boot frontier (D312 integration / D313 storage candidate, 2026-09-21)
 
 D312 qualifies required EVD/FCV variants and binds native em12 using the existing
 module mechanism. The R100Em constructor alias passes its SH-4 layout check.

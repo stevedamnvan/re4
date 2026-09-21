@@ -21,6 +21,7 @@
 #include "tv_mode.h"
 #if !defined(__PPC__)
 #include "re4dc_platform.h"
+#include "native_ui.h"
 #endif
 
 typedef s64 OSTime;
@@ -201,6 +202,9 @@ void Render_init()
 // Frame start: field-rendering viewport jitter and the default (dim) copy filter.
 void Render_before()
 {
+#if !defined(__PPC__)
+    re4dc_ui_begin();
+#endif
     if (Rmode.field_rendering) {
         GXSetViewportJitter(0.0f, 0.0f, Screen.width, Screen.height, 0.0f, 1.0f, VIGetNextField());
     } else {
@@ -245,6 +249,9 @@ void Render_done()
 void Render_swap()
 {
     if (!(pG->System_flg & 0x400)) {
+#if !defined(__PPC__)
+        re4dc_ui_present();
+#endif
         VISetNextFrameBuffer(pCurrent_buff);
         if (pCurrent_buff == pFrame_buff[0]) {
             pCurrent_buff = pFrame_buff[1];

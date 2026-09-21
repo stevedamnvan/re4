@@ -13,49 +13,38 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D313 bounded resource integration
+## Current resumption point - D314 source UI connection
 
-Branch `dreamcast-port`; D312 passes the former R100Em constructor stub, links
-native em12 using the existing module mechanism, and qualifies the four required
-r100 EVD archives. The expanded `/root/probe/d312-required.txt` gate now passes.
-See [R4_EVENT_ENEMY_CHECKPOINT.md](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md)
-for the actual source/data checks, exact artifacts and remaining coverage.
+D314 connects source ID quads and selected texture identities to the existing
+Package/storage/PVR implementation. Warning/logo/title layers and START / LOAD /
+OPTIONS are visible at 640x480. Read
+[R4_SOURCE_UI_CONNECTION_CHECKPOINT.md](port/dreamcast/docs/R4_SOURCE_UI_CONNECTION_CHECKPOINT.md)
+for the connection map, hashes, checked contracts and remaining quality limits.
 
-D313 keeps a selectable compact static-module mirror at `/root/re4data-le-static`;
-full reference `/root/re4data-le` is preserved. Use `--compact-static-rel` with
-the existing mirror. Same scripted replay recovers 46,464 live heap bytes;
-Ganado demand falls 428,288 bytes to 3,577,728, but it still fails with 455,616
-free. The required 1,126,272-byte block-model pool also fails with 465,920 free.
-See [R4_STATIC_MODULE_STORAGE_CHECKPOINT.md](port/dreamcast/docs/R4_STATIC_MODULE_STORAGE_CHECKPOINT.md)
-for command, source/data equivalence checks, identities and exact next work.
+Browse C:/Flycast-Evidence/re4-dreamcast/d314f-menu-visible/frames-corrected.
+Blue images in d314e/frames are invalid readback, not visual evidence. Corrected
+capture reverses KOS's framebuffer pointer conversion before the existing reader.
 
-Next primary task: integrate the recovered resource-to-render path using the
-existing native implementation as a whole. Follow PLAYABLE_PATH.md's
-"Integration correction" and make one bounded source-to-native ownership map
-before more isolated allocation/conversion patches. Connect source model/camera/
-material/pose inputs with existing PVR, texture and storage mechanisms. The
-viewer render entry takes prototype Player/Enemy state; reuse its mechanisms
-without importing that gameplay. Budget core/UI, actors, blocks, effects/events,
-staging and GPU/audio storage together, including transition/retry lifetimes.
+Forty uploads restore source-heap free bytes after freeing native staging.
+Aligned peak staging: 1,048,736 bytes. Retained/peak UI VRAM:
+3,946,496 / 4,192,256 bytes. Original source archives remain resident.
+ELF integration adds 129,776 bytes; arena granularity loses 262,144 versus D313.
+No overall memory win is claimed.
 
-D313's source-image totals (about 4.31 MiB; 13.76 MiB if all expanded to 16-bit)
-are capacity leads, not the optimized native package budget or active set.
-Determine actual source-selected resources; preserve CPU texture users and reclaim
-backing only after successful ownership transfer. ARAM dispatch remains a
-placeholder. Do not delay native presentation until all headless source coverage
-is finished, and do not build another decoder, texture pipeline or renderer.
+**Immediate next work:** diagnose the boot-forward reboot after requests for
+rel/Sscrn.rel and SS/eng/ss_cmmn.dat in d314e-ui-framebuffer. Cause is unresolved.
+The held-menu fixture is stable but does not re-establish D313's later room
+frontier. Preserve visible source UI and reconnect normal New Game.
 
-The room's door/window tasks are active despite failed initialization. Required
-Ganado creation, block residency, ID/effect issues, r101 EVS and native graphics/
-audio remain open. Do not report that the current room is complete or rendered.
+Follow b303de1's whole resource/render correction. Reuse texture_package.*,
+room_storage.*, extracted gpu_lifecycle.* and existing draw mechanisms.
+Common ID output does not accept fonts/effects/3D/audio or manual menu control.
 
-Current limits: the game target still links `platform/gx_stub.cpp` and
-`platform/audio_stub.cpp`; source execution does not establish visible menus,
-native room rendering or audible output. Static module reload/BSS behavior,
-remaining core/player coverage, title ID lookup failures and manual gameplay
-remain open. Preserve inherited dirty source/platform/module/build edits; inspect
-live Git before staging. Earlier raw-REL execution and scheduler failures are
-historical corrected issues, not the active dependency.
+D313 compact mirror /root/re4data-le-static remains selectable; full reference
+/root/re4data-le is preserved. Historical required block pool 1,126,272 and
+Ganado body 3,577,728 still do not fit. EVD ARAM dispatch is a placeholder;
+r101 EVS remains unqualified and the third opening room unverified.
+Preserve inherited dirty source/platform edits; do not broadly stage.
 
 The Astra light helper finished its isolated static-object experiment at
 `/root/work/re4-ps2-experiment`, branch `experiment/ps2-asset`, commit `14dd633`.

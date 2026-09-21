@@ -126,6 +126,8 @@ u32 VIGetTvFormat(void) { return 0; }  // VI_NTSC
 u32 VIGetNextField(void) { return g_retraceCount & 1; }
 u32 VIGetDTVStatus(void) { return 0; }
 
+int re4dc_vi_black(void) { return g_black; }
+
 u32 re4dc_vi_retrace_count(void) { return g_retraceCount; }
 
 }  // extern "C"

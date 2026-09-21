@@ -150,6 +150,39 @@ class ConvertTplTests(unittest.TestCase):
         self.assertEqual(first[4:6], second[4:6])
         self.assertEqual(metadata["texture_bytes"], 128)
 
+    def test_partial_alpha_above_half_is_not_opaque(self):
+        image = TPL.TplImage(4, 4, TPL.GX_TF_IA8, bytes([0xCC, 0x80])*16)
+        package, _ = TPL.build_package([image], [TPL.MaterialBinding("ui", 0, None)])
+        h = TPL.HEADER.unpack_from(package)
+        t = TPL.TEXTURE.unpack_from(package, h[5])
+        self.assertEqual(t[3], TPL.FORMAT_ARGB4444)
+        self.assertEqual(t[6], TPL.FLAG_ALPHA)
+
+    def test_native_padding_preserves_texels_and_replicates_border(self):
+        image = TPL.TplImage(3, 2, TPL.GX_TF_I8, bytes(range(32)))
+        package, _ = TPL.build_package([image], [TPL.MaterialBinding("ui", 0, None)],
+                                      pad_to_power_of_two=True)
+        h = TPL.HEADER.unpack_from(package)
+        t = TPL.TEXTURE.unpack_from(package, h[5])
+        self.assertEqual(t[1:3], (8, 8))
+        actual = struct.unpack_from("<64H", package, t[4])
+        pixels = TPL.decode_image(image)
+        expected = [TPL._pack_565(pixels[min(y,1)*3 + min(x,2)])
+                    for y in range(8) for x in range(8)]
+        self.assertEqual(list(actual), expected)
+
+    def test_source_intensity_alpha_is_explicit(self):
+        image = TPL.TplImage(8, 4, TPL.GX_TF_I8, bytes([0x88])*32)
+        args = ([image], [TPL.MaterialBinding("ui", 0, None)])
+        source, _ = TPL.build_package(*args, source_intensity_alpha=True)
+        legacy, _ = TPL.build_package(*args)
+        hs = TPL.HEADER.unpack_from(source)
+        ts = TPL.TEXTURE.unpack_from(source, hs[5])
+        tl = TPL.TEXTURE.unpack_from(legacy, hs[5])
+        self.assertEqual(ts[3], TPL.FORMAT_ARGB4444)
+        self.assertEqual(tl[3], TPL.FORMAT_RGB565)
+        self.assertEqual(struct.unpack_from("<H", source, ts[4])[0], 0x8888)
+
     def test_cli_writes_private_package_and_manifest(self):
         color_block = struct.pack(">HH4B", 0xF800, 0x07E0, 0, 0, 0, 0) * 4
         with tempfile.TemporaryDirectory() as directory:

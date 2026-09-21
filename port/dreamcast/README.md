@@ -23,15 +23,17 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-The recovered `game/` target passes player/handgun startup and reaches r100 source
-room tasks, but **required block/enemy allocations fail**. D312 qualifies the
-opening EVD data and binds native em12; D313's selectable compact-module mirror
-recovers 46,464 heap bytes and reduces enemy demand by 428,288, still insufficient.
-See [D313 evidence and next task](docs/R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
-Native GX/audio integration, visible controllable menu, manual gameplay and the
-three-room route remain unaccepted. Source task execution is not rendered play.
-The next resource task uses source-active lifetimes and existing native texture/
-storage ownership; an upload-all 16-bit texture scheme exceeds VRAM.
+D314 connects recovered ID layout/animation/menu code to the existing native
+texture, storage and PVR implementation. Warning/logo screens and
+START / LOAD / OPTIONS render at 640x480. See
+[the source UI checkpoint](docs/R4_SOURCE_UI_CONNECTION_CHECKPOINT.md)
+for images, ownership reuse, memory costs and acceptance limits.
+
+The held menu is stable; **boot-forward currently reboots after subscreen
+requests** and has not re-established D313's r100 frontier. Diagnose this next
+while preserving visible output. Native staging is freed; source archives
+remain resident. Block/enemy/event residency, 3D/audio, full UI effects,
+manual gameplay and the three-room route remain open.
 
 ## Preserved scene-runtime visual and performance references
 

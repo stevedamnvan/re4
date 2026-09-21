@@ -19,6 +19,7 @@
 #include "collision_package.hpp"
 #include "room_package.hpp"
 #include "room_storage.hpp"
+#include "gpu_lifecycle.hpp"
 #include "route_package.hpp"
 #include "source_hud_package.hpp"
 #include "texture_package.hpp"
@@ -7048,15 +7049,11 @@ bool compile_character_headers_for(
 // render_busy, which is what actually means the render has finished with it.
 // Both may time out, and a timeout must not be mistaken for an idle GPU.
 bool room_gpu_quiesced() {
-    if(pvr_wait_ready() < 0) {
-        std::printf("re4dc-room: TA did not go idle; keeping the room\n");
-        return false;
-    }
-    if(pvr_wait_render_done() < 0) {
-        std::printf("re4dc-room: render did not finish; keeping the room\n");
-        return false;
-    }
-    return true;
+    const auto result = re4dc::gpu::quiesce();
+    if(result == re4dc::gpu::FenceResult::ready) return true;
+    std::printf("re4dc-room: GPU fence failed (%s); keeping the room\n",
+        result == re4dc::gpu::FenceResult::ta_timeout ? "TA" : "render");
+    return false;
 }
 
 // The only way a room is retired. Call it between scenes, with room submission

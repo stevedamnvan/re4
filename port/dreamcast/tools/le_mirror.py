@@ -57,6 +57,9 @@ END_OF_TABLE = 0xFFFFFFFF
 SKIP_ENTRY = 0xFFFFFFFE
 NESTED = 4
 
+# Optional asset-builder observer sees the bounded original TPL before mutation.
+TPL_OBSERVER = None
+
 
 class Swapper:
     """In-place byte swapper over a bytearray with double-swap protection and
@@ -249,6 +252,8 @@ def fmt_tpl(sw, off, size, ctx):
     magF, f32 lod, 4 bytes}; CLUTHeader {u16 n, 2 bytes, u32 fmt, u32 data}.
     Image and palette data stay in their GameCube layout (the renderer
     converts them)."""
+    if TPL_OBSERVER is not None:
+        TPL_OBSERVER(sw.label, off, bytes(sw.data[off:off + size]), ctx)
     sw.u32(off)
     num = sw.u32(off + 4)
     desc = sw.u32(off + 8)

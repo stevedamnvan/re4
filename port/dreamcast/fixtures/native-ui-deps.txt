@@ -1,0 +1,7 @@
+# Source consumers: IDSystem / IdTexDataLoad / title and card UI.
+# Existing mirror selectors: only the qualified core HUD effect subfile,
+# not the still-incomplete core model/effect/SAT regions.
+etc/core.das:0#25
+ss/eng/title.dat
+ss/eng/option.dat
+ss/cmn/save_e.dat

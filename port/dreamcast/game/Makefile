@@ -53,7 +53,8 @@ GAME_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS))
 CENSUS_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(CENSUS_SRCS))
 PLATFORM_OBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(PLATFORM_SRCS))
 SDK_OBJS = $(patsubst platform/sdk/gen/%.c,$(OBJDIR)/sdk/%.o,$(SDK_GEN))
-OBJS = $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
+NATIVE_REUSE_OBJS = $(OBJDIR)/native-reuse/gpu_lifecycle.o $(OBJDIR)/native-reuse/texture_package.o $(OBJDIR)/native-reuse/room_storage.o $(OBJDIR)/ui_bridge.o
+OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1
 # -fpermissive: cManager<T>::arrayPush names Debug_alloc before its
@@ -112,3 +113,11 @@ census: $(CENSUS_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 clean:
 	rm -rf $(OBJDIR) $(TARGET) census.txt platform/sdk/gen
+
+# Existing native ownership/read/upload implementations; no second texture backend.
+$(OBJDIR)/native-reuse/%.o: ../room/%.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(PLATFORM_CPPFLAGS) -MMD -MP -c $< -o $@
+$(OBJDIR)/ui_bridge.o: ui_bridge.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@

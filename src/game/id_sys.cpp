@@ -16,6 +16,9 @@
 #include "math_sub.h"
 #include "texture.h"
 #include "trans_ot.h"
+#if !defined(__PPC__)
+extern "C" void re4dc_draw_id_quad(const IdUnit*);
+#endif
 
 extern "C" {
 double tan(double);
@@ -91,7 +94,11 @@ void IDSystem::free()
 // 1 when a table of class `type` is currently set (m_set_flag bit).
 int IDSystem::setCk(u8 type)
 {
+#if defined(__PPC__)
     register int raw PPC_REG("r4");  // COMPILER-DIFF: #2 (the original masks the incoming u8 at the entry)
+#else
+    int raw = type;
+#endif
     u8 t = raw;
     return IdBitChk(m_set_flag, t);
 }
@@ -99,7 +106,11 @@ int IDSystem::setCk(u8 type)
 // Shows (sw 1) or hides (sw 0) every unit of class `type` at draw time (m_disp_off bit).
 void IDSystem::dispSw(u8 type, int sw)
 {
+#if defined(__PPC__)
     register int r4v PPC_REG("r4");  // COMPILER-DIFF: #2 (the original masks the u8 at each use)
+#else
+    int r4v = type;
+#endif
     int raw = r4v;
     switch (sw) {
     case 1:
@@ -185,7 +196,11 @@ void IDSystem::unitParent(IdUnit* parent, IdUnit* child)
 IdUnit* IDSystem::unitPtr(u8 id, u8 type)
 {
     static IdUnit tmpId;
+#if defined(__PPC__)
     register int r5v PPC_REG("r5");  // COMPILER-DIFF: #2 (the original masks the u8 at the use)
+#else
+    int r5v = type;
+#endif
     int raw = r5v;
     int i;
     IdUnit* u = pUnit;
@@ -233,7 +248,11 @@ void IDSystem::set(void* data, u8 id, u8 type, u8 ot, u8 prio, u8 mode)
     IdUnit* u;
     IdUnit* c;
     u32 a;
+#if defined(__PPC__)
     register int r6v PPC_REG("r6");  // COMPILER-DIFF: #2 (the original masks the u8 at the use)
+#else
+    int r6v = type;
+#endif
     int raw = r6v;
 
     setCk(type);
@@ -483,7 +502,11 @@ void IDSystem::set(void* data, u8 id, u8 type, u8 ot, u8 prio, u8 mode)
 // and clears the class set bit.
 void IDSystem::kill(u8 id, u8 type)
 {
+#if defined(__PPC__)
     register int r5v PPC_REG("r5");  // COMPILER-DIFF: #2 (the original masks the u8 at each use)
+#else
+    int r5v = type;
+#endif
     int raw = r5v;
     int i;
     IdUnit* u = pUnit;
@@ -1131,6 +1154,10 @@ static inline void IdVtxFmt()
 // texture stage (tex_flag 0x1, CI formats with TLUT), the unit's l_mat under the screen matrix.
 void IdCommonTrans(IdUnit* u)
 {
+#if !defined(__PPC__)
+    re4dc_draw_id_quad(u);
+    return;
+#endif
     int blend[5][4] = {
         { 1, 4, 5, 0 }, { 1, 4, 1, 0 }, { 1, 1, 1, 0 }, { 1, 2, 1, 0 }, { 1, 2, 0, 0 },
     };

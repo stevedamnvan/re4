@@ -1,10 +1,19 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Updated 2026-09-21; current integration reference D313 (compact module storage; block/enemy allocations still fail).
+Updated 2026-09-21; current integration candidate D314 (visible source UI; boot-forward regression remains).
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first
 roadmap. Historical R0-R4 experiment labels do not determine the next task.
+
+D314 connects common ID quads to existing native texture/storage/PVR, with
+verified warning/title/menu images. Peak aligned staging is 1,048,736 bytes;
+each measured upload restores source heap free bytes. Source archive storage
+is not reclaimed. UI VRAM peaks at 4,192,256 bytes. ELF grows 129,776 bytes;
+source arena loses 262,144 versus D313. This is integration cost, not a
+performance win. Normal boot-forward reboots; held menu is stable.
+See [D314](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md). Diagnose that failure next;
+no gameplay FPS/hardware acceptance is claimed.
 
 D313's selectable static-module compaction reclaims 46,464 live heap bytes and
 reduces em12 demand by 428,288; neither required allocation fits yet. Source
