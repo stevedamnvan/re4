@@ -190,6 +190,21 @@ substitution and movie mapping remain later or separately assigned work. The
 Astra light helper uses `/root/work/re4-ps2-experiment` and private extraction,
 build/evidence paths; it does not edit the primary checkout/shared assets.
 
+Completed isolated diagnostic (2026-09-21): branch `experiment/ps2-asset`,
+commit `14dd633`, report `port/dreamcast/docs/PS2_COMPLETE_ASSET_EXPERIMENT.md`
+on that branch. GC SMD054/BIN049 stove versus PS2 SMD072/BIN165: 41 fewer
+triangles / 25 fewer vertices and 1,056 fewer used arena bytes, but unchanged
+reserved arena/VRAM, 2,648 extra code/rodata bytes and 2,432 less heap headroom.
+Matched tick-40 single-pair medians were 78.900 vs 79.410 ms; no speedup shown.
+Six matched 640x480 views and one retire/reload per arm were recorded. Geometry
+removes detail (reverse surface distance up to 19.8 cm), authored color
+factorization adds explicit quantization, and PS2 activation compatibility is
+not qualified. Decision: **not worthwhile for this asset/support path; keep GC**.
+No candidate code is merged/promoted. Private evidence is
+`C:\Flycast-Evidence\re4-dreamcast\ps2-asset-complete`; no character, full-room
+or route-level performance claim follows. Do not repeat this rejected experiment
+without a changed cost hypothesis.
+
 Two acceptance levels apply:
 
 - Early diagnostics use the existing native runtime with precisely matched

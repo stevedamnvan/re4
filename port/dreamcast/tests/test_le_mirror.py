@@ -105,7 +105,7 @@ def make_tagged(parts):
         body += data
         while len(body) % 32:
             body += b"\0"
-    out = be32(n, 0, 0, 0) + be32(*offs) + b"".join(t.encode() + b"\0" for t, _ in parts)
+    out = be32(n, 0, 0, 0) + be32(*offs) + b"".join(t.encode().ljust(4, b"\0") for t, _ in parts)
     out += bytes(head - len(out)) + body
     return bytes(out)
 
@@ -227,6 +227,44 @@ class IsolationTest(unittest.TestCase):
         self.assertEqual(bytes(data[offs[1]:offs[2]]), arc[offs[1]:offs[2]])
         for o in (offs[0], offs[2]):
             self.assertEqual(struct.unpack_from("<3I", data, o), (0x0020AF30, 1, 12))
+
+
+class ArchiveSlotsTest(unittest.TestCase):
+    def test_empty_slots_retain_source_indices_and_offsets(self):
+        tpl = make_tpl([(8, 8, 5, IMAGE[:128])])
+        raw = make_tagged([('', b''), ('TPL', tpl), ('', b''),
+                           ('', b''), ('TPL', tpl), ('', b'')])
+        self.assertTrue(LE.looks_like_tagged(raw, 0, len(raw)))
+        out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file('player.dat', out)
+        offsets = struct.unpack_from('>6I', raw, 16)
+        self.assertEqual(struct.unpack_from('<6I', out, 16), offsets)
+        self.assertEqual(out[40:64], raw[40:64])  # including zero tags
+        subs = [e for e in LE.REPORT if 'sub' in e]
+        self.assertEqual([e['sub'] for e in subs], ['player.dat#1', 'player.dat#4'])
+        self.assertTrue(all(e.get('complete') for e in subs))
+        for i in (1, 4):
+            self.assertEqual(struct.unpack_from('<3I', out, offsets[i]),
+                             (0x0020AF30, 1, 12))
+
+    def test_untagged_payload_is_not_an_empty_slot(self):
+        tpl = make_tpl([(8, 8, 5, IMAGE[:128])])
+        for parts in [[('', bytes(32)), ('TPL', tpl)],
+                      [('TPL', tpl), ('', bytes(32))]]:
+            raw = make_tagged(parts)
+            self.assertFalse(LE.looks_like_tagged(raw, 0, len(raw)))
+        raw = bytearray(make_tagged([('', b''), ('TPL', tpl)]))
+        struct.pack_into('>I', raw, 4, 32)  # embedded REL is not this contract
+        self.assertFalse(LE.looks_like_tagged(raw, 0, len(raw)))
+
+    def test_unknown_nonempty_neighbor_still_fails_qualification(self):
+        raw = make_tagged([('', b''), ('XYZ', bytes(32)), ('', b'')])
+        out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file('player.dat', out)
+        with tempfile.TemporaryDirectory() as work:
+            deps = pathlib.Path(work)/'required.txt'; deps.write_text('player.dat\n')
+            self.assertEqual(LE.check_required(LE.REPORT, deps),
+                             ['player.dat#1: no handler (tag XYZ)'])
 
 
 class RequireTest(unittest.TestCase):

@@ -1,6 +1,50 @@
 # D297: decoded room mirror and source collision layout
 
 
+## D308: player archive reaches weapon loading (2026-09-21)
+
+Kept. `looks_like_tagged` accepts zero tags only for zero-length slots, preserving
+all source indices/offsets. `tools/drs.py` already documents/parses this layout;
+its exact source roundtrip established the detector defect. No decoder, runtime
+loader or reduced character representation was added. Nonempty untagged regions,
+unknown tagged formats and embedded-REL archives remain rejected by this detector.
+
+Leon `em/pl00.drs:0` retains 133 slots: 25 BIN, 15 TPL, one EFF, 66 FCV, 23 SEQ,
+and three empty slots. Existing converters qualify every nonempty entry and the
+nested sound container. Actual-data checks verify source offsets/tags, model
+versions, motion/sequence values and untouched ARAM samples. r100/r120 DAR hashes
+are unchanged. Twelve mirror and 40 room-format tests pass; no shared game source
+changed and no new ProDG comparison was needed. The D307 ELF is reused exactly.
+
+The 55-second Flycast fixture `/root/probe/d292-fixtures` passes D307's Leon model
+version wait, then reads `em/wep02.drs`. Its raw header yields size `e0390400`,
+repeated DVD read errors and eventual thread-stack-underrun failure. The existing
+DRS parser roundtrips this weapon: an alternate Shift-JIS DVD signature and an
+embedded module (ID 4) need qualification. Native registry currently has only
+stage modules. This is the next source consumer, not proof of room completion.
+
+The prior manifest `/root/probe/d308-required.txt` passes known boot/title,
+r100 ARC/DAR and Leon dependencies. Expanded `/root/probe/d309-required.txt`
+adds the newly observed weapon and correctly fails. Do not replay further on
+unqualified weapon data. Current mirror inventory has 780 files, 2400 tagged
+regions / 2109 handled; two legacy core SAT errors plus r101's rejected DAR
+remain explicit. That inventory is not universal coverage.
+
+Private evidence: `C:\Flycast-Evidence\re4-dreamcast\d308-player-archive`:
+paired executable/disc, full asset identities, mirror report and required manifest,
+actual player checks, source dirty patch and log. Build/toolchain/emulator are
+D307's; only asset conversion changed. Effective debug setup flags still need
+recording for gameplay qualification. GX/audio placeholders remain; no displayed
+model completeness, audible sound, manual play or physical-hardware acceptance.
+
+| Artifact | SHA-256 |
+|---|---|
+| ELF (same D307) | `bca0e11f6f0fef34d11c3a10da8c3d823ab0c0c63bea7985ec2a539b7372ad33` |
+| Disc | `3ec64338818eb0cc64526d27384a5280caec51f7f8a05d867f87dfea67512a98` |
+| r100 DAR | `1f80accf5be62432b45a1b7b7e3b7ee630af6449183f1afc582e2155ae6b7739` |
+| Leon DRS | `6152c3f79e0d239f6f5ad77d51eeef6f7cb90ed3835b77650c9a532ecefc1467` |
+
+
 ## D305: qualified r100 reaches source room allocation (2026-09-21)
 
 Keep the existing prepared-room boundary. All required r100 archive entries now

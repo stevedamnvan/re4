@@ -13,24 +13,30 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D307 native arena correction
+## Current resumption point - D308 player archive
 
-Branch `dreamcast-port`; `c325c41` qualifies r100, `3ca3d32` adds allocation
-diagnostics and `44509f9` reconciles planning. Latest completed replay is D307:
-normal first-play opening completion -> r100 stage -> qualified archive and
-ROOM/FOOT sound dispatch -> successful collision/event pools -> Leon model
-version-rejection wait. D307 returns 458,752 bytes from a duplicate platform
-reservation, without reducing source pools or the primitive buffer. There are
-429,536 bytes free after the event allocation; this is not final peak headroom.
+Branch `dreamcast-port`; `7747d29` corrects the native arena and `44509f9`
+reconciles planning. D308 reuses that exact executable with a corrected mirror:
+valid zero-length player-archive slots are preserved, so all 133 source slots in
+`em/pl00.drs` qualify through existing handlers. The replay passes D307's Leon
+model-version rejection and reaches the equipped weapon read. Room/sound loading
+and collision/event allocations still succeed; no source pool was reduced.
 
-Next primary task: qualify `em/pl00.drs:0` (the source-layout player archive,
-still unhandled in the mirror). The task stack reaches `cModInfoMgr::create`'s
-`notBinData` wait through `cPlLeon::setModel`. Reuse existing motion/archive,
-BIN/TPL/FCV/EFF conversion and require qualified data before native consumption;
-do not bypass checks or substitute a viewer character package.
-See [R4_ROOM_MEMORY_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_MEMORY_CHECKPOINT.md)
-for exact D307 implementation/evidence/build hashes and the D305 endian checkpoint for
-qualified data contracts. Do not return to missing YZ2, r120 or EFF work.
+Next primary task: qualify `em/wep02.drs` before another native replay. Its
+alternate Shift-JIS DVD signature is not recognized; the raw header produces
+an invalid `e0390400` read size, repeated DVD errors, then stack-underrun failure.
+The existing `tools/drs.py` parses and roundtrips it, including an embedded REL.
+Reuse that format knowledge and existing converters/static-module mechanism;
+check module 4's compiled coverage before qualifying its PPC payload as data.
+Do not bypass source checks or substitute a viewer character package.
+
+The expanded private manifest `/root/probe/d309-required.txt` (D308 requirements
+plus `em/wep02.drs`) correctly rejects the current mirror. D308's prior manifest
+qualified only dependencies known through Leon; its run is discovery evidence,
+not a qualified complete-room run. See
+[R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md)
+for identities and [R4_ROOM_MEMORY_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_MEMORY_CHECKPOINT.md)
+for D307 memory evidence. Do not return to missing YZ2, r120 or EFF work.
 
 Current limits: the game target still links `platform/gx_stub.cpp` and
 `platform/audio_stub.cpp`; source execution does not establish visible menus,
@@ -40,10 +46,12 @@ remain open. Preserve inherited dirty source/platform/module/build edits; inspec
 live Git before staging. Earlier raw-REL execution and scheduler failures are
 historical corrected issues, not the active dependency.
 
-The assigned Astra light helper uses `/root/work/re4-ps2-experiment` for one
-static environment object: geometry, UVs, textures, authored shading, material
-and instance correspondence. No candidate is promoted. Coordinate emulator
-ownership; keep the primary task on recovered-game integration.
+The Astra light helper finished its isolated static-object experiment at
+`/root/work/re4-ps2-experiment`, branch `experiment/ps2-asset`, commit `14dd633`.
+Result: not worthwhile for this stove/support path; no candidate is promoted.
+Its report is `port/dreamcast/docs/PS2_COMPLETE_ASSET_EXPERIMENT.md` on that
+branch. The main resource backlog records the negative result. No helper capture
+is active; keep the primary task on recovered-game integration.
 
 Once the first room is fully working, create the proven Astra light skill under
 AGENTS.md's acceptance requirement. Archive loading alone does not trigger it.
@@ -326,12 +334,12 @@ still confirms the source title debug menu defaults; it is not manual acceptance
 
 The real `port/dreamcast/fixtures/boot-deps.txt` is the cold-boot/title manifest
 and remains an untracked local integration file. It does not require a room.
-Copy it and append the r100 ARC/DAR dependencies for this bounded fixture as
-below. The saved D305 report passes these combined requirements. D307 identifies
-an additional player dependency: append `em/pl00.drs` when qualifying progress
-beyond this diagnostic frontier; it currently fails and must not be ignored.
-This is not a
-declaration that all future native core/player/room consumers are qualified.
+Copy it and append r100 ARC/DAR, Leon and the now-observed weapon dependency as
+below. D308 passes all but `em/wep02.drs`; the current expanded gate must fail
+until its container, embedded module and payload coverage are qualified. With
+`set -e`, that failure prevents packaging. The actual saved expanded manifest is
+`/root/probe/d309-required.txt`. This is not a declaration that all future native
+core/player/room consumers are qualified.
 
 ```bash
 set -e
@@ -341,7 +349,7 @@ test -f port/dreamcast/fixtures/boot-deps.txt
 test -f /root/probe/d292-fixtures/padscript.txt
 required=$(mktemp /root/probe/re4-r100-required.XXXXXX)
 cat port/dreamcast/fixtures/boot-deps.txt > "$required"
-printf '\nst1/r100.arc\nst1/r100.dar\n' >> "$required"
+printf '\nst1/r100.arc\nst1/r100.dar\nem/pl00.drs\nem/wep02.drs\n' >> "$required"
 mirror_out=$(mktemp -d /root/probe/re4-le-r100.XXXXXX)
 python3 port/dreamcast/tools/le_mirror.py /root/re4data "$mirror_out" --native-rooms --require "$required"
 make -C port/dreamcast/game -j4

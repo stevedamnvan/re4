@@ -1462,6 +1462,12 @@ def looks_like_tagged(data, off, size):
     tags = data[off + 0x10 + 4 * n: off + 0x10 + 8 * n]
     for i in range(n):
         t = tags[4 * i:4 * i + 4]
+        # Player archives retain empty source slots (tools/drs.py): a zero
+        # tag is valid only when this slot owns no bytes. Keep its offset and
+        # index; removing it would change PL_ARC_PTR identities.
+        end = offs[i + 1] if i + 1 < n else size
+        if t == bytes(4) and offs[i] == end:
+            continue
         if not (t[:3].isalpha() and t[:3].isupper() and t[3] == 0):
             return False
     return True
