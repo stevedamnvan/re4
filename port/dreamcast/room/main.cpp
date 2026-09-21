@@ -3368,8 +3368,6 @@ std::uint32_t g_leon_colors[kLeonVertexCapacity];
 std::uint32_t g_ganado_colors[kGanadoVertexCapacity];
 #endif
 pvr_vertex_t g_character_submit_vertices[kCharacterSubmitVertexCapacity];
-const RoomVertexCacheEntry* g_room_strip_entries[kCharacterSubmitVertexCapacity];
-std::uint32_t g_room_strip_indices[kCharacterSubmitVertexCapacity];
 RoomVertexCacheEntry g_room_vertex_cache[kRoomVertexCacheCapacity];
 std::uint32_t g_room_vertex_cache_generation = 0;
 // R3r: one bounding sphere per native strip. The accepted r100 package has
@@ -4546,81 +4544,57 @@ void submit_room_strips(const re4dc::room::Package& room,
                 }
                 submit_count = strip_start;
             } else {
-                for(std::uint32_t local = 0U; local < primitive.vertex_count;
-                    ++local) {
+                // Same shape as the local path above: resolve and pack in one
+                // pass, so what has been written cannot be disturbed by a
+                // later lookup. A vertex outside the depth window rewinds the
+                // packets this strip wrote and sends it to the fallback.
+                if(submit_count + primitive.vertex_count > submit_capacity) {
+                    flush();
+                }
+                const std::uint32_t strip_start = submit_count;
+                const std::uint32_t last = primitive.vertex_count - 1U;
+                for(std::uint32_t local = 0U; local <= last; ++local) {
                     const std::uint32_t vertex_index =
                         primitive_indices[primitive.first_vertex + local];
                     const RoomVertexCacheEntry& entry = cached_room_entry(
                         source, vertex_index, stats, light_selection);
-                    g_room_strip_entries[local] = &entry;
-                    g_room_strip_indices[local] = vertex_index;
-                    const float depth = entry.vertex.position.depth;
+                    const RenderVertex& vertex = entry.vertex;
+                    const float depth = vertex.position.depth;
                     if(depth < kNearClipDistance || depth > kFarClipDistance) {
                         direct_strip = false;
                         break;
                     }
+                    submit_vertices[submit_count++] = {
+                        .flags = local == last ? PVR_CMD_VERTEX_EOL
+                                               : PVR_CMD_VERTEX,
+                        .x = vertex.position.x,
+                        .y = vertex.position.y,
+                        .z = vertex.position.z,
+                        .u = vertex.u,
+                        .v = vertex.v,
+                        .argb = entry.argb,
+                        .oargb = vertex.offset_color,
+                    };
                 }
+                if(direct_strip) {
+#if defined(RE4DC_SUBMIT_PROFILE)
+                    stats.room_gather_ns += timer_ns_gettime64() - gather_start;
+#endif
+                    stats.room_vertex_records += primitive.vertex_count;
+                    ++stats.room_direct_strips;
+                    stats.triangles += primitive.triangle_count;
+                    continue;
+                }
+                submit_count = strip_start;
             }
 #if defined(RE4DC_SUBMIT_PROFILE)
             stats.room_gather_ns += timer_ns_gettime64() - gather_start;
 #endif
         }
-        if(direct_strip && !use_locals) {
-#if defined(RE4DC_SUBMIT_PROFILE)
-            const std::uint64_t verify_start = timer_ns_gettime64();
-#endif
-            // A later lookup in the same strip can evict an earlier entry from
-            // the direct-mapped cache. Confirm every entry still holds the
-            // vertex it was looked up for before reading through the pointers;
-            // otherwise take the fallback path, which re-looks-up each vertex.
-            for(std::uint32_t local = 0U; local < primitive.vertex_count;
-                ++local) {
-                const RoomVertexCacheEntry& entry = *g_room_strip_entries[local];
-                if(entry.generation != g_room_vertex_cache_generation ||
-                   entry.source_index != g_room_strip_indices[local] ||
-                   entry.light_selection != light_selection) {
-                    direct_strip = false;
-                    ++stats.room_strip_evictions;
-                    break;
-                }
-            }
-#if defined(RE4DC_SUBMIT_PROFILE)
-            stats.room_verify_ns += timer_ns_gettime64() - verify_start;
-#endif
-        }
-        if(direct_strip) {
-            if(submit_count + primitive.vertex_count > submit_capacity) {
-                flush();
-            }
-#if defined(RE4DC_SUBMIT_PROFILE)
-            const std::uint64_t pack_start = timer_ns_gettime64();
-#endif
-            for(std::uint32_t local = 0U; local < primitive.vertex_count;
-                ++local) {
-                const RoomVertexCacheEntry& entry = *g_room_strip_entries[local];
-                const RenderVertex& vertex = entry.vertex;
-                submit_vertices[submit_count++] = {
-                    .flags = local + 1U == primitive.vertex_count
-                                 ? PVR_CMD_VERTEX_EOL
-                                 : PVR_CMD_VERTEX,
-                    .x = vertex.position.x,
-                    .y = vertex.position.y,
-                    .z = vertex.position.z,
-                    .u = vertex.u,
-                    .v = vertex.v,
-                    .argb = entry.argb,
-                    .oargb = vertex.offset_color,
-                };
-            }
-#if defined(RE4DC_SUBMIT_PROFILE)
-            stats.room_pack_ns += timer_ns_gettime64() - pack_start;
-#endif
-            stats.room_vertex_records += primitive.vertex_count;
-            ++stats.room_direct_strips;
-            stats.triangles += primitive.triangle_count;
-            continue;
-        }
-
+        // Both gather paths submit their own strip and continue, so
+        // reaching here means the strip was rejected for a geometric reason:
+        // a vertex outside the depth window, or a strip longer than the
+        // submission buffer. Cache state is no longer one of the reasons.
         ++stats.room_strip_fallbacks;
         for(std::uint32_t local = 2U; local < primitive.vertex_count;
             ++local) {
