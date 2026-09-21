@@ -6379,20 +6379,42 @@ enum RoomFailurePoint : std::uint32_t {
     kFailAfterTextureUpload = 3U,
     kFailAfterDerivedAllocations = 4U,
     kFailDuringTextureUpload = 5U,
+    // Not a point: the number of values above, kFailNone included, which is
+    // what the cycle driver rotates through. Five of them are failure sites;
+    // the sixth is the clean load.
     kFailPointCount = 6U,
+    // Reported instead of a point when an injected failure was reached but the
+    // state it is supposed to leave behind was wrong.
+    kFailContractViolated = 7U,
 };
 std::uint32_t g_room_inject_failure_point = kFailNone;
 
-// Returns true when this load should stop at this point. Consumes the request,
-// so the retry that follows runs to completion.
-bool room_failure_injected(std::uint32_t point, const char* what) {
+// Consumes a request for this point without claiming anything happened. Used
+// where arming and failing are separate moments.
+bool room_failure_requested(std::uint32_t point) {
     if(g_room_inject_failure_point != point) {
         return false;
     }
     g_room_inject_failure_point = kFailNone;
+    return true;
+}
+
+// Records that an injected failure was actually reached. This is the only
+// place failed_loads grows, so the counter means failures taken, not failures
+// asked for.
+void room_failure_reached(std::uint32_t point, const char* what) {
     ++g_room_lifecycle.failed_loads;
     g_room_lifecycle.last_failure_point = point;
     std::printf("re4dc-room: injected load failure %s\n", what);
+}
+
+// Returns true when this load should stop at this point. For these points the
+// request and the failure are the same instant: the caller returns immediately.
+bool room_failure_injected(std::uint32_t point, const char* what) {
+    if(!room_failure_requested(point)) {
+        return false;
+    }
+    room_failure_reached(point, what);
     return true;
 }
 // Simulation ticks between automatic load/retire/reload cycles in the
@@ -6439,15 +6461,41 @@ bool load_room_resource(PackageType& package, const RoomResourceId& id) {
 // take that decision away from it.
 bool load_room_texture(re4dc::texture::Package& package,
                        const RoomResourceId& id,
-                       std::uint64_t* upload_us) {
+                       std::uint64_t* upload_us,
+                       bool inject_upload_failure) {
     const std::size_t mark = g_room_arena.mark();
     if(!load_room_resource(package, id)) {
         return false;
+    }
+    // After adoption, because adopting closes the package and closing clears
+    // the hook, and before upload, because that is what it stops.
+    if(inject_upload_failure) {
+        package.inject_upload_failure_after(8U);
     }
     const std::uint64_t began = timer_us_gettime64();
     if(!package.upload()) {
         std::printf("re4dc-room: %s upload failed: %s\n", id.label,
                     package.error());
+        if(inject_upload_failure) {
+            // The point of this failure is the state it leaves: texture memory
+            // allocated for the descriptors that got that far, an upload that
+            // does not claim to be complete, and a payload that refuses to be
+            // released. Check it while it is standing.
+            const bool complete = package.upload_complete();
+            const bool released = package.release_payload();
+            if(complete || released || package.payload_released()) {
+                std::printf(
+                    "re4dc-room: partial upload contract violated "
+                    "(complete=%d release=%d released=%d)\n",
+                    complete ? 1 : 0, released ? 1 : 0,
+                    package.payload_released() ? 1 : 0);
+                ++g_room_lifecycle.failed_loads;
+                g_room_lifecycle.last_failure_point = kFailContractViolated;
+                return false;
+            }
+            room_failure_reached(kFailDuringTextureUpload,
+                                 "during the room texture upload");
+        }
         return false;
     }
     const std::uint64_t took = timer_us_gettime64() - began;
@@ -6698,20 +6746,19 @@ bool load_room(DemoAudio& audio) {
         (void) load_room_resource(room, missing);
         return false;
     }
-    // Arm a stop part way through the room texture upload. The failure lands
-    // inside load_room_texture(), so it also proves the payload is not
-    // released from a package that never finished uploading.
-    if(room_failure_injected(kFailDuringTextureUpload,
-                             "during the room texture upload")) {
-        textures.inject_upload_failure_after(8U);
-    }
+    // Arm a stop part way through the room texture upload. The arming has to
+    // survive adoption, so load_room_texture() does it; this only carries the
+    // request in.
+    const bool inject_upload_failure =
+        room_failure_requested(kFailDuringTextureUpload);
     // Textures first, and transiently. Their texels are the largest thing the
     // load touches that nothing keeps, so they go through the arena before the
     // persistent packages claim it rather than on top of them.
     g_room_lifecycle.upload_us = 0;
     std::uint64_t upload_us = 0;
-    if(!load_room_texture(textures, kRoomTextures, &upload_us) ||
-       !load_room_texture(ganado_textures, kRoomEnemyTex, &upload_us)) {
+    if(!load_room_texture(textures, kRoomTextures, &upload_us,
+                          inject_upload_failure) ||
+       !load_room_texture(ganado_textures, kRoomEnemyTex, &upload_us, false)) {
         return false;
     }
     // A completed upload is the precondition for the release the loader just
@@ -6856,9 +6903,10 @@ int main() {
     std::uint64_t texture_upload_us_total = 0;
     // The two room-owned texture packages, transiently: read, upload, release,
     // rewind, before anything persistent takes the space.
-    if(!load_room_texture(textures, kRoomTextures, &texture_upload_us_total) ||
+    if(!load_room_texture(textures, kRoomTextures, &texture_upload_us_total,
+                          false) ||
        !load_room_texture(ganado_textures, kRoomEnemyTex,
-                          &texture_upload_us_total)) {
+                          &texture_upload_us_total, false)) {
         return 1;
     }
     if(!load_room_resource(room, kRoomGeometry)) {

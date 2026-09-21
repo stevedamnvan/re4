@@ -122,6 +122,37 @@ failures interleaved, in the 3.5 MB build.
   losing its texels would differ everywhere, not in one generation.
 * Frame time is unchanged: p50 48,886 against 48,886.
 
+### The fifth failure site, and the partial-upload contract
+
+A fifth site stops the room texture upload part way through its descriptors.
+It was added with the `upload_complete_` flag and, as first written, never
+fired: it was armed before `load_room_texture()` read the package, and reading
+one calls `adopt()`, which calls `close()`, which clears the hook. The arming
+now happens inside `load_room_texture()`, after adoption and immediately before
+upload, and the counters were split so that requesting a failure is no longer
+recorded as taking one.
+
+While the injected failure stands, the state it exists to test is checked in
+place: `upload_complete()` must be false, `release_payload()` must refuse, and
+`payload_released()` must stay false. A violation would report
+`kFailContractViolated` rather than pass quietly.
+
+Measured over 22 loads and 40 retirements, the five sites rotating in order:
+
+| | |
+|---|---|
+| failures reached, by site | 1,2,3,4,5 three times over, then 1,2,3 |
+| mid-upload failures actually taken | 3 |
+| partial-upload contract violations | **0** |
+| retire fence failures | 0 |
+| distinct memory tuples across 22 generations | 1 |
+| VRAM free | 3,030,856, unchanged |
+
+One memory tuple with the partial uploads interleaved is the evidence that the
+texture memory allocated before the failure comes back in full, and that the
+reload after each one succeeds. Frame p50 48,879 and arena high water 3,343,712
+are unchanged from the runs above.
+
 Still owed, and not claimed here: the representative human gameplay check
 (`make r100-cycle`) and physical-hardware evidence.
 

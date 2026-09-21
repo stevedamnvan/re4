@@ -81,7 +81,7 @@ Same host, same emulator, 240–300 s captures.
 | heap used | 139,780 | 139,780 |
 | frame `frame_us` p50 | 48,886 | 48,879 |
 | loads / retirements | 22 / 37 | 18 / 30 |
-| injected failures, all six points | 18 | 15 |
+| injected failures reached | 18 | 15 |
 | retire fence failures | 0 | 0 |
 | distinct memory tuples | 1 | 1 |
 
@@ -168,6 +168,28 @@ order-preserved but are never drawn in the translucent pass, so their triangle
 range is unread. Removing it needs the converter to know which materials are
 alpha, which lives in the texture package. Recorded with its measurement rather
 than attempted here.
+
+## Correction to the failure coverage claimed here
+
+Both captures above were described as exercising "all six points". That was
+wrong in two ways, found afterwards and fixed separately.
+
+There are **five injected failure sites**, not six: `kFailPointCount` is 6
+because it counts `kFailNone`, the clean load the cycle driver also rotates
+through.
+
+And the fifth site was not being exercised at all. It was armed in
+`load_room()` before `load_room_texture()` read the package; reading it calls
+`adopt()`, `adopt()` calls `close()`, and `close()` clears the hook, so every
+upload ran to completion. What the telemetry recorded was the *request* being
+noted, not a failure being taken. The four earlier sites were unaffected --
+for those, being requested and being taken are the same instant.
+
+Corrected, the counters mean failures reached: the arming moved inside
+`load_room_texture()`, after adoption and immediately before upload, and
+`failed_loads` now grows only at a failing branch. The focused re-test is in
+`R4_TRANSIENT_TEXTURE_PAYLOAD_CHECKPOINT.md`. The memory and pixel results
+above are unaffected -- they never depended on the fifth site.
 
 ## Evidence
 
