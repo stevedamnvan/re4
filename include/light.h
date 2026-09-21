@@ -84,8 +84,13 @@ public:
     union {
         u32 ParentNo;  // 0x2C  parts no << 16 | parent no
         struct {
+#if defined(__PPC__)
             u16 partsNo;   // 0x2C
             u16 no;        // 0x2E
+#else
+            u16 no;        // low half of native ParentNo
+            u16 partsNo;   // high half of native ParentNo
+#endif
         } parent;
     };
     u16 HitRadius;           // 0x30  hit adjust radius

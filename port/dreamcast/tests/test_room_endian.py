@@ -96,13 +96,96 @@ class RoomFormats(unittest.TestCase):
         self.assertTrue(all(e.get('complete') for e in le.REPORT))
 
     def test_incomplete_room_remains_rejected_by_dependency_gate(self):
-        arc = bytearray(struct.pack('>I3I I 4s 2I', 1, 0, 0, 0, 24, b'CAM\0', 0, 0))
+        arc = bytearray(struct.pack('>I3I I 4s 2I', 1, 0, 0, 0, 24, b'MHT\0', 0, 0))
         le.REPORT.clear()
         le.convert_file('st1/r120.arc', arc)
         with tempfile.TemporaryDirectory() as tmp:
             deps=Path(tmp)/'deps.txt'; deps.write_text('st1/r120.arc\n')
             problems=le.check_required(le.REPORT, deps)
-        self.assertTrue(any('CAM' in x for x in problems))
+        self.assertTrue(any('MHT' in x for x in problems))
+
+    def test_light_path_byte_count_offsets_and_terminators(self):
+        raw=bytes([3,0xCD,0xCD,0xCD])+struct.pack('>3I',16,0,19)+bytes([0,200,255,100,255])
+        out,entry=self.convert(raw,le.fmt_light_paths)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(out[:4],raw[:4])
+        self.assertEqual(struct.unpack_from('<3I',out,4),(16,0,19))
+        self.assertEqual(out[16:],raw[16:])
+        out,entry=self.convert(raw[:-1],le.fmt_light_paths)
+        self.assertIn('unterminated',entry['error'])
+        self.assertEqual(out,raw[:-1])
+
+    def camera_fixture(self, kind=6):
+        d=bytearray(256);d[:7]=b'B404'+bytes([1,1,1])
+        struct.pack_into('>2I',d,24,32,80)
+        d[32:36]=bytes([1,2,3,0x40])
+        struct.pack_into('>f',d,36,0.25)
+        struct.pack_into('>2f2I',d,64,100,-20,3,148)
+        d[80:84]=bytes([1,3,kind,0x30])
+        struct.pack_into('>3fIf',d,84,1,2,3,248 if kind==6 else 0x818C3400,0.75)
+        struct.pack_into('>5I',d,112,2,184,208,232,240)
+        d[132:137]=bytes([1,2,3,4,5]);struct.pack_into('>I',d,140,15)
+        struct.pack_into('>25f',d,148,*range(25));struct.pack_into('>2H',d,248,0,30)
+        return d
+
+    def test_camera_consumes_authored_offsets_and_type_specific_frames(self):
+        for kind in (6,8):
+            raw=self.camera_fixture(kind);out,entry=self.convert(raw,le.fmt_cam)
+            self.assertTrue(entry['complete'],entry)
+            self.assertEqual(out[:7],raw[:7])
+            self.assertEqual(struct.unpack_from('<2I',out,24),(32,80))
+            self.assertEqual(struct.unpack_from('<25f',out,148),tuple(range(25)))
+            self.assertEqual(struct.unpack_from('<I',out,140)[0],15)
+            if kind==6:self.assertEqual(struct.unpack_from('<2H',out,248),(0,30))
+            else:
+                self.assertEqual(out[248:252],raw[248:252])
+                self.assertEqual(struct.unpack_from('<I',out,96)[0],0x818C3400)
+        raw=self.camera_fixture();struct.pack_into('>I',raw,120,184)  # shared pos/at
+        out,entry=self.convert(raw,le.fmt_cam)
+        self.assertTrue(entry['complete'],entry)
+        raw=self.camera_fixture();struct.pack_into('>I',raw,76,0xFFFFFFFF)
+        out,entry=self.convert(raw,le.fmt_cam)
+        self.assertFalse(entry['complete']);self.assertEqual(out,raw)
+
+    def test_light_colors_shared_cuts_and_typed_work(self):
+        d=bytearray(16+260+600)
+        struct.pack_into('>HBB2I',d,0,2,0x2C,2,16,16)
+        p=16;d[p:p+4]=bytes([11,22,33,44]);struct.pack_into('>I',d,p+4,2)
+        struct.pack_into('>I2f',d,p+8,2,1.25,9000)
+        d[p+20:p+24]=bytes([55,66,77,88])
+        for i,kind in enumerate((2,4)):
+            w=p+260+i*300;d[w:w+4]=bytes([1,3,kind,0x40])
+            struct.pack_into('>4f',d,w+4,1,2,3,100)
+            d[w+20:w+24]=bytes([128,129,130,131])
+            struct.pack_into('>f',d,w+24,0.5)
+            struct.pack_into('>IHHI',d,w+32,0x00020003,100,2,9)
+            struct.pack_into('>9f',d,w+44,*range(9))
+        struct.pack_into('>4f',d,16+260+108,1,2,3,4)
+        struct.pack_into('>2h',d,16+260+300+108+4,-90,45)
+        out,entry=self.convert(d,le.fmt_lit)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(out[p:p+4],d[p:p+4])
+        self.assertEqual(out[p+20:p+24],d[p+20:p+24])
+        self.assertEqual(struct.unpack_from('<I',out,p+260+32)[0],0x00020003)
+        self.assertEqual(struct.unpack_from('<4f',out,p+260+108),(1,2,3,4))
+        self.assertEqual(struct.unpack_from('<2h',out,p+260+300+112),(-90,45))
+        d[p+80]=1;out,entry=self.convert(d,le.fmt_lit)
+        self.assertTrue(entry['complete'])  # documented opaque padding
+        self.assertEqual(out[p+80],1)
+        d[p+260+2]=16;out,entry=self.convert(d,le.fmt_lit)
+        self.assertEqual(entry['raw_parts'],['cut0 light0 type16 work'])
+
+    @unittest.skipUnless(shutil.which('g++'), 'host compiler required')
+    def test_light_parent_numeric_and_halfword_views(self):
+        header=(ROOT/'include/light.h').read_text()
+        begin=header.index('    union {\n        u32 ParentNo;')
+        end=header.index('    };',begin)+6
+        source='#include <cassert>\nusing u16=unsigned short;using u32=unsigned;struct Test {\n'+header[begin:end]+'\n};\n'
+        source+='int main(){Test l{};l.ParentNo=0x12345678;assert(l.parent.partsNo==0x1234 && l.parent.no==0x5678);}'
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp);(p/'test.cpp').write_text(source)
+            subprocess.run(['g++',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+            subprocess.run([str(p/'test')],check=True)
 
     def model_fixture(self, byte_normals=False):
         data=bytearray(320)

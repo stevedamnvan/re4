@@ -574,6 +574,130 @@ def _fmt_sat_file(sw, off, size):
     if len(visited) != nb:
         raise ValueError('SAT block count does not match graph')
 
+def fmt_light_paths(sw, off, size, ctx):
+    """ArcFile.ofs_3C: light.h LightPathHeader, despite its generic BIN tag."""
+    sw._check(off, 4)
+    count = sw.data[off]
+    offsets = sw.u32s(off + 4, count)
+    for relative in offsets:
+        if not relative:
+            continue  # source getPathPtr returns NULL
+        if relative < 4 + 4 * count or relative >= size:
+            raise ValueError('light path offset outside data')
+        if 0xFF not in sw.data[off + relative:off + size]:
+            raise ValueError('unterminated light brightness path')
+
+
+def fmt_cam(sw, off, size, ctx):
+    """cam_ctrl.h and CameraControl::calcAddr; file-relative links stay offsets."""
+    sw._check(off, 16)
+    version = bytes(sw.data[off:off + 4])
+    if version == b'EMPT':
+        return  # cameraDataVersion rejects the sentinel before reading counts
+    if version not in (b'B402', b'B403', b'B404'):
+        raise ValueError('unsupported camera data version %r' % version)
+    cuts, areas, lerps = sw.data[off + 4:off + 7]
+    recs = off + 16
+    infos = recs + areas * 16
+    keys = infos + areas * 48
+    transitions = keys + cuts * 52
+    sw._check(recs, areas * 64 + cuts * 52 + lerps * 16)
+    seen = set()
+
+    def array(relative, count, width):
+        if count == 0:
+            return
+        p = off + relative
+        sw._check(p, count * width)
+        if count and p < transitions + lerps * 16:
+            raise ValueError('camera key array overlaps record table')
+        for i in range(count):
+            field = p + i * width
+            if (field, width) in seen:
+                continue
+            (sw.u32 if width == 4 else sw.u16)(field)
+            seen.add((field, width))
+
+    for i in range(areas):
+        area, cut = sw.u32s(recs + i * 16 + 8, 2)
+        if not infos <= off + area < keys or (off + area - infos) % 48:
+            raise ValueError('camera area link outside area records')
+        if cut and (not keys <= off + cut < transitions or (off + cut - keys) % 52):
+            raise ValueError('camera cut link outside cut records')
+        p = infos + i * 48
+        sw.f32(p + 4)
+        sw.f32s(p + 32, 2)
+        count, points = sw.u32s(p + 40, 2)
+        array(points, count * 3, 4)
+    for i in range(cuts):
+        p = keys + i * 52
+        sw.f32s(p + 4, 3)
+        frames = sw.u32(p + 16)
+        sw.f32(p + 20)
+        count = sw.u32(p + 32)
+        pos, at, roll, fovy = sw.u32s(p + 36, 4)
+        # Only Hermite camera types consume frame times. Shoulder cuts retain
+        # stale debug pointers in this unused field in the original files.
+        if sw.data[p + 2] in (6, 7) and frames:
+            array(frames, count, 2)
+        for target, stride in [(pos, 3), (at, 3), (roll, 1), (fovy, 1)]:
+            array(target, count * stride, 4)
+    for i in range(lerps):
+        sw.u32(transitions + i * 16 + 8)
+
+
+def fmt_lit(sw, off, size, ctx):
+    """Source cLit/cLightEnv/cLightWork, preserving byte colors and light order."""
+    sw._check(off, 4)
+    count = sw.u16(off)
+    version = sw.data[off + 2]
+    if not 0x20 <= version <= 0x2C:
+        raise ValueError('unsupported light version %#x' % version)
+    offsets = sw.u32s(off + 4, count)
+    raw = []
+    for cut, relative in enumerate(offsets):
+        if not relative:
+            continue
+        p = off + relative
+        if relative < 4 + 4 * count:
+            raise ValueError('light cut overlaps offset table')
+        if sw.swapped(p + 4):
+            continue  # shared cut: convert once
+        sw._check(p, 260)
+        lights = sw.u32(p + 4)
+        sw.u32s(p + 8, 3)    # fog type/start/end, colors remain RGBA bytes
+        sw.u32s(p + 24, 3)   # mirror fog
+        sw.u32(p + 40)      # focus depth
+        sw.f32(p + 68)      # far plane ratio
+        sw.f32(p + 248)     # texture LOD bias
+        # cLightEnv::pad_49 and other reserved bytes have no typed consumer;
+        # retain them verbatim, including stale debug-export padding.
+        sw._check(p + 260, lights * 300)
+        for i in range(lights):
+            w = p + 260 + i * 300
+            kind = sw.data[w + 2]
+            sw.f32s(w + 4, 4)  # position, radius
+            sw.f32(w + 24)     # intensity
+            sw.u32(w + 32)     # numeric parent id/parts
+            sw.u16s(w + 36, 2)
+            sw.u32(w + 40)
+            sw.u32s(w + 44, 9)  # direction, spot/parallel union, attenuation
+            # LightSpot::pad_24 is reserved and copied as opaque bytes.
+            sub = w + 108
+            known = 0
+            if kind == 1: known = 5  # color bytes + signed flicker range
+            elif kind == 2: sw.f32s(sub, 4); known = 16
+            elif kind in (3, 6): sw.f32s(sub, 3); known = 12
+            elif kind == 4: sw.u16s(sub + 4, 2); known = 9
+            elif kind == 5: known = 14  # runtime pointers initialized by setPath
+            elif kind == 7: sw.f32s(sub, 6); known = 24
+            elif kind == 8: known = 3  # tracking type/enemy/part bytes
+            elif kind >= 16:
+                raw.append('cut%d light%d type%d work' % (cut, i, kind))
+            # LightFuncTbl[0,9..15] is static and does not read work. The
+            # unused tail and LightPath byte block are copied, not interpreted.
+    return raw
+
 def fmt_bin(sw, off, size, ctx):
     """ModelData CPU arrays in source layout; GX command streams stay BE bytes.
 
@@ -773,6 +897,8 @@ def fmt_smx(sw, off, size, ctx):
     return raw
 
 TAG_FORMATS = {
+    b"CAM\0": fmt_cam,
+    b"LIT\0": fmt_lit,
     b"BIN\0": fmt_bin,
     b"SMD\0": fmt_smd,
     b"SMX\0": fmt_smx,
@@ -821,8 +947,13 @@ def fmt_tagged(sw, off, size, ctx):
             continue
         sub_ctx = "%s#%d" % (ctx, i)
         handler = TAG_FORMATS.get(tags[i])
+        # CoreData's fixed offset is authoritative; BIN here is not ModelData.
+        if sub_ctx == 'etc/core.das:0#11':
+            handler = fmt_light_paths
         entry = {"file": sw.label, "sub": sub_ctx, "tag": tags[i][:3].decode("ascii", "replace"),
                  "ofs": off + start, "size": end - start, "handled": handler is not None}
+        if handler is fmt_light_paths:
+            entry['format'] = 'LightPathHeader'
         if handler:
             if not sw.swapped(off + start):
                 guarded(sw, handler, off + start, end - start, sub_ctx, entry)

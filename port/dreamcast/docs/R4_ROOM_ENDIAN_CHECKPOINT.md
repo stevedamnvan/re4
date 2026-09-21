@@ -1,5 +1,45 @@
 # D297: decoded room mirror and source collision layout
 
+## D300: camera, lighting and source light paths (2026-09-21)
+
+The mirror converts CameraData B402/B403/B404 record links, hit polygons,
+authored positions/targets, roll/FOV, floor ratio and interpolation times.
+All three room CAM blocks pass. The core EMPT sentinel stays bytes. Only
+Hermite types 6/7 consume frame-key arrays: source shoulder type 8 contains
+stale debug pointers in that unused field. Those values are preserved, not
+followed as arrays. Empty cuts do not dereference empty arrays.
+
+All 16 available LIT blocks convert using cLightEnv/cLightWork and light01..08 /
+foot_shadow layouts. Colors, flags and source-defined opaque padding remain
+bytes; numeric fields and known per-type work are swapped. LightFuncTbl static
+types do not consume their work tails. Type16 remains explicit unsupported work.
+The native light parent union preserves numeric ParentNo and named parent/part
+halves; PowerPC preprocessing is unchanged. This corrects data interpretation,
+not source light-selection or runtime rendering behavior.
+
+Correction to D299: `etc/core.das:0#11` is not a legacy model. ArcFile.ofs_3C and
+cLightMgr::getPathPtr identify it as light brightness paths despite its BIN tag.
+Its byte count, offset table and terminated byte sequences now have a scoped
+consumer-specific handler. The two legacy core SAT layout errors remain open.
+
+Sixteen room-endian tests and nine mirror tests pass; the game builds. The
+existing read_env/read_light field comparison matched 97 cuts / 724 lights
+between original and converted files. Source NaN bit patterns in unused spot
+fields were preserved (numeric NaN equality alone is not a valid comparison).
+This is a data comparison, not a rendered or runtime selection test.
+
+Evidence: `C:\Flycast-Evidence\re4-dreamcast\d300-light-camera` contains
+archive identities/copies, mirror report, light comparison results and refreshed
+build log. Current sources/tests survived a temporary-directory cleanup; focused
+checks and build were rerun before committing. Last target replay remains D295.
+
+Next: native room loading and remaining required formats (SHD/EFF/TEX/FSE,
+SMX callback data and source animation/FCV). Keep original nested sound handling.
+Do not gate gameplay on unused padding, but do not reinterpret live unknown
+fields or treat the incomplete whole-room archive as qualified. The main-menu,
+three playable rooms, rendering/audio, transitions/retry and hardware gates
+remain open; this checkpoint does not narrow that objective.
+
 ## D299: original model arrays and morph deltas (2026-09-21)
 
 The mirror now converts source ModelData/BIN versions 0x20010801 and 0x20030818:

@@ -51,7 +51,16 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D299 (2026-09-21)
+## Latest bounded result: D300 (2026-09-21)
+
+Room cameras, light cuts and the core source brightness-path table now convert.
+The apparent legacy core BIN failure was a consumer-specific light-path format;
+see [R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md)
+for the correction, native parent-layout fix, tests and evidence. Next: native
+room loading and remaining SHD/EFF/TEX/FSE, callback and animation data coverage.
+Sidecars are not wholly qualified. Latest build D300; last target replay D295.
+
+## Historical bounded result: D299 (2026-09-21)
 
 Source ModelData/BIN arrays, palettes, draw identities and morph deltas now
 convert; 421 tagged BINs and all nine SMD regions pass. Original numeric arrays
