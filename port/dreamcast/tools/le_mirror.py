@@ -59,6 +59,8 @@ NESTED = 4
 
 # Optional asset-builder observer sees the bounded original TPL before mutation.
 TPL_OBSERVER = None
+# Optional prepared-resource relocation observer: field, relative base, value.
+OFFSET_OBSERVER = None
 
 
 class Swapper:
@@ -137,6 +139,12 @@ class Swapper:
         v = struct.unpack_from(">I", self.data, off)[0]
         struct.pack_into("<I", self.data, off, v)
         return v
+
+    def offset32(self, off, base):
+        value = self.u32(off)
+        if OFFSET_OBSERVER is not None and value:
+            OFFSET_OBSERVER(self.label, off, base, value)
+        return value
 
     def u16(self, off):
         self._mark(off, 2)
@@ -256,22 +264,25 @@ def fmt_tpl(sw, off, size, ctx):
         TPL_OBSERVER(sw.label, off, bytes(sw.data[off:off + size]), ctx)
     sw.u32(off)
     num = sw.u32(off + 4)
-    desc = sw.u32(off + 8)
+    desc = sw.offset32(off + 8, off)
     seen_tex = set()
     seen_clut = set()
     for i in range(num):
         d = off + desc + 8 * i
-        tex, clut = sw.u32s(d, 2)
+        tex, clut = (sw.offset32(d + j * 4, off) for j in range(2))
         if tex and tex not in seen_tex:
             seen_tex.add(tex)
             h = off + tex
             sw.u16s(h, 2)
-            sw.u32s(h + 4, 7)
+            sw.u32(h + 4)
+            sw.offset32(h + 8, off)
+            sw.u32s(h + 12, 5)
         if clut and clut not in seen_clut:
             seen_clut.add(clut)
             c = off + clut
             sw.u16(c)
-            sw.u32s(c + 4, 2)
+            sw.u32(c + 4)
+            sw.offset32(c + 8, off)
 
 
 def fmt_uwf(sw, off, size, ctx):
@@ -424,7 +435,8 @@ def fmt_fcvseq(sw, off, size, ctx):
 
 def fmt_itm(sw, off, size, ctx):
     """item_model.cpp: source id table and table-relative BIN/TPL pairs."""
-    version, oi, ob, ot = sw.u32s(off, 4)
+    version = sw.u32(off)
+    oi, ob, ot = (sw.offset32(off + 4*i, off) for i in range(1,4))
     if version != 3:
         raise ValueError('unsupported item model pack version')
     bases = [off + v for v in (oi, ob, ot)]
@@ -446,7 +458,7 @@ def fmt_itm(sw, off, size, ctx):
         with sw.bounded(base, ends[base] - base):
             if sw.u32(base) != count:
                 raise ValueError('item model table counts differ')
-            targets = [base + v for v in sw.u32s(base + 4, count)]
+            targets = [base + sw.offset32(base + 4 + 4*i, base) for i in range(count)]
             starts = sorted(set(targets))
             for i, start in enumerate(starts):
                 if start < base + 4 + count * 4:
@@ -872,7 +884,7 @@ def fmt_eff(sw, off, size, ctx):
         remain explicit incomplete coverage,
       - the est / sst / path lists and data blocks, raw when present (recorded).
     Image and palette data keep their GameCube encoding (fmt_tpl contract)."""
-    hdr = sw.u32s(off, 12)
+    hdr = [sw.u32(off)] + [sw.offset32(off + 4*i, off) for i in range(1, 12)]
     (version, ofs_tex_id, ofs_est_list, ofs_sst_list, ofs_path_list, ofs_efm_id,
      ofs_tpl, ofs_anm, ofs_est_data, ofs_sst_data, ofs_path_data, ofs_efm) = hdr
     if version != 0xB:
@@ -891,7 +903,7 @@ def fmt_eff(sw, off, size, ctx):
 
     def ofs_table(o):
         n = sw.u32(o)
-        return [o + v for v in sw.u32s(o + 4, n)]
+        return [o + sw.offset32(o + 4 + 4*i, o) for i in range(n)]
 
     tex_ids = id_table(off + ofs_tex_id)
     # The game forms the table pointers unconditionally but dereferences them
@@ -932,7 +944,7 @@ def fmt_eff(sw, off, size, ctx):
         if len(efm_ids) != len(efms):
             raise ValueError("%s: effect model tables disagree" % ctx)
         for i, e in enumerate(sorted(set(efms))):
-            x0, o_model, o_tpl, o_mot, o_x = sw.u32s(e, 5)
+            x0, o_model, o_tpl, o_mot, o_x = [sw.u32(e)] + [sw.offset32(e + 4*i, e) for i in range(1, 5)]
             if not o_model or not o_tpl:
                 raise ValueError('effect model has no model or texture body')
             end = min(p for p in [off + size] + efms +
@@ -1343,7 +1355,7 @@ def fmt_smd(sw, off, size, ctx):
     sw._check(off, 16)
     flag = sw.data[off + 1]
     count = sw.u16(off + 2)
-    tables = sw.u32s(off + 4, 3)
+    tables = [sw.offset32(off + 4 + 4*i, off) for i in range(3)]
     work = off + 16
     total = count
     if flag & 1:
@@ -1373,7 +1385,7 @@ def fmt_smd(sw, off, size, ctx):
         # Count comes from source references, not padding before the first body.
         n = max(ids) + 1
         base = off + table
-        offsets = sw.u32s(base, n)
+        offsets = [sw.offset32(base + 4*i, base) for i in range(n)]
         for ident in sorted(ids):
             relative = offsets[ident]
             target = base + relative
@@ -1488,7 +1500,7 @@ def fmt_tagged(sw, off, size, ctx):
     """Tagged archive: u32 count, 12 bytes, u32 ofs[count], char tag[count][4];
     every sub-file is dispatched on its tag."""
     n = sw.u32(off)
-    offs = sw.u32s(off + 0x10, n)
+    offs = [sw.offset32(off + 0x10 + 4*i, off) for i in range(n)]
     tags = [bytes(sw.data[off + 0x10 + 4 * n + 4 * i: off + 0x10 + 4 * n + 4 * i + 4]) for i in range(n)]
     order = sorted(range(n), key=lambda i: offs[i])
     for rank, i in enumerate(order):

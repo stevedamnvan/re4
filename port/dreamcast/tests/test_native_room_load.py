@@ -36,6 +36,7 @@ void StopwatchStart() {}
 u32 StopwatchStop(void*) { return 123; }
 void OSReport(const char*,...) {}
 void re4dc_missing(const char*) { throw std::runtime_error("rejected"); }
+int re4dc_ui_bind_room(void* p,unsigned size){assert(p==storage && size==sizeof(storage));return fail!=3;}
 void PSet(void*& dst,void* src) { dst=src; }
 void* GetDataExt(void* room,const char*,int n) { assert(room==storage && !n); ++lookups; return storage; }
 '''
@@ -49,6 +50,9 @@ for(fail=1;fail<=2;++fail) { polls=0; pG->pRoom=nullptr;
 try { ReadAreaData(); assert(false); } catch(const std::runtime_error&) {}
 assert(pG->pRoom==nullptr && lookups==8);
 }
+fail=3;polls=0;try{ReadAreaData();assert(false);}catch(const std::runtime_error&){}
+assert(lookups==8); // bad native identities never activate archive consumers
+
 }
 '''
         with tempfile.TemporaryDirectory() as d:

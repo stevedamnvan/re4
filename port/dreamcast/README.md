@@ -24,38 +24,30 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D319 verifies compact VQ upload through the shared texture path using an existing
-D258 candidate:18,432 payload bytes versus131,072 uncompressed, with18,464 actual
-VRAM allocation including overhead. PAL4/PAL8 remain analysis; moving-scene VQ
-quality is unaccepted. See [D319](docs/R4A_TEXTURE_INVENTORY_CHECKPOINT.md).
-D318's opt-in source-model diagnostic reuses shared clipping, packets and frame
-ownership, but emits zero triangles in the captured state; it is not visible
-room acceptance. Source title/menu remains working. Continue source archive
-recovery and the room connection; see [the lifetime checkpoint](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+D320 loads a compact qualified r100 archive directly: **4,669,568 ->3,812,576
+bytes**, recovering **856,992 source-heap bytes**. The required **1,126,272-byte
+block pool now allocates** and blocks0-2 load/create. Source title/menu remains
+visible. The shared texture path uses the existing64 KiB storage buffer for
+bounded native uploads; no full package is staged on the source heap.
 
-D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
-buffer after synchronous consumption, retaining full per-frame capacity. The
-source menu remains visible; required block/enemy allocations still fail.
-Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
-4,276,992 before overhead/intervening allocations. Continue the source-to-native
-world/actor connection and actual resource backing recovery, using the existing
-room renderer and the UI-owned PVR frame. See
-[D316](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+The enemy still needs3,577,728 bytes with147,360 free at the first request.
+Source 3D preparation emits packets, but the captured source presentation hold
+produces zero model presentations. This is not a restored cabin or gameplay.
+Read [D320's evidence and current limits](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+ARAM/event/audio, inventory, full manual controls, transitions/retry and physical
+hardware remain open. The first three source rooms remain the objective.
 
+D314 remains the first verified source warning/main-menu presentation checkpoint;
+D315 fixes the post-title native task-stack failure; D316 recovers319,488 bytes
+through the source primitive lifetime. Those historical allocation failures are
+superseded by D320. D319 independently proves compact VQ upload using a retained
+candidate; PAL4/PAL8 are still analysis and moving-scene VQ quality is unaccepted.
+See [the texture checkpoint](docs/R4A_TEXTURE_INVENTORY_CHECKPOINT.md).
 
-D314 connects recovered ID layout/animation/menu code to the existing native
-texture, storage and PVR implementation. Warning/logo screens and
-START / LOAD / OPTIONS render at 640x480. See
-[the source UI checkpoint](docs/R4_SOURCE_UI_CONNECTION_CHECKPOINT.md)
-for images, ownership reuse, memory costs and acceptance limits.
-
-D314 is the first verified source-to-native UI presentation checkpoint. D315
-fixes a native task-stack underrun and reaches r100 initialization again; see
-[the subscreen boot checkpoint](docs/R4_SUBSCREEN_BOOT_CHECKPOINT.md). The stack
-correction costs 96,256 bytes. Required block/enemy allocations still fail.
-Subscreen reads complete but ARAM storage, inventory module/data qualification,
-3D/audio, manual gameplay and the three-room route remain open. Native upload
-staging is freed; original source archives remain resident.
+Smaller native render assets are authorized selectable candidates, with source
+gameplay/complete components preserved and actual RAM/CPU/visual checks. PS2 mesh
+substitution alone cannot meet the current66%-size enemy target: GC mesh backing
+is only11.60% of that archive. Texture and motion storage require attention too.
 
 ## Preserved scene-runtime visual and performance references
 

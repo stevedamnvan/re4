@@ -1,4 +1,5 @@
 #include "texture_package.hpp"
+#include "room_storage.hpp"
 
 #include <dc/pvr/pvr_mem.h>
 #include <dc/pvr/pvr_txr.h>
@@ -10,8 +11,7 @@
 namespace re4dc::texture {
 namespace {
 
-std::uint32_t crc32(const std::uint8_t* data, std::size_t size) {
-    std::uint32_t crc = 0xffffffffU;
+std::uint32_t crc_update(std::uint32_t crc, const std::uint8_t* data, std::size_t size) {
     for(std::size_t i = 0; i < size; ++i) {
         crc ^= data[i];
         for(unsigned bit = 0; bit < 8; ++bit) {
@@ -19,10 +19,82 @@ std::uint32_t crc32(const std::uint8_t* data, std::size_t size) {
             crc = (crc >> 1U) ^ (0xedb88320U & mask);
         }
     }
-    return ~crc;
+    return crc;
+}
+std::uint32_t crc32(const std::uint8_t* data, std::size_t size) {
+    return ~crc_update(0xffffffffU,data,size);
 }
 
+// Store queues copy complete 32-byte units. Full-codebook 8x8 VQ has
+// a 16-byte tail; pad only the transfer, within PVR allocator alignment.
+void upload_native(const std::uint8_t* src, void* destination, std::size_t bytes) {
+    const std::size_t bulk=bytes&~std::size_t(31);
+    if(bulk) pvr_txr_load(src,destination,bulk);
+    if(bytes!=bulk) {
+        alignas(32) std::uint8_t tail[32]{};
+        std::memcpy(tail,src+bulk,bytes-bulk);
+        pvr_txr_load(tail,static_cast<std::uint8_t*>(destination)+bulk,32);
+    }
+}
 } // namespace
+
+namespace {
+unsigned word(const std::uint8_t* p) { unsigned v; std::memcpy(&v,p,4); return v; }
+unsigned half(const std::uint8_t* p) { std::uint16_t v; std::memcpy(&v,p,2); return v; }
+}
+
+bool SourceIdentityTable::adopt(const void* archive, std::size_t bytes) {
+    clear();
+    if(!archive || bytes < 16) return false;
+    auto* data = static_cast<const std::uint8_t*>(archive);
+    const unsigned slots=word(data);
+    if(slots > (bytes-16)/8) return false;
+    const std::uint8_t* native=nullptr;
+    std::size_t native_bytes=0;
+    for(unsigned i=0;i<slots;++i) {
+        if(std::memcmp(data+16+4*slots+4*i,"NTR",4)) continue;
+        const unsigned off=word(data+16+4*i);
+        if(native || off>bytes || bytes-off<32) return false;
+        native=data+off;native_bytes=bytes-off;
+    }
+    if(!native) return true; // original qualified archive stays selectable
+    if(std::memcmp(native,"R4NTBL\0",8) || word(native+8)!=1 || word(native+16)!=12 ||
+       word(native+28)!=bytes || word(native+24)<=bytes) return false;
+    const unsigned count=word(native+12);
+    if(!count || count>(native_bytes-32)/12 || count>1024 ||
+       crc32(native+32,count*12)!=word(native+20)) return false;
+    for(unsigned i=0;i<count;++i) {
+        const auto* entry=native+32+i*12;
+        const unsigned record=word(entry),header=word(entry+4),tpl=word(entry+8);
+        if(record>bytes-32 || header>bytes-36 || tpl>bytes-12 ||
+           (record&31) || (header&3) || (tpl&3)) return false;
+        const auto* p=data+record;const auto* h=data+header;
+        const unsigned w=word(p+16),ht=word(p+20),fmt=word(p+24);
+        if(std::memcmp(p,"R4NREF\0",8) || !w || !ht || w>1024 || ht>1024 ||
+           (fmt>6 && fmt!=14) || h[33] || h[34] || h[35] ||
+           w!=half(h+2) || ht!=half(h) || fmt!=word(h+4) ||
+           std::uint64_t(tpl)+word(h+8)!=record) return false;
+    }
+    data_=data;bytes_=bytes;table_=native+32;count_=count;
+    return true;
+}
+
+int SourceIdentityTable::lookup(const void* pixels,unsigned width,unsigned height,unsigned format,
+                                  unsigned& crc,unsigned& fnv) const {
+    const auto address=reinterpret_cast<std::uintptr_t>(pixels);
+    const auto base=reinterpret_cast<std::uintptr_t>(data_);
+    if(!data_ || address<base || address-base>=bytes_) return false;
+    const auto offset=address-base;
+    for(unsigned i=0;i<count_;++i) {
+        const auto start=word(table_+12*i);
+        if(offset<start || offset-start>=32) continue;
+        if(offset!=start) return -1;
+        const auto* p=data_+offset;
+        if(word(p+16)!=width || word(p+20)!=height || word(p+24)!=format) return -1;
+        crc=word(p+8);fnv=word(p+12);return true;
+    }
+    return false;
+}
 
 Package::~Package() {
     close();
@@ -54,6 +126,49 @@ bool Package::open(const char* path) {
         return false;
     }
     return validate();
+}
+
+bool Package::open_streamed(const char* path) {
+    close();
+    file_ = fs_open(path,O_RDONLY);
+    if(file_ == FILEHND_INVALID) { error_="open failed"; return false; }
+    const ssize_t total=fs_total(file_);
+    Header h{};
+    if(total < static_cast<ssize_t>(sizeof(h)) || !storage::read_exact(file_,&h,sizeof(h))) {
+        error_="streamed header read failed";close();return false;
+    }
+    // Bound metadata before trusting offsets/counts. Prepared native packages
+    // place the descriptor table directly after the header; no texel overlap.
+    const std::uint64_t prefix=std::uint64_t(h.texture_offset)+std::uint64_t(h.texture_count)*sizeof(Texture);
+    if(std::memcmp(h.magic,kMagic,8) || h.version!=kVersion || h.header_size!=sizeof(h) ||
+       h.texture_stride!=sizeof(Texture) || h.texture_offset!=sizeof(h) ||
+       !h.texture_count || prefix>64*1024 || prefix>std::uint64_t(total) || h.data_offset<prefix) {
+        error_="invalid streamed metadata layout";close();return false;
+    }
+    size_=static_cast<std::size_t>(total);
+    metadata_bytes_=static_cast<std::size_t>(prefix);
+    metadata_=static_cast<std::uint8_t*>(std::malloc(metadata_bytes_));
+    if(!metadata_) { error_="streamed metadata allocation failed";close();return false; }
+    std::memcpy(metadata_,&h,sizeof(h));
+    if(!storage::read_exact(file_,metadata_+sizeof(h),metadata_bytes_-sizeof(h))) {
+        error_="streamed descriptor read failed";close();return false;
+    }
+    data_=metadata_;streamed_=true;
+    if(!validate()) return false;
+    for(unsigned i=0;i<header_->texture_count;++i) {
+        if(textures()[i].payload==kPayloadLinear) {
+            error_="streamed upload requires native texture layout";close();return false;
+        }
+    }
+    // Validate once before any VRAM allocation or publishing this package.
+    std::uint32_t crc=0xffffffffU;
+    if(fs_seek(file_,sizeof(Header),SEEK_SET)!=sizeof(Header) ||
+       !storage::read_chunks(file_,size_-sizeof(Header),[](const std::uint8_t* p,std::size_t n,void* ctx) {
+           auto& c=*static_cast<std::uint32_t*>(ctx);c=crc_update(c,p,n);return true;
+       },&crc) || ~crc!=header_->payload_crc32) {
+        error_="streamed payload read or CRC mismatch";close();return false;
+    }
+    error_=nullptr;return true;
 }
 
 // R4 5A. The same package, parsed out of memory the caller owns rather than a
@@ -92,7 +207,7 @@ bool Package::validate() {
         close();
         return false;
     }
-    if(crc32(data_ + header_->header_size, size_ - header_->header_size) !=
+    if(!streamed_ && crc32(data_ + header_->header_size, size_ - header_->header_size) !=
        header_->payload_crc32) {
         error_ = "payload CRC mismatch";
         close();
@@ -192,15 +307,24 @@ bool Package::upload() {
             return false;
         }
         ++uploaded;
-        if(texture.payload == kPayloadLinear) {
+        if(streamed_) {
+            auto* target=static_cast<std::uint8_t*>(pvr_textures_[index]);
+            if(fs_seek(file_,texture.data_offset,SEEK_SET)!=static_cast<off_t>(texture.data_offset) ||
+               !storage::read_chunks(file_,texture.data_size,[](const std::uint8_t* src,std::size_t n,void* ctx) {
+                   auto*& dst=*static_cast<std::uint8_t**>(ctx);
+                   upload_native(src,dst,n);dst+=n;return true;
+               },&target)) {
+                error_="streamed texture upload read failed";return false;
+            }
+        } else if(texture.payload == kPayloadLinear) {
             // Legacy layout: the PVR cannot consume it, so it is reordered
             // here during upload.
             pvr_txr_load_ex(data_ + texture.data_offset, pvr_textures_[index],
                             texture.width, texture.height, PVR_TXRLOAD_16BPP);
         } else {
             // Already in the layout the PVR expects; copy it straight in.
-            pvr_txr_load(data_ + texture.data_offset, pvr_textures_[index],
-                         texture.data_size);
+            upload_native(data_ + texture.data_offset, pvr_textures_[index],
+                          texture.data_size);
         }
         vram_bytes_ += texture.data_size;
     }
@@ -224,6 +348,11 @@ bool Package::release_payload() {
     if(header_ == nullptr || !upload_complete_) {
         error_ = "payload release before a completed upload";
         return false;
+    }
+    if(streamed_) {
+        // No whole-file CPU payload was allocated: do not count it as freed.
+        fs_close(file_);file_=FILEHND_INVALID;
+        size_=metadata_bytes_;payload_released_=true;return true;
     }
     const std::uint64_t descriptor_end =
         static_cast<std::uint64_t>(header_->texture_offset) +
@@ -292,6 +421,7 @@ void Package::close() {
     metadata_bytes_ = 0;
     released_bytes_ = 0;
     payload_released_ = false;
+    streamed_ = false;
     upload_complete_ = false;
     inject_failure_after_ = 0;
     data_ = nullptr;

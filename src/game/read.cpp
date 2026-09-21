@@ -1,3 +1,6 @@
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_ui.h"
+#endif
 // game/read: room / core / option / enemy / player / weapon data loading (D:/Bio4/Prog/read.cpp).
 // All 21 functions byte-identical (OptionDataRead's objdiff rows are reloc-only). readEmData: `m`
 // (14 refs / 198 insns, 2121) lost r29 to `newSize` (6 / 54, 2222) in global.c priority; the
@@ -255,6 +258,11 @@ void ReadAreaData()
         }
         PSet(pG->pRoom, (void*) roomInfo.addr[0][0]);
         out_data_size = roomInfo.size[0][0];
+
+        if (!re4dc_ui_bind_room(pG->pRoom, out_data_size)) {
+            re4dc_missing("invalid prepared native room identities");
+            return;
+        }
         readTime = StopwatchStop(NULL);
         OSReport("Native room: %s bytes=%u read_us=%u\n", name, out_data_size, readTime);
 #endif

@@ -55,6 +55,25 @@ std::uint32_t pvr_format(const Texture& texture);
 static_assert(sizeof(Header) == 48);
 static_assert(sizeof(Texture) == 96);
 
+// Small descriptor index owned by the source room archive. Its records replace
+// only offline-qualified upload-only texels. No source data is decoded or copied.
+class SourceIdentityTable {
+public:
+    bool adopt(const void* archive, std::size_t bytes);
+    void clear() { data_ = nullptr; table_ = nullptr; count_ = 0; bytes_ = 0; }
+    // 1: identity, 0: ordinary resident pixels, -1: external record with invalid
+    // dimensions/palette context. A rejected external record must never be hashed
+    // as though its original (discarded) texel range were still present.
+    int lookup(const void* pixels, unsigned width, unsigned height, unsigned format,
+                unsigned& crc, unsigned& fnv) const;
+    unsigned count() const { return count_; }
+private:
+    const std::uint8_t* data_ = nullptr;
+    const std::uint8_t* table_ = nullptr;
+    unsigned count_ = 0;
+    std::size_t bytes_ = 0;
+};
+
 class Package {
 public:
     Package() = default;
@@ -63,6 +82,10 @@ public:
     ~Package();
 
     bool open(const char* path);
+    // Retains only bounded metadata; validates the full file CRC through the
+    // shared storage bounce buffer. upload() reads native payloads in chunks.
+    // Linear layouts are rejected here; legacy adopt/open remain available.
+    bool open_streamed(const char* path);
     bool adopt(const std::uint8_t* data, std::size_t size);
     // Uploads every descriptor's payload into texture memory. Succeeds only
     // by finishing: a package whose earlier attempt stopped part way is
@@ -107,6 +130,7 @@ private:
     bool range_valid(std::uint32_t offset, std::uint32_t size) const;
 
     bool validate();
+    bool streamed_ = false;
 
     file_t file_ = FILEHND_INVALID;
     const std::uint8_t* data_ = nullptr;

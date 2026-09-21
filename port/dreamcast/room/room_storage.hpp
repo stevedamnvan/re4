@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <kos/fs.h>
 
 // Explicitly owned storage for everything a room brings in.
 //
@@ -64,6 +65,13 @@ struct ReadResult {
 // reads and refusing a truncated one. On any failure the arena is rewound to
 // where it started, so a caller can retry without leaking capacity.
 ReadResult read_file(Arena& arena, const char* path);
+
+// Synchronous, bounded transport over the same existing 64 KiB bounce buffer.
+// The callback must consume bytes before returning; it cannot retain the buffer
+// or re-enter either reader. File position advances; caller owns the handle.
+using ChunkConsumer = bool (*)(const std::uint8_t*, std::size_t, void*);
+bool read_chunks(file_t file, std::size_t bytes, ChunkConsumer consume, void* context);
+bool read_exact(file_t file, void* destination, std::size_t bytes);
 
 } // namespace re4dc::storage
 

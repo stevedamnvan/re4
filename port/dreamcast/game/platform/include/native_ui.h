@@ -16,6 +16,8 @@ void re4dc_ui_begin();
 void re4dc_ui_present();
 void re4dc_ui_submit(const Re4dcUiQuad*);
 void re4dc_ui_invalidate_sources();
+int re4dc_ui_bind_room(void*,unsigned);
+void re4dc_ui_retire_room();
 void* re4dc_ui_stage_alloc(unsigned bytes);
 void re4dc_ui_stage_free(void* data);
 int re4dc_ui_heap_free();

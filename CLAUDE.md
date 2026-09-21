@@ -13,7 +13,7 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D319 compact VQ proven; source archive recovery next
+## Current resumption point - D320 block pool fits; enemy and source presentation remain
 
 D314 remains the first verified source-driven warning/main-menu UI presentation
 checkpoint. Adapter 4123a85 and focused capture/interaction validation 8f1578b
@@ -63,13 +63,31 @@ acceptance: D318's zero-output scheduler frontier remains. PAL4/PAL8 stay invent
 proposals. Read the D319 addendum in R4A_TEXTURE_INVENTORY_CHECKPOINT.md and
 C:/Flycast-Evidence/re4-dreamcast/d319-existing-vq. Preserve the uncompressed fixture.
 
-Current user-directed memory task: compact the qualified r100 source archive by
-externalizing verified upload-only textures, with offline descriptor/resource
-identities and direct smaller final allocation. Retain all CPU readers, mip and
-palette/animation semantics, original source slot identities and sound dispatch.
-Keep unsupported payloads resident. Measure actual heap at the same block/enemy
-requests; first target is successful required block pool allocation. Do not call
-VQ or cleared pointers source-archive recovery. Keep moving the room adapter.
+D320c now directly loads r100 at3,812,576 versus4,669,568 bytes, recovering
+856,992 real source-heap bytes. The required1,126,272-byte block pool ALLOCATES;
+blocks0-2 load/create. First enemy3,577,728 still fails with147,360 free (shortfall
+3,430,368 before overhead). 97 offline identities replace upload-only source
+texels; mip/palette/CPU-noise/unreviewed payloads remain. Shared Package/storage
+now uploads native textures in bounded chunks through the existing64 KiB bounce,
+with no whole-package source-heap allocation. Title menu stays visible. Ten
+room uploads succeed; the snapshot has435 output triangles/8512 peak packet
+bytes but zero model presentations under source System0xc00 hold. Do not clear
+that flag to manufacture a scene. Existing effect-path errors continue.
+Read the D320 section of R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md. Final evidence:
+C:/Flycast-Evidence/re4-dreamcast/d320c-qualified-compact, exact identities/manifest.
+Candidate mirror /root/probe/d320b-mirror, disc /root/probe/d320c-disc, unchanged
+uncompressed textures/input /root/probe/d318d-fixtures. D320a is retained as the
+failed full-texture-staging diagnostic. No new world/playability acceptance.
+
+User-authorized next asset strategy: compact or reviewed smaller Dreamcast render
+assets, optionally compatible PS2 geometry, must replace costly loaded backing;
+retain source gameplay, complete components, original references and measured
+CPU/RAM/quality gates. 66% enemy-body target is about2,361,300 bytes, not66% saved.
+PS2 enemy audit /root/probe/ps2-enemy-audit shows mesh substitution alone cannot
+reach it: all GC meshes are415,040 bytes (11.60%), PS2 top-level BINs are slightly
+larger. FCV/SEQ dominate at1,864,928 bytes; texture backing remains another lead.
+Structural skeleton correspondence is promising but not deformation acceptance.
+Keep source hold/enemy/event requirements visible while pursuing these savings.
 
 **Immediate frontier:** bring the existing native cabin mechanisms into the
 recovered-game executable. Connect commonModelTrans/ModelRender source-owned
@@ -92,8 +110,8 @@ room_storage.*, extracted gpu_lifecycle.* and existing draw mechanisms.
 Common ID output does not accept fonts/effects/3D/audio or manual menu control.
 
 D313 compact mirror /root/re4data-le-static remains selectable; full reference
-/root/re4data-le is preserved. Historical required block pool 1,126,272 and
-Ganado body 3,577,728 still do not fit. EVD ARAM dispatch is a placeholder;
+/root/re4data-le is preserved. D313 historical block/enemy failures are superseded by D320: the required block
+pool fits, but the Ganado body still does not. EVD ARAM dispatch is a placeholder;
 r101 EVS remains unqualified and the third opening room unverified.
 Preserve inherited dirty source/platform edits; do not broadly stage.
 

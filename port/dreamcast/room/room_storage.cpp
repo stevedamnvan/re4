@@ -19,6 +19,7 @@ constexpr std::size_t kSectorBytes = 2048U;
 // Deliberately not 32-byte aligned: that is what steers KOS away from its
 // streaming path. Only ever holds one package smaller than kReadChunkBytes.
 alignas(32) std::uint8_t g_small_file_bounce[kReadChunkBytes + 32U];
+bool bounce_busy = false;
 std::uint8_t* small_file_buffer() { return g_small_file_bounce + 16U; }
 
 std::size_t align_up(std::size_t value) {
@@ -62,8 +63,36 @@ void Arena::rewind(std::size_t mark) {
     }
 }
 
+bool read_chunks(file_t file, std::size_t bytes, ChunkConsumer consume, void* context) {
+    if(bounce_busy || !consume) return false;
+    bounce_busy = true;
+    bool ok = true;
+    while(bytes && ok) {
+        const std::size_t chunk = bytes < kReadChunkBytes ? bytes : kReadChunkBytes;
+        std::size_t done = 0;
+        while(done < chunk) {
+            const ssize_t got = fs_read(file, small_file_buffer() + done, chunk - done);
+            if(got <= 0 || static_cast<std::size_t>(got) > chunk-done) { ok=false; break; }
+            done += static_cast<std::size_t>(got);
+        }
+        if(ok) ok = consume(small_file_buffer(), chunk, context);
+        bytes -= chunk;
+    }
+    bounce_busy = false;
+    return ok;
+}
+
+bool read_exact(file_t file, void* destination, std::size_t bytes) {
+    auto* out = static_cast<std::uint8_t*>(destination);
+    return read_chunks(file, bytes, [](const std::uint8_t* p, std::size_t n, void* ctx) {
+        auto*& target = *static_cast<std::uint8_t**>(ctx);
+        std::memcpy(target,p,n); target+=n; return true;
+    }, &out);
+}
+
 ReadResult read_file(Arena& arena, const char* path) {
     ReadResult result{};
+    if(bounce_busy) { result.error="storage reader re-entry"; return result; }
     const std::size_t mark = arena.mark();
     const std::uint32_t started = timer_us_gettime64() & 0xffffffffU;
 
@@ -89,6 +118,7 @@ ReadResult read_file(Arena& arena, const char* path) {
     // See small_file_buffer(): a package this small is read through the block
     // cache and copied, because the streaming path does not return for it.
     const bool via_bounce = size < kReadChunkBytes;
+    if(via_bounce) bounce_busy = true;
     std::uint8_t* const target = via_bounce ? small_file_buffer() : buffer;
 
     std::size_t done = 0;
@@ -101,12 +131,14 @@ ReadResult read_file(Arena& arena, const char* path) {
         }
         const ssize_t got = fs_read(handle, target + done, want);
         if(got < 0) {
+            if(via_bounce) bounce_busy = false;
             fs_close(handle);
             arena.rewind(mark);
             result.error = "read error";
             return result;
         }
         if(got == 0) {
+            if(via_bounce) bounce_busy = false;
             // End of file before the declared length: a truncated package must
             // never reach a parser.
             fs_close(handle);
@@ -119,6 +151,7 @@ ReadResult read_file(Arena& arena, const char* path) {
     fs_close(handle);
     if(via_bounce) {
         std::memcpy(buffer, target, size);
+        bounce_busy = false;
     }
 
     result.data = buffer;

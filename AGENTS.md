@@ -68,6 +68,13 @@ old "next task", test count, FPS, or clean-tree claim without checking it.
   Flycast-first evidence and physical-console acceptance are separate gates;
   unavailable hardware does not stop useful implementation or imply a pass.
 
+The user authorizes smaller Dreamcast-specific render assets from the original
+or compatible PS2 content as selectable candidates. Preserve original references,
+source gameplay contracts and complete required components. Replace the actual
+costly loaded backing, measure total RAM/CPU costs, and review appearance in
+motion; do not claim visual equivalence or savings from a second retained copy.
+This permits meaningful reviewed content reductions, not silent gameplay loss.
+
 ## Execution workflow for Sol and Astra
 
 Both models implement against the same evidence and acceptance contract. This

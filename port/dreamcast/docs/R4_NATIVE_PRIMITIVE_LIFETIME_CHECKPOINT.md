@@ -213,3 +213,173 @@ candidate and extends this same texture path, verifying actual compact VRAM.
 PAL proposals, encoded files and runtime-supported formats must stay distinct.
 Source archive recovery, required room creation, source lighting/material parity,
 visible moving 3D/audio/manual play and all three-room gates remain open.
+
+
+## D320: compact r100 backing and bounded native texture installation
+
+2026-09-21, final D320c candidate based on 503aa10 plus the preserved integration
+worktree. This is actual source-archive recovery and successful required block
+allocation. It is not visible cabin, enemy creation or playable-room acceptance.
+
+### Existing connection, new adapter, and ownership
+
+`prepare_native_ui.py --compact-room` reuses `le_mirror.prepare_room_archive`,
+the recovered offline YZ2 decoder, whole-room/sound qualification and
+`prepare_native_room`. Its small relocation observer records relative offsets
+in the existing tagged/SMD/TPL/EFF/ITM parsers. It does not introduce a decoder
+or a viewer-format replacement for source data.
+
+For reviewed r100 SMD/model palettes, effect textures except CPU noise ID 0xFE,
+and ITM pickup-model palettes, each eligible texel range becomes a 32-byte
+identity record. The builder verifies the existing native texture package
+against the existing converter, without writing/re-encoding textures. Mip
+chains, palettes, unreviewed resource families, card/font data and CPU noise
+stay resident. Item consumers are cItmSys::DataLoad -> ItemGetBinTplAddr ->
+setItemObj/modelInit; their models, IDs and animation structures remain intact.
+Original archive slot ordinals, direct ROOM_ARC_PTR consumers, material/animation
+identities and all retained source data are preserved; relative byte offsets
+are explicitly rebased and both source/resident locations recorded. NTR metadata
+uses spare header space without shifting the existing offset slots.
+
+`ReadAreaData` still uses its qualified .dar and source DVD queue. Type 0 now
+requests the smaller final allocation directly. The old compressed geometry is
+on disc only; no full original or second decoded archive is loaded in RAM.
+Original sound-container headers, dispatch order and sound payloads remain.
+This retains sound-loading semantics, not functioning ARAM/AICA/audio output.
+
+New `SourceIdentityTable` in the shared texture package validates the compact
+index before source pointer relocation. The existing UI/model texture cache
+resolves its source pointer/dimensions to the offline resource key without
+hashing discarded pixels. Incompatible external descriptors are rejected before
+fallback hashing. The table is borrowed metadata inside the source room, not a
+second archive. gameRoomMemInit reuses the GPU quiescence contract before clearing
+queued native references/cache and retiring its identity view, ahead of heap
+reuse. Full door/retry and special source heap-swap paths remain unqualified.
+
+D320a initially reclaimed 780,224 bytes and allocated the block pool, but the
+newly enabled blocks exhausted later collision/path and full-texture staging
+allocations. Preserve that failure in d320-compact-room. D320c additionally
+externalizes the verified ITM textures and uses `Package::open_streamed` with
+`room_storage::read_chunks`. These extend the existing Package/storage path:
+CRC-validated bounded metadata, the existing 64 KiB bounce buffer, direct native
+VRAM upload, same sharing/partial-failure/close ownership and GPU fence. No new
+full payload buffer is allocated; each sampled one-image package retains 144
+metadata bytes plus its existing handle/ownership allocations. Whole-file CPU
+payload release is correctly reported as zero for this path. Native VQ stays
+compact; the 8x8 VQ tail is padded only for the 32-byte store-queue transfer.
+Linear legacy packages keep the existing adopt/open path; streamed installation
+explicitly rejects them. Source-game fixtures use native twiddled layouts.
+
+This trades extra bounded file traversal/CRC work at first use for a lower
+loading peak; it is not a measured CPU/frame-rate improvement. The files are
+cached after installation. No second renderer or source preparation was added.
+
+### Matched allocation results
+
+| Metric | D319 uncompressed reference | D320c |
+|---|---:|---:|
+| Resident r100 archive | 4,669,568 | 3,812,576 |
+| Actual source-heap recovery | 0 | 856,992 |
+| Free immediately before block request | 427,008 | 1,284,000 |
+| Required block payload | 1,126,272 (failed) | 1,126,272 (allocated) |
+| Block allocator overhead | 0 (failed) | 64 |
+| Free after block request | 427,008 | 157,664 |
+| Free at first em12 request | 416,704 | 147,360 |
+| Required em12 body | 3,577,728 (failed) | 3,577,728 (failed) |
+
+The enemy's free memory is lower because the block pool is now actually charged.
+Its first remaining shortfall is **3,430,368 bytes before overhead**, with later
+allocations still required. Do not add the failed enemy request to used RAM.
+Source heap reservation remains 8,667,136 bytes (8,464 KiB).
+
+The room shrinks by 856,992 net bytes, including 3,104 replacement-record and
+1,216 index bytes. No second full archive or compressed geometry overlaps its
+final allocation. Source DVD staging, sound work and the KOS buffer remain
+separate existing costs. 97 source image identities are retained. Blocks 0, 1,
+2 load/create normally; block 3 ARAM staging is still an unimplemented copy.
+Ten source-room native uploads succeed in the recorded log. Sampled room upload
+heap free remains 75,072 before/after, including the 262,144-byte texture that
+could not use full source-heap staging in D320a. This proves bounded installation,
+not source archive recovery from that upload. All textures in D320c use the
+uncompressed native reference; D319 VQ is separately selectable, not promoted.
+
+The same fixture shows the source title menu at 640x480 with corrected readback.
+At the matched snapshot: source frame 1236, Rno0=3, System=0xc00; 86 processed
+parts, 28,107 input triangles, 435 output triangles, peak copied packet bytes
+8,512, zero invalid/overflow counts, 40 resource rejections, and **zero model
+presentations**. This advances D318's zero-output frontier, but the source hold
+prevents visible 3D. Preserve it: do not force the hold flag off. Existing effect
+path errors continue; required enemy/event/ARAM/audio/inventory work is open.
+The capture ends at its 90-second deadline, not a reported native fault.
+
+### Evidence, tests and keep decision
+
+Final private evidence: C:/Flycast-Evidence/re4-dreamcast/d320c-qualified-compact.
+Diagnostic predecessors: d320-compact-room and d320b-bounded-upload. Final and
+initial evidence-manifest.json files validate. Final evidence pins the dirty
+source patch/new fixture, exact executable/disc, per-file asset manifest,
+input fixtures, tools/configuration, sampled menu and RAM snapshot. The revision
+alone is not the full build identity. No old accepted evidence was overwritten.
+
+- ELF SHA256: e8dd3e2093c28cb2e6c75beffaa32e7f633e6f8eb8dedb8cbd9fd81bb0f1f4e4.
+- Disc SHA256: 8d6e105aece2000753b3af934a9744c326f0f98566807c227c5fddb310c488dc.
+- Flycast SHA256: 64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a.
+- KOS 804b3195ebd1a06a27cc2b3a5eacf7a2429040a3; SH GCC 15.2.0.
+
+Checks: qualified compaction with retained noise/mip/other bodies and ITM lookup;
+source load rejection before consumers; 40 room endian and 25 mirror tests;
+shared Package/storage tests under ASan/UBSan including short reads, CRC and
+partial-upload failures, pointer sharing, VQ tail/byte identity, and invalid
+external descriptor rejection. Both native targets' affected units build;
+game links with the five known stubs. read.cpp/game.cpp PowerPC preprocessing
+matches pre-slice working tokens; full ProDG was not rerun.
+
+Keep this selectable compact room and bounded installation. Reproduction:
+
+```sh
+python3 port/dreamcast/tools/prepare_native_ui.py   --compact-room /root/re4data/st1/r100.das   --textures /root/probe/d318d-fixtures/tex --output <fresh-output-directory>
+```
+
+Final mirror /root/probe/d320b-mirror differs from /root/re4data-le-static only
+in r100.arc/.dar. Final disc /root/probe/d320c-disc uses /root/probe/d318d-fixtures.
+Original mirrors and the accepted cabin audiovisual reference stay selectable.
+Continue actual enemy memory recovery and source-controlled presentation/event
+integration; no scene, gameplay, performance, full peak/lifecycle or physical
+hardware acceptance is implied.
+
+### Review of the supplied DC_MEMORY_PATHWAY note
+
+The supplied scratchpad's externalization direction is useful and D320 provides
+measured evidence for it. Its projected 3.9 MB saving and "memory only" conclusion
+are not established. Current source heap is 8,667,136 bytes, not 8,929,280.
+Current sound dispatch does not put its entire ARAM sample payload inside the
+room allocation, so an AICA implementation cannot be credited with removing
+that amount from r100. VRAM is not general backing for CPU-readable geometry.
+Direct ROOM_ARC_PTR users also preclude treating GetDataExt as a universal lazy
+loader boundary. Source rendering/presentation, enemy/event, inventory and audio
+integration remain separate requirements. Do not import another port's memory
+or performance numbers as RE4 acceptance.
+
+### Enemy asset candidate boundary (user-authorized reductions)
+
+The user authorizes smaller Dreamcast render assets, from original or compatible
+PS2 content, provided they replace actual expensive backing, preserve source
+gameplay/complete components, and receive memory/CPU/visual checks. This is not
+a requirement to retain every render payload unchanged. Keep original references
+and make perceptual changes selectable until reviewed.
+
+Private /root/probe/ps2-enemy-audit/REPORT.md, audit.json, identities.json and the
+existing pinned extraction tools establish a bounded negative result for using
+PS2 meshes alone to reach 66% of the 3,577,728-byte em12 body. GC's 34 top-level
+BINs total407,168 bytes; PS2 equivalents total411,264. GC nested effect BINs add
+7,872. All mesh backing is therefore415,040 (11.60%); even removing every mesh
+would leave88.40%, not66%. Source FCV/SEQ occupy1,864,928 bytes; top-level TPLs
+480,800 and EFF819,168 include further texture data. The full PS2 archive is
+3,321,120 bytes on disc, not a native residency measurement.
+
+All34 model slots and joint ID/parent arrays correspond; bind translations
+match exactly in17, otherwise within0.00039632 source units. Skin weights,
+complete component semantics, deformation, visual/CPU/native-memory costs remain
+unqualified. Do not promote PS2 motions/effects merely to claim archive savings.
+Prioritize render texture backing and equivalent motion-storage reuse; selective
+mesh changes remain candidates where a native working-set/timing gain is proven.

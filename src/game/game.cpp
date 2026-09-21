@@ -1,3 +1,6 @@
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_ui.h"
+#endif
 // game/game: the game task (init / stage / room / main loop / door / ending / option steps), the
 // save data front end (cGameSave), the died demo, difficulty points, the primitive buffer and
 // the debug displays (D:/Bio4/Prog/game.cpp).
@@ -1370,6 +1373,9 @@ void gameDoordemo()
 // the debug/status flags.
 void gameRoomMemInit()
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_ui_retire_room();
+#endif
     if (pG->System_flg & 0x200000) {
         MemReplaceHeap(3, 4);
         MemorySwap((void*) 0x807EC000, ARAM_FREE_BASE, 0x188000);

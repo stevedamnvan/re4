@@ -20,6 +20,7 @@ struct Key { unsigned crc,fnv; bool operator==(const Key& b)const{return crc==b.
 struct Entry { re4dc::texture::Package package; Key key{}; unsigned frame=0; bool valid=false; };
 struct Source { Re4dcUiImage image{}; Key key{}; };
 Entry entries[kTextureCount]; Source sources[256]; unsigned nsource;
+re4dc::texture::SourceIdentityTable room_identities;unsigned identity_hits;
 Re4dcUiQuad quads[kQuadCount]; Entry* handles[kQuadCount]; unsigned nquad,frame,used,peak,staging_peak;
 unsigned dropped,unsupported,missing,drawn,culled,loads,reclaimed; bool ready,frame_ready;
 extern "C" int re4dc_vi_black();
@@ -53,15 +54,25 @@ bool same_image(const Re4dcUiImage& a,const Re4dcUiImage& b) {
     return a.pixels==b.pixels && a.palette==b.palette && a.width==b.width && a.height==b.height &&
            a.format==b.format && a.palette_format==b.palette_format && a.palette_bytes==b.palette_bytes;
 }
-Key image_key(const Re4dcUiImage& image) {
-    for(unsigned n=0;n<nsource;++n) if(same_image(sources[n].image,image)) return sources[n].key;
+bool image_key(const Re4dcUiImage& image,Key& key) {
+    for(unsigned n=0;n<nsource;++n) if(same_image(sources[n].image,image)) {key=sources[n].key;return true;}
+    Key external{};
+    const int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
+    if(native<0 || (native && (image.palette || image.palette_bytes))) {
+        re4dc_log("native room identity: incompatible descriptor rejected\n");return false;
+    }
+    if(native) {
+        if(identity_hits++<3)re4dc_log("native room identity: %08x-%08x (no source-texel hash)\n",external.crc,external.fnv);
+        if(nsource<256)sources[nsource++]={image,external};
+        key=external;return true;
+    }
     const unsigned metadata[]={image.width,image.height,image.format,image.palette_format,image.palette_bytes};
-    Key key{0xffffffffU,2166136261U};hash_bytes(key,metadata,sizeof(metadata));
+    key={0xffffffffU,2166136261U};hash_bytes(key,metadata,sizeof(metadata));
     hash_bytes(key,image.pixels,image_size(image));
     if(image.palette_bytes) hash_bytes(key,image.palette,image.palette_bytes);
     key.crc=~key.crc;
     if(nsource<256) sources[nsource++]={image,key};
-    return key;
+    return true;
 }
 void close_entry(Entry& entry) {
     if(entry.valid) used-=entry.package.vram_bytes();
@@ -69,7 +80,7 @@ void close_entry(Entry& entry) {
 }
 Entry* load(const Re4dcUiImage& image) {
     if(!image.pixels || !image_size(image) || !image.width || !image.height || image.width>1024 || image.height>1024) return nullptr;
-    const Key key=image_key(image);
+    Key key{};if(!image_key(image,key))return nullptr;
     for(auto& e:entries) if(e.valid && e.key==key) {e.frame=frame;return &e;}
     Entry* slot=nullptr;
     for(auto& e:entries) if(!e.valid){slot=&e;break;}
@@ -78,17 +89,9 @@ Entry* load(const Re4dcUiImage& image) {
     close_entry(*slot); // caller has completed both TA and render fences
     char path[96];std::sprintf(path,"/cd/dc/tex/%08x-%08x.re4tex",key.crc,key.fnv);
     re4dc_log("native UI: load %s %ux%u fmt=%u\n",path,image.width,image.height,image.format);
-    file_t f=fs_open(path,O_RDONLY);if(f<0) {re4dc_log("native UI: missing package\n");return nullptr;}
-    const ssize_t size=fs_total(f);fs_close(f);
-    if(size<48 || size>2*1024*1024+4096) return nullptr;
     const int heap_before=re4dc_ui_heap_free();
-    void* backing=re4dc_ui_stage_alloc((size+31)&~31U);if(!backing) return nullptr;
-    if((unsigned)size>staging_peak) staging_peak=size;
-    re4dc::storage::Arena arena;arena.init((unsigned char*)backing,(size+31)&~31U);
-    re4dc_log("native UI: read bytes=%u\n",(unsigned)size);
-    auto read=re4dc::storage::read_file(arena,path);
-    re4dc_log("native UI: read complete error=%s\n",read.error?read.error:"none");
-    bool ok=read.data && slot->package.adopt(read.data,read.size);
+    bool ok=slot->package.open_streamed(path);
+    if(!ok) re4dc_log("native UI: package rejected: %s\n",slot->package.error());
     if(ok) {
         const auto& h=slot->package.header();
         ok=h.texture_count==1 && h.data_size<=kVramBudget;
@@ -111,9 +114,8 @@ Entry* load(const Re4dcUiImage& image) {
     }
     re4dc_log("native UI: upload %s vram=%u\n",ok?"ok":"FAILED",slot->package.vram_bytes());
     if(!ok) slot->package.close();
-    re4dc_ui_stage_free(backing);
-    re4dc_log("native UI: stage freed bytes=%u heap=%d->%d metadata=%u\n",(unsigned)((size+31)&~31U),heap_before,re4dc_ui_heap_free(),slot->package.metadata_bytes());
-    if(ok){++loads;reclaimed+=(size+31)&~31U;}
+    re4dc_log("native UI: bounded upload heap=%d->%d metadata=%u staging=existing-65536 source_allocation=0\n",heap_before,re4dc_ui_heap_free(),slot->package.metadata_bytes());
+    if(ok)++loads;
     if(!ok) return nullptr;
     slot->valid=true;slot->key=key;slot->frame=frame;used+=slot->package.vram_bytes();
     if(used>peak) peak=used;
@@ -121,6 +123,21 @@ Entry* load(const Re4dcUiImage& image) {
 }
 }
 extern "C" void re4dc_ui_invalidate_sources(){nsource=0;}
+extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
+    nsource=0;identity_hits=0;
+    const bool ok=room_identities.adopt(archive,bytes);
+    re4dc_log("native room identities: %s count=%u archive=%u metadata_owner=room\n",ok?"ok":"REJECTED",room_identities.count(),bytes);
+    return ok;
+}
+extern "C" void re4dc_ui_retire_room(){
+    if(ready && re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready)
+        re4dc_missing("native room retire fence failed");
+    // No queued draw may outlive its source room. Shared cached uploads may be
+    // reloaded from their stable identities; no archive texels are needed.
+    nquad=0;model_used=0;nsource=0;room_identities.clear();identity_hits=0;
+    for(auto& entry:entries)close_entry(entry);
+}
+
 extern "C" void re4dc_ui_init(){
     if(ready)return;
     pvr_init_params_t params=pvr_default_params;

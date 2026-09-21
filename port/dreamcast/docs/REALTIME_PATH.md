@@ -1,16 +1,14 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
-buffer after synchronous consumption, retaining full per-frame capacity. The
-source menu remains visible; required block/enemy allocations still fail.
-Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
-4,276,992 before overhead/intervening allocations. Continue the source-to-native
-world/actor connection and actual resource backing recovery, using the existing
-room renderer and the UI-owned PVR frame. See
-[D316](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+D320c recovers856,992 real r100 source-heap bytes by loading qualified compact
+backing directly. The required1,126,272-byte block pool now fits. First em12
+request3,577,728 still fails with147,360 free. Source-native textures upload
+through the existing64 KiB bounce without full package staging. The menu remains
+visible; emitted model packets are still held by source presentation state.
+See [D320](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md). No gameplay frame-budget or
+physical-hardware acceptance follows from these loading/memory results.
 
-
-Updated 2026-09-21; current integration candidate D317 (shared native geometry/packets; source world adapter remains open).
+Updated 2026-09-21; current integration candidate D320c.
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first
@@ -28,8 +26,8 @@ See [D314](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md) and
 [D315](R4_SUBSCREEN_BOOT_CHECKPOINT.md). Continue measured resource integration;
 no gameplay FPS/hardware acceptance is claimed.
 
-D313's selectable static-module compaction reclaims 46,464 live heap bytes and
-reduces em12 demand by 428,288; neither required allocation fits yet. Source
+Historically, D313's selectable static-module compaction reclaims 46,464 live heap bytes and
+reduces em12 demand by 428,288; neither required allocation fit at that checkpoint; D320 supersedes the block failure. Source
 base-texture inventory is a next capacity lead, not a measured active set or
 license to upload everything. See [the exact checkpoint](R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
 
