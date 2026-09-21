@@ -4,6 +4,12 @@
 
 #include <cstring>
 
+// [0] is the check that is running, [1] how far through it. Read by the host
+// capture, which has no other view of a load that has not reached a frame yet.
+extern "C" {
+volatile std::uint32_t g_room_validate_progress[2] = {0U, 0U};
+}
+
 namespace re4dc::room {
 namespace {
 
@@ -121,12 +127,16 @@ bool Package::validate() {
             return false;
         }
     }
+    g_room_validate_progress[0] = 1U;
+    g_room_validate_progress[1] =
+        static_cast<std::uint32_t>(size_ - header_->header_size);
     if(crc32(data_ + header_->header_size, size_ - header_->header_size) !=
        header_->payload_crc32) {
         error_ = "payload CRC mismatch";
         close();
         return false;
     }
+    g_room_validate_progress[0] = 2U;
     const auto* package_indices = indices();
     for(std::uint32_t index = 0; index < header_->index_count; ++index) {
         if(package_indices[index] >= header_->vertex_count) {
@@ -139,6 +149,7 @@ bool Package::validate() {
     const auto* package_primitive_indices = primitive_indices();
     // The strip table has to be checked before the batch loop reads through it
     // to count triangles.
+    g_room_validate_progress[0] = 3U;
     for(std::uint32_t index = 0; index < header_->primitive_count; ++index) {
         const auto& primitive = package_primitives[index];
         if(primitive.vertex_count < 3U ||
@@ -161,6 +172,7 @@ bool Package::validate() {
     }
     std::uint32_t triangles = 0;
     const auto* package_batches = batches();
+    g_room_validate_progress[0] = 4U;
     for(std::uint32_t index = 0; index < header_->batch_count; ++index) {
         const auto& batch = package_batches[index];
         const bool triangles_resident =
@@ -203,6 +215,7 @@ bool Package::validate() {
         close();
         return false;
     }
+    g_room_validate_progress[0] = 5U;
     error_ = nullptr;
     return true;
 }

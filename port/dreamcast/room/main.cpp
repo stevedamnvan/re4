@@ -255,6 +255,15 @@ constexpr float kStepUp = 0.55f;
 constexpr float kStepDown = 2.5f;
 constexpr float kFallbackPlayerMoveSpeed = 6.0f;
 constexpr float kTurnSpeed = 2.4f;
+// Whether this scene has the player and enemy actors. The village does not:
+// its own enemies, events and door progression are not implemented, and
+// borrowing the cabin's would be substituting one room's content for another.
+#if defined(RE4DC_SCENE_R101)
+constexpr bool kSceneHasActors = false;
+#else
+constexpr bool kSceneHasActors = true;
+#endif
+
 #if defined(RE4DC_SCENE_R100)
 // r100_Sce_look in src/st1/r100.cpp places Leon in the opening cabin encounter.
 // Room, collision, actor, camera, and light coordinates use metres (source * 0.001).
@@ -274,6 +283,39 @@ constexpr float kEnemySpawnX = -79.116f;
 constexpr float kEnemySpawnY = 0.860f;
 constexpr float kEnemySpawnZ = -38.890f;
 constexpr float kEnemySpawnYaw = -1.39f;
+#elif defined(RE4DC_SCENE_R101)
+// Point 0 of r101_016.RTP, the village's own authored route table. A route
+// point is where the source walks its own actors, so it is a position the room
+// is built around rather than one picked off a bounding box.
+constexpr float kSpawnX = -51.1649f;
+constexpr float kSpawnY = 0.500f;
+constexpr float kSpawnZ = 22.1509f;
+constexpr float kSpawnYaw = 0.0f;
+constexpr float kGoalX = kSpawnX;
+constexpr float kGoalY = kSpawnY;
+constexpr float kGoalZ = kSpawnZ;
+// No enemy is created in this scene; the Enemy struct still default-initialises
+// from these, so they sit on the entry point rather than anywhere meaningful.
+constexpr float kEnemySpawnX = kSpawnX;
+constexpr float kEnemySpawnY = kSpawnY;
+constexpr float kEnemySpawnZ = kSpawnZ;
+constexpr float kEnemySpawnYaw = 0.0f;
+#else
+constexpr float kSpawnX = 0.0f;
+constexpr float kSpawnY = -7.98f;
+constexpr float kSpawnZ = -245.0f;
+constexpr float kSpawnYaw = kPi;
+constexpr float kGoalX = 32.0f;
+constexpr float kGoalY = -7.98f;
+constexpr float kGoalZ = -284.0f;
+constexpr float kEnemySpawnX = 0.0f;
+constexpr float kEnemySpawnY = -7.98f;
+constexpr float kEnemySpawnZ = -256.0f;
+constexpr float kEnemySpawnYaw = 0.0f;
+constexpr float kFarClipDistance = 35.0f;
+#endif
+
+#if defined(RE4DC_SOURCE_SCENE)
 // The scene's lighting environment -- fog, background, ambient and the light
 // table -- comes from the room's own .LIT. Room coordinates use the source
 // 0.001 metre scale; cLightMgr shortens the gameplay far plane to
@@ -352,19 +394,6 @@ constexpr float kSourceRoomAmbientBlue = 2.0f / 255.0f;
 constexpr float kSourceActorAmbientRed = 26.0f / 255.0f;
 constexpr float kSourceActorAmbientGreen = 26.0f / 255.0f;
 constexpr float kSourceActorAmbientBlue = 24.0f / 255.0f;
-#else
-constexpr float kSpawnX = 0.0f;
-constexpr float kSpawnY = -7.98f;
-constexpr float kSpawnZ = -245.0f;
-constexpr float kSpawnYaw = kPi;
-constexpr float kGoalX = 32.0f;
-constexpr float kGoalY = -7.98f;
-constexpr float kGoalZ = -284.0f;
-constexpr float kEnemySpawnX = 0.0f;
-constexpr float kEnemySpawnY = -7.98f;
-constexpr float kEnemySpawnZ = -256.0f;
-constexpr float kEnemySpawnYaw = 0.0f;
-constexpr float kFarClipDistance = 35.0f;
 #endif
 constexpr float kFallbackEnemyMoveSpeed = 1.9f;
 // em10AxeAtkCk admits the normal hatchet attack at sqrt(2890000) source
@@ -3031,7 +3060,8 @@ struct SelectedSourceLights {
     std::uint8_t count = 0U;
 };
 
-SelectedSourceLights selected_source_lights(std::uint32_t selection) {
+[[maybe_unused]] SelectedSourceLights selected_source_lights(
+    std::uint32_t selection) {
     SelectedSourceLights result{};
     for(std::size_t index = 0U; index < kSourceLightCount; ++index) {
         if((selection & (1U << index)) == 0U) {
@@ -3073,7 +3103,8 @@ struct PreparedActorLights {
     std::uint32_t count = 0U;
 };
 
-PreparedActorLights prepare_actor_lights(const SelectedSourceLights& selection) {
+[[maybe_unused]] PreparedActorLights prepare_actor_lights(
+    const SelectedSourceLights& selection) {
     PreparedActorLights result{};
     for(std::uint8_t slot = 0U; slot < selection.count; ++slot) {
         const std::size_t index = selection.indices[slot];
@@ -3105,7 +3136,7 @@ PreparedActorLights prepare_actor_lights(const SelectedSourceLights& selection) 
     return result;
 }
 
-void evaluate_prepared_actor_lighting(
+[[maybe_unused]] void evaluate_prepared_actor_lighting(
     float px, float py, float pz, float nx, float ny, float nz,
     const PreparedActorLights& lights,
     float& out_red, float& out_green, float& out_blue) {
@@ -3962,6 +3993,31 @@ bool prepare_room_primitive_bounds(const re4dc::room::Package& room) {
     return covered == header.primitive_count;
 }
 
+// Free main RAM at each installation step and the lowest seen, published for
+// the host: [0] at boot, [1] after the packages, [2] after the derived tables,
+// [3] the low mark, [4] the batch-local scratch bytes asked for.
+extern "C" {
+volatile std::uint32_t g_room_install_ram[5] = {0U, 0U, 0U, 0U, 0U};
+}
+
+std::uint32_t main_ram_free_now() {
+    const std::uintptr_t heap_end =
+        reinterpret_cast<std::uintptr_t>(mm_sbrk(0));
+    const std::uintptr_t limit =
+        static_cast<std::uintptr_t>(_arch_mem_top - THD_KERNEL_STACK_SIZE);
+    return static_cast<std::uint32_t>(limit > heap_end ? limit - heap_end : 0U);
+}
+
+void note_install_ram(unsigned slot) {
+    const std::uint32_t free_now = main_ram_free_now();
+    if(slot < 3U) {
+        g_room_install_ram[slot] = free_now;
+    }
+    if(g_room_install_ram[3] == 0U || free_now < g_room_install_ram[3]) {
+        g_room_install_ram[3] = free_now;
+    }
+}
+
 // Builds the per-batch local vertex tables the direct-strip path indexes into.
 //
 // Three separate limits refuse a room here, and they are not the same limit:
@@ -3992,10 +4048,13 @@ bool prepare_room_batch_locals(const re4dc::room::Package& room) {
        primitive_indices == nullptr) {
         return false;
     }
+    g_room_install_ram[4] = static_cast<std::uint32_t>(
+        header.vertex_count * (sizeof(std::uint32_t) + sizeof(std::uint16_t)));
     std::uint32_t* last_batch =
         new (std::nothrow) std::uint32_t[header.vertex_count];
     std::uint16_t* local_of =
         new (std::nothrow) std::uint16_t[header.vertex_count];
+    note_install_ram(9U);
     if(last_batch == nullptr || local_of == nullptr) {
         delete[] last_batch;
         delete[] local_of;
@@ -6072,6 +6131,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #endif
     const std::uint64_t opaque_actor_start = timer_us_gettime64();
     submit_pvr(stats, &untextured_header, sizeof(untextured_header));
+    if(kSceneHasActors) {
     stats.character_triangles = draw_character(
         leon, leon_projected,
 #if defined(RE4DC_SCENE_R100)
@@ -6086,6 +6146,7 @@ FrameStats render_scene(const re4dc::room::Package& room,
 #endif
         ganado_headers, ganado_alpha, false,
         character_submit_vertices, kCharacterSubmitVertexCapacity, stats);
+    }
 #if !defined(RE4DC_SOURCE_SCENE)
     draw_goal(enemy.state == EnemyState::Dead);
 #endif
@@ -6383,7 +6444,16 @@ void restart_snapshots(std::uint32_t tick) {
 //
 // Down again to 3,440,640 now that r100's batches carry one primitive
 // representation each: the measured high water is 3,343,712.
+#if defined(RE4DC_SCENE_R101)
+// r101's persistent set measured from the generated packages: geometry
+// 8,430,664 plus collision 129,938 plus route 12,589, each padded to the
+// arena's alignment. Its textures are transient and load first, and their
+// 2,990,672 peak is well under the persistent set, so the persistent set is
+// the high water. Sized with the same slack as r100's.
+constexpr std::size_t kRoomArenaCapacity = 8U * 1024U * 1024U + 512U * 1024U;
+#else
 constexpr std::size_t kRoomArenaCapacity = 3U * 1024U * 1024U + 288U * 1024U;
+#endif
 alignas(32) std::uint8_t g_room_arena_memory[kRoomArenaCapacity];
 re4dc::storage::Arena g_room_arena;
 
@@ -6465,6 +6535,34 @@ enum RoomFailurePoint : std::uint32_t {
 };
 std::uint32_t g_room_inject_failure_point = kFailNone;
 
+// What an unhandled exception was: marker, code, PC, PR, TEA (the address the
+// SH-4 faulted on) and EXPEVT. Written by the handler below and then left
+// alone, because the handler does not return.
+extern "C" {
+volatile std::uint32_t g_room_fault[6] = {0U, 0U, 0U, 0U, 0U, 0U};
+}
+
+void record_fault(irq_t code, irq_context_t* context, void*) {
+    g_room_fault[1] = static_cast<std::uint32_t>(code);
+    g_room_fault[2] = context != nullptr ? context->pc : 0U;
+    g_room_fault[3] = context != nullptr ? context->pr : 0U;
+    g_room_fault[4] = *reinterpret_cast<volatile std::uint32_t*>(0xff00003cU);
+    g_room_fault[5] = *reinterpret_cast<volatile std::uint32_t*>(0xff000024U);
+    g_room_fault[0] = 0xfa1dedU;
+    // Stop here. Returning would re-execute the faulting instruction and
+    // rebooting would erase what was just recorded.
+    for(;;) {
+    }
+}
+
+
+// The boot step that is running, published for the host capture. Volatile
+// because it is read from outside the program and because the ordinary
+// telemetry word is free to be reordered by the optimiser.
+extern "C" {
+volatile std::uint32_t g_room_boot_stage = 0U;
+}
+
 // Consumes a request for this point without claiming anything happened. Used
 // where arming and failing are separate moments.
 bool room_failure_requested(std::uint32_t point) {
@@ -6503,8 +6601,10 @@ constexpr std::uint64_t kRoomCycleIntervalTicks = 300U;
 template <typename PackageType>
 bool load_room_resource(PackageType& package, const RoomResourceId& id) {
     const std::uint64_t began = timer_us_gettime64();
+    g_re4dc_demo_telemetry.flags = 0x10000040U;
     const auto read = re4dc::storage::read_file(g_room_arena, id.path);
     if(read.data == nullptr) {
+        g_re4dc_demo_telemetry.flags = 0x1000004FU;
         std::printf("re4dc-room: %s read failed (%s/%s/%u at %s): %s\n",
                     id.label, id.archive, id.tag,
                     static_cast<unsigned>(id.ordinal), id.path, read.error);
@@ -6512,13 +6612,19 @@ bool load_room_resource(PackageType& package, const RoomResourceId& id) {
     }
     g_room_lifecycle.read_us += read.read_us;
     g_room_lifecycle.read_bytes += static_cast<std::uint32_t>(read.size);
+    g_re4dc_demo_telemetry.room_read_bytes = g_room_lifecycle.read_bytes;
+    g_re4dc_demo_telemetry.room_arena_used =
+        static_cast<std::uint32_t>(g_room_arena.used());
+    g_re4dc_demo_telemetry.flags = 0x10000041U;
     const std::uint64_t validate_began = timer_us_gettime64();
     if(!package.adopt(read.data, read.size)) {
+        g_re4dc_demo_telemetry.flags = 0x1000004EU;
         std::printf("re4dc-room: %s validation failed (%s/%s/%u): %s\n",
                     id.label, id.archive, id.tag,
                     static_cast<unsigned>(id.ordinal), package.error());
         return false;
     }
+    g_re4dc_demo_telemetry.flags = 0x10000042U;
     g_room_lifecycle.validate_us +=
         static_cast<std::uint32_t>(timer_us_gettime64() - validate_began);
     (void) began;
@@ -6833,13 +6939,17 @@ bool load_room(DemoAudio& audio) {
     g_room_lifecycle.upload_us = 0;
     std::uint64_t upload_us = 0;
     if(!load_room_texture(textures, kRoomTextures, &upload_us,
-                          inject_upload_failure) ||
+                          inject_upload_failure)) {
+        return false;
+    }
+    if(kSceneHasActors &&
        !load_room_texture(ganado_textures, kRoomEnemyTex, &upload_us, false)) {
         return false;
     }
     // A completed upload is the precondition for the release the loader just
     // did; assert it rather than trusting the ordering to stay this way.
-    if(!textures.payload_released() || !ganado_textures.payload_released()) {
+    if(!textures.payload_released() ||
+       (kSceneHasActors && !ganado_textures.payload_released())) {
         std::printf("re4dc-room: room textures resident after a load\n");
         return false;
     }
@@ -6851,8 +6961,10 @@ bool load_room(DemoAudio& audio) {
     }
     if(!load_room_resource(room, kRoomGeometry) ||
        !load_room_resource(collision, kRoomCollision) ||
-       !load_room_resource(route, kRoomRoute) ||
-       !load_room_resource(ganado, kRoomEnemy)) {
+       !load_room_resource(route, kRoomRoute)) {
+        return false;
+    }
+    if(kSceneHasActors && !load_room_resource(ganado, kRoomEnemy)) {
         return false;
     }
     // Texture memory owned and the persistent packages adopted, so retirement
@@ -6862,18 +6974,20 @@ bool load_room(DemoAudio& audio) {
     }
     // The shape checks main() makes on the first load apply to every load: the
     // hit-capsule and axe-marker arithmetic indexes off the end otherwise.
-    if(ganado.header().clip_count < 5U ||
+    if(kSceneHasActors &&
+      (ganado.header().clip_count < 5U ||
        ganado.header().position_count != 1690U ||
        ganado.header().version != re4dc::character::kVersion ||
        ganado.header().skinned_position_count != 1667U ||
        ganado.header().source_normal_count != 1818U ||
-       ganado.header().normal_matrix_count != 112U) {
+       ganado.header().normal_matrix_count != 112U)) {
         std::printf("re4dc-room: reloaded Ganado package has the wrong shape\n");
         return false;
     }
-    if(ganado.header().position_count > kGanadoVertexCapacity ||
+    if(kSceneHasActors &&
+      (ganado.header().position_count > kGanadoVertexCapacity ||
        ganado.header().normal_count > kGanadoVertexCapacity ||
-       ganado.header().source_normal_count > kGanadoVertexCapacity) {
+       ganado.header().source_normal_count > kGanadoVertexCapacity)) {
         std::printf("re4dc-room: reloaded actor exceeds transform capacity\n");
         return false;
     }
@@ -6890,13 +7004,16 @@ bool load_room(DemoAudio& audio) {
     material_alpha.reset(new(std::nothrow) bool[room.header().material_count]);
     material_punchthrough.reset(
         new(std::nothrow) bool[room.header().material_count]);
-    ganado_headers =
-        new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
-    ganado_alpha.reset(new(std::nothrow) bool[ganado.header().batch_count]);
+    if(kSceneHasActors) {
+        ganado_headers =
+            new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
+        ganado_alpha.reset(new(std::nothrow) bool[ganado.header().batch_count]);
+    }
     if(material_headers == nullptr || room_strip_headers == nullptr ||
        room_punchthrough_headers == nullptr || visible_room_groups == nullptr ||
        material_alpha == nullptr || material_punchthrough == nullptr ||
-       ganado_headers == nullptr || ganado_alpha == nullptr) {
+       (kSceneHasActors &&
+        (ganado_headers == nullptr || ganado_alpha == nullptr))) {
         std::printf("re4dc-room: room header allocation failed\n");
         return false;
     }
@@ -6909,7 +7026,8 @@ bool load_room(DemoAudio& audio) {
     if(!compile_room_material_headers()) {
         return false;
     }
-    if(!compile_character_headers_for(ganado, ganado_textures, ganado_headers,
+    if(kSceneHasActors &&
+       !compile_character_headers_for(ganado, ganado_textures, ganado_headers,
                                       ganado_alpha.get(), "Ganado")) {
         return false;
     }
@@ -6923,7 +7041,7 @@ bool load_room(DemoAudio& audio) {
         std::printf("re4dc-room: room strip bounds unavailable\n");
     }
     prepare_room_batch_locals(room);
-    if(!load_enemy_audio(audio)) {
+    if(kSceneHasActors && !load_enemy_audio(audio)) {
         std::printf("re4dc-room: enemy audio load failed\n");
         return false;
     }
@@ -6936,6 +7054,11 @@ bool load_room(DemoAudio& audio) {
 } // namespace
 
 int main() {
+    for(const irq_t fault_code :
+        {EXC_DATA_ADDRESS_READ, EXC_DATA_ADDRESS_WRITE, EXC_ILLEGAL_INSTR,
+         EXC_GENERAL_FPU, EXC_SLOT_FPU, EXC_INSTR_ADDRESS}) {
+        irq_set_handler(fault_code, &record_fault, nullptr);
+    }
     g_re4dc_demo_telemetry.flags = 0x10000001U;
     g_room_arena.init(g_room_arena_memory, kRoomArenaCapacity);
     // The PVR comes up before the first package is read so the room textures
@@ -6979,18 +7102,27 @@ int main() {
     std::uint64_t texture_upload_us_total = 0;
     // The two room-owned texture packages, transiently: read, upload, release,
     // rewind, before anything persistent takes the space.
+    note_install_ram(0U);
+    g_room_boot_stage = 31U;
     if(!load_room_texture(textures, kRoomTextures, &texture_upload_us_total,
-                          false) ||
+                          false)) {
+        return 1;
+    }
+    g_room_boot_stage = 32U;
+    if(kSceneHasActors &&
        !load_room_texture(ganado_textures, kRoomEnemyTex,
                           &texture_upload_us_total, false)) {
         return 1;
     }
+    g_room_boot_stage = 33U;
     if(!load_room_resource(room, kRoomGeometry)) {
         return 1;
     }
+    g_room_boot_stage = 34U;
     if(!load_room_resource(collision, kRoomCollision)) {
         return 1;
     }
+    g_room_boot_stage = 35U;
     const re4dc::route::Package* route_ptr = nullptr;
 #if defined(RE4DC_SCENE_R100)
     if(!load_room_resource(route, kRoomRoute)) {
@@ -7002,18 +7134,20 @@ int main() {
                 static_cast<unsigned long>(route.header().link_count));
 #endif
     re4dc::character::Package leon;
-    if(!leon.open("/rd/leon.re4chr")) {
-        std::printf("re4dc-room: Leon load failed: %s\n", leon.error());
-        return 1;
-    }
-    if(!load_room_resource(ganado, kRoomEnemy)) {
-        return 1;
-    }
     re4dc::texture::Package leon_textures;
-    if(!leon_textures.open("/rd/leon.re4tex")) {
-        std::printf("re4dc-room: Leon texture load failed: %s\n",
-                    leon_textures.error());
-        return 1;
+    if(kSceneHasActors) {
+        if(!leon.open("/rd/leon.re4chr")) {
+            std::printf("re4dc-room: Leon load failed: %s\n", leon.error());
+            return 1;
+        }
+        if(!load_room_resource(ganado, kRoomEnemy)) {
+            return 1;
+        }
+        if(!leon_textures.open("/rd/leon.re4tex")) {
+            std::printf("re4dc-room: Leon texture load failed: %s\n",
+                        leon_textures.error());
+            return 1;
+        }
     }
 #if defined(RE4DC_SCENE_R100)
     re4dc::hud::Package source_hud;
@@ -7030,6 +7164,7 @@ int main() {
     }
 #endif
     g_re4dc_demo_telemetry.flags = 0x10000002U;
+    if(kSceneHasActors) {
     std::printf(
         "re4dc-room: loaded room=%lu/%lu/%lu collision=%lu/%lu/%lu "
         "hierarchy=%lu/%lu leon=%lu/%lu/%lu/%lu/%lu "
@@ -7057,6 +7192,8 @@ int main() {
         static_cast<unsigned long>(ganado.header().frame_count),
         room.source_groups() != nullptr ? "yes" : "no");
     g_re4dc_demo_telemetry.flags = 0x10000021U;
+    }
+    if(kSceneHasActors) {
     if(leon.header().clip_count < 11U) {
         std::printf(
             "re4dc-room: Leon package needs source aim/fire triplets and actions\n");
@@ -7090,12 +7227,14 @@ int main() {
         return 1;
     }
 #endif
+    }
 
     // The persistent romdisk-backed packages. These are mapped out of .rodata
     // rather than adopted from the arena, so releasing their payload would buy
     // a heap copy and nothing else.
+    g_room_boot_stage = 36U;
     const std::uint64_t texture_upload_begin = timer_us_gettime64();
-    if(!leon_textures.upload()) {
+    if(kSceneHasActors && !leon_textures.upload()) {
         std::printf("re4dc-room: Leon texture upload failed: %s\n",
                     leon_textures.error());
         return 1;
@@ -7110,6 +7249,7 @@ int main() {
     g_re4dc_demo_telemetry.texture_upload_us = static_cast<std::uint32_t>(
         texture_upload_us_total + (timer_us_gettime64() - texture_upload_begin));
     g_re4dc_demo_telemetry.flags = 0x10000004U;
+    g_room_boot_stage = 37U;
     pvr_poly_cxt_t context{};
     pvr_poly_hdr_t untextured_header{};
     pvr_poly_cxt_col(&context, PVR_LIST_OP_POLY);
@@ -7132,26 +7272,34 @@ int main() {
         std::printf("re4dc-room: material header allocation failed\n");
         return 1;
     }
+    g_room_boot_stage = 38U;
     if(!compile_room_material_headers()) {
         return 1;
     }
-    pvr_poly_hdr_t* leon_headers =
-        new(std::nothrow) pvr_poly_hdr_t[leon.header().batch_count];
-    ganado_headers =
-        new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
-    std::unique_ptr<bool[]> leon_alpha(
-        new(std::nothrow) bool[leon.header().batch_count]);
-    ganado_alpha.reset(new(std::nothrow) bool[ganado.header().batch_count]);
-    if(leon_headers == nullptr || ganado_headers == nullptr ||
-       leon_alpha == nullptr || ganado_alpha == nullptr) {
+    g_room_boot_stage = 39U;
+    pvr_poly_hdr_t* leon_headers = nullptr;
+    std::unique_ptr<bool[]> leon_alpha;
+    if(kSceneHasActors) {
+        leon_headers =
+            new(std::nothrow) pvr_poly_hdr_t[leon.header().batch_count];
+        ganado_headers =
+            new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
+        leon_alpha.reset(new(std::nothrow) bool[leon.header().batch_count]);
+        ganado_alpha.reset(
+            new(std::nothrow) bool[ganado.header().batch_count]);
+    }
+    if(kSceneHasActors &&
+      (leon_headers == nullptr || ganado_headers == nullptr ||
+       leon_alpha == nullptr || ganado_alpha == nullptr)) {
         std::printf("re4dc-room: character material header allocation failed\n");
         return 1;
     }
 
-    if(!compile_character_headers_for(leon, leon_textures, leon_headers,
+    if(kSceneHasActors &&
+      (!compile_character_headers_for(leon, leon_textures, leon_headers,
                                       leon_alpha.get(), "Leon") ||
        !compile_character_headers_for(ganado, ganado_textures, ganado_headers,
-                                      ganado_alpha.get(), "Ganado")) {
+                                      ganado_alpha.get(), "Ganado"))) {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
@@ -7197,14 +7345,20 @@ int main() {
         "re4dc-room: textures=%lu+%lu+%lu shared=%lu bytes=%lu "
         "pvr_free_before=%lu pvr_free_after=%lu\n",
         static_cast<unsigned long>(textures.header().texture_count),
-        static_cast<unsigned long>(leon_textures.header().texture_count),
-        static_cast<unsigned long>(ganado_textures.header().texture_count),
-        static_cast<unsigned long>(textures.shared_textures() +
-                                   leon_textures.shared_textures() +
-                                   ganado_textures.shared_textures()),
-        static_cast<unsigned long>(textures.vram_bytes() +
-                                   leon_textures.vram_bytes() +
-                                   ganado_textures.vram_bytes()),
+        static_cast<unsigned long>(
+            kSceneHasActors ? leon_textures.header().texture_count : 0U),
+        static_cast<unsigned long>(
+            kSceneHasActors ? ganado_textures.header().texture_count : 0U),
+        static_cast<unsigned long>(
+            textures.shared_textures() +
+            (kSceneHasActors ? leon_textures.shared_textures() +
+                                   ganado_textures.shared_textures()
+                             : 0U)),
+        static_cast<unsigned long>(
+            textures.vram_bytes() +
+            (kSceneHasActors
+                 ? leon_textures.vram_bytes() + ganado_textures.vram_bytes()
+                 : 0U)),
         static_cast<unsigned long>(vram_before_textures),
         static_cast<unsigned long>(pvr_mem_available()));
 
@@ -7212,14 +7366,18 @@ int main() {
     const vector_t up = {0.0f, -1.0f, 0.0f, 0.0f};
     Player player{};
     Enemy enemy{};
+    // Without actors there is no authored root speed to take, so the viewer
+    // moves at the fallback rate.
     const float player_move_speed =
-        std::fabs(leon.clips()[kPlayerWalkClip].root_forward_speed_mps) >
-                0.0001f
+        (kSceneHasActors &&
+         std::fabs(leon.clips()[kPlayerWalkClip].root_forward_speed_mps) >
+             0.0001f)
             ? std::fabs(
                   leon.clips()[kPlayerWalkClip].root_forward_speed_mps)
             : kFallbackPlayerMoveSpeed;
     float enemy_move_speed =
-        std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f
+        (kSceneHasActors &&
+         std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f)
             ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
             : kFallbackEnemyMoveSpeed;
     std::printf(
@@ -7260,38 +7418,47 @@ int main() {
     bool reload_was_down = false;
     bool restart_was_down = false;
     InputService input_service{};
-    if(leon.header().position_count > kLeonVertexCapacity ||
+    if(kSceneHasActors &&
+      (leon.header().position_count > kLeonVertexCapacity ||
        leon.header().normal_count > kLeonVertexCapacity ||
        leon.header().source_normal_count > kLeonVertexCapacity ||
        ganado.header().position_count > kGanadoVertexCapacity ||
        ganado.header().normal_count > kGanadoVertexCapacity ||
-       ganado.header().source_normal_count > kGanadoVertexCapacity) {
+       ganado.header().source_normal_count > kGanadoVertexCapacity)) {
         std::printf("re4dc-room: actor transform capacity exceeded\n");
         return 1;
     }
-#if defined(RE4DC_SCENE_R100)
-    const std::uint32_t leon_normal_scratch_count =
-        leon.header().source_normal_count != 0U
-            ? leon.header().source_normal_count
-            : leon.header().normal_count;
-    const std::uint32_t ganado_normal_scratch_count =
-        ganado.header().source_normal_count != 0U
-            ? ganado.header().source_normal_count
-            : ganado.header().normal_count;
-    if(leon_normal_scratch_count > kLeonNormalScratchCapacity ||
-       ganado_normal_scratch_count > kGanadoNormalScratchCapacity) {
-        std::printf("re4dc-room: actor normal scratch capacity exceeded\n");
-        return 1;
+#if defined(RE4DC_SOURCE_SCENE)
+    if(kSceneHasActors) {
+        const std::uint32_t leon_normal_scratch_count =
+            leon.header().source_normal_count != 0U
+                ? leon.header().source_normal_count
+                : leon.header().normal_count;
+        const std::uint32_t ganado_normal_scratch_count =
+            ganado.header().source_normal_count != 0U
+                ? ganado.header().source_normal_count
+                : ganado.header().normal_count;
+        if(leon_normal_scratch_count > kLeonNormalScratchCapacity ||
+           ganado_normal_scratch_count > kGanadoNormalScratchCapacity) {
+            std::printf(
+                "re4dc-room: actor normal scratch capacity exceeded\n");
+            return 1;
+        }
     }
+    note_install_ram(1U);
+    g_room_boot_stage = 40U;
     prepare_source_lights();
+    g_room_boot_stage = 41U;
     if(!prepare_room_static_lighting(room)) {
         std::printf("re4dc-room: room static-light preparation failed\n");
         return 1;
     }
+    g_room_boot_stage = 42U;
     if(!prepare_room_primitive_bounds(room)) {
         std::printf("re4dc-room: room strip bounds unavailable; "
                     "strip culling disabled\n");
     }
+    g_room_boot_stage = 43U;
 #if defined(RE4DC_SUBMIT_PROFILE)
     run_flycast_calibration();
     std::printf("re4dc-room: calibration ns x100: add %lu fmul %lu fdiv %lu "
@@ -7303,6 +7470,7 @@ int main() {
                 static_cast<unsigned long>(g_calib_ns_x100[4]),
                 static_cast<unsigned long>(g_calib_ns_x100[5]));
 #endif
+    g_room_boot_stage = 44U;
     if(prepare_room_batch_locals(room)) {
         std::printf("re4dc-room: %lu batch-local vertices, largest batch %lu, "
                     "%lu batches over the slot table\n",
@@ -7313,6 +7481,8 @@ int main() {
         std::printf("re4dc-room: batch-local vertex tables unavailable; "
                     "hashed room cache only\n");
     }
+    note_install_ram(2U);
+    g_room_boot_stage = 45U;
     std::uint32_t room_light_links = 0U;
     if(room.source_groups() != nullptr) {
         for(std::uint32_t group = 0; group < room.header().group_count;
@@ -7321,19 +7491,25 @@ int main() {
                 source_group_light_selection(&room.source_groups()[group]));
         }
     }
-    const std::uint32_t leon_light_selection =
-        source_actor_light_selection(player.x, player.y, player.z, 1U);
-    const std::uint32_t ganado_light_selection =
-        source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U);
-    std::printf(
-        "re4dc-room: source light selection room_links=%lu "
-        "leon_mask=%08lx/%u ganado_mask=%08lx/%u\n",
-        static_cast<unsigned long>(room_light_links),
-        static_cast<unsigned long>(leon_light_selection),
-        selected_light_count(leon_light_selection),
-        static_cast<unsigned long>(ganado_light_selection),
-        selected_light_count(ganado_light_selection));
+    if(kSceneHasActors) {
+        const std::uint32_t leon_light_selection =
+            source_actor_light_selection(player.x, player.y, player.z, 1U);
+        const std::uint32_t ganado_light_selection =
+            source_actor_light_selection(enemy.x, enemy.y, enemy.z, 2U);
+        std::printf(
+            "re4dc-room: source light selection room_links=%lu "
+            "leon_mask=%08lx/%u ganado_mask=%08lx/%u\n",
+            static_cast<unsigned long>(room_light_links),
+            static_cast<unsigned long>(leon_light_selection),
+            selected_light_count(leon_light_selection),
+            static_cast<unsigned long>(ganado_light_selection),
+            selected_light_count(ganado_light_selection));
+    } else {
+        std::printf("re4dc-room: source light selection room_links=%lu\n",
+                    static_cast<unsigned long>(room_light_links));
+    }
 #endif
+    g_room_boot_stage = 46U;
     g_re4dc_demo_telemetry.flags = 0x10000006U;
     DemoAudio audio;
     if(!load_demo_audio(audio)) {
@@ -7381,6 +7557,7 @@ int main() {
                 (unsigned long)(g_re4dc_demo_telemetry.timer_probe_ns_x100 %
                                 100U));
 #endif
+    g_room_boot_stage = 47U;
     g_re4dc_demo_telemetry.flags = 0x10000007U;
     // Automatic cycling is opt-in so a frame-time baseline can be taken without
     // deliberate load pauses in the sample.
@@ -7420,7 +7597,8 @@ int main() {
                 }
             }
             enemy_move_speed =
-                std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f
+                (kSceneHasActors &&
+                 std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f)
                     ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
                     : kFallbackEnemyMoveSpeed;
             reset_encounter(player, enemy);
@@ -7523,14 +7701,29 @@ int main() {
                 std::printf("re4dc-room: encounter restarted tick=%llu\n",
                             static_cast<unsigned long long>(simulation_tick));
             }
+#if defined(RE4DC_DIAGNOSTIC_SWEEP)
+            // Eight seconds forward, two turning, repeating: enough to leave
+            // the entry point, meet geometry and face a different way each
+            // cycle. Overwrites the pad so a capture needs no operator.
+            {
+                const std::uint64_t phase =
+                    simulation_tick % (30U * 10U);
+                const bool turning = phase >= 30U * 8U;
+                input = Input{};
+                input.move = turning ? 0.0f : 1.0f;
+                input.turn = turning ? 1.0f : 0.0f;
+            }
+#endif
             update_player(player, collision, input, player_move_speed,
                           kSimulationDeltaSeconds);
-            update_animation(player, leon, input, kSimulationDeltaSeconds);
-            update_combat(player, enemy, input, fire_pressed, reload_pressed,
-                          kSimulationDeltaSeconds, collision, leon, ganado,
-                          audio);
-            update_enemy(enemy, player, ganado, leon, collision, route_ptr, audio,
-                         kSimulationDeltaSeconds);
+            if(kSceneHasActors) {
+                update_animation(player, leon, input, kSimulationDeltaSeconds);
+                update_combat(player, enemy, input, fire_pressed,
+                              reload_pressed, kSimulationDeltaSeconds,
+                              collision, leon, ganado, audio);
+                update_enemy(enemy, player, ganado, leon, collision, route_ptr,
+                             audio, kSimulationDeltaSeconds);
+            }
             const float goal_dx = player.x - kGoalX;
             const float goal_dz = player.z - kGoalZ;
             if(enemy.state == EnemyState::Dead && !player.dead &&

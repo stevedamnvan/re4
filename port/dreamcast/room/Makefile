@@ -43,9 +43,10 @@ ROOM_DISK_DIR = ../build/room-disk
 ROOM_DISK_FILES = \
 	r10d.re4room \
 	r10d.re4sat \
-	r10d.re4tex \
-	ganado.re4chr \
-	ganado.re4tex
+	r10d.re4tex
+ifneq ($(ENEMY_PACKAGE),)
+ROOM_DISK_FILES += ganado.re4chr ganado.re4tex
+endif
 ifneq ($(ROUTE_PACKAGE),)
 ROOM_DISK_FILES += route.re4rtp
 endif
@@ -84,7 +85,7 @@ ifeq ($(DEMO_SCENE),r100)
 CPPFLAGS += -DRE4DC_SOURCE_SCENE -DRE4DC_SCENE_R100
 endif
 ifeq ($(DEMO_SCENE),r101)
-CPPFLAGS += -DRE4DC_SOURCE_SCENE -DRE4DC_SCENE_R101
+CPPFLAGS += -DRE4DC_SOURCE_SCENE -DRE4DC_SCENE_R101 -I../build/private
 endif
 ifeq ($(DEMO_RESOLUTION),480p)
 CPPFLAGS += -DRE4DC_480P
@@ -124,6 +125,31 @@ KOS_GCCVER_MIN = 12.0.0
 .PHONY: all clean rm-elf run prepare-romdisk split-room-disk disc r100-autoplay-cycle r100-cycle r100-autoplay-cycle-disc r100-cycle-disc r100-autoplay-snapshot r100-autoplay-cycle-snapshot r100-autoplay-snapshot-disc r100-autoplay-cycle-snapshot-disc r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit r100-autoplay-digest FORCE
 
 all: prepare-romdisk split-room-disk rm-elf $(TARGET)
+
+# A diagnostic environment build of r101, the village: its own geometry,
+# collision, textures, SMX source groups and LIT lighting, loaded and
+# retired through the same storage lifecycle. No enemies, no events, no door
+# progression, and a diagnostic camera rather than r101's authored ones.
+# The character packages are staged because the disc layout expects them; the
+# runtime never opens them when the scene has no actors.
+r101:
+	$(MAKE) all DEMO_SCENE=r101 \
+		ROOM_PACKAGE=../build/private/r101-source-cell-4.re4room \
+		COLLISION_PACKAGE=../build/private/r101-meters.re4sat \
+		TEXTURE_PACKAGE=../build/private/r101-source.re4tex \
+		ROUTE_PACKAGE=../build/private/r101.re4rtp \
+		CHARACTER_PACKAGE= ENEMY_PACKAGE= \
+		CHARACTER_TEXTURE_PACKAGE= ENEMY_TEXTURE_PACKAGE=
+
+r101-disc: r101
+	$(MAKE) disc
+
+# The same scene with the unattended diagnostic sweep compiled in.
+r101-sweep:
+	$(MAKE) r101 ROOM_CAPS='-DRE4DC_DIAGNOSTIC_SWEEP'
+
+r101-sweep-disc: r101-sweep
+	$(MAKE) disc
 
 r100:
 	$(MAKE) all DEMO_SCENE=r100 \
@@ -202,10 +228,13 @@ prepare-romdisk:
 	@mkdir -p $(KOS_ROMDISK_DIR)
 	cp $(ROOM_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4room
 	cp $(COLLISION_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4sat
-	cp $(CHARACTER_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4chr
-	cp $(ENEMY_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4chr
-	cp $(CHARACTER_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4tex
-	cp $(ENEMY_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4tex
+	rm -f $(KOS_ROMDISK_DIR)/leon.re4chr $(KOS_ROMDISK_DIR)/ganado.re4chr $(KOS_ROMDISK_DIR)/leon.re4tex $(KOS_ROMDISK_DIR)/ganado.re4tex
+	@if [ -n "$(CHARACTER_PACKAGE)" ]; then \
+		cp $(CHARACTER_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4chr; \
+		cp $(ENEMY_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4chr; \
+		cp $(CHARACTER_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/leon.re4tex; \
+		cp $(ENEMY_TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/ganado.re4tex; \
+	fi
 	cp $(TEXTURE_PACKAGE) $(KOS_ROMDISK_DIR)/r10d.re4tex
 	rm -f $(KOS_ROMDISK_DIR)/source-hud.re4hud \
 		$(KOS_ROMDISK_DIR)/source-hud.re4tex
