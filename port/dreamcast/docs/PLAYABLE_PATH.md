@@ -50,7 +50,7 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D303, 2026-09-21)
+## Current boot frontier (D303 replay / D304 conversion, 2026-09-21)
 
 D302 proved full qualified r120 archive transport into recovered gameRoomInit,
 then source pool exhaustion. D303 implements the authorized first-play opening
@@ -58,6 +58,10 @@ skip using R120Event's movie-skip branch completion effects before cinematic
 allocation. The existing normal stage path reaches r100 and explicitly rejects
 its still-incomplete `.dar`. Finish r100 source-format qualification next, then
 replay initialization and measure its representative gameplay working set.
+D304 qualifies source ITM/BLK and tagged/named FCV/SEQ data using existing
+codecs; r100's incomplete regions decrease from 24 to 14. ETM reports remaining
+effect members explicitly. See the current endian checkpoint for exact coverage;
+no qualified r100 DAR or newer emulator result exists yet.
 D302 stays the full r120 reference; no source gameplay pools were cut. Existing
 save entry and NG+ merchant behavior are unchanged and not accepted by D303.
 See [R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md) for exact source

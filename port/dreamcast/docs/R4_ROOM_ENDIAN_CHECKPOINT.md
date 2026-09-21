@@ -1,5 +1,59 @@
 # D297: decoded room mirror and source collision layout
 
+
+## D304: source model packs, residency and motion conversion (2026-09-21)
+
+Offline qualification advances the normal r100 loading dependency without
+changing the recovered executable or accepting incomplete data. Added ITM
+item-id/BIN/TPL tables and BLK authored area/link/working-set records to the
+existing mirror. Both r100 and r101 ITM/BLK regions qualify. ITM shares the
+existing model and texture handlers, bounds each resource to its table region,
+and preserves shared offsets. BLK retains signed byte lists, original area
+ordering/priorities and source residency choices; this is not a new streamer.
+
+ETM named object archives now dispatch their BIN/TPL/EFF/FCV/SEQ members through
+existing handlers. An unknown or incomplete member keeps the archive and room
+unqualified. This exposes the exact remaining effect dependencies instead of
+leaving the whole container opaque. No texture, model, collision or gameplay
+substitution was made.
+
+FCV conversion reuses `tools/motion/fcv.py`, the existing codec used by the
+real-motion fixture. It requires a byte-identical big-endian parse/serialize
+roundtrip before emitting the same-layout little-endian image. All ten source
+key encodings remain intact; no resampling, key reduction or precision change.
+The existing codec now preserves uniform zero alignment padding found in named
+ETM members, alongside the existing 0xCD variant. Other unexpected trailing
+bytes are rejected. Motion SEQ conversion swaps only counts/frame values;
+sound/event bytes remain unchanged. SMD motion references use the same handler.
+
+Validation:
+- 31 room-format tests, nine mirror tests and two native-loader boundary tests
+  pass. Fixtures cover shared resources, bounded offsets/counts, malformed
+  references, all key types, non-joint file order, both padding forms, sequence
+  event bytes, and incomplete nested members.
+- Real mirror qualifies all 163 tagged FCVs. An independent raw-width check
+  compared 2,103,153 scalar fields across those and 21 named motions; numeric
+  bits reverse exactly and untouched bytes agree. Five named motion sequences
+  retain their frame/sound/event values. This checks file interpretation, not
+  live pose evaluation or gameplay.
+- r120.dar is byte-identical to the frozen D302 reference. r100.dar/r101.dar
+  remain absent. r100 incomplete tagged regions decrease from 24 to 14.
+- No game-source change, new ELF, emulator replay, performance measurement or
+  manual-play acceptance in D304. Last executable/replay remains D303. A replay
+  of the still-rejected r100 package would not advance that frontier.
+
+Keep this conversion work. Next required r100 regions are EFF and ETM effect
+payloads, ETS placements, EAR/SAR areas, AEV interactions, RTP routes, STB/ESE/DSE
+audio data, OSD, DRA, ITA and EMI. ETM's remaining blockers are effect parameter
+unions/model bodies, not motion conversion. Inspect current source consumers;
+keep every unsupported required field rejected. Once qualified, build its DAR
+through the existing path and replay source gameRoomInit. Visible menu/native
+rendering/audio, memory fit, manual play and three-room completion remain open.
+
+Private evidence: `C:\Flycast-Evidence\re4-dreamcast\d304-room-model-motion`:
+conversion report/log, source/native asset hashes, independent verification
+script/results and exact candidate patch. No private asset bytes are committed.
+
 ## D303: first-play cinematic completion reaches r100 (2026-09-21)
 
 The native game now handles the authorized first-play opening skip before

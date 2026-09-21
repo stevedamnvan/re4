@@ -51,7 +51,26 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D303 (2026-09-21)
+## Latest bounded result: D304 (2026-09-21)
+
+The existing mirror now converts source ITM model packs, BLK residency tables,
+and named ETM members. FCV/SEQ support reuses the established motion codec;
+184 real motions and five named event/sound sequences pass independent wire
+checks. r100 has 14 remaining incomplete regions (previously 24), principally
+effects, placements/areas, interaction/routes and sound/source tables. No r100
+DAR is emitted yet. r120's accepted package remains byte-identical.
+
+See [R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md)
+for exact coverage, remaining tags and evidence. Last ELF/replay is D303; D304
+is offline conversion only. Continue required r100 handlers, then replay its
+normal initialization once qualified. Do not reimplement motion conversion.
+
+A separately assigned Astra Low sub-agent is investigating one complete PS2
+geometry/texture/authored-shading candidate in `/root/work/re4-ps2-experiment`.
+Its earlier texture-only commit a6edcba is not the full experiment and is not
+promoted. Keep primary boot-forward work independent and coordinate captures.
+
+## Historical bounded result: D303 (2026-09-21)
 
 First-play New Game now follows the source opening-movie skip effects into
 r100 before allocating r120 cinematic resources. Flycast confirms normal stage

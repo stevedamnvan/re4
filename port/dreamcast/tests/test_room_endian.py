@@ -75,6 +75,160 @@ class RoomFormats(unittest.TestCase):
             self.assertIn('error', entry)
             self.assertEqual(out, raw)
 
+    def test_motion_codec_preserves_all_source_key_types_and_layout(self):
+        fcv = le.motion_codec()
+        joints = []
+        for kind in fcv.FCC_FMT:
+            v, t = fcv.FCC_FMT[kind]
+            values = (1.25 if v == 'f' else -17,)
+            if t:
+                values += ((0.5, -0.25) if t == 'f' else (4, -3))
+            joints.append(fcv.Joint(2, 0, kind, len(joints),
+                [fcv.Axis([0, 10], [values, values]) for _ in range(3)]))
+        motion = fcv.Motion(10, joints, list(reversed(range(len(joints)))))
+        raw = fcv.serialise(motion)
+        out, entry = self.convert(raw, le.fmt_fcv)
+        self.assertTrue(entry['complete'], entry)
+        n = len(joints)
+        self.assertEqual(struct.unpack_from('<H', out)[0], 10)
+        self.assertEqual(out[2], n)
+        table = ((3+3*n+3)&~3)+4
+        for i, joint in enumerate(joints):
+            self.assertEqual(struct.unpack_from('<H', out, 3+2*i)[0], joint.info)
+            offset = struct.unpack_from('<I', out, table+4*i)[0]
+            self.assertEqual(offset, struct.unpack_from('>I', raw, table+4*i)[0])
+            value, tangent = fcv.FCC_FMT[joint.fcc_type]
+            fmt = value + (2*tangent if tangent else '')
+            stride = struct.calcsize('<'+fmt)
+            for axis in joint.axes:
+                self.assertEqual(struct.unpack_from('<3H', out, offset), (2, 0, 10))
+                offset += 6
+                for key in axis.keys:
+                    self.assertEqual(struct.unpack_from('<'+fmt, out, offset), key)
+                    offset += stride
+        # Bounds, unknown key type and noncanonical source bytes fail closed.
+        for mutation in ('offset', 'type', 'padding'):
+            bad = bytearray(raw)
+            if mutation == 'offset': struct.pack_into('>I', bad, table, len(bad))
+            elif mutation == 'type': struct.pack_into('>H', bad, 3, 0x3002)
+            else: bad[-1] ^= 1
+            unchanged, entry = self.convert(bad, le.fmt_fcv)
+            self.assertFalse(entry['complete'], entry)
+            self.assertEqual(unchanged, bad)
+
+    def test_named_motion_zero_padding_roundtrips_without_changing_keys(self):
+        fcv = le.motion_codec()
+        joint = fcv.Joint(2, 0, 10, 0, [fcv.Axis([0], [(1, -2, 3)]) for _ in range(3)])
+        raw = fcv.serialise(fcv.Motion(1, [joint], [0], padding_byte=0))
+        self.assertEqual(fcv.serialise(fcv.parse(raw)), raw)
+        out, entry = self.convert(raw, le.fmt_fcv)
+        self.assertTrue(entry['complete'], entry)
+        self.assertEqual(out[-23:], bytes(23))
+        raw = fcv.serialise_seq(fcv.Sequence(0, [fcv.SeqKey(64, 4, 5)], padding_byte=0))
+        self.assertEqual(fcv.serialise_seq(fcv.parse_seq(raw)), raw)
+        out, entry = self.convert(raw, le.fmt_fcvseq)
+        self.assertTrue(entry['complete'], entry)
+        self.assertEqual(out[8:], bytes(24))
+
+    def test_motion_sequence_preserves_sound_and_event_bytes(self):
+        fcv = le.motion_codec()
+        raw = fcv.serialise_seq(fcv.Sequence(1, [fcv.SeqKey(64, 7, 0xa5),
+                                                fcv.SeqKey(129, 11, 0x81)]))
+        out, entry = self.convert(raw, le.fmt_fcvseq)
+        self.assertTrue(entry['complete'], entry)
+        self.assertEqual(struct.unpack_from('<HBBHBBHBB', out),
+                         (2, 1, 0, 64, 7, 0xa5, 129, 11, 0x81))
+        self.assertEqual(out[12:], raw[12:])
+
+    def item_pack(self):
+        model = self.model_fixture()
+        # Two IDs deliberately share one BIN and one TPL. Offsets are relative
+        # to their own table, not to the archive; use nonzero padding too.
+        data = bytearray(96) + model + bytearray(48)
+        struct.pack_into('>4I', data, 0, 3, 32, 64, 416)
+        struct.pack_into('>IHHIHHI', data, 32, 2, 7, 0, 0, 255, 0, 0)
+        struct.pack_into('>3I', data, 64, 2, 32, 32)
+        struct.pack_into('>3I', data, 416, 2, 16, 16)
+        struct.pack_into('>3I', data, 432, 0x20af30, 0, 12)
+        return data
+
+    def test_item_pack_source_lookup_and_shared_resources(self):
+        data = self.item_pack()
+        out, entry = self.convert(data, le.fmt_itm)
+        self.assertTrue(entry['complete'], entry)
+        # Execute the same three-table addressing used by cItmSys::DataLoad.
+        oi, ob, ot = struct.unpack_from('<3I', out, 4)
+        count, = struct.unpack_from('<I', out, oi)
+        for i, expected_id in enumerate((7, 255)):
+            self.assertEqual(struct.unpack_from('<H', out, oi+4+8*i)[0], expected_id)
+            model = ob + struct.unpack_from('<I', out, ob+4+4*i)[0]
+            texture = ot + struct.unpack_from('<I', out, ot+4+4*i)[0]
+            expected, _ = self.convert(self.model_fixture(), le.fmt_bin)
+            self.assertEqual(out[model:model+320], expected)
+            self.assertEqual(struct.unpack_from('<3I', out, texture), (0x20af30, 0, 12))
+
+    def test_item_pack_rejects_bad_counts_ids_and_cross_table_payload(self):
+        for at, fmt, value in ((64, '>I', 3), (36, '>H', 256),
+                               (68, '>I', 400), (68, '>I', 4)):
+            raw = self.item_pack(); struct.pack_into(fmt, raw, at, value)
+            out, entry = self.convert(raw, le.fmt_itm)
+            self.assertFalse(entry['complete'], entry)
+            self.assertEqual(out, raw)
+
+    def block_pack(self):
+        data = bytearray(144)
+        struct.pack_into('>4sHBBHH3I', data, 0, b'BLK\0', 0x100, 0, 2, 1, 2, 24, 48, 104)
+        data[24:48] = bytes([1, 0, 0, 0, 1]+[255]*7+[1, 0, 0, 0, 0]+[255]*7)
+        struct.pack_into('>IBBH11f4B', data, 48, 0, 1, 1, 0, *range(11), 1, 0, 1, 7)
+        data[104:124] = bytes([1, 0, 0, 0, 1]+[255]*7+[0]+[255]*7)
+        data[124:144] = bytes([1, 1, 0, 0]+[255]*16)
+        return data
+
+    def test_block_residency_keeps_source_sets_and_area_order(self):
+        raw = self.block_pack(); out, entry = self.convert(raw, le.fmt_blk)
+        self.assertTrue(entry['complete'], entry)
+        self.assertEqual(struct.unpack_from('<4sHBBHH3I', out),
+                         struct.unpack_from('>4sHBBHH3I', raw))
+        self.assertEqual(struct.unpack_from('<IBBH11f4B', out, 48),
+                         struct.unpack_from('>IBBH11f4B', raw, 48))
+        self.assertEqual(out[24:48], raw[24:48])
+        self.assertEqual(out[104:], raw[104:])  # signed -1 lists / active flags
+
+    def test_block_residency_rejects_invalid_refs_and_overlap(self):
+        for at, fmt, value in ((28, '>B', 2), (103, '>B', 8), (102, '>B', 2),
+                               (105, '>B', 2), (16, '>I', 24)):
+            raw = self.block_pack(); struct.pack_into(fmt, raw, at, value)
+            out, entry = self.convert(raw, le.fmt_blk)
+            self.assertFalse(entry['complete'], entry)
+            self.assertEqual(out, raw)
+
+    def etc_pack(self, unknown=False):
+        data = bytearray(32); struct.pack_into('>I', data, 0, 2)
+        for name, body in ((b'object.bin', self.model_fixture()),
+                           (b'unknown.xyz' if unknown else b'object.tpl',
+                            struct.pack('>3I', 0x20af30, 0, 12))):
+            header = bytearray(64);struct.pack_into('>I', header, 0, 64+len(body))
+            header[32:32+len(name)] = name
+            data += header+body
+        return data
+
+    def test_etc_named_walk_and_unknown_member_fail_closed(self):
+        for unknown in (False, True):
+            raw = self.etc_pack(unknown);out, entry = self.convert(raw, le.fmt_etm)
+            self.assertEqual(entry['complete'], not unknown, entry)
+            count, = struct.unpack_from('<I', out);self.assertEqual(count, 2)
+            p = 32
+            for name in (b'object.bin', b'unknown.xyz' if unknown else b'object.tpl'):
+                self.assertEqual(out[p+32:p+64].split(b'\0', 1)[0], name)
+                p += struct.unpack_from('<I', out, p)[0]
+            self.assertEqual(p, len(out))
+            if unknown:
+                self.assertEqual(out[-12:], raw[-12:])
+                self.assertIn('etc member unknown.xyz', entry['raw_parts'])
+        raw = self.etc_pack();struct.pack_into('>I', raw, 32, 32)
+        out, entry = self.convert(raw, le.fmt_etm)
+        self.assertFalse(entry['complete']);self.assertEqual(out, raw)
+
     def test_shadow_relative_model_and_placement(self):
         model=self.model_fixture()
         data=bytearray(128)+model
@@ -349,6 +503,20 @@ class RoomFormats(unittest.TestCase):
         out,entry=self.convert(raw,le.fmt_bin)
         self.assertIn('morph vertex outside',entry['error'])
         self.assertEqual(out,raw)
+
+    def test_smd_uses_existing_motion_codec_and_rejects_bad_motion(self):
+        fcv = le.motion_codec()
+        motion = fcv.serialise(fcv.Motion(2, [], []))
+        data = bytearray(96) + motion
+        struct.pack_into('>BBH3I', data, 0, 0, 0, 1, 0, 0, 88)
+        data[52:55] = bytes([255, 255, 0])
+        struct.pack_into('>I', data, 88, 8)
+        out, entry = self.convert(data, le.fmt_smd)
+        self.assertTrue(entry['complete'], entry)
+        self.assertEqual(out[96:], fcv.serialise(fcv.parse(motion), '<'))
+        data[-1] ^= 1
+        out, entry = self.convert(data, le.fmt_smd)
+        self.assertFalse(entry['complete']);self.assertEqual(out, data)
 
     def test_smd_groups_reserve_slots_not_extra_records(self):
         # nModel=1, group has 100 deferred block slots. Only one work lives here.

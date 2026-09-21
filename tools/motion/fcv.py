@@ -12,7 +12,7 @@ Layout (big-endian, from game/motion.cpp MotionSetCore / HermiteInterpolation / 
   u32 keyOfs[nJoints]     offset of the joint's key block (relocated to a pointer at load time)
   key blocks, one per joint, each 3 axes (x, y, z) back to back:
       u16 n; u16 frame[n]; key[n]   with key = Fcc layout `type` (below)
-  0xCD padding to 32 bytes
+  0xCD padding to 32 bytes (zero-filled in named ETC archive members)
 
 The key blocks are contiguous in the file but NOT in joint order (the exporter's traversal order);
 `Motion.layout` keeps that order so that the serialisation is byte-identical.
@@ -118,6 +118,7 @@ class Motion:
     joints: list
     layout: list          # joint indices in file (key block) order
     zero_size: bool = False   # empty-motion variant with a zero size word (see parse)
+    padding_byte: int = FILL  # named ETC archives use zero alignment padding
 
     @property
     def n_frames(self):
@@ -183,9 +184,10 @@ def parse(d: bytes) -> Motion:
             raise ValueError(f'joint {i} key block at {key_ofs[i]:#x}, expected {p:#x}')
         p = ends[i]
     pad = len(d) - p
-    if pad < 0 or pad >= ALIGN or d[p:] != bytes([FILL]) * pad:
-        raise ValueError(f'trailing bytes at {p:#x} are not 0xCD padding to 32')
-    return Motion(max_frame, joints, layout)
+    fill = 0 if pad and d[p:] == bytes(pad) else FILL
+    if pad < 0 or pad >= ALIGN or d[p:] != bytes([fill]) * pad:
+        raise ValueError(f'trailing bytes at {p:#x} are not uniform 0xCD/zero padding to 32')
+    return Motion(max_frame, joints, layout, padding_byte=fill)
 
 
 def serialise(m: Motion, endian='>') -> bytes:
@@ -220,7 +222,7 @@ def serialise(m: Motion, endian='>') -> bytes:
     out += struct.pack(f'{endian}{n}I', *ofs)
     for b in blocks:
         out += b
-    out += bytes([FILL]) * (total - p)
+    out += bytes([m.padding_byte]) * (total - p)
     return bytes(out)
 
 
@@ -239,6 +241,7 @@ class SeqKey:
 class Sequence:
     flags: int
     keys: list
+    padding_byte: int = FILL
 
 
 def parse_seq(d: bytes) -> Sequence:
@@ -248,9 +251,10 @@ def parse_seq(d: bytes) -> Sequence:
     keys = [SeqKey(*struct.unpack('>HBB', d[4 + 4 * i:8 + 4 * i])) for i in range(count)]
     p = 4 + 4 * count
     tail = len(d) - p
-    if tail < 0 or tail >= ALIGN or d[p:] != bytes([FILL]) * tail:
-        raise ValueError(f'sequence trailing bytes at {p:#x} are not 0xCD padding')
-    return Sequence(flags, keys)
+    fill = 0 if tail and d[p:] == bytes(tail) else FILL
+    if tail < 0 or tail >= ALIGN or d[p:] != bytes([fill]) * tail:
+        raise ValueError(f'sequence trailing bytes at {p:#x} are not uniform 0xCD/zero padding')
+    return Sequence(flags, keys, padding_byte=fill)
 
 
 def serialise_seq(s: Sequence) -> bytes:
@@ -258,5 +262,5 @@ def serialise_seq(s: Sequence) -> bytes:
     for k in s.keys:
         out += struct.pack('>HBB', k.frame, k.se, k.free)
     total = (len(out) + ALIGN - 1) & ~(ALIGN - 1)
-    out += bytes([FILL]) * (total - len(out))
+    out += bytes([s.padding_byte]) * (total - len(out))
     return bytes(out)

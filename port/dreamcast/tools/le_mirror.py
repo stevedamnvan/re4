@@ -40,6 +40,7 @@ The tree and the mirror are private game data; only this tool is committed.
 import fnmatch
 import json
 import os
+from pathlib import Path
 import struct
 import sys
 
@@ -368,6 +369,156 @@ def fmt_snd_mram(sw, off, size, ctx, bgm=False):
         count = sw.u32(t)
         sw.u32s(t + 4, count)
 
+
+
+def motion_codec():
+    # Reuse the byte-exact source codec behind build_real_motion_fixture.py.
+    tools_path = str(Path(__file__).resolve().parents[3] / 'tools')
+    if tools_path not in sys.path:
+        sys.path.insert(0, tools_path)
+    from motion import fcv
+    return fcv
+
+
+def fmt_fcv(sw, off, size, ctx):
+    """Original compressed Hermite keys; preserve layout and numeric values."""
+    fcv = motion_codec()
+    sw._check(off, size)
+    original = bytes(sw.data[off:off + size])
+    try:
+        motion = fcv.parse(original)
+    except KeyError as exc:
+        raise ValueError('unsupported FCV key type: ' + str(exc)) from exc
+    if fcv.serialise(motion, '>') != original:
+        raise ValueError('FCV source roundtrip differs; refusing conversion')
+    native = fcv.serialise(motion, '<')
+    if len(native) != size:
+        raise ValueError('FCV conversion changed source layout size')
+    sw._mark(off, size)
+    sw.data[off:off + size] = native
+
+
+def fmt_fcvseq(sw, off, size, ctx):
+    """MotionSeqKey timing plus byte-sized sound/event fields; not EspSeqData."""
+    fcv = motion_codec()
+    sw._check(off, size)
+    original = bytes(sw.data[off:off + size])
+    sequence = fcv.parse_seq(original)
+    if fcv.serialise_seq(sequence) != original:
+        raise ValueError('motion sequence source roundtrip differs')
+    count = sw.u16(off)
+    for i in range(count):
+        sw.u16(off + 4 + 4 * i)
+
+
+def fmt_itm(sw, off, size, ctx):
+    """item_model.cpp: source id table and table-relative BIN/TPL pairs."""
+    version, oi, ob, ot = sw.u32s(off, 4)
+    if version != 3:
+        raise ValueError('unsupported item model pack version')
+    bases = [off + v for v in (oi, ob, ot)]
+    if len(set(bases)) != 3 or min(bases) < off + 16:
+        raise ValueError('invalid item model tables')
+    limits = sorted(bases) + [off + size]
+    ends = {a: b for a, b in zip(limits, limits[1:])}
+    ids = bases[0]
+    with sw.bounded(ids, ends[ids] - ids):
+        count = sw.u32(ids)
+        sw._check(ids + 4, count * 8)
+        for i in range(count):
+            p = ids + 4 + i * 8
+            if sw.u16(p) >= 256:
+                raise ValueError('item model id exceeds source registry')
+            sw.u16(p + 2)
+            sw.u32(p + 4)
+    for base, handler in zip(bases[1:], (fmt_bin, fmt_tpl)):
+        with sw.bounded(base, ends[base] - base):
+            if sw.u32(base) != count:
+                raise ValueError('item model table counts differ')
+            targets = [base + v for v in sw.u32s(base + 4, count)]
+            starts = sorted(set(targets))
+            for i, start in enumerate(starts):
+                if start < base + 4 + count * 4:
+                    raise ValueError('item model payload overlaps its offset table')
+                end = starts[i + 1] if i + 1 < len(starts) else ends[base]
+                with sw.bounded(start, end - start):
+                    raw = handler(sw, start, end - start, ctx + '/item')
+                if raw:
+                    raise ValueError('incomplete item model: ' + str(raw))
+
+
+def fmt_etm(sw, off, size, ctx):
+    """EtcModel.cpp GetEtcAddr: size includes each 64-byte named header.
+
+    Unknown member formats remain explicit blockers for the entire room.
+    Never promote an archive merely because its directory was converted.
+    """
+    sw._check(off, 32)
+    count = sw.u32(off)
+    cursor = off + 32
+    raw = []
+    for i in range(count):
+        sw._check(cursor, 64)
+        length = sw.u32(cursor)
+        if length < 64:
+            raise ValueError('etc member length does not include its header')
+        sw._check(cursor, length)
+        name = bytes(sw.data[cursor + 32:cursor + 64])
+        if b'\0' not in name:
+            raise ValueError('unterminated etc member name')
+        name = name.split(b'\0', 1)[0].decode('ascii')
+        handler = {'.bin': fmt_bin, '.tpl': fmt_tpl, '.eff': fmt_eff,
+                   '.fcv': fmt_fcv, '.seq': fmt_fcvseq}.get(
+            os.path.splitext(name)[1].lower())
+        if handler is None:
+            raw.append('etc member ' + name)
+        else:
+            with sw.bounded(cursor + 64, length - 64):
+                pending = handler(sw, cursor + 64, length - 64, ctx + '/' + name)
+            raw.extend(name + ': ' + reason for reason in (pending or []))
+        cursor += length
+    return raw
+
+
+def fmt_blk(sw, off, size, ctx):
+    """block.h / block.cpp: authored residency links, areas and working sets."""
+    sw._check(off, 24)
+    if sw.data[off:off + 4] != b'BLK\0' or sw.u16(off + 4) != 0x100:
+        raise ValueError('unsupported block residency header')
+    blocks = sw.data[off + 7]
+    areas, connects = sw.u16s(off + 8, 2)
+    offsets = sw.u32s(off + 12, 3)
+    if blocks > 32:
+        raise ValueError('block count exceeds source working-set bitmap')
+    ranges = sorted((off + o, n * stride) for o, n, stride in
+                    zip(offsets, (blocks, areas, connects), (12, 56, 20)) if n)
+    end = off + 24
+    for start, length in ranges:
+        if start < end:
+            raise ValueError('overlapping block residency tables')
+        sw._check(start, length)
+        end = start + length
+    def block_refs(p, n):
+        if any(v != 255 and v >= blocks for v in sw.data[p:p + n]):
+            raise ValueError('invalid block residency reference')
+    for i in range(blocks):
+        block_refs(off + offsets[0] + 12 * i + 4, 8)
+    for i in range(areas):
+        p = off + offsets[1] + 56 * i
+        sw.u32(p)  # runtime OT link; source overwrites it during registration
+        if sw.data[p + 5] not in (0, 1, 2, 3):
+            raise ValueError('unsupported block area type')
+        sw.u16(p + 6)
+        sw.f32s(p + 8, 11)
+        if sw.data[p + 55] >= 8 or sw.data[p + 54] >= connects:
+            raise ValueError('invalid block area priority or connection')
+    for i in range(connects):
+        p = off + offsets[2] + 20 * i
+        if sw.data[p] & 1:
+            if sw.data[p + 1] >= blocks:
+                raise ValueError('invalid connection owner block')
+            block_refs(p + 4, 16)
+    # Signed byte block lists (including -1), flags and ordering stay unchanged.
 
 
 def fmt_tex(sw, off, size, ctx):
@@ -928,8 +1079,8 @@ def fmt_bin(sw, off, size, ctx):
 def fmt_smd(sw, off, size, ctx):
     """scroll.h cSmd/SmdWork: source instances and table-relative resources.
 
-    Model and motion payloads remain explicit coverage debt; textures use the
-    existing TPL handler. Do not report the full SMD as ready from metadata alone.
+    Referenced BIN/TPL/FCV bodies use the existing source-layout handlers.
+    Any incomplete nested payload keeps the whole SMD unqualified.
     """
     sw._check(off, 16)
     flag = sw.data[off + 1]
@@ -973,14 +1124,11 @@ def fmt_smd(sw, off, size, ctx):
             limits = [off + size] + [off + t for t in tables if off + t > target]
             limits += [base + value for value in offsets if base + value > target]
             end = min(limits)
-            if kind in ('TPL', 'BIN'):
-                if not sw.swapped(target):
-                    with sw.bounded(target, end - target):
-                        pending = (fmt_tpl if kind == 'TPL' else fmt_bin)(
-                            sw, target, end - target, ctx + '/%s%d' % (kind, ident))
-                    raw.extend('%s%d %s' % (kind, ident, item) for item in (pending or []))
-            else:
-                raw.append('%s%d payload' % (kind, ident))
+            if not sw.swapped(target):
+                with sw.bounded(target, end - target):
+                    pending = {'TPL': fmt_tpl, 'BIN': fmt_bin, 'FCV': fmt_fcv}[kind](
+                        sw, target, end - target, ctx + '/%s%d' % (kind, ident))
+                raw.extend('%s%d %s' % (kind, ident, item) for item in (pending or []))
     return raw
 
 
@@ -1016,6 +1164,11 @@ def fmt_smx(sw, off, size, ctx):
     return raw
 
 TAG_FORMATS = {
+    b"FCV\0": fmt_fcv,
+    b"SEQ\0": fmt_fcvseq,
+    b"ITM\0": fmt_itm,
+    b"ETM\0": fmt_etm,
+    b"BLK\0": fmt_blk,
     b"SHD\0": fmt_shd,
     b"TEX\0": fmt_tex,
     b"FSE\0": fmt_fse,
