@@ -2,7 +2,16 @@
 """Build a little-endian mirror of the GameCube data tree for the Dreamcast
 game target.
 
-    le_mirror.py <src-tree> <dst-tree> [--force]
+--decode-rooms also writes decoded, converted st*/r*.arc sidecars using the
+recovered offline decoder. They remain unqualified until --require coverage
+passes for each sidecar; the current runtime does not yet load these files.
+
+    le_mirror.py <src-tree> <dst-tree> [--force] [--require <deps.txt>]
+
+--require names a file listing the disc paths a boot fixture actually reads
+(one per line, # comments); the run fails (exit 2) unless every part of every
+listed file was converted completely or carries an explicit safe-raw contract
+(ARAM sample bytes, text). Formats the fixture does not touch may stay raw.
 
 The recovered game code overlays its structures straight onto the files it
 reads (include/dvd.h DvdHeader, include/snd.h, include/snd_drv.h, the
@@ -41,29 +50,74 @@ NESTED = 4
 
 
 class Swapper:
-    """In-place byte swapper over a bytearray with double-swap protection."""
+    """In-place byte swapper over a bytearray with double-swap protection and
+    a bounds stack: every handler runs inside `bounded(off, size)` and can
+    neither read nor swap a byte outside that region, so a corrupt or
+    unexpected offset in one sub-file is an error for that sub-file only and
+    never reaches a neighbour."""
 
     def __init__(self, data, label):
         self.data = data
         self.label = label
         self.done = bytearray(len(data))
+        self.lo = 0
+        self.hi = len(data)
+        self._stack = []
+
+    class _Bound:
+        def __init__(self, sw, lo, hi):
+            self.sw, self.lo, self.hi = sw, lo, hi
+
+        def __enter__(self):
+            sw = self.sw
+            sw._stack.append((sw.lo, sw.hi))
+            sw.lo, sw.hi = self.lo, self.hi
+            return sw
+
+        def __exit__(self, *exc):
+            self.sw.lo, self.sw.hi = self.sw._stack.pop()
+            return False
+
+    def bounded(self, off, size):
+        """Context manager narrowing the accessible region to [off, off+size),
+        which must lie inside the current region."""
+        if size < 0 or off < self.lo or off + size > self.hi:
+            raise ValueError("%s: region %#x/%d outside the current region %#x..%#x" %
+                             (self.label, off, size, self.lo, self.hi))
+        return Swapper._Bound(self, off, off + size)
+
+    def _check(self, off, size):
+        if off < self.lo or off + size > self.hi:
+            raise ValueError("%s: field at %#x/%d outside the region %#x..%#x" %
+                             (self.label, off, size, self.lo, self.hi))
 
     def _mark(self, off, size):
-        if off < 0 or off + size > len(self.data):
-            raise ValueError("%s: field at %#x/%d outside %#x bytes" % (self.label, off, size, len(self.data)))
+        self._check(off, size)
         if any(self.done[off:off + size]):
             raise ValueError("%s: byte %#x swapped twice" % (self.label, off))
         for o in range(off, off + size):
             self.done[o] = 1
 
     def peek32(self, off):
+        self._check(off, 4)
         return struct.unpack_from(">I", self.data, off)[0]
 
     def peek16(self, off):
+        self._check(off, 2)
         return struct.unpack_from(">H", self.data, off)[0]
 
     def swapped(self, off):
+        self._check(off, 1)
         return bool(self.done[off])
+
+    def val32(self, off):
+        """The original (big-endian) value of a u32 whether or not it has been swapped."""
+        self._check(off, 4)
+        return struct.unpack_from("<I" if self.done[off] else ">I", self.data, off)[0]
+
+    def val16(self, off):
+        self._check(off, 2)
+        return struct.unpack_from("<H" if self.done[off] else ">H", self.data, off)[0]
 
     def u32(self, off):
         """Swap the u32 at off; returns its (big-endian, original) value."""
@@ -313,10 +367,221 @@ def fmt_snd_mram(sw, off, size, ctx, bgm=False):
         sw.u32s(t + 4, count)
 
 
+
+def fmt_eff(sw, off, size, ctx):
+    """Effect data file, version 0xB (src/game/eff_sys.cpp EffData; the ID
+    layout system reads the same block through src/game/id_tex.cpp
+    IdTexDataLoad): twelve u32 offsets from the block start, then
+      - the texture id table (TexIdTbl: u32 num, {u16 id, u16 x2, u32 x4}[num]),
+      - the TPL offset table (TexOfsTbl: u32 num, u32 ofs[num] relative to the
+        table) whose targets are TPL palettes (fmt_tpl; a target shared by
+        several entries is converted once),
+      - the animation offset table (same shape) whose targets are EspAnmData
+        records (u16 Width, Height, s16 Cx, Cy, u16 Frames at +8, bytes at
+        +0xA..+0xF, then the byte pattern / frame-time tables, untouched),
+      - the effect model id table and the model offset table (EffEfmEnt: five
+        u32 from the entry, model / TPL / motion bodies relative to it) whose
+        TPL is converted and whose model and motion bodies stay raw (recorded),
+      - the est / sst / path lists and data blocks, raw when present (recorded).
+    Image and palette data keep their GameCube encoding (fmt_tpl contract)."""
+    hdr = sw.u32s(off, 12)
+    (version, ofs_tex_id, ofs_est_list, ofs_sst_list, ofs_path_list, ofs_efm_id,
+     ofs_tpl, ofs_anm, ofs_est_data, ofs_sst_data, ofs_path_data, ofs_efm) = hdr
+    if version != 0xB:
+        raise ValueError("%s: EFF version %#x, expected 0xB" % (ctx, version))
+    raw = []
+
+    def id_table(o):
+        n = sw.u32(o)
+        ids = []
+        for i in range(n):
+            e = o + 4 + 8 * i
+            ids.append(sw.u16(e))
+            sw.u16(e + 2)
+            sw.u32(e + 4)
+        return ids
+
+    def ofs_table(o):
+        n = sw.u32(o)
+        return [o + v for v in sw.u32s(o + 4, n)]
+
+    tex_ids = id_table(off + ofs_tex_id)
+    # The game forms the table pointers unconditionally but dereferences them
+    # only inside the per-id loops; a file without textures carries offset 0
+    # (which would alias the header) and is left alone the same way.
+    if tex_ids:
+        if not (ofs_tpl and ofs_anm):
+            raise ValueError("%s: %d texture ids but no TPL / animation table" % (ctx, len(tex_ids)))
+        tpls = ofs_table(off + ofs_tpl)
+        anms = ofs_table(off + ofs_anm)
+    else:
+        tpls = anms = []
+    if not (len(tex_ids) == len(tpls) == len(anms)):
+        raise ValueError("%s: texture tables disagree (%d ids, %d TPLs, %d animations)" %
+                         (ctx, len(tex_ids), len(tpls), len(anms)))
+    seen_tpl = set()
+    for i, t in enumerate(tpls):
+        if t in seen_tpl:
+            continue  # shared reference: one conversion, both entries resolve to it
+        seen_tpl.add(t)
+        fmt_tpl(sw, t, off + size - t, ctx + "/tpl%d" % i)
+    seen_anm = set()
+    for i, a in enumerate(anms):
+        if a in seen_anm:
+            continue
+        seen_anm.add(a)
+        width, height, cx, cy, frames = sw.u16s(a, 5)
+        if frames == 0:
+            raise ValueError("%s: animation %d has no frames" % (ctx, i))
+        n_desc = sw.val32(tpls[i] + 4)
+        if n_desc != frames:
+            raise ValueError("%s: animation %d frames %d != TPL images %d" % (ctx, i, frames, n_desc))
+    efm_ids = id_table(off + ofs_efm_id) if ofs_efm_id else []
+    if efm_ids:
+        if not ofs_efm:
+            raise ValueError("%s: %d effect model ids but no model table" % (ctx, len(efm_ids)))
+        efms = ofs_table(off + ofs_efm)
+        if len(efm_ids) != len(efms):
+            raise ValueError("%s: effect model tables disagree" % ctx)
+        for i, e in enumerate(efms):
+            x0, o_model, o_tpl, o_mot, o_x = sw.u32s(e, 5)
+            fmt_tpl(sw, e + o_tpl, off + size - (e + o_tpl), ctx + "/efm%d" % i)
+            raw.append("efm%d model body" % i)
+            if o_mot:
+                raw.append("efm%d motion body" % i)
+            if o_x:
+                raw.append("efm%d extra body" % i)
+    for name, o_list, o_data in (("est", ofs_est_list, ofs_est_data), ("sst", ofs_sst_list, ofs_sst_data),
+                                 ("path", ofs_path_list, ofs_path_data)):
+        if o_list and sw.peek32(off + o_list):
+            raw.append("%s list and data" % name)
+    return raw
+
+
+
+def fmt_roominfo(sw, off, size, ctx):
+    """debug/roomInfo.dat (src/game/room_jmp.cpp cRoomJmp, include/room_jmp.h
+    CRoomInfo): u32 stage count, u32 ofs[count] from the table start (0 = no
+    table), and per stage u32 record count followed by 0x20-byte records
+    {u16 flag, u16 roomNo (stage << 8 | room), Vec pos, f32 angle, u32 name,
+    scr, soft string offsets from the table start}. The strings stay raw.
+    getIndexNum reads the record count's low byte and the record's `room`
+    byte through a union; the Dreamcast build of those accessors follows the
+    swapped layout (room_jmp.cpp / room_jmp.h)."""
+    count = sw.u32(off)
+    offs = sw.u32s(off + 4, count)
+    for stage, o in enumerate(offs):
+        if o == 0:
+            continue
+        base = off + o
+        n = sw.u32(base)
+        for i in range(n):
+            r = base + 4 + 0x20 * i
+            sw.u16s(r, 2)
+            sw.f32s(r + 4, 4)
+            sw.u32s(r + 0x14, 3)
+
+
+
+def fmt_rel(sw, off, size, ctx):
+    """REL module header (include/main_sub.h OSModuleHeader, the SDK
+    OSModuleInfo + OSModuleHeader v3): sixteen u32 words (id, link, section
+    count / table offset, name offset / size, version, bss size, relocation
+    / import offsets, prolog / epilog / unresolved section and offsets ...).
+    The code and relocation bodies are PowerPC and stay raw: on the Dreamcast
+    the module is compiled into the image and OSLink binds the header's entry
+    points to it (platform/modules.cpp)."""
+    sw.u32s(off, 16)
+    return ["PowerPC code, data and relocations (static module in the image)"]
+
+
+def fmt_cns(sw, off, size, ctx):
+    """cons.cpp ConsRoom: count, (count >> 5)+1 bitmap words, values."""
+    count = sw.u32(off)
+    words = (count >> 5) + 1
+    sw._check(off + 4, 4 * (words + count))
+    sw.u32s(off + 4, words + count)
+
+
+def fmt_sat(sw, off, size, ctx):
+    """atari.h/cSat::operator=: retain native source layout and block graph.
+
+    SAT and EAT share this format but remain separate source resources/managers.
+    Attribute words use the native AtPoly half-word view in include/at_sub.h.
+    No coordinate scaling, welding, reordering or hierarchy rebuilding occurs.
+    """
+    sw._check(off, 4)
+    version = sw.data[off]
+    if version != 0xFF and version & 0x80:
+        # The shipped archive's byte 1 counts offset entries (same format used
+        # by convert_sat.py); the runtime indexes them with the source type.
+        count = sw.data[off + 1]
+        if count == 0:
+            raise ValueError('empty multi-SAT header')
+        offsets = sw.u32s(off + 4, count)
+        if any(x < 4 + 4 * count or x + 20 > size for x in offsets):
+            raise ValueError('SAT section offset outside archive')
+        unique = sorted(set(offsets))
+        for i, start in enumerate(unique):
+            end = unique[i + 1] if i + 1 < len(unique) else size
+            with sw.bounded(off + start, end - start):
+                _fmt_sat_file(sw, off + start, end - start)
+    else:
+        _fmt_sat_file(sw, off, size)
+
+
+def _fmt_sat_file(sw, off, size):
+    nv, nn, ne, unused, np, nf, ns, nw, nb = sw.u16s(off + 2, 9)
+    if np > 0x1FFF or nf + ns + nw != np:
+        raise ValueError('invalid SAT polygon counts')
+    vectors = off + 20
+    sw._check(vectors, (nv + nn + ne) * 12 + np * 20)
+    sw.f32s(vectors, (nv + nn + ne) * 3)
+    polygons = vectors + (nv + nn + ne) * 12
+    for i in range(np):
+        p = polygons + i * 20
+        indices = sw.u16s(p, 7)
+        if any(x >= nv for x in indices[:3]) or indices[3] >= nn or any(x >= ne for x in indices[4:]):
+            raise ValueError('SAT polygon index outside source table')
+        sw.u32(p + 16)
+    first = polygons + np * 20
+    todo = [first] if nb else []
+    visited = set()
+    while todo:
+        p = todo.pop()
+        if p in visited:
+            raise ValueError('shared or cyclic SAT block')
+        if len(visited) >= nb or p < first:
+            raise ValueError('SAT block count or offset invalid')
+        sw._check(p, 36)
+        visited.add(p)
+        sw.f32s(p, 6)
+        floor, slope, wall, flags = sw.u16s(p + 24, 4)
+        following = sw.u32(p + 32)
+        count = floor + slope + wall
+        if flags & 1:
+            if count:
+                raise ValueError('SAT parent contains polygon indices')
+            todo.append(p + 36)
+        else:
+            indices = sw.u16s(p + 36, count)
+            if any(x >= np for x in indices):
+                raise ValueError('SAT leaf polygon outside source table')
+        if following:
+            if following < 36 or following & 3:
+                raise ValueError('invalid SAT next relative offset')
+            todo.append(p + following)
+    if len(visited) != nb:
+        raise ValueError('SAT block count does not match graph')
+
 TAG_FORMATS = {
+    b"CNS\0": fmt_cns,
+    b"SAT\0": fmt_sat,
+    b"EAT\0": fmt_sat,
     b"MDT\0": fmt_mdt,
     b"TPL\0": fmt_tpl,
     b"UWF\0": fmt_uwf,
+    b"EFF\0": fmt_eff,
 }
 
 
@@ -363,29 +628,49 @@ def fmt_tagged(sw, off, size, ctx):
         elif looks_like_tagged(sw.data, off + start, end - start):
             entry["tag"] = "ARC"
             entry["handled"] = True
-            fmt_tagged(sw, off + start, end - start, sub_ctx)
+            guarded(sw, fmt_tagged, off + start, end - start, sub_ctx, entry)
         REPORT.append(entry)
 
 
 def guarded(sw, handler, off, size, ctx, entry):
-    """Runs a handler; on a layout error the region is restored raw and the
-    error recorded, so one unexpected file never aborts the mirror."""
+    """Runs a handler confined to [off, off+size); on a layout error that
+    region (and only that region) is restored raw and the error recorded, so
+    one unexpected sub-file never aborts the mirror or damages a neighbour.
+    A handler may return a list of "raw parts" it left untouched on purpose
+    (an explicit safe-raw contract); they are recorded and the entry is
+    marked incomplete."""
     backup = bytes(sw.data[off:off + size])
     marks = bytes(sw.done[off:off + size])
     try:
-        handler(sw, off, size, ctx)
+        with sw.bounded(off, size):
+            raw = handler(sw, off, size, ctx)
+        if raw:
+            entry["raw_parts"] = list(raw)
+            # a static-module REL is complete by contract: only its header is data
+            entry["complete"] = handler is fmt_rel
+        else:
+            entry["complete"] = True
     except (ValueError, IndexError, struct.error) as e:
         sw.data[off:off + size] = backup
         sw.done[off:off + size] = marks
         entry["handled"] = False
+        entry["complete"] = False
         entry["error"] = str(e)
 
+
+# Files the game reads but never overlays a structure on (or only through a
+# consumer outside the boot fixture): copied verbatim under a named contract.
+RAW_CONTRACTS = {
+    "etc/sizetbl.dat": "stored in cDvd::pSizeTbl by SizeTableRead and never dereferenced (src/game/dvd.cpp)",
+}
 
 FILE_FORMATS = [
     ("bgm/bio4str.hed", fmt_bio4str_hed),
     ("bgm/bio4midi.hed", fmt_u32_array),
     ("bgm/doorse.hed", fmt_doorse_hed),
     ("bgm/bgmtbl.dat", fmt_bgmtbl_dat),
+    ("debug/roominfo.dat", fmt_roominfo),
+    ("rel/*.rel", fmt_rel),
     ("font/*.fnt", fmt_fnt),
     ("*.tpl", fmt_tpl),
 ]
@@ -409,7 +694,14 @@ def convert_part(sw, rel, key, part_off, size, entry):
     elif looks_like_tagged(sw.data, part_off, size):
         entry["format"] = "ARC"
         entry["handled"] = True
-        fmt_tagged(sw, part_off, size, "%s:%s" % (rel, key))
+        guarded(sw, fmt_tagged, part_off, size, "%s:%s" % (rel, key), entry)
+    elif entry["type"] == 2:
+        # ARAM sample data: raw PCM / ADPCM bytes the sound DSP consumes as a
+        # byte stream; no game structure is overlaid on it (explicit safe-raw).
+        entry["format"] = "ARAM"
+        entry["handled"] = True
+        entry["complete"] = True
+        entry["safe_raw"] = "sample bytes"
 
 
 def convert_container(sw, rel):
@@ -454,15 +746,107 @@ def convert_file(rel, data):
     elif data[:32] == CONTAINER_MAGIC:
         convert_container(sw, rel)
     elif looks_like_tagged(data, 0, len(data)):
-        fmt_tagged(sw, 0, len(data), rel)
-        REPORT.append({"file": rel, "handled": True, "size": len(data), "format": "ARC"})
+        entry = {"file": rel, "handled": True, "size": len(data), "format": "ARC"}
+        guarded(sw, fmt_tagged, 0, len(data), rel, entry)
+        REPORT.append(entry)
+    elif rel in RAW_CONTRACTS:
+        REPORT.append({"file": rel, "handled": True, "complete": True, "size": len(data),
+                       "format": "RAW", "safe_raw": RAW_CONTRACTS[rel]})
+    elif rel.endswith(".txt"):
+        # Text the game parses byte by byte (debug/config.txt): explicit safe-raw.
+        REPORT.append({"file": rel, "handled": True, "complete": True, "size": len(data),
+                       "format": "TXT", "safe_raw": "text"})
     else:
         REPORT.append({"file": rel, "handled": False, "size": len(data)})
 
 
+def check_required(report, deps_path):
+    """Every entry of every required file must be handled and complete (or
+    safe-raw). Returns the list of violations as strings."""
+    required = []
+    with open(deps_path) as f:
+        lines = f.readlines()
+    for line in lines:
+        # a comment starts the line or follows whitespace ("#n" names a sub-file)
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.split(" #", 1)[0].split(chr(9) + "#", 1)[0].strip().lower()
+        if line:
+            required.append(line)
+    by_file = {}
+    for e in report:
+        by_file.setdefault(e["file"], []).append(e)
+    problems = []
+    for line in required:
+        # "file" = every part and sub-file of it; "file:part" = that container
+        # part; "file:part#n" or "file#n" = that tagged sub-file only.
+        rel = line.split(":", 1)[0].split("#", 1)[0]
+        entries = by_file.get(rel)
+        if not entries:
+            problems.append("%s: not in the tree" % rel)
+            continue
+        if "#" in line:
+            entries = [e for e in entries if e.get("sub") == line]
+        elif ":" in line:
+            entries = [e for e in entries if "%s:%s" % (rel, e.get("part")) == line]
+        if not entries:
+            problems.append("%s: no such part" % line)
+            continue
+        for e in entries:
+            where = e.get("sub") or ("%s:%s" % (rel, e["part"]) if "part" in e else rel)
+            if e.get("error"):
+                problems.append("%s: error: %s" % (where, e["error"]))
+            elif not e.get("handled"):
+                problems.append("%s: no handler (tag %s)" % (where, e.get("tag", e.get("format", "?"))))
+            elif e.get("complete") is False:
+                problems.append("%s: incomplete, raw parts: %s" % (where, ", ".join(e.get("raw_parts", []))))
+    return problems
+
+
+def prepare_room_archive(rel, data):
+    """Decode the source room's single type-0 payload, then use normal handlers.
+
+    The returned .arc is a build artifact, not runtime-ready unless every entry
+    passes check_required. Original compressed files remain independently copied.
+    """
+    from decode_yz2 import decode
+    if data[:32] != CONTAINER_MAGIC:
+        raise ValueError(rel + ': room is not a DVD container')
+    payloads = []
+    terminated = False
+    for pos in range(ENTRY_SIZE, HEADER_TABLE, ENTRY_SIZE):
+        kind, size, dest, offset = struct.unpack_from('>4I', data, pos)
+        if kind == END_OF_TABLE:
+            terminated = True
+            break
+        if kind == 0:
+            if offset < HEADER_TABLE or offset + size > len(data):
+                raise ValueError(rel + ': room payload outside container')
+            payloads.append((offset, size))
+        elif kind not in (NESTED, SKIP_ENTRY):
+            raise ValueError(rel + ': unexpected top-level room entry')
+    if not terminated or len(payloads) != 1:
+        raise ValueError(rel + ': expected one type-0 room payload')
+    offset, size = payloads[0]
+    decoded = bytearray(decode(data[offset:offset + size]))
+    if not looks_like_tagged(decoded, 0, len(decoded)):
+        raise ValueError(rel + ': decoded room is not a tagged archive')
+    native_rel = rel[:-4] + '.arc'
+    convert_file(native_rel, decoded)
+    return native_rel, decoded
+
+
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    force = "--force" in sys.argv
+    argv = sys.argv[1:]
+    require = None
+    if "--require" in argv:
+        i = argv.index("--require")
+        require = argv[i + 1]
+        del argv[i:i + 2]
+    args = [a for a in argv if not a.startswith("--")]
+    force = "--force" in argv
+    decode_rooms = "--decode-rooms" in argv
     if len(args) != 2:
         sys.exit(__doc__)
     src, dst = args
@@ -479,6 +863,11 @@ def main():
             rel = os.path.relpath(sp, src).replace(os.sep, "/").lower()
             dp = os.path.join(dst, rel)
             os.makedirs(os.path.dirname(dp), exist_ok=True)
+            if decode_rooms and fnmatch.fnmatchcase(rel, "st*/r*.das"):
+                native_rel, decoded = prepare_room_archive(rel, open(sp, "rb").read())
+                native_path = os.path.join(dst, native_rel)
+                with open(native_path, "wb") as f:
+                    f.write(decoded)
             if not force and os.path.exists(dp) and rel in previous:
                 dm = os.path.getmtime(dp)
                 if dm >= os.path.getmtime(sp) and dm >= tool_mtime:
@@ -503,6 +892,18 @@ def main():
              sum(1 for e in REPORT if "part" not in e and "sub" not in e and not e.get("handled")),
              len(subs), sum(1 for e in subs if e.get("handled")),
              " ".join("%s=%d" % kv for kv in sorted(raw_tags.items()))))
+    errors = [e for e in REPORT if e.get("error")]
+    if errors:
+        print("le_mirror: %d handler errors (rolled back to raw), first: %s: %s"
+              % (len(errors), errors[0].get("sub") or errors[0]["file"], errors[0]["error"]))
+    if require:
+        problems = check_required(REPORT, require)
+        if problems:
+            print("le_mirror: boot fixture dependencies not satisfied (%s):" % require)
+            for m in problems:
+                print("  " + m)
+            sys.exit(2)
+        print("le_mirror: boot fixture dependencies satisfied (%s)" % require)
 
 
 if __name__ == "__main__":

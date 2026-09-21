@@ -50,12 +50,13 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D296, 2026-09-21)
+## Current boot frontier (D297, 2026-09-21)
 
 D295 cleared the captured scheduler stalls and reached missing r120 data. D296
 extracted that source file and added an offline recovered-code YZ2 decoder,
-checked against r100/r101/r120 archives. Native loading and decoded endian
-coverage remain next; the runtime decoder is still a stub. See
+checked against r100/r101/r120 archives. D297 adds decoded mirror sidecars plus CNS and source-layout SAT/EAT conversion.
+Native loading and remaining scene/model, lighting/camera coverage are next;
+the runtime decoder is still a stub. See [R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md). See
 [R4_OFFLINE_ROOM_DECODE_CHECKPOINT.md](R4_OFFLINE_ROOM_DECODE_CHECKPOINT.md).
 Do not repeat scheduler or archive-location work. No visible menu or playable
 room acceptance is implied by these data-preparation results.

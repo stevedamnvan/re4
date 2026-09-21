@@ -51,7 +51,18 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D296 (2026-09-21)
+## Latest bounded result: D297 (2026-09-21)
+
+The existing mirror now writes decoded `.arc` sidecars with `--decode-rooms`.
+CNS and full source-layout SAT/EAT (including block hierarchy) convert for all
+three decoded room fixtures. Native AtPoly word/half-word views agree; the game
+build and focused tests pass. See [R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md).
+The sidecars are not runtime-ready: scene/model, lighting/camera and other
+formats remain unconverted; two legacy core SAT blocks explicitly fail layout
+checks. Next: SMD/SMX and the native loader boundary, preserving sound-container
+handling. Last target replay remains D295; no new gameplay acceptance.
+
+## Historical bounded result: D296 (2026-09-21)
 
 The missing r120 archive is now extracted from the source disc. The new offline
 `port/dreamcast/tools/decode_yz2.py` executes the recovered PowerPC decoder during
