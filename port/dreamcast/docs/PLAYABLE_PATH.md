@@ -7,6 +7,49 @@ validation policy. [R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md) is t
 supporting resource and alternative-render-asset policy. Historical checkpoint
 letters do not schedule the next task.
 
+## Active milestone: main menu and first three playable rooms
+
+User scope, 2026-09-21: cold boot through required startup/card prompts, a visible
+and controllable source-derived title/main menu, New Game, and the first three
+rooms of the original opening progression in one manually playable session.
+Include required pause/inventory interactions, combat and events where present,
+audio/HUD, both forward room transitions, death/retry and relevant menu return.
+Verify the actual room IDs, entry state and exit conditions from source/data;
+the current configured room-120 fixture does not establish the original sequence.
+
+**Cutscene presentation is deferred for this milestone by explicit user request.**
+Use the source skip/completion path when available. Preserve required script
+side effects, flags, inventory, spawning, camera restoration and player control.
+Where the source cannot skip, implement and document a bounded completion
+adaptation. Skipping a cinematic is not permission to skip its gameplay effects,
+required encounter, title/main menu, or door conditions. Record skipped sequences
+and their completion contracts; full presentation remains in the deferred backlog.
+
+This scope supersedes older cutscene-presentation gates and the isolated cabin
+objective. Menu/debug fixtures remain valuable development tools but cannot pass
+the normal-menu or continuous-three-room acceptance gates. A headless source loop
+or required stub call does not demonstrate a playable or rendered game.
+
+Shared agent instructions are in [AGENTS.md](../../../AGENTS.md); current working
+paths/frontier are in [CLAUDE.md](../../../CLAUDE.md). Both Sol and Astra follow
+the same source authority, implementation loop and evidence requirements.
+
+| Existing backlog | Disposition for this milestone |
+|---|---|
+| Boot/title/menu, scheduler/input, module linking, endian/ID/light-path coverage | Immediate dependencies; verify normal New Game progression and explicit failure paths. |
+| Player/camera/collision, required enemy/weapon/event systems, HUD/audio and menu interaction | Integrate as reached on the verified three-room route, then prove manual play. |
+| Room/resource lifecycle, module reload/BSS/constructors, persistent flags and retry | Required at transitions and retry; reuse the existing residency infrastructure. |
+| Native rendering and performance | Reuse completed R3/R4 work; fix representative blockers. Keep REALTIME_PATH targets and hardware gates distinct from integration progress. |
+| Native texture/resource and alternate-asset experiments | Keep R4_ASSET_RESIDENCY_PLAN policy; select only experiments justified by the active route's measured needs. |
+| Debug tools/source parity | Use targeted fixtures to unblock source behavior; return to the natural path for acceptance. Do not rebuild every editor first. |
+| Cinematic presentation, later opening chapter/Disc 1 | Explicitly deferred beyond this milestone; retain existing plans and checkpoint history. |
+| Physical Dreamcast validation | Separate final hardware gate; continue useful Flycast implementation when hardware is unavailable. |
+
+For each of the three room IDs once verified, record entry/exit source evidence,
+required systems, stub/unimplemented hits, manual gameplay results, transition
+and retry results, exact build/assets and capture location. Keep missing entries
+open rather than assigning guessed IDs or declaring completion from compilation.
+
 ## Binding correction
 
 **Advance the recovered game from normal startup through continuously playable
@@ -264,21 +307,27 @@ isolation. Maintain a runnable build and continue after each milestone.
    startup/title/new-game control flow through appropriate platform adapters.
    Establish scheduler, input, memory, resources, and initial game state. Trace
    the actual opening route rather than assuming the cabin viewer is startup.
-   Support required opening media/events as they are encountered. A temporary
-   explicit diagnostic skip may unblock development but does not pass this gate.
+   Render and operate the title/main menu, including required startup prompts.
+   Opening cutscene presentation may use the authorized skip policy above;
+   required initialization and event-completion behavior must still execute.
 2. **Opening gameplay through the first coherent encounter.** Integrate the
    source player/camera/environment/object state, triggers, relevant enemy AI,
    weapon behavior, collision, audio/HUD, and event transitions. Exercise human
    movement, aiming, firing, reload, interaction, and the applicable death/retry.
-   Replace manual post-cutscene flag/spawn fixtures with the real initialization
-   and completion paths as they become available.
+   Replace manual post-cutscene flag/spawn fixtures with source-derived
+   initialization and completion paths under the authorized cutscene-skip policy.
 3. **Persistent gameplay across the first authored room transition.** Use one
    executable and the existing lifecycle to enter r101 from r100 with correct
    entry/camera/object state and player persistence. Respect the source's door
    availability and room flags; a graph edge does not prove a door is currently
    traversable. Exercise return/retry where the source allows it. Blocking loads
    behind the authored transition are acceptable before I/O optimization.
-4. **Representative village play and the opening chapter.** Integrate the
+4. **Complete the verified three-room opening route.** Prove consecutive manual
+   play from the main menu through all three rooms and both transitions, including
+   required events/combat, audio, death/retry and allowed re-entry. Cutscene
+   presentation is deferred under the explicit policy above. Room IDs remain
+   unverified until traced from the matching original New Game path.
+5. **Deferred: representative village play and the opening chapter.** Integrate the
    required enemy variants, source-controlled activation/waves, objects,
    inventory/items, events, and progression. Exercise the inventory and
    death/retry/save paths when required by the sequence. Continue toward the

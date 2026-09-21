@@ -1,167 +1,136 @@
-# RE4 Dreamcast port handover
+# RE4 Dreamcast working handoff
 
-## Mission
+Updated 2026-09-21. Read and follow [AGENTS.md](AGENTS.md), the shared instruction
+entry point for Sol, Astra and Claude. It defines scope, implementation workflow,
+acceptance and preservation rules. This file records where to resume.
 
-Continue the existing native Sega Dreamcast port of Resident Evil 4. This is a course correction and optimization effort, not a restart. The immediate goal is a responsive, high-performance, manually playable 30-second r100 encounter that preserves the accepted room, lighting, corrected complete character presentation, source camera/FOV, transparency, animation/event timing, collision, combat behavior, audio, and 640x480 output.
+## Active objective
 
-Use the GameCube source to decide what the game must do. Use Dreamcast-native data layouts and algorithms to decide how to do it. Do not preserve redundant GameCube work or a known prototype defect merely because it appears in an older checkpoint.
+Cold boot -> required startup prompts -> visible, controllable title/main menu
+-> New Game -> the first three source-authored opening rooms, fully playable
+with normal transitions, combat/events where applicable, audio, death and retry.
+Cutscene presentation is deferred for now; required source completion effects
+and restoration of player control are still necessary. Verify the actual room
+sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Working folders
+## Working paths
 
-| Purpose | Linux / WSL path | Windows path |
-| --- | --- | --- |
-| Active repository | `/root/work/re4-dreamcast` | `\\wsl.localhost\Ubuntu-24.04\root\work\re4-dreamcast` |
-| Dreamcast port | `/root/work/re4-dreamcast/port/dreamcast` | `\\wsl.localhost\Ubuntu-24.04\root\work\re4-dreamcast\port\dreamcast` |
-| KallistiOS | `/root/work/kos` | `\\wsl.localhost\Ubuntu-24.04\root\work\kos` |
-| kos-ports | `/root/work/kos-ports` | `\\wsl.localhost\Ubuntu-24.04\root\work\kos-ports` |
-| Private captures and timing evidence | `/mnt/c/Flycast-Evidence/re4-dreamcast` | `C:\Flycast-Evidence\re4-dreamcast` |
-| Source disc image | `/mnt/c/Game Dev/Emulators/Resident Evil 4 Debug (Disc 1)/Resident Evil 4 Debug (Disc 1).iso` | `C:\Game Dev\Emulators\Resident Evil 4 Debug (Disc 1)\Resident Evil 4 Debug (Disc 1).iso` |
-| Soulcalibur Dreamcast/Flycast reference | `/mnt/c/Game Dev/Emulators/flycast` | `C:\Game Dev\Emulators\flycast` |
+| Purpose | Path |
+|---|---|
+| Authoritative repository | `/root/work/re4-dreamcast` |
+| Windows access to repository | `\\wsl.localhost\Ubuntu-24.04\root\work\re4-dreamcast` |
+| Active recovered game executable | `port/dreamcast/game/re4dc-game.elf` |
+| Existing native renderer and scene fixtures | `port/dreamcast/room` |
+| Extracted private source data | `/root/re4data` |
+| Converted little-endian private mirror | `/root/re4data-le` |
+| KallistiOS / ports | `/root/work/kos`, `/root/work/kos-ports` |
+| Private evidence | `C:\Flycast-Evidence\re4-dreamcast` (`/mnt/c/Flycast-Evidence/re4-dreamcast`) |
+| Source disc | `C:\Game Dev\Emulators\Resident Evil 4 Debug (Disc 1)\Resident Evil 4 Debug (Disc 1).iso` |
+| Read-only Soulcalibur/Flycast reference | `C:\Game Dev\Emulators\flycast` |
 
-Treat the Soulcalibur tree as a read-only reference unless the user explicitly changes its scope. Do not commit the disc image, extracted proprietary assets, private captures, telemetry dumps, generated packages, or local toolchains.
+Branch is `dreamcast-port`; origin is `https://github.com/stevedamnvan/re4.git`,
+upstream is `https://github.com/adonis-singh/re4.git`. At inspection the latest
+implementation commit was `7d03ad5` (title screens after card check), following
+`2420a80` (game frame loop) and `cb0d60a` (SH-4 source compile). Recheck live Git;
+these are evidence anchors, not instructions to reset the branch.
 
-The Linux checkout is authoritative. Upstream contains distinct `src/Tools` and `src/tools` paths, so the retained `C:\Game Dev\Emulators\re4-dreamcast-WINDOWS-INCOMPLETE` checkout is not a build source.
+## Last committed boot evidence
 
-## Repository state
+The user's completion report for `7d03ad5` matches the inspected 14-file commit:
+Dreamcast DVD staging-buffer fix (PowerPC address retained), sound MRAM mirror
+handler, fixture-aware disc packaging, scripted pad input, and boot diagnostics.
+It records card-check completion, title.dat loading and entry into the ID system.
+The reported ProDG comparison was 438 same / 0 different; it was not rerun for
+this documentation update and does not qualify subsequent dirty source edits.
+The reported clean tree was immediately after that commit, not the current tree.
+No source assets or evidence were included; launcher changes stayed private.
 
-- Branch: `dreamcast-port`
-- GitHub remote: `origin = https://github.com/stevedamnvan/re4.git`
-- Original project remote: `upstream = https://github.com/adonis-singh/re4.git`
-- Latest accepted implementation checkpoint: `000bdb4f5e5ef7090c9fa27fe36113ba9ca4a9f7`
-- Checkpoint meaning: separate immutable actor normals from lighting output; retain actor timing/mask telemetry; reject and remove the slower `frsqrt` experiment
-- Latest measurement pass: R3q, which adds only the compile-gated `SUBMIT_PROFILE` room diagnostic and changes no accepted code; it closes submission transport and room vertex cache growth
-- Latest accepted optimization: R3r, per-strip bounds culling plus the `kProjectionDepthBias` fix for the KOS projection; CPU frame p50 86.217 ms to 74.139 ms while drawing more room geometry. Any new visibility test must measure projected extents at `depth + 1`
-- Latest rejected experiment: R3s room identity cache, 21.5% fewer transform-and-light evaluations but 1.274 ms slower; the opaque room pass is per-reference/per-record bound, not transform bound
-- R3t (accepted): room PVR packets written straight from cache entries, colour packed per cache fill; 74.139 ms to 73.247 ms, framebuffers byte-identical. Its calibrated profile: hit lookup 809 ns per reference, miss body 836 ns, strip-loop overhead 2,242 ns per strip
-- R3u (accepted): production room package moved from one-metre to four-metre opaque cells after strip culling made coarser cells win; 73.247 ms to 71.369 ms, +405,504 B free RAM, no room pixel changed. 8 m ties 4 m; do not re-sweep cell size without changing the cull tests. `R100_PRODUCTION_CELL_SIZE` and both package defaults are now 4
-- R3v (accepted): batch-local room vertex slots replace the hashed cache on the direct-strip path; 71.369 ms to 68.789 ms, no room pixel changed, +413,696 B static RAM that a converter-side table should recover
-- R3w (accepted): prepared per-actor light lists, arithmetic unchanged, zero differing bits in a dual-path build; 68.789 ms to 64.758 ms
-- Flycast cost model, measured in R3w: ~3.3 ns per non-memory SH-4 instruction (fdiv and fsqrt included), ~13.3 ns per load or store, no FP latency, no cache. Size candidates by memory instructions per record with `port/dreamcast/tools/sh4_loop_cost.py`; hardware weighs divides more and memory less, so prefer changes that cut both
-- R3x (accepted): 32-byte room slots filled by the same arithmetic, resolve/fill/pack in one pass, per-strip stat accumulation; 64.758 ms to 61.229 ms, identical counters and pixels
-- Next target: memory instructions in the per-record loops, in order: the room transform-and-light body and per-strip sphere-test loads, actor lighting normalization and per-position terms, `project_character`, actor packet loop. Keep arithmetic identical and prove it with a dual-path bit comparison. Strip count is not a lever
-- Expected state after the handover commit and push: clean local tree with local HEAD equal to `origin/dreamcast-port`
+That committed checkpoint names EFF conversion as its next dependency. The
+current dirty `le_mirror.py` already defines `fmt_eff` and `fmt_rel`. Inspect
+those handlers and `test_le_mirror.py`, validate real ID data, then replay the
+same boot before deciding whether EFF remains the blocker. Do not write a second
+handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-Read these first:
+## Frontier and unaccepted work
 
-1. `port/dreamcast/README.md`
-2. `port/dreamcast/docs/REALTIME_PATH.md`
-3. `port/dreamcast/docs/R3P_ACTOR_NORMAL_ALIAS_FIX_CHECKPOINT.md`
-4. `port/dreamcast/docs/R3O_HEADER_PAYLOAD_BATCHING_CHECKPOINT.md`
-5. `port/dreamcast/docs/R3N_VISIBILITY_REUSE_CHECKPOINT.md`
+The current tree is deliberately dirty across recovered source, platform shims,
+module/build tooling, fixtures and endian conversion. Preserve it. New files
+include `game/platform/modules.cpp`, `game/tools/gen_modules.py`,
+`fixtures/boot-deps.txt`, and `tests/test_le_mirror.py`, under `port/dreamcast`.
+They are in-flight work, not an accepted three-room implementation.
 
-Preserve all historical checkpoint documents. Update the README current-status section and `REALTIME_PATH.md` only after a candidate has been built, measured, and accepted or reverted.
+The preceding implementor reports New Game reaching room-120 initialization,
+then failing at stage REL linkage and light-path/ID data. The registry/generator
+now exist and retain `_st1_*_prolog` / `_st1_*_epilog` symbols across partial
+links. This report needs a fresh final-ELF symbol check and emulator replay.
+At inspection, `OSLink` still returned success regardless of registry failure;
+unknown IDs received placeholder entries. Static-module BSS persisted and
+constructor execution differed from per-load source semantics. These are open
+correctness issues, particularly for retries and transitions.
 
-## Accepted references
+The historical boot checkpoint describes missing GX/audio implementations. Do
+not infer that the recovered game's menu or room is visibly playable from a
+frame-loop trace or from the separate room viewer's graphics. Inspect current
+adapters and integrate the existing renderer/audio paths as needed.
 
-Keep two separate authorities:
+Next bounded slice: validate stage-module entries and explicit failure handling,
+reproduce the boot with current data, then resolve the first actual blocking
+room/light-path dependency. Record real room init/update execution as an
+intermediate checkpoint. Subsequently return to normal menu/New Game entry,
+verify the opening route, and advance through its three rooms.
 
-- The original GameCube/decomp behavior determines gameplay and authored presentation.
-- R3p is the latest accepted Dreamcast regression/performance baseline. It detects regressions in the working native port but does not make known prototype approximations authoritative.
+## Existing backlog map
 
-The accepted audio/video progress capture remains:
+| Document | Role and how to use it |
+|---|---|
+| [PLAYABLE_PATH.md](port/dreamcast/docs/PLAYABLE_PATH.md) | Authoritative execution order, menu/three-room milestone and source/debug integration backlog. |
+| [REALTIME_PATH.md](port/dreamcast/docs/REALTIME_PATH.md) | Supporting performance/fidelity gates. Integration first; representative bottlenecks when they block useful play/testing. |
+| [R4_ASSET_RESIDENCY_PLAN.md](port/dreamcast/docs/R4_ASSET_RESIDENCY_PLAN.md) | Existing load/retire/transition infrastructure, native texture handling and explicit alternate-asset policy. |
+| [R4_GAME_BOOT_CHECKPOINT.md](port/dreamcast/docs/R4_GAME_BOOT_CHECKPOINT.md) | Dated boot/capture procedure and known source/platform dependencies. Current dirty work may be ahead. |
+| [R4_GAME_TARGET_CENSUS.md](port/dreamcast/docs/R4_GAME_TARGET_CENSUS.md) | Compile/platform inventory; compiled symbols are not behavior acceptance. |
+| [R4_R101_SOURCE_ENTRY_CHECKPOINT.md](port/dreamcast/docs/R4_R101_SOURCE_ENTRY_CHECKPOINT.md) | Existing source entry/camera fixture and its explicit missing events/enemies/progression. |
+| R3*/R4* checkpoint files in `port/dreamcast/docs` | Accepted implementations, corrections and rejected experiments; read only those relevant to the active dependency. |
 
-`C:\Flycast-Evidence\re4-dreamcast\d202-current-progress-video-audio-dba07e2\re4dc-dba07e2-current-progress-32s-with-audio.mp4`
+Do not reimplement completed visibility, strips, light preparation, native texture
+layout, ownership or upload-lifetime work because an old handoff calls it next.
+The former R3p metrics and 49-test count are historical. The latest room-viewer
+measurements do not establish recovered-game performance. Keep the wider chapter,
+Disc 1, cutscene, performance and hardware backlogs; they are not prerequisites
+to implementing every small opening-route dependency.
 
-- Video SHA-256: `c93e31f09744413d8f3bf56603ec3b7a6408b55d14762187f04753fac4120125`
-- Corrected visual ELF SHA-256: `c5ae9de436fd7b9f3770ce3e7cc40d1f37b8e2c000b3b9dfb9be5d46ce7c0e68`
-- Keep audio in future progress recordings.
+## Build and evidence workflow
 
-The R3p qualitative framebuffer check is in:
-
-`C:\Flycast-Evidence\re4-dreamcast\d221-actor-normal-alias-fix-visual`
-
-- Framebuffer SHA-256: `658ae4dbb1f6a13e80fd4c48eda5124b7a7a0f36f0ab2e2ff5940c7b0e8236f9`
-- It retains the accepted room, complete Leon and Ganado assemblies, HUD, camera, transparency, and coherent lighting.
-- Full-framebuffer emulation was enabled only to extract the image. Do not use D221 as timing evidence.
-
-Flycast results are emulator evidence. Physical Dreamcast acceptance has not happened and must be reported separately.
-
-## Current measured baseline
-
-R3p timing evidence is in:
-
-`C:\Flycast-Evidence\re4-dreamcast\d219-actor-normal-alias-fix-final`
-
-- Exact autoplay ELF SHA-256: `4fd89b4e929aca49a9cdc8b7e231c9a1e33ff387cac81466d42e0d49b686a44f`
-- Manual ELF SHA-256: `b265872f40b74f8fbe3cd5e7be28e4bcb73e8af2e54717d8cc5076f9ef91dd0a`
-- Matched ticks against R3o: 165-1194
-- CPU frame p50/p95/p99: 86.217 / 88.719 / 88.836 ms
-- TA registration p50: 58.096 ms
-- Presented ready-to-ready p50/p95: 83.409 / 100.096 ms
-- Actor lighting p50: 18.198 ms, split into Leon 13.960 ms and Ganado 4.232 ms
-- Selected masks remained Leon `0x00000053`, Ganado `0x00000126`
-- Visible work medians: 327 room groups, 9,155 room triangles, 11,900 actor triangles, 617 PVR submissions, and 1,071,840 submitted bytes
-- Main-RAM break-to-stack headroom: 5,570,560 bytes
-- No discarded simulation time or catch-up overruns
-
-The separate buffers cost exactly 98,304 bytes versus R3o, but fixed a real correctness defect and improved CPU frame p50 by 1.398 ms. The old buffer held transformed source normals and then lighting output even though package `normal_sources` references are repeated and non-monotonic. R3p makes those source normals immutable for the whole lighting pass.
-
-The clean manual smoke is in `d220-actor-normal-alias-fix-manual`. It reached tick 558, sampled input 1,860 times with a 12.484 ms maximum gap, and had zero queue drops, simulation overruns, or discarded time. The manual ROM-disk staging had no `autoplay.flag`. It did not inject combat inputs, so it is not full manual or physical-console acceptance.
-
-This is still roughly 11-12 distinct presented frames per second. A 33.33 ms CPU frame needs about 52.9 ms more median reduction. The last separately measured PVR raster p50 was 7.50 ms in R3n, while target preparation and TA registration remain much larger.
-
-## Closed R3p experiment
-
-The actor-normal alias fix is accepted. The KallistiOS `frsqrt` subexperiment is rejected and removed.
-
-Evidence:
-
-- `d216-actor-lighting-alias-fix-validation`: corrected dual-path validation, 330 frames
-- `d217-actor-lighting-alias-fix-production`: `frsqrt` production candidate, actor-lighting p50 19.514 ms
-- `d218-actor-lighting-reference-production`: portable square-root production reference, actor-lighting p50 18.692 ms
-- `d219-actor-normal-alias-fix-final`: clean accepted autoplay build
-- `d220-actor-normal-alias-fix-manual`: clean manual smoke
-- `d221-actor-normal-alias-fix-visual`: qualitative framebuffer check
-
-After the alias fix, almost every packed-color comparison was exact; the worst observed frame changed one channel value in one packed actor color. The `frsqrt` path still regressed actor lighting by 0.822 ms p50, so it was reverted. Do not retry it without a materially different implementation and fresh evidence.
-
-Production telemetry is ABI version 10, 360 bytes. It retains total, Leon, and Ganado lighting timings and the selected light masks. Validation-only telemetry and Makefile switches were removed.
-
-## Immediate continuation
-
-Choose the next bounded candidate from the latest trace, not from the checkpoint letter sequence.
-
-1. Prioritize room packet work. Opaque plus binary/blended room work totals 44.507 ms p50, the largest visible frame cost. Measure transforms, light evaluations, clipping crossings, headers, vertices, bytes, and calls per list before changing the path. Preserve winding, near-plane clipping, alpha order, and all accepted content.
-2. In parallel only where independently bounded, target the stable actor selected-light work, especially Leon's 13.960 ms p50. Retain the portable evaluator as a reference, validate packed colors, and include the 98,304-byte normal scratch in memory accounting.
-3. Treat direct store-queue versus bounded DMA/buffering as a benchmark, not an assumption. Current KOS `pvr_prim` already uses store queues.
-4. Run the R4 asset residency and streaming workstream alongside the remaining frame work, in the order of `port/dreamcast/docs/R4_ASSET_RESIDENCY_PLAN.md`. Deliverable 1 is done: `tools/asset_residency_report.py`, plus the `texture-r100-production` recipe that had been missing for the accepted texture package. Measured: restoring a build-reduced texture at full resolution under VQ is strictly better (46% less VRAM, +5.7 to +7.3 dB), while VQ on an unreduced texture costs 3 to 13 dB and is not a default. Next: the native texture layout, which needs the `re4tex` header to carry a payload format before VQ or palette payloads can ship. Then package-resident batch-local tables, residency model from the authored block sets, asynchronous reads into a staging arena, one room transition with eviction. GameCube is the authority, PS2 is an oracle for Capcom's reductions only, DCA3 is the Dreamcast streaming prior art (mechanisms, not code or data).
-5. Expand the benchmark route to free movement, aim extremes, enemy contact, Leon death, kill, and retry. Keep human control and physical Dreamcast timing as separate acceptance gates.
-
-Every experiment must end with a bootable candidate, a correctness check, matched timing and memory evidence, and a keep-or-revert decision. Do not claim gains from changing the camera, resolution, room, complete character components, lighting, transparency, simulation quality, or audio.
-
-## Build and verification
-
-From WSL:
+Run from WSL; these commands target the recovered game, not the scene viewer:
 
 ```bash
 cd /root/work/re4-dreamcast
 source port/dreamcast/kos-env.sh
+make -C port/dreamcast/game -j4
 python3 -m unittest discover -s port/dreamcast/tests -p 'test_*.py'
-make -C port/dreamcast/room r100-autoplay
-make -C port/dreamcast/room r100
+python3 port/dreamcast/tools/le_mirror.py /root/re4data /root/re4data-le
+# Choose an unused absolute output directory: mkdisc.sh replaces its output.
+bash port/dreamcast/tools/mkdisc.sh port/dreamcast/game/re4dc-game.elf /root/re4data-le /root/probe/UNUSED-RUN-DIRECTORY port/dreamcast/fixtures
 ```
 
-R3p passed all 49 Python tests and both builds after the final source cleanup. The rebuilt manual ELF matches the accepted SHA-256 above, and the manual staging contains no stale autoplay flag.
+Inspect the mirror inputs/output and active processes before rebuilding shared
+private data. Choose a new capture folder for each candidate. Existing launcher
+and log-reading helpers are under
+`C:\Flycast-Evidence\re4-dreamcast\d290-game-boot`; inspect hardcoded paths and
+regenerate log symbol addresses from the candidate ELF before using them. Keep
+prior `game.bin`, logs, symbols and captures paired with their exact build.
+A padscript fixture must be identified in evidence; verify human controls in the
+presentation build without automated input.
 
-For every performance experiment:
+For runtime work, record exact source/dirty patch, ELF/assets, toolchain/emulator,
+fixture and capture identity; reached normal-boot frontier; required stubs hit;
+manual checks; frame/input/memory results; keep/revert and next blocker. Keep
+PowerPC source-comparison checks for shared-source changes. No new runtime tests
+or performance claims were made by this handoff update.
 
-1. Produce a bootable candidate.
-2. Run an appropriate correctness or image/state comparison.
-3. Capture before/after timing, presentation intervals, simulation debt, input delivery, and memory changes over matched gameplay.
-4. Make and document a keep-or-revert decision.
+## Preserved audiovisual reference
 
-Use repeatable movement, turning, aim extremes, firing, reload, enemy attack, death, and retry segments. A settled pose or dead enemy is not an adequate performance sample.
-
-## Fidelity and scope rules
-
-- Do not restart or introduce a new engine, generic GX interpreter, generalized rendering framework, or wholesale rewrite.
-- Preserve the accepted geometry, complete Leon and Ganado components, weapon/component visibility, camera/FOV, resolution, lighting behavior, transparency order, near-plane clipping, animation timing, collision, combat behavior, and audio.
-- Cull rendering work conservatively without suppressing off-screen gameplay, collision, animation events, or hit volumes.
-- Prefer source-derived selection and ownership rules when they reduce work: SAT collision hierarchy, per-model light selection, position/normal/UV identity, source model eligibility, weight palettes, and source residency decisions.
-- Use Dreamcast-native structures and mature KallistiOS/PVR tooling. Benchmark store queues, DMA/buffering, VQ, palette formats, mipmaps, and native texture layouts rather than assuming a gain.
-- Keep visual or numerical adaptations separate from equivalent optimizations so quality tradeoffs remain attributable.
-- Do not call emulator evidence physical-hardware acceptance.
-
-## Git discipline
-
-The user authorized committing and pushing accepted work to the GitHub `origin`. Stage exact files only. Never use broad `git add`, clean/reset the tree, or commit private assets/evidence. Before every commit, inspect the staged file list and diff. After pushing, verify that local HEAD and `origin/dreamcast-port` match.
+Keep the existing capture with game audio:
+`C:\Flycast-Evidence\re4-dreamcast\d202-current-progress-video-audio-dba07e2\re4dc-dba07e2-current-progress-32s-with-audio.mp4`.
+Later renderer/resource checkpoints retain their own exact comparisons. These
+are source-derived presentation references, not proof of current boot-forward
+menu, three-room gameplay or physical hardware. Preserve audio in new captures.
