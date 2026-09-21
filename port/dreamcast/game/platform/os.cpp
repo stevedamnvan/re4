@@ -571,6 +571,24 @@ void re4dc_threads_dump(void)
         re4dc_log("  thread %d kos-state %d os-state %d suspend %ld gate %ld pc=%08lx pr=%08lx\n", i,
                   (int) t->kt->state, (int) t->state, (long) t->suspend, (long) t->gateCount,
                   (unsigned long) t->kt->context.pc, (unsigned long) t->kt->context.pr);
+        // Return addresses left on the thread's stack (no frame pointers: a
+        // scan for text addresses between the saved SP and the stack top).
+        if (t->kt->state == STATE_WAIT && t->stackBase != NULL) {
+            extern char re4dc_etext[] __asm__("_etext");  // the linker's end-of-text symbol
+            u32* sp = (u32*) (t->kt->context.r[15] & ~3u);
+            u32* top = (u32*) t->stackBase;
+            char line[200];
+            int n = 0;
+            line[0] = 0;
+            for (; sp < top && n < 12; sp++) {
+                u32 v = *sp;
+                if (v >= 0x8c010000u && v < (u32) re4dc_etext && (v & 1) == 0) {
+                    snprintf(line + strlen(line), sizeof(line) - strlen(line), " %08lx", (unsigned long) v);
+                    n++;
+                }
+            }
+            re4dc_log("    stack:%s\n", line);
+        }
     }
 }
 

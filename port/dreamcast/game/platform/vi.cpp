@@ -20,8 +20,46 @@ extern "C" void re4dc_threads_dump(void);
 
 extern "C" volatile unsigned long re4dc_stage;
 
+// Poll-based memory watch: the vblank handler compares a checksum of a region
+// every frame and logs the running context the first time it changes.
+static volatile unsigned long* g_watchAddr;
+static unsigned long g_watchWords;
+static unsigned long g_watchSum;
+static int g_watchArmed;
+
+static unsigned long watchSum(void)
+{
+    unsigned long s = 0;
+    for (unsigned long i = 0; i < g_watchWords; i++) s = s * 31 + g_watchAddr[i];
+    return s;
+}
+
+extern "C" void re4dc_watch_set(const void* addr, unsigned long words)
+{
+    g_watchAddr = (volatile unsigned long*) addr;
+    g_watchWords = words;
+    g_watchSum = watchSum();
+    g_watchArmed = 1;
+    re4dc_log("watch: %p x%lu sum %08lx [%08lx %08lx %08lx %08lx]\n", addr, words, g_watchSum,
+              g_watchAddr[0], g_watchAddr[1], g_watchAddr[2], g_watchAddr[3]);
+}
+
+static void watchPoll(void)
+{
+    if (!g_watchArmed) return;
+    unsigned long s = watchSum();
+    if (s == g_watchSum) return;
+    g_watchArmed = 0;
+    irq_context_t* c = irq_get_context();
+    re4dc_log("watch: CHANGED at vblank %lu stage %08lx pc %08lx pr %08lx [%08lx %08lx %08lx %08lx]\n",
+              (unsigned long) g_retraceCount, (unsigned long) re4dc_stage, c ? (unsigned long) c->pc : 0,
+              c ? (unsigned long) c->pr : 0, g_watchAddr[0], g_watchAddr[1], g_watchAddr[2], g_watchAddr[3]);
+    re4dc_threads_dump();
+}
+
 static void vblankHandler(uint32_t code, void* data)
 {
+    watchPoll();
     (void) code;
     (void) data;
     unsigned long prev = re4dc_stage;

@@ -364,8 +364,14 @@ struct DvdSndStrWork {
 extern "C" DvdSndStrWork Snd_str_work[4];
 
 #define ALIGN32(x) (((x) + 0x1F) & ~0x1F)
+#if defined(__PPC__)
 #define DVD_BUFF ((void*) 0x80350000)
 #define DVD_BUFF2 ((void*) 0x80360000)
+#else
+// The 128 KB read staging area at the GameCube's fixed 0x80350000 is a platform buffer here.
+#define DVD_BUFF ((void*) re4dc_dvd_buff)
+#define DVD_BUFF2 ((void*) (re4dc_dvd_buff + 0x10000))
+#endif
 
 // status field of cDvdQueue::flag
 enum {
@@ -1532,13 +1538,21 @@ int cDvd::ReadCheck(int req)
     DvdReadInfo* info;
 
 #if !defined(__PPC__)
-    // The GameCube build passes whatever r4 holds; give the poll a real
-    // scratch record so a completed read has somewhere to copy its tables.
+    // The GameCube build reads the caller's second argument register here
+    // (ReadCheckInfo is an alias of this function); give the plain poll a
+    // scratch record and see ReadCheckInfo below.
     DvdReadInfo scratch;
     info = &scratch;
 #endif
     return readCheckMain(req, info);
 }
+
+#if !defined(__PPC__)
+int cDvd::ReadCheckInfo(int req, DvdReadInfo* info)
+{
+    return readCheckMain(req, info);
+}
+#endif
 
 // The poll: by slot status (READ pending, COMPLETE copies the part address / size tables and
 // releases, CANCEL / ERROR release with a negative result).

@@ -32,17 +32,50 @@ The frame loop keeps running (vblank count advances, the scheduler resumes
 the title task every frame). The run is deterministic in Flycast and takes
 about 4 s of guest time from `OSInit` to the frame loop.
 
+## Update 2026-09-21 (second slice): through the card check into the title screens
+
+The boot now continues past item 4 above:
+
+5. The memory-card first check runs with no card ("no memory card" prompt);
+   the scripted input fixture answers it (Up, A = continue without saving),
+   `CardStatus` bit 31 is set and `titleWait` completes.
+6. `SS/eng/title.dat` (2,518,944 bytes) is read into the title heap and the
+   ID layout system starts the Nintendo / warning / logo screens
+   (`IdDataLoad`, `idSysMove04`, the ordering-table submit).
+
+The three earlier errors ("Illegal SE No.", "Message::init Address Error",
+"CORE_DATA IS TOO LARGE") had one cause, found with a memory watch: the DVD
+read staging buffer `DVD_BUFF` in `src/game/dvd.cpp` was the GameCube's fixed
+address `0x80350000`, which is not RAM on the Dreamcast, so every archive
+part copied through it arrived as zeros. The Dreamcast branch now uses a
+128 KB platform buffer (`re4dc_dvd_buff`); the PowerPC branch is unchanged.
+
+### Scripted input fixture
+
+`port/dreamcast/fixtures/padscript.txt` lists `frame buttons hold` lines
+(vblank count, GameCube `PAD_*` bits in hex, frames held). `tools/mkdisc.sh`
+publishes the fixtures directory as `/cd/dc/` and `platform/pad.cpp` ORs a
+running entry into controller port 0, so a boot through the card check and
+the title screens is reproducible without a player or an emulator input hook
+(key injection into Flycast's SDL window did not reach the emulated pad).
+
+### Diagnostics added (Dreamcast branch only)
+
+`re4dc_watch_set` (vi.cpp): a checksum of a region compared every vblank,
+logging the running context the first time it changes. Card state trace in
+`cCard::MainLoop`, pad button-edge log, message-table dump in `Message::init`
+on a NULL message, thread dump with a return-address scan of parked stacks.
+
 ## Next precise missing dependency
 
-`Message::init()` and the title task read the core archive's sub-files
-(`ArcFile` offsets at +0x10.., message tables at `ofs_28`) as raw GameCube
-big-endian data. On the SH-4 those reads return byte-swapped values
-("Message::init() Msg[24] Address Error", `SndCall` "Illegal SE No.", and the
-main thread looping in `Message::WidthCk` over a garbage table), so the title
-never reaches `titleInit`'s `SS/cmn/title.snd` read. The fix is the next
-handlers of the little-endian mirror (below): the `ArcFile` offset table of
-`etc/core.das` part 0 and the message-table format that `mes.cpp` overlays
-(the PS2 `RE4-MDT-TOOL` in the toolbox documents the same MDT layout).
+The ID system reads `title.dat`'s three `EFF` sub-files (2,127,840, 222,720
+and 115,584 bytes) as raw big-endian data: `IdDataLoad(): EffData Invalid`,
+every texture id lookup fails (`idSysMove04 ... No such Texture`) and the
+render stub's primitive buffer overflows with the fallback primitives. The
+fix is the `EFF` handler in `tools/le_mirror.py`, written from
+`include/id_sys.h` and `src/game/id_sys.cpp` (the effect / texture-table
+layout the ID units index), after which the same scripted boot should reach
+`titleMain`, the menu, New Game and `GameTask`.
 
 ## Decisions recorded by this slice
 
@@ -58,10 +91,16 @@ Files or archive parts without a handler are copied verbatim and listed in
 The disc is built from the mirror (`tools/mkdisc.sh <elf> <mirror> <out>`).
 
 Handled so far: the archive container (`cab6be20` magic, 32-byte `DvdHeader`
-entries, one nesting level, `.das`/`.drs`/`title.snd`/...), `bgm/bio4str.hed`
-(stream blocks: RIT and SHD records), `bgm/bio4midi.hed`, `bgm/doorse.hed`,
-`bgm/bgmtbl.dat`. Reported and still raw: 50 container parts (the core
-archive, memcard, player/enemy `.drs` parts, room archives) and 757 files.
+entries, one nesting level, `.das`/`.drs`/`title.snd`/...), the tagged
+sub-file archive (`{n, ofs[n], tag[n]}` in `core.das` part 0, `ss/*.dat`,
+`memcard.das`, room archives) with `MDT` (message tables), `TPL` (texture
+palettes), `UWF` (id/effect work files) and the sound MRAM block of type-1
+container parts (ISS header, SIT, wavetable sections, sequence table),
+`bgm/bio4str.hed` (stream blocks: RIT and SHD records), `bgm/bio4midi.hed`,
+`bgm/doorse.hed`, `bgm/bgmtbl.dat`, `font/*.fnt`, `*.tpl`. The last run
+converted 779 files (410 whole files handled, 1,180 tagged sub-files of which
+339 handled, 18 sound parts, 0 errors); still raw by tag: BIN 411, MHT 214,
+FCV 155, EFF 38, LIT 10, SMD 5, FNT 3, SAT 2, CAM/TEX/VIB 1 each.
 
 The mirror and the extracted tree are private data and stay outside the
 repository, like the disc image.
@@ -113,7 +152,7 @@ archive part size that made a 58 KB read into a 1.6 GB one.
 source kos-env.sh
 make -C game -j4
 python3 tools/le_mirror.py /root/re4data /root/re4data-le
-bash tools/mkdisc.sh game/re4dc-game.elf /root/re4data-le /root/probe/game-disc
+bash tools/mkdisc.sh game/re4dc-game.elf /root/re4data-le /root/probe/game-disc fixtures
 # Windows: copy disc.bin to the evidence dir as game.bin, then
 powershell -File C:\Flycast-Evidence\re4-dreamcast\d290-game-boot\boot2.ps1 -Seconds 40
 ```
@@ -137,5 +176,7 @@ vsync waits; no performance claim is made at this state.
   reached: the title task is the frontier.
 - No PS2 or alternate representation was tested.
 - REL modules (enemy/player/weapon `.drs` code parts) are not linked.
-- `Dvd.ReadCheckInfo` reports a spurious "CORE_DATA IS TOO LARGE(0/2310144)";
-  the size it compares is not the part size the pump recorded (to trace).
+- `Dvd.ReadCheckInfo` reported a spurious "CORE_DATA IS TOO LARGE": the
+  `asm("ReadCheck__4cDvdi")` alias relied on the caller's register surviving
+  into the callee; the Dreamcast branch defines it as a real function
+  (`include/dvd.h`, `src/game/dvd.cpp`) and the report is gone.

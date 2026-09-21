@@ -184,7 +184,13 @@ public:
     // read.cpp calls ReadCheck(int) with a DvdReadInfo* as a third argument (r5): the callee
     // passes its uninitialised `info` pointer straight to readCheckMain, so the info block gets
     // filled. This declaration is that entry point with the arguments the callers really pass.
+#if defined(__PPC__)
     int ReadCheckInfo(int req, DvdReadInfo* info) asm("ReadCheck__4cDvdi");
+#else
+    // The GameCube build aliases this onto ReadCheck(int), whose uninitialised
+    // `info` local is the caller's second argument register; a real function here.
+    int ReadCheckInfo(int req, DvdReadInfo* info);
+#endif
     int readCheckMain(int req, DvdReadInfo* info);
     cDvdQueue* getQueuePtr(u8 no);
     int ErrCheck(int disc, int flag);

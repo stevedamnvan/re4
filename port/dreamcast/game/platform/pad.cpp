@@ -5,6 +5,9 @@
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <string.h>
+#include <stdio.h>
+
+#include "re4dc_platform.h"
 
 typedef signed char s8;
 typedef unsigned char u8;
@@ -34,6 +37,57 @@ static s8 axis(int v)  // maple -128..127 -> GameCube -128..127 (already the sam
     return (s8) v;
 }
 
+
+// Scripted input fixture: /cd/dc/padscript.txt lists "frame buttons hold"
+// lines (retrace count at which the press starts, GameCube PAD_* button bits
+// in hex, frames held). PADRead ORs a running entry into port 0, so a boot
+// through the card check / title screens is reproducible without a player.
+struct PadScriptEntry { u32 frame; u16 buttons; u16 hold; };
+static PadScriptEntry g_script[64];
+static int g_scriptCount = -1;  // -1: not loaded yet
+
+extern "C" u32 re4dc_vi_retrace_count(void);
+
+static void loadScript(void)
+{
+    g_scriptCount = 0;
+    file_t f = fs_open("/cd/dc/padscript.txt", O_RDONLY);
+    if (f < 0) return;
+    static char text[2048];
+    ssize_t n = fs_read(f, text, sizeof(text) - 1);
+    fs_close(f);
+    if (n <= 0) return;
+    text[n] = 0;
+    char* line = text;
+    while (line && *line && g_scriptCount < 64) {
+        char* next = strchr(line, '\n');
+        if (next) *next++ = 0;
+        unsigned frame, buttons, hold;
+        if (*line != '#' && sscanf(line, "%u %x %u", &frame, &buttons, &hold) == 3) {
+            g_script[g_scriptCount].frame = frame;
+            g_script[g_scriptCount].buttons = (u16) buttons;
+            g_script[g_scriptCount].hold = (u16) hold;
+            g_scriptCount++;
+        }
+        line = next;
+    }
+    re4dc_log("pad: script /cd/dc/padscript.txt: %d entries\n", g_scriptCount);
+}
+
+static u16 scriptButtons(void)
+{
+    if (g_scriptCount < 0) loadScript();
+    u32 now = re4dc_vi_retrace_count();
+    u16 b = 0;
+    for (int i = 0; i < g_scriptCount; i++) {
+        if (now >= g_script[i].frame && now < g_script[i].frame + g_script[i].hold) {
+            if (now == g_script[i].frame) re4dc_log("pad: script press %04x at frame %lu\n", g_script[i].buttons, (unsigned long) now);
+            b |= g_script[i].buttons;
+        }
+    }
+    return b;
+}
+
 extern "C" {
 
 BOOL PADInit(void) { return 1; }
@@ -53,17 +107,20 @@ u32 PADRead(PADStatus* status)
     for (int i = 0; i < 4; i++) {
         PADStatus* p = &status[i];
         memset(p, 0, sizeof(*p));
+        u16 scripted = i == 0 ? scriptButtons() : 0;
         maple_device_t* dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
-        if (dev == NULL) {
+        const cont_state_t* st = dev ? (const cont_state_t*) maple_dev_status(dev) : NULL;
+        static const cont_state_t idle = {};
+        if (st == NULL && (i != 0 || g_scriptCount <= 0)) {
             p->err = PAD_ERR_NO_CONTROLLER;
             continue;
         }
-        const cont_state_t* st = (const cont_state_t*) maple_dev_status(dev);
-        if (st == NULL) {
-            p->err = PAD_ERR_NO_CONTROLLER;
-            continue;
-        }
+        if (st == NULL) st = &idle;  // a scripted port counts as connected
         connected |= 0x80000000u >> i;
+        {
+            static int seen[4];
+            if (!seen[i]) { seen[i] = 1; re4dc_log("pad %d: controller present\n", i); }
+        }
         u16 b = 0;
         if (st->buttons & CONT_A) b |= PAD_BUTTON_A;
         if (st->buttons & CONT_B) b |= PAD_BUTTON_B;
@@ -78,6 +135,14 @@ u32 PADRead(PADStatus* status)
         if (st->rtrig > 128) b |= PAD_TRIGGER_R;
         if (st->buttons & CONT_C) b |= PAD_TRIGGER_Z;   // six-button pads: C = Z
         if (st->buttons & CONT_Z) b |= PAD_TRIGGER_Z;
+        b |= scripted;
+        {
+            static u16 lastLogged[4];
+            if (b != lastLogged[i]) {
+                re4dc_log("pad %d: buttons %04x\n", i, (unsigned) b);
+                lastLogged[i] = b;
+            }
+        }
         p->button = b;
         p->stickX = axis(st->joyx);
         p->stickY = axis(-st->joyy);   // maple Y grows downward, the GameCube stick upward

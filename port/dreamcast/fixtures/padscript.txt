@@ -1,0 +1,18 @@
+# Scripted pad input for boot runs (platform/pad.cpp): frame buttons hold
+# frame = vblank count at which the press starts, buttons = GameCube PAD_*
+# bits in hex (START 1000, A 0100, B 0200, X 0400, Y 0800, Z 0010, dpad
+# L/R/D/U 1/2/4/8), hold = frames held.
+# Card check without a memory card: the no-card prompt is a two-way choice,
+# Up then A picks "continue without saving"; START skips the title screens
+# and opens the menu, A confirms menu entries.
+900 1000 6
+1100 0008 6
+1200 0100 6
+1600 1000 6
+1900 1000 6
+2200 1000 6
+2500 1000 6
+2800 0100 6
+3100 0100 6
+3400 0100 6
+3700 0100 6

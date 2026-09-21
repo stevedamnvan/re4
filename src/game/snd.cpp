@@ -171,6 +171,9 @@ void SndInit()
     r = DvdRead(0x59, (void*) SndMem.sub_adr, 0, 0, 0, 0x8001, __FILE__, __LINE__);
     Dvd.ReadCheck(r, &len, 0, 0);
     SndMem.sub_end = SndMem.sub_adr + len;
+#if !defined(__PPC__)
+    re4dc_watch_set((const void*) SndMem.sub_adr, 64);
+#endif
 
     SndDriverInit();
     pSys->sound_mode = Snd_get_sound_mode();

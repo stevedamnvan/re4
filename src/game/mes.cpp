@@ -11,6 +11,9 @@ extern MessageFont MesFont[4];
 #include "main_mem.h"
 #include "light.h"
 #include "mes.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 #include "dvd.h"
 #include "db_log.h"
 #include "id_sys.h"
@@ -738,6 +741,10 @@ void Message::init(int no, int x, int y, u32 attr, int col, MessageFont* fnt)
     if (m_pMes == NULL) {
         m_pMes = MesData.getAddr(0, 0);
         pLog->err(0, 0, "Message::init() Msg[%02d] Address Error", no);
+#if !defined(__PPC__)
+        re4dc_log("  mes: attr %08lx lang %ld tables %p %p %p %p %p -> %p\n", (unsigned long) attr, (long) MesData.lang,
+                  MesData.ptr[0], MesData.ptr[1], MesData.ptr[2], MesData.ptr[3], MesData.ptr[4], m_pMes);
+#endif
     }
     m_ot_type = 0x15;
     m_ot_no = 1;
@@ -808,7 +815,16 @@ void Message::WidthCk()
     for (i = 15; i >= 0; i--) {
         m_width[i] = 0;
     }
+#if !defined(__PPC__)
+    u32 guard = 0;
+#endif
     while (flags2 & 8) {
+#if !defined(__PPC__)
+        if (++guard == 200000) {  // a message without an end code would spin the frame loop
+            re4dc_log("Message::WidthCk: no end code (pMes %p code %04x); giving up\n", m_pMes, *m_pMes);
+            break;
+        }
+#endif
         if (isCtrlCode(*m_pMes)) {
             switch (*m_pMes) {
             case 3:

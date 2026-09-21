@@ -87,6 +87,7 @@ char re4dc_logbuf[RE4DC_LOG_SIZE] __attribute__((aligned(32)));
 // 1 while stdout is a separate device; 0 once fault.cpp routes the KOS
 // debug output into this ring (printing would then loop back here).
 int re4dc_log_console = 1;
+unsigned char re4dc_dvd_buff[0x20000] __attribute__((aligned(32)));
 
 void re4dc_log_raw(const char* data, unsigned long len)
 {

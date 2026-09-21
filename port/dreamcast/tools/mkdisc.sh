@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build a bootable Dreamcast disc image (CUE/BIN) from an ELF plus a data
-# directory.  mkdisc.sh <elf> <datadir> <outdir>
+# directory.  mkdisc.sh <elf> <datadir> <outdir> [fixturesdir]
 #
 # Deliberately a single-session CD-R layout rather than a GD-ROM (GDI) image.
 # KOS mounts /cd by reading the *low density* table of contents
@@ -52,6 +52,13 @@ chmod +x "$KOS/utils/makeip/makeip" 2>/dev/null || true
 if [ -d "$DATA" ]; then
   # the whole tree: the game target keeps the GameCube directory layout
   cp -r "$DATA"/. "$WORK/cdroot/" 2>/dev/null || true
+fi
+# Optional fixtures directory (port/dreamcast/fixtures): scripted input and
+# other Dreamcast-only test files, published under /cd/dc/.
+EXTRA="$4"
+if [ -n "$EXTRA" ] && [ -d "$EXTRA" ]; then
+  mkdir -p "$WORK/cdroot/dc"
+  cp -r "$EXTRA"/. "$WORK/cdroot/dc/"
 fi
 
 # One MODE1/2048 data track starting at LBA 0, with IP.BIN occupying the first

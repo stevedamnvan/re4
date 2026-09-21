@@ -10,6 +10,9 @@
 #include "light.h"
 #include "widget.h"
 #include "card.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 #include "id_sys.h"
 #include "mes.h"
 #include "main.h"
@@ -2202,6 +2205,16 @@ void cCard::MainLoop(int arg)
         }
         TaskSleep(1);
         (this->*tbl[m_Rno0][arg])();
+#if !defined(__PPC__)
+        {
+            static int last = -1;
+            int cur = (m_Rno0 << 16) | (m_Rno1 << 8) | m_Rno2;
+            if (cur != last) {
+                last = cur;
+                re4dc_log("card: mode %d state %d/%d/%d err %d sel %d\n", arg, m_Rno0, m_Rno1, m_Rno2, m_ErrCode, cMes.mes[0].m_sel);
+            }
+        }
+#endif
         if (dispFlag == 1) {
             screenTrans();
         }
