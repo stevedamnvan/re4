@@ -1801,7 +1801,7 @@ YARARE_INFO* EmYarareContactCk(cEm* em, Vec* pos, Vec* out, f32 r)
     f32 rr;
     f32 len;  // the axis length, then the step (one variable: it lives across the VECNormalize call)
     u32 n;
-    register s16 hm asm("r5"); // COMPILER-DIFF: #8
+    register s16 hm PPC_REG("r5"); // COMPILER-DIFF: #8
 
     // COMPILER-DIFF: #8 -- the original ranks `mr r26,r5` (out) after `fmr f28,f1`, i.e. as if r5
     // did not die at the copy; the HImode read of r5 keeps it live past the copy (docs/matching.md #8).

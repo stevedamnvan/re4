@@ -939,7 +939,7 @@ static void SetEmHitAtari()
     // high here: cse1 forwards the high (a constant) to the later load, the hard-register value
     // itself is invalidated by the calls (no `fmr` forwarding), and the dead set is deleted.
     {
-        register f32 z asm("fr0");
+        register f32 z PPC_REG("fr0");
         z = 0.0f;
     }
     PSVECSubtract(&SmdGetObjPtr(0x61)->pos, &SmdGetObjPtr(0x5E)->pos, &ofsA);

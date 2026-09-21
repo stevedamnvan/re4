@@ -351,7 +351,7 @@ int retry_load_menu(OptionScreen* o)
 {
     static int yes = 0;
     static u32 snd_id = 0;
-    register int old asm("r29") = o->_rno2;  // COMPILER-DIFF: o must outrank old for r31
+    register int old PPC_REG("r29") = o->_rno2;  // COMPILER-DIFF: o must outrank old for r31
     int confirm = 0;
     IdUnit* base;
     IdUnit* u;
@@ -788,12 +788,12 @@ int brightness_menu(OptionScreen* o)
             {
                 // COMPILER-DIFF: candidate (global alloc order): pSys must be allocated after DEFAULT
                 // (target r10/r11; ours has pSys 4 refs/18 = 0.444 > DEFAULT 3/9 = 0.333).
-                register SystemWork* s asm("r10") = pSys;
+                register SystemWork* s PPC_REG("r10") = pSys;
 
                 if (s->brightness < DEFAULT + MIN_OFS) {
                     // COMPILER-DIFF: candidate (local-alloc qty order): the byte-narrowed DEFAULT must take
                     // r9 (D dies into the sum) so the two `stb r9,0xa(r10)` tails cross-jump.
-                    register u8 d asm("r9") = DEFAULT;
+                    register u8 d PPC_REG("r9") = DEFAULT;
                     s->brightness = d + MIN_OFS;
                 } else {
                     n = s->brightness;

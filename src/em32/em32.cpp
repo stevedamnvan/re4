@@ -780,8 +780,8 @@ static void em32_R0_Init(cEm32* em)
     // The 600/0xFF constants are REG_EQUIV pseudos the original never allocates: reload re-materialises
     // them in the spill registers r10/r9 (59 takes r11); ours local-allocs them the other way round.
     {
-        register int lw asm("r10"); // COMPILER-DIFF: #13
-        register int bn asm("r9"); // COMPILER-DIFF: #13
+        register int lw PPC_REG("r10"); // COMPILER-DIFF: #13
+        register int bn PPC_REG("r9"); // COMPILER-DIFF: #13
         lw = 600;
         w->longAtkWait = lw;
         w->voiceTimer = 59;
@@ -807,9 +807,9 @@ static void em32_R0_Init(cEm32* em)
     // routine stores. sched2 issues `li r0,1` after `stb r11,0xfd` (both priority 15; ours has one more
     // dependent on the stb) unless the `li` gets a dependent, see the asm below.
     {
-        register int hp asm("r0"); // COMPILER-DIFF: #13
-        register int six asm("r11"); // COMPILER-DIFF: #13
-        register int one asm("r0"); // COMPILER-DIFF: #13
+        register int hp PPC_REG("r0"); // COMPILER-DIFF: #13
+        register int six PPC_REG("r11"); // COMPILER-DIFF: #13
+        register int one PPC_REG("r0"); // COMPILER-DIFF: #13
         hp = 500;
         em->hp = hp;
         six = 6;

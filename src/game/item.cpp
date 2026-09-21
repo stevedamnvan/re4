@@ -2301,7 +2301,7 @@ int cItemMgr::combine(ItemWork* a, ItemWork* b, int flag)
                     }
                     a->bullet = (inv << 13) | (n & 0x1FFF);
                     {
-                        register ItemWork* arm asm("r0"); // COMPILER-DIFF: 17 (local-alloc fake-lifetime parity: the pArm load reuses r0 right after the x8 store's value dies)
+                        register ItemWork* arm PPC_REG("r0"); // COMPILER-DIFF: 17 (local-alloc fake-lifetime parity: the pArm load reuses r0 right after the x8 store's value dies)
 
                         arm = pArm;
                         if (a == arm) {
@@ -2341,7 +2341,7 @@ int cItemMgr::combine(ItemWork* a, ItemWork* b, int flag)
                     }
                     b->bullet = (inv << 13) | (n & 0x1FFF);
                     {
-                        register ItemWork* arm asm("r0"); // COMPILER-DIFF: 17 (local-alloc fake-lifetime parity: the pArm load reuses r0 right after the x8 store's value dies)
+                        register ItemWork* arm PPC_REG("r0"); // COMPILER-DIFF: 17 (local-alloc fake-lifetime parity: the pArm load reuses r0 right after the x8 store's value dies)
 
                         arm = pArm;
                         if (b == arm) {
@@ -2654,7 +2654,7 @@ int cItemMgr::trigger()
     case 3:
     case 6: {
         ItemWork* p = pArm;
-        register int id asm("r9"); // COMPILER-DIFF: #2 (the original masks the u16 member before the call)
+        register int id PPC_REG("r9"); // COMPILER-DIFF: #2 (the original masks the u16 member before the call)
         id = m_wep_id;
         asm("" : "+r"(id));
 
@@ -2874,7 +2874,7 @@ void cItemMgr::save(void* dst)
     for (i = 0; i < nItems; i++, p++) {
         memclr_asm(&s[i], sizeof(ItemSaveWork));
         if (itemEmpty(p)) {
-            register int m1 asm("r0"); // COMPILER-DIFF: #13 (the 0xFFFF re-materialised at the store)
+            register int m1 PPC_REG("r0"); // COMPILER-DIFF: #13 (the 0xFFFF re-materialised at the store)
             m1 = -1;
             s[i].id = m1;
         } else {

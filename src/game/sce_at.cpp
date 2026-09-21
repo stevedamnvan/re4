@@ -1063,7 +1063,7 @@ void releaseModel(SceAtWork* w, int keep)
 static void sceAtGetItem(SceAtWork* w_)
 {
     // COMPILER-DIFF: 13 (global-alloc pair w/cancel r24/r25): value pin of the parameter copy.
-    register SceAtWork* w asm("r24") = w_;
+    register SceAtWork* w PPC_REG("r24") = w_;
     static int disp_flag_bak;
     static int sub_screen_open;
     static int swep_flag;
@@ -1115,7 +1115,7 @@ static void sceAtGetItem(SceAtWork* w_)
     case 8: {
         // COMPILER-DIFF: 13 (global-alloc rotation it/ItemMgr/money): money pinned to the
         // original's r29 settles the other two (it r31, the ItemMgr high r30).
-        register u32 money asm("r29") = pG->peseta;
+        register u32 money PPC_REG("r29") = pG->peseta;
 
         put = ItemMgr.get(it->id, it->num);
         if (it->id == 0x73) {
@@ -1234,7 +1234,7 @@ static void sceAtGetItem(SceAtWork* w_)
             // COMPILER-DIFF: candidate #12 (r0 pin): cse1 follows the `bne` into the else arm and would
             // canonicalise `res == 2` to sel; canon_reg never replaces a hard register, so the pinned res
             // keeps `cmpwi r0,2` and sel (a pseudo: preferred as class head) keeps `mr; cmpwi sel,1`.
-            register int res asm("r0") = cMes.getWork()->m_sel;
+            register int res PPC_REG("r0") = cMes.getWork()->m_sel;
 
             sel = res;
             if (sel == 1) {
@@ -1477,7 +1477,7 @@ static void sceAtGetItem_NoModel(SceAtWork* w)
             // COMPILER-DIFF: candidate #12 (r0 pin): cse1 follows the `bne` into the else arm and would
             // canonicalise `res == 2` to sel; canon_reg never replaces a hard register, so the pinned res
             // keeps `cmpwi r0,2` and sel (a pseudo: preferred as class head) keeps `mr; cmpwi sel,1`.
-            register int res asm("r0") = cMes.getWork()->m_sel;
+            register int res PPC_REG("r0") = cMes.getWork()->m_sel;
 
             sel = res;
             if (sel == 1) {
@@ -2087,8 +2087,8 @@ static int sceAtFunc_pos_jump(SceAtWork* w, cModel* m)
     // the local-alloc'd dstAngle load in f0); ours allocates the 3-ref 0.0 first (f0). Both values
     // pinned: the angle too, so the y store gets the same call anti-dependent as the z/x stores
     // and the three stores keep the source order.
-    register f32 a asm("fr0");
-    register f32 z asm("fr13");
+    register f32 a PPC_REG("fr0");
+    register f32 z PPC_REG("fr13");
 
     pPL->setPos(&w->jumpPos);
     a = w->dstAngle;

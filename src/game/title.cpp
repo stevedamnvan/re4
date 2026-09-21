@@ -210,7 +210,7 @@ void titleWait(TitleWork* w)
             IdSys.roomInit();
             IdTexDataLoad(TITLE_ARC_PTR(w->pDat, 4), TEX_OWNER_ID_TITLE);
             {
-                register u8 z asm("r11");  // COMPILER-DIFF: #13 (REG_EQUIV zero reloaded into r11)
+                register u8 z PPC_REG("r11");  // COMPILER-DIFF: #13 (REG_EQUIV zero reloaded into r11)
                 z = 0;
                 CSet(w->Rno0, 2);
                 ISet(w->sndFlag, 1);

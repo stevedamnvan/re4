@@ -1132,11 +1132,11 @@ void cLanternUnit::throwLantern(cLanternUnit* u)
     // `lis pPL@ha`. Ours folds a user variable known to be 0 (cse) and lets the fixed-scalar pPL load
     // pass the struct stores; the hard register + launder hide the value, the reference setters order
     // the stores.
-    register int st asm("r29"); // COMPILER-DIFF: #12 (user variable constant not folded)
+    register int st PPC_REG("r29"); // COMPILER-DIFF: #12 (user variable constant not folded)
     int cnt = 0;
     // COMPILER-DIFF: #2 (value-carrying FPR pin): the 0.0 pseudo is f30 and its `turn` copy f31 in the
     // target; local-alloc ties them the other way round.
-    register f32 zero asm("fr30");
+    register f32 zero PPC_REG("fr30");
     f32 turn;
 
     st = 0;

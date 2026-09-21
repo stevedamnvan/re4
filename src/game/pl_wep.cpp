@@ -790,8 +790,8 @@ cModel* searchLockEm(Vec* pos, cModel* skip_, f32 range_)
     // COMPILER-DIFF: candidate (global-alloc order): skip r30 / range f30 pins; a plain `skip` copy
     // ranks below `i`/`pos` here (ours r28, target r30). `best`/`i` cannot be pinned: a hard-reg
     // `best` stops cse from reusing its zero for the loop entry test (`cmplw best,nArray`).
-    register cModel* skip asm("r30") = skip_;
-    register f32 range asm("fr30") = range_;
+    register cModel* skip PPC_REG("r30") = skip_;
+    register f32 range PPC_REG("fr30") = range_;
     cEm* best = 0;
     f32 bestD = 1000000000000.0f;
     u32 i;
@@ -1133,7 +1133,7 @@ void PlWepAutoTrack(cModel* plm, int mode, f32 rate)
     f32 d;
     f32 e;
     f32 na = 0.20943952f;  // function-scope, dead initialiser: puts 12deg before 400.0f in the pool (target 0x178)
-    register s16 hm asm("r4"); // COMPILER-DIFF: #8
+    register s16 hm PPC_REG("r4"); // COMPILER-DIFF: #8
 
     // COMPILER-DIFF: #8 -- the original ranks `mr r29,r4` (mode) after `fmr f31,f1`, i.e. as if r4
     // did not die at the copy; the HImode read of r4 keeps it live past the copy (regmove only moves
@@ -1247,7 +1247,7 @@ void PlSetLockPitch(cModel* plm)
         // COMPILER-DIFF: 13 (value pin): the target's 2/PI high sits in r11 and pWep in r9 -- the
         // original rematerialises the pool constant's high with a reload register that avoids the
         // live pWep; local-alloc here hands the shorter-lived high r9 first.
-        register cPlWep* w asm("r9") = pl->Wep;
+        register cPlWep* w PPC_REG("r9") = pl->Wep;
         w->pitch = p;
     }
     p *= 2.0f / PI;

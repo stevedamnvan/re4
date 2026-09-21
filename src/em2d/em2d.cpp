@@ -2789,8 +2789,8 @@ static void em2d_R1_W_Walk(cEm2d* em)
                 // canonicalises a hard register, so the fr0 pin keeps the first compare on the load; the
                 // DFmode read of fr0 in the second arm keeps it live past the copy, so regmove does not move
                 // its death onto the copy (docs/matching.md #8) and the `fmr` survives.
-                register f32 ny asm("fr0");
-                register f64 nyd asm("fr0");
+                register f32 ny PPC_REG("fr0");
+                register f64 nyd PPC_REG("fr0");
                 ny = w->wallNrm.y;
                 alpha = ny;
                 if (ny > 0.899999976f || ({ asm("" : "=m"(inv[0][0]) : "f"(nyd)); alpha; }) < -0.899999976f) {

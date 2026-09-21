@@ -248,7 +248,11 @@ inline void cDbgOkCancelWindow::Init(int wx, int wy, const char* name)
     do { } while (0); // COMPILER-DIFF: #13 (sched region split)
     {
         cDbgButton* z;
+#if defined(__PPC__)
         asm("li %0,0" : "=r"(z) : "m"(m_wx)); // COMPILER-DIFF: #13 (asm-emitted zero, reload-placed li)
+#else
+        z = 0;
+#endif
         pBottom = m_pStartBut = m_pCurrentBut = z;
     }
     AddButton(1, 2, " [OK] ", 0, 0, 0, 0);

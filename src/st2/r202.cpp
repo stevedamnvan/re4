@@ -171,7 +171,7 @@ void R202Init()
     r202_work.p = (R202Work*) MEM_CALLOC(sizeof(R202Work), 1, 0xd);
     // COMPILER-DIFF: candidate #17 (value-carrying pin): the pG temp of the first RsfCheck is r10
     // in the original (local-alloc adjacency with the work high's r9 under its sched1 order), r9 in ours.
-    register GlobalWork* g asm("r10");
+    register GlobalWork* g PPC_REG("r10");
     g = pG;
     if (RsfCheck(*(u16*) &g->stage_no, 1) == 0) {
         r202_initCatapult();
@@ -1051,8 +1051,8 @@ static void r202_setRock(cCatapult* c)
             // -0.024 high before the 0.0 high, so its local-alloc gave obj/pParts r10/r11 and the -0.024
             // high r8; ours issues the highs the other way round (equal priority, LUID) and names them
             // r10/r9/r11. Value-carrying pins on the two pointers give the target's names.
-            register cObj* o asm("r10");
-            register cModel* pp asm("r11");
+            register cObj* o PPC_REG("r10");
+            register cModel* pp PPC_REG("r11");
             o = c->obj;
             pp = o->pParts;
             pp->ang.x = 0.0f;

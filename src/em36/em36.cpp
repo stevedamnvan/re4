@@ -4256,7 +4256,7 @@ void em36SetHitMark(cEm36* em, int big)
     EspSeqData* seq;
     // The original zero-extends the u8 once (`clrlwi r30`) before both calls; a hard-register QImode variable
     // keeps the extension (combine drops it for a pseudo whose sets are the constants 3/4).
-    register u8 kind asm("r30"); // COMPILER-DIFF: #2
+    register u8 kind PPC_REG("r30"); // COMPILER-DIFF: #2
     u32 i;
     f32 len;
 

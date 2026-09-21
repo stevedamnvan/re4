@@ -1298,7 +1298,7 @@ int idEditPos(IdTool* w, int x, int y)
                 break;
             case 4:
                 for (j = 0; j <= 7; j++) {
-                    register int col asm("r5"); // COMPILER-DIFF: #17 (col r5 vs r30, local ext pref)
+                    register int col PPC_REG("r5"); // COMPILER-DIFF: #17 (col r5 vs r30, local ext pref)
 
                     col = 7;
                     if (j == w->gridLv) {
@@ -2201,7 +2201,7 @@ int idEditTrans(IdTool* w, int x, int y)
             break;
         }
         case 2: {
-            register int step asm("r11") = (joy->on & 0x100) ? 10 : 1; // COMPILER-DIFF: pin (global-alloc order: the target allocates step (r11) before joy (r10))
+            register int step PPC_REG("r11") = (joy->on & 0x100) ? 10 : 1; // COMPILER-DIFF: pin (global-alloc order: the target allocates step (r11) before joy (r10))
 
             if (joy->rep & 0x10001) {
                 d->power -= step;
@@ -2220,7 +2220,7 @@ int idEditTrans(IdTool* w, int x, int y)
             }
             break;
         case 4: {
-            register int step asm("r11") = (joy->on & 0x100) ? 10 : 1; // COMPILER-DIFF: pin
+            register int step PPC_REG("r11") = (joy->on & 0x100) ? 10 : 1; // COMPILER-DIFF: pin
 
             if (joy->rep & 0x10001) {
                 d->maskTex -= step;

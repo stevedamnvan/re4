@@ -293,10 +293,10 @@ void tp_pl_flag()
             // this-argument after the `li` constants in both arms; a codeless asm reading the num() result
             // in r3 gives the addi an anti-dependence (one cycle in the dump arm, two chained in the get arm).
             if (ItemMgr.num(0xFE)) {
-                { register int n3 asm("r3"); asm("" : "=m"(PlKaiou) : "r"(n3)); }
+                { register int n3 PPC_REG("r3"); asm("" : "=m"(PlKaiou) : "r"(n3)); }
                 ItemMgr.dump(0xFE);
             } else {
-                { register int n3 asm("r3"); asm("" : "=m"(PlKaiou) : "r"(n3)); asm("" : "=m"(PlDbFlag) : "r"(n3), "m"(PlKaiou)); }
+                { register int n3 PPC_REG("r3"); asm("" : "=m"(PlKaiou) : "r"(n3)); asm("" : "=m"(PlDbFlag) : "r"(n3), "m"(PlKaiou)); }
                 ItemMgr.get(0xFE, 0);
             }
             PlSetCostume();

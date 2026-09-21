@@ -1332,7 +1332,7 @@ void SceElevator(SceElevatorData* d)
     int i;
     int j;
     u32 hSnd;
-    register Vec* jp asm("r25");  // COMPILER-DIFF: register pin (see the comment above the function)
+    register Vec* jp PPC_REG("r25");  // COMPILER-DIFF: register pin (see the comment above the function)
 
     obj = SmdGetObjPtr(d->objId);
     if (obj == 0) {

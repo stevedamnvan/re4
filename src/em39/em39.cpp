@@ -720,13 +720,13 @@ static void em39_R0_Init(cEm39* em)
     // zero is reload's callee-saved r20, the 0x1D/300/10/-1/450 init constants its spill registers
     // r0/r8/r11/r9/r10 and the subArc load of the routine MotionSetCore its r11, and the post-call
     // init block is issued in pure source order (no store carries a register death). Pinned here.
-    register int z0 asm("r20");
-    register int r0c asm("r0");
-    register int r8c asm("r8");
-    register int r9c asm("r9");
-    register int r10c asm("r10");
-    register int r11c asm("r11");
-    register PlArc* arc11 asm("r11");
+    register int z0 PPC_REG("r20");
+    register int r0c PPC_REG("r0");
+    register int r8c PPC_REG("r8");
+    register int r9c PPC_REG("r9");
+    register int r10c PPC_REG("r10");
+    register int r11c PPC_REG("r11");
+    register PlArc* arc11 PPC_REG("r11");
 
     switch (em->type) {
     case 1:
@@ -2624,12 +2624,12 @@ static void em39_R1_JumpUp2(cEm39* em)
         // COMPILER-DIFF: #2 -- the target's `fmuls f12,f0,f12` ties the product to the constant's
         // register (its sum was not a tieable operand); value-carrying pins reproduce the tie and
         // the FPR names around it.
-        register f32 posy asm("fr11");
-        register f32 dy asm("fr0");
-        register f32 k asm("fr12");
-        register f32 t asm("fr12");
-        register f32 k19 asm("fr13");
-        register f32 py asm("fr13");
+        register f32 posy PPC_REG("fr11");
+        register f32 dy PPC_REG("fr0");
+        register f32 k PPC_REG("fr12");
+        register f32 t PPC_REG("fr12");
+        register f32 k19 PPC_REG("fr13");
+        register f32 py PPC_REG("fr13");
 
         MotionSetCore(em, MOTION(em), ARC(0x6A), (int) ARC(0x6B), 0xA, 1, 0);
         posy = em->pos.y;
@@ -2703,13 +2703,13 @@ static void em39_R1_JumpUp3(cEm39* em)
             // (`fmuls f12,f13,f12` / `fmuls f12,f0,f12`) and the 0.0 reuses the 1000.0 register;
             // value-carrying pins per arm (the JumpUp2 recipe). Store order x, y, z, x18: the zero's
             // first use sinks last, the dying stores keep source order.
-            register f32 posy asm("fr0");
-            register f32 dy asm("fr13");
-            register f32 k asm("fr12");
-            register f32 t asm("fr12");
-            register f32 k19 asm("fr0");
-            register f32 py asm("fr0");
-            register f32 zf asm("fr11");
+            register f32 posy PPC_REG("fr0");
+            register f32 dy PPC_REG("fr13");
+            register f32 k PPC_REG("fr12");
+            register f32 t PPC_REG("fr12");
+            register f32 k19 PPC_REG("fr0");
+            register f32 py PPC_REG("fr0");
+            register f32 zf PPC_REG("fr11");
 
             posy = em->pos.y;
             dy = w->jumpPos.y - posy + 1000.0f;
@@ -2725,13 +2725,13 @@ static void em39_R1_JumpUp3(cEm39* em)
             em->r_no_3 = 0;
         } else {
             MotionSetCore(em, MOTION(em), ARC(0x68), (int) ARC(0x69), 0xA, 1, 0);
-            register f32 posy asm("fr13"); // COMPILER-DIFF: #2 (see the other arm)
-            register f32 dy asm("fr0");
-            register f32 k asm("fr12");
-            register f32 t asm("fr12");
-            register f32 k19 asm("fr13");
-            register f32 py asm("fr13");
-            register f32 zf asm("fr11");
+            register f32 posy PPC_REG("fr13"); // COMPILER-DIFF: #2 (see the other arm)
+            register f32 dy PPC_REG("fr0");
+            register f32 k PPC_REG("fr12");
+            register f32 t PPC_REG("fr12");
+            register f32 k19 PPC_REG("fr13");
+            register f32 py PPC_REG("fr13");
+            register f32 zf PPC_REG("fr11");
 
             posy = em->pos.y;
             dy = w->jumpPos.y - posy + 1000.0f;
@@ -8440,7 +8440,7 @@ int em39GotoCk(cEm39* em)
 // (Locate), damage counters reset, a 30-frame attack wait, Wait.
 void cEm39::set2ndBattle()
 {
-    register Em39Work* w asm("r29"); // COMPILER-DIFF: #13 -- w kept live past its last store (see the asm below)
+    register Em39Work* w PPC_REG("r29"); // COMPILER-DIFF: #13 -- w kept live past its last store (see the asm below)
     Vec p = { 31259.0f, 5250.0f, -14068.0f };
     u32 zero;
 

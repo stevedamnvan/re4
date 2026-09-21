@@ -195,7 +195,7 @@ int MercSysInitRoom(MercInit* pMInit)
         // COMPILER-DIFF: #13 (int shape): the original never allocates the single-use REG_EQUIV zero;
         // reload re-materialises `li r11, 0` right before the store (after the pG load), where ours
         // local-allocs the constant to r0 and hoists it above the load.
-        register int z asm("r11"); // COMPILER-DIFF: #13
+        register int z PPC_REG("r11"); // COMPILER-DIFF: #13
         z = 0;
         wk->stage = z;
     }

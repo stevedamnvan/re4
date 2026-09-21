@@ -882,7 +882,7 @@ static void seAtDataLoad()
         break;
     }
     {
-        register int col5 asm("r5");  // COMPILER-DIFF: 2 (the original masks the u8 colour at the join; the draw_light_graph form)
+        register int col5 PPC_REG("r5");  // COMPILER-DIFF: 2 (the original masks the u8 colour at the join; the draw_light_graph form)
         int x = pW->x;
         int y = pW->y + 0x20;
         col5 = pW->sub == 1 ? (pW->loadCursor == 0 ? 6 : 0) : 0;

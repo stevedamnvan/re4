@@ -130,7 +130,7 @@ void em21DmCk(cEm21* em)
         case 7:
             mode = em->set;
             {
-                register int c asm("r9"); // COMPILER-DIFF: #13
+                register int c PPC_REG("r9"); // COMPILER-DIFF: #13
                 c = 0x1E;
                 em->dmg.m_Timer = c;
             }

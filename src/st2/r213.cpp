@@ -147,7 +147,7 @@ void R213Init()
     u32 i;
 
     {
-        register Vec* a3 asm("r3"); // COMPILER-DIFF: 3
+        register Vec* a3 PPC_REG("r3"); // COMPILER-DIFF: 3
         a3 = &rot;
         pr = a3;
         r213_memset(a3, 0, sizeof(Vec));

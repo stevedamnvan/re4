@@ -93,7 +93,7 @@ void R10fInit()
     // COMPILER-DIFF: candidate #17 (value-carrying pins): the pG temp of the first test is r10 in the
     // original (local-alloc adjacency with the work high's r9 under its sched1 order) and the pG temp of
     // the setSubMotion block is r10 too (its qty ahead of the work pointer's; ours reverses the two).
-    register GlobalWork* g asm("r10");
+    register GlobalWork* g PPC_REG("r10");
     g = pG;
     if (!(g->door_unlock[0] & 0x00800000)) {
         SceAtDataSet_exec(2, SCE_LEVEL10, 0, (TaskFunc) r10f_DoorClose, 0, 1);
@@ -122,7 +122,7 @@ void R10fInit()
             if (r10f_work.p->gondola[i] != 0) {
                 r10f_work.p->gondola[i]->setMoveMotion(ROOM_ARC_PTR(pG->pRoom, 0x26), (u16) (i * 0x1C2));
                 if (m != 0) {
-                    register GlobalWork* g2 asm("r10");    // COMPILER-DIFF: candidate #17 (see above)
+                    register GlobalWork* g2 PPC_REG("r10");    // COMPILER-DIFF: candidate #17 (see above)
                     g2 = pG;
                     r10f_work.p->gondola[i]->setSubMotion((MotionWork*) m++, ROOM_ARC_PTR(g2->pRoom, 0x30), ROOM_ARC_PTR(g2->pRoom, 0x31));
                 }

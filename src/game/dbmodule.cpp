@@ -831,7 +831,11 @@ void init_corn()
 
 // `psq_l f,0(p),1,qr5` straight from the vertex pointer: inline asm in the original (the compiler
 // always converts an s16 through a stack slot).
+#if defined(__PPC__)
 #define PSQ_L_S16(p) ({ f32 f_; asm volatile("psq_l %0,0(%1),1,5" : "=f"(f_) : "b"(p)); f_; })
+#else
+#define PSQ_L_S16(p) ((f32) *(const s16*) (p))
+#endif
 
 // Converts `n` indexed s16 vertices into `p` (scaled) and transforms them by `mat`.
 static inline void WireXform(Vec* p, u16* idx, u32 n, s16* vtx, f32 scale, Mtx mat)

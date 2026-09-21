@@ -1097,7 +1097,7 @@ int cPlayer::getLifeLevel()
 // Event start (mode in r4, see player.h): interrupt, routine 5 (0: idle footwork, 1: sub 2).
 void cPlayer::beginEvent()
 {
-    register int modeReg asm("r4");
+    register int modeReg PPC_REG("r4");
     int mode = modeReg;
 
     interrupt();
@@ -1214,7 +1214,7 @@ int cPlayer::endCamera()
 // Event end (mode in r4, see player.h).
 void cPlayer::endEvent()
 {
-    register u32 modeReg asm("r4");
+    register u32 modeReg PPC_REG("r4");
 
     endEvent0(modeReg);
 }
@@ -1766,7 +1766,7 @@ void cMot3::set(cModel* m, void* m0, void* m1, void* m2, int a, u8 b, int c, u16
     // any mask written on `b`. Reading the incoming register through a pin gives the
     // zero_extendqisi2 no LOG_LINK to fold through (and no CC clobber: sched1 weight 0, so it
     // is ranked like the original's insn).
-    register int rb asm("r9");
+    register int rb PPC_REG("r9");
     int mode = (u8) rb;
 
     m_pEm = m;

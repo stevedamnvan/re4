@@ -208,7 +208,7 @@ void Em34ClothSet1(cModel* m, PlCloth* pCloth)
     {
         // COMPILER-DIFF: 13 (local-alloc qty order): a codeless prio-4 filler issued before the
         // pUp2 `lis` in sched1 equalises the pUp2/pDown2/pMax2 qty lives (r10/r8/r7 in qty order).
-        register u32 k asm("r12");
+        register u32 k PPC_REG("r12");
         asm("" : "=r"(k));
         asm("" : "=m"(em34ClothRate[1]) : "r"(k));
     }

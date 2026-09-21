@@ -1,0 +1,4 @@
+obj/
+census.txt
+*.elf
+*.d

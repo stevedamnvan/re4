@@ -352,7 +352,7 @@ void pzzlCursorDisp(SUB_SCREEN* wk, int sw)
             // load outranks the copy (load latency 2) and gives case 2's `lwz r0; mr r30,r3; mr r3,r0`
             // in both arms. The r3 pin makes the load's destination the hard register: its
             // anti-dependence on the `col` copy (which reads r3) orders it after the copy.
-            register pzlPlayer* pl asm("r3");
+            register pzlPlayer* pl PPC_REG("r3");
             pl = wk->puzzlePlayer;
             p = pl->ptrPiece(pl->cur);
         }

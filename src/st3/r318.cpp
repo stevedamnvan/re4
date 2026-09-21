@@ -301,8 +301,8 @@ static void R318ExecSitEnd()
 void R318LaserCallBackFunc(cObj* obj)
 {
     if ((pG->Room_flg[0] & 0x00020000) && obj->isTrans() == 1) {
-        register cModel* q asm("r28");
-        register Vec* pa asm("r10");
+        register cModel* q PPC_REG("r28");
+        register Vec* pa PPC_REG("r10");
         cModel* p2 = GetPartsAddr(obj->pParts, 2);
         cModel* p4 = GetPartsAddr(obj->pParts, 4);
         int k = 2;
@@ -1013,7 +1013,7 @@ void R318EventLaserEnd(int no)
 
             laser->be_flag &= ~2;
             if (no != 4) {
-                register cModel* t asm("r28");
+                register cModel* t PPC_REG("r28");
                 cModel* p2 = GetPartsAddr(laser->pParts, 2);
                 t = p2;
                 cModel* p4 = GetPartsAddr(laser->pParts, 4);

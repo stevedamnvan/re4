@@ -327,7 +327,7 @@ none:
 // Signed height in cells for the current orientation.
 int pzlPiece::size_y()
 {
-    register s8 size asm("r0");  // COMPILER-DIFF: #17 (value pin)
+    register s8 size PPC_REG("r0");  // COMPILER-DIFF: #17 (value pin)
 
     if (m_p_data == 0) {
         return 0;

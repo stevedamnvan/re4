@@ -189,8 +189,16 @@ struct ShapeEntry {
 };
 
 // Apply the shape `data` at `rate` to the vertex buffer `dst` (8-byte vertices, s16 xyz).
+#if defined(__PPC__)
 #define PSQ_L_S16(p) ({ f32 f_; asm volatile("psq_l %0,0(%1),1,5" : "=f"(f_) : "b"(p)); f_; })
+#else
+#define PSQ_L_S16(p) ((f32) *(const s16*) (p))
+#endif
+#if defined(__PPC__)
 #define PSQ_ST_S16(f, p) asm volatile("psq_st %0,0(%1),1,5" : : "f"(f), "b"(p) : "memory")
+#else
+#define PSQ_ST_S16(f, p) (*(s16*) (p) = (s16) (f))
+#endif
 
 // Applies shape `data` at frame `rate` to the vertex buffer `dst`: for every channel flagged 4 the
 // Hermite weight (percent / 100, x1.37 with shapeFlags bit3) scales that channel's delta list

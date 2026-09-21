@@ -39,7 +39,9 @@ public:
         cAtariInfo* m_pList;    // 0x48  next info of the chain (at_mod DrawOba)
     };
 
+#if defined(__PPC__)
     cAtariInfo();
+#endif
     void init0(int parts, int hokan, int flags, f32 x, f32 y, f32 z, f32 rx, f32 rz, f32 w, f32 h);
     // init(parts, flags, hokan, ...) = init0(parts, hokan, flags, ...); m_flag |= 1
     void init(int parts, int flags, int hokan, f32 x, f32 y, f32 z, f32 rx, f32 rz, f32 w, f32 h);

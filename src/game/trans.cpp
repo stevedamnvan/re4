@@ -110,9 +110,17 @@ struct Weight {
     }
 
 // u8 -> f32 through GQR2 straight from memory: the compiler only emits psq_l from a stack slot.
+#if defined(__PPC__)
 #define PSQ_L_U8(p) ({ f32 f_; asm volatile("psq_l %0,0(%1),1,2" : "=f"(f_) : "b"(p) : "memory"); f_; })
+#else
+#define PSQ_L_U8(p) ((f32) *(const u8*) (p))
+#endif
 // Loads straight into the named variable so the asm output shares the variable's (global) register.
+#if defined(__PPC__)
 #define PSQ_L_U8_TO(dst, p) asm volatile("psq_l %0,0(%1),1,2" : "=f"(dst) : "b"(p) : "memory")
+#else
+#define PSQ_L_U8_TO(dst, p) ((dst) = (f32) *(const u8*) (p))
+#endif
 
 // Bit test as 0 / 1 (matching helper).
 static inline int isBit(u32 f, u32 b)
@@ -338,6 +346,15 @@ static void SelfShadowSetup(ModelPart* part, cModel* m, ShadowMng* mng);
 static void bumpSetup(ModelPart* part, cModelInfo* info);
 static void alphaSetup(cModel* m, ModelPart* part, cModelInfo* info, int thermo);
 static void CalcSk1_x(void* dst, void* src, u32 n);
+
+// The skinning matrix palette lives in the Gekko locked cache. Off PowerPC the platform
+// layer provides the same 16 KB as an ordinary buffer (port/dreamcast/game/platform/lc.cpp).
+#if defined(__PPC__)
+#define RE4DC_LC_PALETTE 0xE0000000u
+#else
+extern "C" unsigned char re4dc_locked_cache[];
+#define RE4DC_LC_PALETTE ((u32) re4dc_locked_cache)
+#endif
 static void CalcSk1_x2(void* dst, void* src, u32 n);
 static int MakeWeightPaletteExt(WeightExt* w, int n);
 static int MakeWeightPalette(Weight* w, int n);
@@ -880,7 +897,7 @@ static int MakeWeightPaletteExt(WeightExt* w0, int n)
             m[2][3] += *s++ * rate;
             cnt++;
         }
-        PSMTXReorder(m, (f32(*)[3]) (0xE0000000 + i * 0x30));
+        PSMTXReorder(m, (f32(*)[3]) (RE4DC_LC_PALETTE + i * 0x30));
     }
 #undef w
     return cnt;
@@ -932,7 +949,7 @@ static int MakeWeightPalette(Weight* w0, int n)
             m[2][3] += *s++ * rate;
             cnt++;
         }
-        PSMTXReorder(m, (f32(*)[3]) (0xE0000000 + i * 0x30));
+        PSMTXReorder(m, (f32(*)[3]) (RE4DC_LC_PALETTE + i * 0x30));
     }
 #undef w
     return cnt;
@@ -2521,6 +2538,7 @@ static void primBuffDebugDisp(int n)
 
 // Skin `n` vertices (s16 x/y/z + s16 matrix index, 8 bytes) from src into dst (s16 x/y/z, 6 bytes)
 // with the matrix palette in locked cache (0xE0000000, ROMtx 0x30 each). GQR6 holds the fixed point scale.
+#if defined(__PPC__)
 static void CalcSk1_x(void* dst, void* src, u32 n)
 {
     asm volatile(
@@ -2597,6 +2615,82 @@ void setupGQR6(u32 v)
 {
     asm volatile("mtspr 918, %0" : : "r"(v));
 }
+
+#else
+// Off PowerPC the same loops in C. GQR6 is modelled: its load half dequantises the
+// s16/s8 input (x 2^-scale), its store half quantises the result (x 2^scale, truncated
+// toward zero and saturated, as the paired-single store does). Both halves use the same
+// scale here, so the rotation part is exact fixed point and only the translation row is
+// scaled; the normal passes set a large negative scale so that row vanishes (0x32073207,
+// 0x20062006), exactly as on the Gekko.
+static u32 g_gqr6;
+
+static inline f32 gqrScale(u32 field)  // 6-bit two's-complement scale field -> 2^-scale
+{
+    int sc = (int) ((field >> 8) & 0x3F);
+    if (sc & 0x20) {
+        sc -= 64;
+    }
+    return __builtin_ldexpf(1.0f, -sc);
+}
+
+static inline s32 psQuant(f32 v, s32 lo, s32 hi)
+{
+    if (v >= (f32) hi) {
+        return hi;
+    }
+    if (v <= (f32) lo) {
+        return lo;
+    }
+    return (s32) v;  // C truncation == round toward zero
+}
+
+static void CalcSk1_x(void* dst, void* src, u32 n)
+{
+    s16* d = (s16*) dst;
+    const s16* s = (const s16*) src;
+    const f32 ls = gqrScale(g_gqr6 >> 16);
+    const f32 ss = 1.0f / gqrScale(g_gqr6 & 0xFFFF);
+    for (u32 i = 0; i < n; i++, s += 4, d += 3) {
+        const f32* m = (const f32*) (RE4DC_LC_PALETTE + (u32) ((s32) s[3] * 0x30));
+        f32 x = (f32) s[0] * ls;
+        f32 y = (f32) s[1] * ls;
+        f32 z = (f32) s[2] * ls;
+        f32 ox = x * m[0] + y * m[3] + z * m[6] + m[9];
+        f32 oy = x * m[1] + y * m[4] + z * m[7] + m[10];
+        f32 oz = x * m[2] + y * m[5] + z * m[8] + m[11];
+        d[0] = (s16) psQuant(ox * ss, -32768, 32767);
+        d[1] = (s16) psQuant(oy * ss, -32768, 32767);
+        d[2] = (s16) psQuant(oz * ss, -32768, 32767);
+    }
+}
+
+static void CalcSk1_x2(void* dst, void* src, u32 n)
+{
+    s8* d = (s8*) dst;
+    const s8* s = (const s8*) src;
+    const f32 ls = gqrScale(g_gqr6 >> 16);
+    const f32 ss = 1.0f / gqrScale(g_gqr6 & 0xFFFF);
+    for (u32 i = 0; i < n; i++, s += 4, d += 3) {
+        const f32* m = (const f32*) (RE4DC_LC_PALETTE + (u32) ((u8) s[3] * 0x30));
+        f32 x = (f32) s[0] * ls;
+        f32 y = (f32) s[1] * ls;
+        f32 z = (f32) s[2] * ls;
+        f32 ox = x * m[0] + y * m[3] + z * m[6] + m[9];
+        f32 oy = x * m[1] + y * m[4] + z * m[7] + m[10];
+        f32 oz = x * m[2] + y * m[5] + z * m[8] + m[11];
+        d[0] = (s8) psQuant(ox * ss, -128, 127);
+        d[1] = (s8) psQuant(oy * ss, -128, 127);
+        d[2] = (s8) psQuant(oz * ss, -128, 127);
+    }
+}
+
+void setupGQR6(u32 v)
+{
+    g_gqr6 = v;
+}
+
+#endif
 
 // Relocate a TPL whose texture headers also carry a CLUT (thermo palette).
 void CalcTplAddrC8(TEXPalette* tpl)

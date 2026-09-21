@@ -40,7 +40,16 @@ int GetModelInfoNum(cModelInfo* info);
 // MotionMove takes a second argument (pl_npc.cpp MotionMoveF)
 int MotionMoveF(cModel* m, int flag) asm("MotionMove");
 // cAtariInfo lives in cModel's union (no member constructor call): constructed by hand
+#if defined(__PPC__)
 cAtariInfo* AtariInfoConstruct(cAtariInfo* p) asm("__10cAtariInfo");
+#else
+// The constructor only zeroes the object (atariInfo.cpp).
+static inline cAtariInfo* AtariInfoConstruct(cAtariInfo* p)
+{
+    __builtin_memset(p, 0, sizeof(cAtariInfo));
+    return p;
+}
+#endif
 }
 cModelInfo* GetModelInfoAddr(cModelInfo* info, int no);
 
@@ -363,7 +372,7 @@ void cModel::matBlend(f32 rate)
         // and copies it (`addi r0,r31,60; mr r28,r0`). With the temp pinned to r0 and kept live
         // past the copy by the codeless anchor below (before the PSVECMag call), combine cannot
         // fold the copy into the addi (the r0 set is still needed) and regmove skips hard registers.
-        register MtxPtr t asm("r0") = p->l_mat;
+        register MtxPtr t PPC_REG("r0") = p->l_mat;
         MtxPtr wm = t;
 
         vx.x = p->l_mat[0][0];

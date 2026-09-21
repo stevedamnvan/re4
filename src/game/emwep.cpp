@@ -1910,7 +1910,7 @@ void cEmWep::setThrow(Vec* spd, f32 grav, EmAtkInfo* atk)
     EmWepWork* w = EMWEP_WK(this);
     Vec v;
     Mtx m;
-    register f64 hd asm("fr1"); // COMPILER-DIFF: #8
+    register f64 hd PPC_REG("fr1"); // COMPILER-DIFF: #8
 
     // COMPILER-DIFF: #8 -- the original ranks `fmr f30,f1` (grav) after `mr r26,r5; addi w`, i.e. as
     // if f1 did not die at the copy; the DFmode read of f1 keeps it live past the copy (see

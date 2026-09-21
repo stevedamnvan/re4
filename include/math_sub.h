@@ -14,7 +14,11 @@
 static inline f32 fabsf(f32 x)
 {
     f32 r;
+#if defined(__PPC__)
     asm volatile("fabs %0,%1" : "=f"(r) : "f"(x));
+#else
+    r = __builtin_fabsf(x);
+#endif
     return r;
 }
 

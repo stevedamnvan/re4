@@ -183,6 +183,7 @@ void* TaskExec_hook(void* value)
     if (ParentThread() != NULL) {
         OSSuspendThread(ParentThread());
     }
+#if defined(__PPC__)
     asm("li 3, 4\n"
         "oris 3, 3, 4\n"
         "mtspr 914, 3\n"
@@ -198,6 +199,7 @@ void* TaskExec_hook(void* value)
         :
         :
         : "r3");
+#endif
     GXSetCurrentGXThread();
     CTASK->pFunc((int) value);
     return NULL;

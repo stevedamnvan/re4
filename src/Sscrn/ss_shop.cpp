@@ -1141,7 +1141,7 @@ void SellItemNum::move(SUB_SCREEN* wk)
     // (27 / 386): this r24, val r25. Pinning `this` to r24 (every member access below goes through
     // `self`) keeps r24 away from val, which then takes r25; a pin on val itself ties the `val % 10`
     // remainder to r25 (`sub 25,25,0`).
-    register SellItemNum* self asm("r24") = this;
+    register SellItemNum* self PPC_REG("r24") = this;
     ShopWork* sw = wk->pShopWk;
     Merchant* m = wk->merchant;
     IdUnit* u;

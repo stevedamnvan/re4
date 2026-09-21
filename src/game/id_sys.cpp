@@ -91,7 +91,7 @@ void IDSystem::free()
 // 1 when a table of class `type` is currently set (m_set_flag bit).
 int IDSystem::setCk(u8 type)
 {
-    register int raw asm("r4");  // COMPILER-DIFF: #2 (the original masks the incoming u8 at the entry)
+    register int raw PPC_REG("r4");  // COMPILER-DIFF: #2 (the original masks the incoming u8 at the entry)
     u8 t = raw;
     return IdBitChk(m_set_flag, t);
 }
@@ -99,7 +99,7 @@ int IDSystem::setCk(u8 type)
 // Shows (sw 1) or hides (sw 0) every unit of class `type` at draw time (m_disp_off bit).
 void IDSystem::dispSw(u8 type, int sw)
 {
-    register int r4v asm("r4");  // COMPILER-DIFF: #2 (the original masks the u8 at each use)
+    register int r4v PPC_REG("r4");  // COMPILER-DIFF: #2 (the original masks the u8 at each use)
     int raw = r4v;
     switch (sw) {
     case 1:
@@ -185,7 +185,7 @@ void IDSystem::unitParent(IdUnit* parent, IdUnit* child)
 IdUnit* IDSystem::unitPtr(u8 id, u8 type)
 {
     static IdUnit tmpId;
-    register int r5v asm("r5");  // COMPILER-DIFF: #2 (the original masks the u8 at the use)
+    register int r5v PPC_REG("r5");  // COMPILER-DIFF: #2 (the original masks the u8 at the use)
     int raw = r5v;
     int i;
     IdUnit* u = pUnit;
@@ -233,7 +233,7 @@ void IDSystem::set(void* data, u8 id, u8 type, u8 ot, u8 prio, u8 mode)
     IdUnit* u;
     IdUnit* c;
     u32 a;
-    register int r6v asm("r6");  // COMPILER-DIFF: #2 (the original masks the u8 at the use)
+    register int r6v PPC_REG("r6");  // COMPILER-DIFF: #2 (the original masks the u8 at the use)
     int raw = r6v;
 
     setCk(type);
@@ -483,7 +483,7 @@ void IDSystem::set(void* data, u8 id, u8 type, u8 ot, u8 prio, u8 mode)
 // and clears the class set bit.
 void IDSystem::kill(u8 id, u8 type)
 {
-    register int r5v asm("r5");  // COMPILER-DIFF: #2 (the original masks the u8 at each use)
+    register int r5v PPC_REG("r5");  // COMPILER-DIFF: #2 (the original masks the u8 at each use)
     int raw = r5v;
     int i;
     IdUnit* u = pUnit;

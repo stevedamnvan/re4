@@ -451,7 +451,7 @@ static void wep07_r3_fire00(cPlayer* pl)
         // re-materialises `lis/lfs` for the compare in the first free FPR (f0, so m3r[2] takes f13)
         // and sched2 issues it before the m3r[2] load. Ours would local-alloc the shorter m3r[2]
         // load to f0 and keep the RTL order (m3r[2] first).
-        register f32 zero asm("fr0"); // COMPILER-DIFF: #13
+        register f32 zero PPC_REG("fr0"); // COMPILER-DIFF: #13
         zero = 0.0f;
         if (m3r[2] == zero) {
             m3r[0] = pitch;

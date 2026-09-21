@@ -318,6 +318,7 @@ void systemStartInit()
     VISetPostRetraceCallback(postVSyncCallback);
     Dvd.Init();
     CardInit();
+#if defined(__PPC__)
     asm("li 3, 4\n"
         "oris 3, 3, 4\n"
         "mtspr 914, 3\n"
@@ -333,6 +334,7 @@ void systemStartInit()
         :
         :
         : "r3");
+#endif
     SystemMemInit();
     if (pG->dev_mode == 1) {
         CardDbgCacheSet();

@@ -110,7 +110,11 @@ void Espgen45_static_init()
 // the pos/cur address adds before the noise lbzx and the neighbour loads after it in the target's loop A.
 // Loads straight into the destination variable (no statement-expression temp): the target's `psq_l f10; fsubs f10,f10`
 // is one pseudo, the function-level `n`.
+#if defined(__PPC__)
 #define PSQ_L_U8_TO(dst, p) asm volatile("psq_l %0,0(%1),1,2" : "=f"(dst) : "b"(p), "m"(*(p)))
+#else
+#define PSQ_L_U8_TO(dst, p) ((dst) = (f32) *(const u8*) (p))
+#endif
 
 // Bump texture (I8, 8x4 tiles) index of grid point (x, y). x/8 before y/4 (the two signed divisions are
 // separate blocks, so their order is the source order) and `(y / 4) << 5`: with `* 32` fold would
@@ -373,7 +377,7 @@ void Espgen45_Move00(EspgenWork* w)
                     // COMPILER-DIFF: candidate #17 (r0 occupant): `j / 8` pinned to r0 = a hard-register conflict of the i
                     // copy `t_i` with r0 during the i-division blocks, so global.c's preference override skips r0 and t_i
                     // takes r9 (the target's `mr r9,i`); jq's shift then inherits r0 (`slwi r0,r0,5`).
-                    register int jq asm("r0") = j / 8;
+                    register int jq PPC_REG("r0") = j / 8;
                     jx = (i / 4) << 5;
                     mx = p->nx;
                     // COMPILER-DIFF: candidate (sched1 slot fillers). Three codeless frame stores of `v` (dead after the

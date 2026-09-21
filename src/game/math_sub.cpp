@@ -691,6 +691,7 @@ f32 SQRTF(f32 x)
     if (x <= 0.00001f) {
         return 0.0f;
     }
+#if defined(__PPC__)
     asm("frsqrte 2, %1\n\t"
         "fmuls 3, 2, 2\n\t"
         "fmuls 4, 2, %2\n\t"
@@ -700,6 +701,13 @@ f32 SQRTF(f32 x)
         : "=f"(r)
         : "f"(x), "f"(half), "f"(three)
         : "fr2", "fr3", "fr4");
+#else
+    // x * rsqrt(x) after one Newton step on the frsqrte estimate; the exact
+    // square root is within the estimate's error of that value.
+    (void) half;
+    (void) three;
+    r = __builtin_sqrtf(x);
+#endif
     return r;
 }
 
@@ -741,12 +749,37 @@ f32 Coeff[10] = {
 f32 powx[2] = {1.0f, 1.0f};
 f32 sum[2] = {0.0f, 0.0f};
 
+
+#if !defined(__PPC__)
+// The same series in scalar C: the paired-single loop accumulates the odd powers
+// (x, x^3, ... x^9 with Coeff[0,2,4,6,8]) in slot 0 and the even powers (x^2 ... x^10
+// with Coeff[1,3,5,7,9]) in slot 1, then ps_sum0 adds the two slots.
+static inline f32 sinSeries(f32 x)
+{
+    f32 x2 = x * x;
+    f32 p1 = x;
+    f32 p2 = x2;
+    f32 s0 = 0.0f;
+    f32 s1 = 0.0f;
+    int k;
+
+    for (k = 0; k < 5; k++) {
+        s0 += p1 * Coeff[2 * k];
+        s1 += p2 * Coeff[2 * k + 1];
+        p1 *= x2;
+        p2 *= x2;
+    }
+    return s0 + s1;
+}
+#endif
+
 // sin(x) by a paired-single Taylor series after wrapping x into [-PI, PI).
 f32 SINF(f32 x)
 {
     f32 r;
 
     x = LIMIT_ANGLE(x);
+#if defined(__PPC__)
     asm volatile(
         "lis 9, Coeff@ha\n\t"
         "li 10, powx@sda21\n\t"
@@ -775,6 +808,9 @@ f32 SINF(f32 x)
         : "=f"(r)
         : "f"(x)
         : "r9", "r10", "r11", "fr2", "fr3", "fr4", "fr5");
+#else
+    r = sinSeries(x);
+#endif
     return r;
 }
 
@@ -784,6 +820,7 @@ f32 COSF(f32 x)
     f32 r;
 
     x = LIMIT_ANGLE(x + 1.5707964f);
+#if defined(__PPC__)
     asm volatile(
         "lis 9, Coeff@ha\n\t"
         "li 10, powx@sda21\n\t"
@@ -812,6 +849,9 @@ f32 COSF(f32 x)
         : "=f"(r)
         : "f"(x)
         : "r9", "r10", "r11", "fr2", "fr3", "fr4", "fr5");
+#else
+    r = sinSeries(x);
+#endif
     return r;
 }
 
@@ -822,6 +862,7 @@ f32 LIMIT_ANGLE(f32 x)
     f32 max = PI;
     f32 step = PI2;
 
+#if defined(__PPC__)
     asm("fcmpu 0, %0, %2\n\t"
         "blt 1f\n"
         "0:\n\t"
@@ -840,5 +881,17 @@ f32 LIMIT_ANGLE(f32 x)
         : "+f"(x)
         : "f"(min), "f"(max), "f"(step)
         : "cr0");
+#else
+    // The same loop: subtract while at or above max, else add while below min.
+    if (x >= max) {
+        do {
+            x -= step;
+        } while (x >= max);
+    } else if (x < min) {
+        do {
+            x += step;
+        } while (x < min);
+    }
+#endif
     return x;
 }

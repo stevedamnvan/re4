@@ -2850,7 +2850,7 @@ int cSubChar::checkBackEm()
 // The damage routine handler (routine 4): pl_sub's SetSubDamage passes it in r4.
 void cSubChar::setEmFunc()
 {
-    register void (*func)() asm("r4");
+    register void (*func)() PPC_REG("r4");
 
     subFunc = func;
 }
