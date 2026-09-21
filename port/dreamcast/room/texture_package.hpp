@@ -59,6 +59,7 @@ public:
     ~Package();
 
     bool open(const char* path);
+    bool adopt(const std::uint8_t* data, std::size_t size);
     bool upload();
     void close();
 
@@ -74,6 +75,8 @@ public:
 
 private:
     bool range_valid(std::uint32_t offset, std::uint32_t size) const;
+
+    bool validate();
 
     file_t file_ = FILEHND_INVALID;
     const std::uint8_t* data_ = nullptr;

@@ -18,6 +18,7 @@
 #include "character_package.hpp"
 #include "collision_package.hpp"
 #include "room_package.hpp"
+#include "room_storage.hpp"
 #include "route_package.hpp"
 #include "source_hud_package.hpp"
 #include "texture_package.hpp"
@@ -124,6 +125,25 @@ struct DemoTelemetry {
     // Microseconds spent uploading every texture package into VRAM,
     // published once at load. R4b measures offline payload layouts here.
     std::uint32_t texture_upload_us;
+    // R4 5A: the room lifecycle. The arena figures say how much of the reserved
+    // capacity a room actually needs; the counters and timings say whether
+    // repeated load, retire and reload returns to the same baseline.
+    std::uint32_t room_loads;
+    std::uint32_t room_retirements;
+    std::uint32_t room_failed_loads;
+    std::uint32_t room_arena_capacity;
+    std::uint32_t room_arena_used;
+    std::uint32_t room_arena_high_water;
+    std::uint32_t room_read_bytes;
+    std::uint32_t room_read_us;
+    std::uint32_t room_validate_us;
+    std::uint32_t room_upload_us;
+    std::uint32_t room_install_us;
+    std::uint32_t room_retire_us;
+    // Sampled every frame rather than once at load, so a reclaim that does not
+    // return to its baseline shows up as drift across cycles.
+    std::uint32_t pvr_free_now;
+    std::uint32_t aica_free_now;
 #if defined(RE4DC_CULL_AUDIT)
     std::uint32_t cull_audit_on_screen_strips;
     std::uint32_t cull_audit_on_screen_vertices;
@@ -178,26 +198,26 @@ struct DemoTelemetry {
 };
 
 #if defined(RE4DC_SUBMIT_DIGEST)
-static_assert(sizeof(DemoTelemetry) == 384U);
+static_assert(sizeof(DemoTelemetry) == 440U);
 #elif defined(RE4DC_SUBMIT_PROFILE)
-static_assert(sizeof(DemoTelemetry) == 512U);
+static_assert(sizeof(DemoTelemetry) == 568U);
 #elif defined(RE4DC_CULL_AUDIT)
-static_assert(sizeof(DemoTelemetry) == 392U);
+static_assert(sizeof(DemoTelemetry) == 448U);
 #else
-static_assert(sizeof(DemoTelemetry) == 376U);
+static_assert(sizeof(DemoTelemetry) == 432U);
 #endif
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
 #if defined(RE4DC_SUBMIT_DIGEST)
-    telemetry.version = 15U;
+    telemetry.version = 19U;
 #elif defined(RE4DC_SUBMIT_PROFILE)
-    telemetry.version = 13U;
+    telemetry.version = 17U;
 #elif defined(RE4DC_CULL_AUDIT)
-    telemetry.version = 14U;
+    telemetry.version = 18U;
 #else
-    telemetry.version = 12U;
+    telemetry.version = 16U;
 #endif
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
@@ -918,16 +938,23 @@ bool file_exists(const char* path) {
     return true;
 }
 
+// The room owns the em12 cues; the weapon and player cues are persistent. These
+// four are the only audio a room retirement may release.
+constexpr const char* kEnemySwingPath = "/cd/em12-swing-3d.wav";
+constexpr const char* kEnemyHitPath = "/cd/em12-body-hit-0c.wav";
+constexpr const char* kEnemyDamageVoicePath = "/cd/em12-damage-voice-47.wav";
+constexpr const char* kEnemyDeathVoicePath = "/cd/em12-death-voice-16.wav";
+
 bool load_demo_audio(DemoAudio& audio) {
     constexpr const char* fire_0_path = "/rd/wep02-fire-0.wav";
     constexpr const char* fire_2_path = "/rd/wep02-fire-2.wav";
     constexpr const char* reload_path = "/rd/wep02-reload-16.wav";
-    constexpr const char* enemy_swing_path = "/rd/em12-swing-3d.wav";
-    constexpr const char* enemy_hit_path = "/rd/em12-body-hit-0c.wav";
+    constexpr const char* enemy_swing_path = kEnemySwingPath;
+    constexpr const char* enemy_hit_path = kEnemyHitPath;
     constexpr const char* enemy_damage_voice_path =
-        "/rd/em12-damage-voice-47.wav";
+        kEnemyDamageVoicePath;
     constexpr const char* enemy_death_voice_path =
-        "/rd/em12-death-voice-16.wav";
+        kEnemyDeathVoicePath;
     constexpr const char* player_damage_voice_paths[] = {
         "/rd/pl00-damage-voice-09.wav",
         "/rd/pl00-damage-voice-10.wav",
@@ -1035,6 +1062,43 @@ bool load_demo_audio(DemoAudio& audio) {
                 any_player_reaction_audio ? 1 : 0);
     return true;
 }
+bool load_enemy_audio(DemoAudio& audio) {
+    if(!audio.initialized) {
+        return true;
+    }
+    audio.enemy_swing_3d = snd_sfx_load(kEnemySwingPath);
+    audio.enemy_body_hit_0c = snd_sfx_load(kEnemyHitPath);
+    audio.enemy_damage_voice_47 = snd_sfx_load(kEnemyDamageVoicePath);
+    audio.enemy_death_voice_16 = snd_sfx_load(kEnemyDeathVoicePath);
+    return audio.enemy_swing_3d != SFXHND_INVALID &&
+           audio.enemy_body_hit_0c != SFXHND_INVALID &&
+           audio.enemy_damage_voice_47 != SFXHND_INVALID &&
+           audio.enemy_death_voice_16 != SFXHND_INVALID;
+}
+
+void unload_enemy_audio(DemoAudio& audio) {
+    if(!audio.initialized) {
+        return;
+    }
+    // Unloading a sample does not silence a channel already streaming from it,
+    // and there is no way to wait for one, so every channel is stopped first.
+    // The original does the same at a transition: gameDoordemo stops everything
+    // before the room heap goes.
+    for(int channel = 0; channel < 64; ++channel) {
+        snd_sfx_stop(channel);
+    }
+    sfxhnd_t* const handles[4] = {
+        &audio.enemy_swing_3d, &audio.enemy_body_hit_0c,
+        &audio.enemy_damage_voice_47, &audio.enemy_death_voice_16,
+    };
+    for(sfxhnd_t* handle : handles) {
+        if(*handle != SFXHND_INVALID) {
+            snd_sfx_unload(*handle);
+            *handle = SFXHND_INVALID;
+        }
+    }
+}
+
 void release_demo_audio(DemoAudio& audio) {
     if(!audio.initialized) {
         return;
@@ -6060,25 +6124,416 @@ FrameStats render_scene(const re4dc::room::Package& room,
     return stats;
 }
 
+
+// ---------------------------------------------------------------------------
+// R4 5A: the room residency.
+//
+// Room-owned packages are read off the disc into this arena and the room's
+// derived state hangs off the pointers below. Retiring the room frees the
+// derived state, releases its texture memory and audio, and resets the arena,
+// which is the lifetime gameRoomMemInit gives the original game's room heap.
+// Persistent resources (Leon, his textures, the HUD and its atlas, weapon and
+// player audio) are untouched by any of it and stay in the linked romdisk for
+// this checkpoint.
+// ---------------------------------------------------------------------------
+
+// Sized from the measured high water of r100's six packages, 5,671,872 bytes
+// once each is padded to the arena's alignment, plus a little under 100 KB of
+// slack. Reported usage and high water say how much of it is real, so this is
+// a measurement rather than a guess.
+constexpr std::size_t kRoomArenaCapacity = 5U * 1024U * 1024U + 512U * 1024U;
+alignas(32) std::uint8_t g_room_arena_memory[kRoomArenaCapacity];
+re4dc::storage::Arena g_room_arena;
+
+// Source resource identity, kept so a resource is named the way the original
+// names it rather than by where its converted bytes happen to sit. The path is
+// a storage location, not an identity.
+struct RoomResourceId {
+    const char* archive;
+    const char* tag;
+    std::uint8_t ordinal;
+    const char* path;
+    const char* label;
+};
+
+constexpr RoomResourceId kRoomGeometry   = {"r100", "SMD", 0, "/cd/r10d.re4room", "room"};
+constexpr RoomResourceId kRoomCollision  = {"r100", "SAT", 0, "/cd/r10d.re4sat", "collision"};
+constexpr RoomResourceId kRoomTextures   = {"r100", "TPL", 0, "/cd/r10d.re4tex", "room textures"};
+constexpr RoomResourceId kRoomRoute      = {"r100", "RTP", 0, "/cd/route.re4rtp", "route"};
+constexpr RoomResourceId kRoomEnemy      = {"em12", "MDL", 0, "/cd/ganado.re4chr", "Ganado"};
+constexpr RoomResourceId kRoomEnemyTex   = {"em12", "TPL", 0, "/cd/ganado.re4tex", "Ganado textures"};
+
+// The room's packages. At file scope because their lifetime is the room's, not
+// main()'s.
+re4dc::room::Package room;
+re4dc::collision::Package collision;
+re4dc::route::Package route;
+re4dc::character::Package ganado;
+re4dc::texture::Package textures;
+re4dc::texture::Package ganado_textures;
+
+// State compiled from those packages. Every one of these either points into
+// package bytes or holds a texture address, so every one must be rebuilt on
+// reload.
+pvr_poly_hdr_t* material_headers = nullptr;
+pvr_poly_hdr_t* room_strip_headers = nullptr;
+pvr_poly_hdr_t* room_punchthrough_headers = nullptr;
+VisibleRoomGroup* visible_room_groups = nullptr;
+std::unique_ptr<bool[]> material_alpha;
+std::unique_ptr<bool[]> material_punchthrough;
+pvr_poly_hdr_t* ganado_headers = nullptr;
+std::unique_ptr<bool[]> ganado_alpha;
+
+struct RoomLifecycle {
+    std::uint32_t loads = 0;
+    std::uint32_t retirements = 0;
+    std::uint32_t failed_loads = 0;
+    std::uint32_t read_us = 0;
+    std::uint32_t validate_us = 0;
+    std::uint32_t upload_us = 0;
+    std::uint32_t install_us = 0;
+    std::uint32_t retire_us = 0;
+    std::uint32_t read_bytes = 0;
+};
+RoomLifecycle g_room_lifecycle{};
+
+// Set to make the next load fail on purpose, so the cleanup and retry paths are
+// exercised rather than assumed.
+bool g_room_inject_load_failure = false;
+// Simulation ticks between automatic load/retire/reload cycles in the
+// unattended route. A manual run triggers one with the Y button instead.
+constexpr std::uint64_t kRoomCycleIntervalTicks = 300U;
+
+// Reads one room resource into the arena and hands the bytes to the package's
+// own validator. Nothing is copied afterwards and nothing here owns the bytes:
+// the arena does, and resetting it releases them all at once.
+template <typename PackageType>
+bool load_room_resource(PackageType& package, const RoomResourceId& id) {
+    const std::uint64_t began = timer_us_gettime64();
+    const auto read = re4dc::storage::read_file(g_room_arena, id.path);
+    if(read.data == nullptr) {
+        std::printf("re4dc-room: %s read failed (%s/%s/%u at %s): %s\n",
+                    id.label, id.archive, id.tag,
+                    static_cast<unsigned>(id.ordinal), id.path, read.error);
+        return false;
+    }
+    g_room_lifecycle.read_us += read.read_us;
+    g_room_lifecycle.read_bytes += static_cast<std::uint32_t>(read.size);
+    const std::uint64_t validate_began = timer_us_gettime64();
+    if(!package.adopt(read.data, read.size)) {
+        std::printf("re4dc-room: %s validation failed (%s/%s/%u): %s\n",
+                    id.label, id.archive, id.tag,
+                    static_cast<unsigned>(id.ordinal), package.error());
+        return false;
+    }
+    g_room_lifecycle.validate_us +=
+        static_cast<std::uint32_t>(timer_us_gettime64() - validate_began);
+    (void) began;
+    return true;
+}
+
+
+// Compiling a polygon header bakes its texture address into the header words,
+// so every one of these must be rebuilt whenever its texture package is
+// uploaded again. Each group starts from its own context: the HUD pass sets
+// depth comparison, depth write and blend fields that the room pass never
+// clears, so a shared context would silently hand reloaded room headers the
+// HUD's depth state.
+bool compile_room_material_headers() {
+    pvr_poly_cxt_t context{};
+    for(std::uint32_t material = 0; material < room.header().material_count;
+        ++material) {
+        const auto* texture = textures.find(room.materials()[material].name);
+        if(texture == nullptr) {
+            std::printf("re4dc-room: no texture for material %s\n",
+                        room.materials()[material].name);
+            return false;
+        }
+        const std::uint32_t texture_index =
+            static_cast<std::uint32_t>(texture - textures.textures());
+        material_alpha[material] =
+            (texture->flags & re4dc::texture::kAlpha) != 0;
+        material_punchthrough[material] =
+            (texture->flags & re4dc::texture::kBinaryAlpha) != 0;
+        const pvr_list_t list = material_alpha[material]
+                                    ? PVR_LIST_TR_POLY
+                                    : PVR_LIST_OP_POLY;
+        const int format = texture->format == re4dc::texture::kRgb565
+                               ? PVR_TXRFMT_RGB565
+                               : texture->format == re4dc::texture::kArgb1555
+                                     ? PVR_TXRFMT_ARGB1555
+                                     : PVR_TXRFMT_ARGB4444;
+        pvr_poly_cxt_txr(&context, list, format, texture->width,
+                         texture->height, textures.pvr_texture(texture_index),
+                         PVR_FILTER_BILINEAR);
+        context.gen.culling = PVR_CULLING_NONE;
+        context.gen.fog_type = PVR_FOG_TABLE;
+        if(material_alpha[material]) {
+            context.txr.alpha = PVR_TXRALPHA_ENABLE;
+        }
+        pvr_poly_compile(&material_headers[material], &context);
+        constexpr pvr_cull_mode_t kPvrCullModes[3] = {
+            PVR_CULLING_NONE,
+            PVR_CULLING_CCW,
+            PVR_CULLING_CW,
+        };
+        for(std::uint32_t cull = 0U; cull < 3U; ++cull) {
+            context.gen.culling = kPvrCullModes[cull];
+            pvr_poly_compile(&room_strip_headers[material * 3U + cull],
+                             &context);
+        }
+        if(material_punchthrough[material]) {
+            pvr_poly_cxt_txr(
+                &context, PVR_LIST_PT_POLY, format, texture->width,
+                texture->height, textures.pvr_texture(texture_index),
+                PVR_FILTER_BILINEAR);
+            context.gen.fog_type = PVR_FOG_TABLE;
+            context.txr.alpha = PVR_TXRALPHA_ENABLE;
+            for(std::uint32_t cull = 0U; cull < 3U; ++cull) {
+                context.gen.culling = kPvrCullModes[cull];
+                pvr_poly_compile(
+                    &room_punchthrough_headers[material * 3U + cull],
+                    &context);
+            }
+        }
+    }
+    return true;
+}
+
+bool compile_character_headers_for(
+    const re4dc::character::Package& character,
+    const re4dc::texture::Package& character_textures,
+    pvr_poly_hdr_t* headers, bool* alpha, const char* label) {
+    pvr_poly_cxt_t context{};
+
+        for(std::uint32_t batch_index = 0;
+            batch_index < character.header().batch_count; ++batch_index) {
+            char material_name[32];
+            ::snprintf(
+                material_name, sizeof(material_name), "PART_%03lu",
+                static_cast<unsigned long>(character.batches()[batch_index].source_part));
+            const auto* texture = character_textures.find(material_name);
+            if(texture == nullptr) {
+                std::printf("re4dc-room: missing %s material %s\n", label,
+                            material_name);
+                return false;
+            }
+            const std::uint32_t texture_index = static_cast<std::uint32_t>(
+                texture - character_textures.textures());
+            const int format = texture->format == re4dc::texture::kRgb565
+                                   ? PVR_TXRFMT_RGB565
+                                   : texture->format == re4dc::texture::kArgb1555
+                                         ? PVR_TXRFMT_ARGB1555
+                                         : PVR_TXRFMT_ARGB4444;
+            alpha[batch_index] =
+                (texture->flags & re4dc::texture::kAlpha) != 0;
+            const pvr_list_t list = alpha[batch_index]
+                                        ? PVR_LIST_TR_POLY
+                                        : PVR_LIST_OP_POLY;
+            pvr_poly_cxt_txr(&context, list, format,
+                             texture->width, texture->height,
+                             character_textures.pvr_texture(texture_index),
+                             PVR_FILTER_BILINEAR);
+            // Source Model::CullMode defaults to GX_CULL_FRONT.  The model
+            // conversion preserves GX primitive order, so retain that source
+            // cull direction for both native strips and clipped triangles.
+            context.gen.culling = PVR_CULLING_CCW;
+            context.gen.fog_type = PVR_FOG_TABLE;
+            context.gen.specular = PVR_SPECULAR_ENABLE;
+            if(alpha[batch_index]) {
+                context.txr.alpha = PVR_TXRALPHA_ENABLE;
+            }
+            pvr_poly_compile(&headers[batch_index], &context);
+        }
+        return true;
+}
+
+// Retiring the room. The order is the one the hazards demand: silence and
+// release the room's audio, drop the state compiled from the room, free its
+// texture memory, drop the package views, invalidate every table keyed by
+// package indices, then return the arena.
+//
+// The caller must already have waited for the previous render. pvr_scene_finish
+// returns before the PVR has finished reading textures, so freeing texture
+// memory is only safe once pvr_wait_ready has returned.
+//
+// Safe to call on a half-loaded room: every pointer is checked and every
+// package tolerates being closed twice, which is what makes a failed load
+// recoverable.
+void retire_room(DemoAudio& audio) {
+    const std::uint64_t began = timer_us_gettime64();
+
+    unload_enemy_audio(audio);
+
+    delete[] material_headers;
+    material_headers = nullptr;
+    delete[] room_strip_headers;
+    room_strip_headers = nullptr;
+    delete[] room_punchthrough_headers;
+    room_punchthrough_headers = nullptr;
+    delete[] visible_room_groups;
+    visible_room_groups = nullptr;
+    material_alpha.reset();
+    material_punchthrough.reset();
+    delete[] ganado_headers;
+    ganado_headers = nullptr;
+    ganado_alpha.reset();
+
+    // close() frees only the allocations upload() actually owns, so a payload
+    // shared by several descriptors is freed exactly once.
+    ganado_textures.close();
+    textures.close();
+
+    room.close();
+    collision.close();
+    route.close();
+    ganado.close();
+
+    // Everything below is keyed by indices into the package that has just gone,
+    // so none of it means anything for the next one.
+#if defined(RE4DC_SCENE_R100)
+    std::memset(g_room_static_lighting_owner, 0xff,
+                sizeof(g_room_static_lighting_owner));
+#endif
+    for(auto& entry : g_room_vertex_cache) {
+        entry = RoomVertexCacheEntry{};
+    }
+    g_room_vertex_cache_generation = 0;
+    for(auto& slot : g_room_batch_slots) {
+        slot = RoomBatchSlot{};
+    }
+    g_room_batch_serial = 0;
+    g_room_primitive_bounds_ready = false;
+    g_room_batch_locals_ready = false;
+#if defined(RE4DC_SCENE_R100)
+    g_room_normals_are_unit = false;
+#endif
+
+    g_room_arena.reset();
+    ++g_room_lifecycle.retirements;
+    g_room_lifecycle.retire_us =
+        static_cast<std::uint32_t>(timer_us_gettime64() - began);
+}
+
+// Loads the room from the disc into the arena and rebuilds everything derived
+// from it. On failure the caller retires the room, which cleans up whatever
+// this managed to install, and may then try again.
+bool load_room(DemoAudio& audio) {
+    if(g_room_inject_load_failure) {
+        // Deliberately unreadable, to prove the failure path cleans up and that
+        // a retry afterwards succeeds.
+        g_room_inject_load_failure = false;
+        ++g_room_lifecycle.failed_loads;
+        RoomResourceId missing = kRoomGeometry;
+        missing.path = "/cd/absent.re4room";
+        std::printf("re4dc-room: injecting a load failure\n");
+        if(!load_room_resource(room, missing)) {
+            return false;
+        }
+    }
+    if(!load_room_resource(room, kRoomGeometry) ||
+       !load_room_resource(collision, kRoomCollision) ||
+       !load_room_resource(route, kRoomRoute) ||
+       !load_room_resource(ganado, kRoomEnemy) ||
+       !load_room_resource(textures, kRoomTextures) ||
+       !load_room_resource(ganado_textures, kRoomEnemyTex)) {
+        return false;
+    }
+    // The shape checks main() makes on the first load apply to every load: the
+    // hit-capsule and axe-marker arithmetic indexes off the end otherwise.
+    if(ganado.header().clip_count < 5U ||
+       ganado.header().position_count != 1690U ||
+       ganado.header().version != re4dc::character::kVersion ||
+       ganado.header().skinned_position_count != 1667U ||
+       ganado.header().source_normal_count != 1818U ||
+       ganado.header().normal_matrix_count != 112U) {
+        std::printf("re4dc-room: reloaded Ganado package has the wrong shape\n");
+        return false;
+    }
+    if(ganado.header().position_count > kGanadoVertexCapacity ||
+       ganado.header().normal_count > kGanadoVertexCapacity ||
+       ganado.header().source_normal_count > kGanadoVertexCapacity) {
+        std::printf("re4dc-room: reloaded actor exceeds transform capacity\n");
+        return false;
+    }
+
+    const std::uint64_t upload_began = timer_us_gettime64();
+    if(!textures.upload()) {
+        std::printf("re4dc-room: room texture upload failed: %s\n",
+                    textures.error());
+        return false;
+    }
+    if(!ganado_textures.upload()) {
+        std::printf("re4dc-room: Ganado texture upload failed: %s\n",
+                    ganado_textures.error());
+        return false;
+    }
+    g_room_lifecycle.upload_us =
+        static_cast<std::uint32_t>(timer_us_gettime64() - upload_began);
+
+    const std::uint64_t install_began = timer_us_gettime64();
+    material_headers =
+        new(std::nothrow) pvr_poly_hdr_t[room.header().material_count];
+    room_strip_headers =
+        new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
+    room_punchthrough_headers =
+        new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
+    visible_room_groups =
+        new(std::nothrow) VisibleRoomGroup[room.header().group_count];
+    material_alpha.reset(new(std::nothrow) bool[room.header().material_count]);
+    material_punchthrough.reset(
+        new(std::nothrow) bool[room.header().material_count]);
+    ganado_headers =
+        new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
+    ganado_alpha.reset(new(std::nothrow) bool[ganado.header().batch_count]);
+    if(material_headers == nullptr || room_strip_headers == nullptr ||
+       room_punchthrough_headers == nullptr || visible_room_groups == nullptr ||
+       material_alpha == nullptr || material_punchthrough == nullptr ||
+       ganado_headers == nullptr || ganado_alpha == nullptr) {
+        std::printf("re4dc-room: room header allocation failed\n");
+        return false;
+    }
+    if(!compile_room_material_headers()) {
+        return false;
+    }
+    if(!compile_character_headers_for(ganado, ganado_textures, ganado_headers,
+                                      ganado_alpha.get(), "Ganado")) {
+        return false;
+    }
+#if defined(RE4DC_SCENE_R100)
+    if(!prepare_room_static_lighting(room)) {
+        std::printf("re4dc-room: room static lighting failed on load\n");
+        return false;
+    }
+#endif
+    if(!prepare_room_primitive_bounds(room)) {
+        std::printf("re4dc-room: room strip bounds unavailable\n");
+    }
+    prepare_room_batch_locals(room);
+    if(!load_enemy_audio(audio)) {
+        std::printf("re4dc-room: enemy audio load failed\n");
+        return false;
+    }
+    g_room_lifecycle.install_us =
+        static_cast<std::uint32_t>(timer_us_gettime64() - install_began);
+    ++g_room_lifecycle.loads;
+    return true;
+}
+
 } // namespace
 
 int main() {
     g_re4dc_demo_telemetry.flags = 0x10000001U;
-    re4dc::room::Package room;
-    if(!room.open("/rd/r10d.re4room")) {
-        std::printf("re4dc-room: room load failed: %s\n", room.error());
+    g_room_arena.init(g_room_arena_memory, kRoomArenaCapacity);
+    if(!load_room_resource(room, kRoomGeometry)) {
         return 1;
     }
-    re4dc::collision::Package collision;
-    if(!collision.open("/rd/r10d.re4sat")) {
-        std::printf("re4dc-room: collision load failed: %s\n", collision.error());
+    if(!load_room_resource(collision, kRoomCollision)) {
         return 1;
     }
-    re4dc::route::Package route;
     const re4dc::route::Package* route_ptr = nullptr;
 #if defined(RE4DC_SCENE_R100)
-    if(!route.open("/rd/route.re4rtp")) {
-        std::printf("re4dc-room: r100 route load failed: %s\n", route.error());
+    if(!load_room_resource(route, kRoomRoute)) {
         return 1;
     }
     route_ptr = &route;
@@ -6091,14 +6546,10 @@ int main() {
         std::printf("re4dc-room: Leon load failed: %s\n", leon.error());
         return 1;
     }
-    re4dc::character::Package ganado;
-    if(!ganado.open("/rd/ganado.re4chr")) {
-        std::printf("re4dc-room: Ganado load failed: %s\n", ganado.error());
+    if(!load_room_resource(ganado, kRoomEnemy)) {
         return 1;
     }
-    re4dc::texture::Package textures;
-    if(!textures.open("/rd/r10d.re4tex")) {
-        std::printf("re4dc-room: texture load failed: %s\n", textures.error());
+    if(!load_room_resource(textures, kRoomTextures)) {
         return 1;
     }
     re4dc::texture::Package leon_textures;
@@ -6107,10 +6558,7 @@ int main() {
                     leon_textures.error());
         return 1;
     }
-    re4dc::texture::Package ganado_textures;
-    if(!ganado_textures.open("/rd/ganado.re4tex")) {
-        std::printf("re4dc-room: Ganado texture load failed: %s\n",
-                    ganado_textures.error());
+    if(!load_room_resource(ganado_textures, kRoomEnemyTex)) {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
@@ -6254,17 +6702,16 @@ int main() {
     pvr_poly_cxt_col(&context, PVR_LIST_OP_POLY);
     context.gen.culling = PVR_CULLING_NONE;
     pvr_poly_compile(&untextured_header, &context);
-    pvr_poly_hdr_t* material_headers =
+    material_headers =
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count];
-    pvr_poly_hdr_t* room_strip_headers =
+    room_strip_headers =
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
-    pvr_poly_hdr_t* room_punchthrough_headers =
+    room_punchthrough_headers =
         new(std::nothrow) pvr_poly_hdr_t[room.header().material_count * 3U];
-    VisibleRoomGroup* visible_room_groups =
+    visible_room_groups =
         new(std::nothrow) VisibleRoomGroup[room.header().group_count];
-    std::unique_ptr<bool[]> material_alpha(
-        new(std::nothrow) bool[room.header().material_count]);
-    std::unique_ptr<bool[]> material_punchthrough(
+    material_alpha.reset(new(std::nothrow) bool[room.header().material_count]);
+    material_punchthrough.reset(
         new(std::nothrow) bool[room.header().material_count]);
     if(material_headers == nullptr || room_strip_headers == nullptr ||
        room_punchthrough_headers == nullptr || material_alpha == nullptr ||
@@ -6272,124 +6719,26 @@ int main() {
         std::printf("re4dc-room: material header allocation failed\n");
         return 1;
     }
-    for(std::uint32_t material = 0; material < room.header().material_count;
-        ++material) {
-        const auto* texture = textures.find(room.materials()[material].name);
-        if(texture == nullptr) {
-            std::printf("re4dc-room: no texture for material %s\n",
-                        room.materials()[material].name);
-            return 1;
-        }
-        const std::uint32_t texture_index =
-            static_cast<std::uint32_t>(texture - textures.textures());
-        material_alpha[material] =
-            (texture->flags & re4dc::texture::kAlpha) != 0;
-        material_punchthrough[material] =
-            (texture->flags & re4dc::texture::kBinaryAlpha) != 0;
-        const pvr_list_t list = material_alpha[material]
-                                    ? PVR_LIST_TR_POLY
-                                    : PVR_LIST_OP_POLY;
-        const int format = texture->format == re4dc::texture::kRgb565
-                               ? PVR_TXRFMT_RGB565
-                               : texture->format == re4dc::texture::kArgb1555
-                                     ? PVR_TXRFMT_ARGB1555
-                                     : PVR_TXRFMT_ARGB4444;
-        pvr_poly_cxt_txr(&context, list, format, texture->width,
-                         texture->height, textures.pvr_texture(texture_index),
-                         PVR_FILTER_BILINEAR);
-        context.gen.culling = PVR_CULLING_NONE;
-        context.gen.fog_type = PVR_FOG_TABLE;
-        if(material_alpha[material]) {
-            context.txr.alpha = PVR_TXRALPHA_ENABLE;
-        }
-        pvr_poly_compile(&material_headers[material], &context);
-        constexpr pvr_cull_mode_t kPvrCullModes[3] = {
-            PVR_CULLING_NONE,
-            PVR_CULLING_CCW,
-            PVR_CULLING_CW,
-        };
-        for(std::uint32_t cull = 0U; cull < 3U; ++cull) {
-            context.gen.culling = kPvrCullModes[cull];
-            pvr_poly_compile(&room_strip_headers[material * 3U + cull],
-                             &context);
-        }
-        if(material_punchthrough[material]) {
-            pvr_poly_cxt_txr(
-                &context, PVR_LIST_PT_POLY, format, texture->width,
-                texture->height, textures.pvr_texture(texture_index),
-                PVR_FILTER_BILINEAR);
-            context.gen.fog_type = PVR_FOG_TABLE;
-            context.txr.alpha = PVR_TXRALPHA_ENABLE;
-            for(std::uint32_t cull = 0U; cull < 3U; ++cull) {
-                context.gen.culling = kPvrCullModes[cull];
-                pvr_poly_compile(
-                    &room_punchthrough_headers[material * 3U + cull],
-                    &context);
-            }
-        }
+    if(!compile_room_material_headers()) {
+        return 1;
     }
     pvr_poly_hdr_t* leon_headers =
         new(std::nothrow) pvr_poly_hdr_t[leon.header().batch_count];
-    pvr_poly_hdr_t* ganado_headers =
+    ganado_headers =
         new(std::nothrow) pvr_poly_hdr_t[ganado.header().batch_count];
     std::unique_ptr<bool[]> leon_alpha(
         new(std::nothrow) bool[leon.header().batch_count]);
-    std::unique_ptr<bool[]> ganado_alpha(
-        new(std::nothrow) bool[ganado.header().batch_count]);
+    ganado_alpha.reset(new(std::nothrow) bool[ganado.header().batch_count]);
     if(leon_headers == nullptr || ganado_headers == nullptr ||
        leon_alpha == nullptr || ganado_alpha == nullptr) {
         std::printf("re4dc-room: character material header allocation failed\n");
         return 1;
     }
-    const auto compile_character_headers = [&context](
-        const re4dc::character::Package& character,
-        const re4dc::texture::Package& character_textures,
-        pvr_poly_hdr_t* headers, bool* alpha, const char* label) {
-        for(std::uint32_t batch_index = 0;
-            batch_index < character.header().batch_count; ++batch_index) {
-            char material_name[32];
-            ::snprintf(
-                material_name, sizeof(material_name), "PART_%03lu",
-                static_cast<unsigned long>(character.batches()[batch_index].source_part));
-            const auto* texture = character_textures.find(material_name);
-            if(texture == nullptr) {
-                std::printf("re4dc-room: missing %s material %s\n", label,
-                            material_name);
-                return false;
-            }
-            const std::uint32_t texture_index = static_cast<std::uint32_t>(
-                texture - character_textures.textures());
-            const int format = texture->format == re4dc::texture::kRgb565
-                                   ? PVR_TXRFMT_RGB565
-                                   : texture->format == re4dc::texture::kArgb1555
-                                         ? PVR_TXRFMT_ARGB1555
-                                         : PVR_TXRFMT_ARGB4444;
-            alpha[batch_index] =
-                (texture->flags & re4dc::texture::kAlpha) != 0;
-            const pvr_list_t list = alpha[batch_index]
-                                        ? PVR_LIST_TR_POLY
-                                        : PVR_LIST_OP_POLY;
-            pvr_poly_cxt_txr(&context, list, format,
-                             texture->width, texture->height,
-                             character_textures.pvr_texture(texture_index),
-                             PVR_FILTER_BILINEAR);
-            // Source Model::CullMode defaults to GX_CULL_FRONT.  The model
-            // conversion preserves GX primitive order, so retain that source
-            // cull direction for both native strips and clipped triangles.
-            context.gen.culling = PVR_CULLING_CCW;
-            context.gen.fog_type = PVR_FOG_TABLE;
-            context.gen.specular = PVR_SPECULAR_ENABLE;
-            if(alpha[batch_index]) {
-                context.txr.alpha = PVR_TXRALPHA_ENABLE;
-            }
-            pvr_poly_compile(&headers[batch_index], &context);
-        }
-        return true;
-    };
-    if(!compile_character_headers(leon, leon_textures, leon_headers,
-                                  leon_alpha.get(), "Leon") ||
-       !compile_character_headers(ganado, ganado_textures, ganado_headers,
-                                   ganado_alpha.get(), "Ganado")) {
+
+    if(!compile_character_headers_for(leon, leon_textures, leon_headers,
+                                      leon_alpha.get(), "Leon") ||
+       !compile_character_headers_for(ganado, ganado_textures, ganado_headers,
+                                      ganado_alpha.get(), "Ganado")) {
         return 1;
     }
 #if defined(RE4DC_SCENE_R100)
@@ -6456,7 +6805,7 @@ int main() {
             ? std::fabs(
                   leon.clips()[kPlayerWalkClip].root_forward_speed_mps)
             : kFallbackPlayerMoveSpeed;
-    const float enemy_move_speed =
+    float enemy_move_speed =
         std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f
             ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
             : kFallbackEnemyMoveSpeed;
@@ -6620,7 +6969,55 @@ int main() {
                                 100U));
 #endif
     g_re4dc_demo_telemetry.flags = 0x10000007U;
+    // Automatic cycling is opt-in so a frame-time baseline can be taken without
+    // deliberate load pauses in the sample.
+    const bool room_cycle_enabled = file_exists("/rd/cycle.flag");
+    std::printf("re4dc-room: room cycling %s\n",
+                room_cycle_enabled ? "enabled" : "disabled");
+    std::uint64_t next_cycle_tick = kRoomCycleIntervalTicks;
+    bool cycle_requested = false;
     while(true) {
+        if(room_cycle_enabled && simulation_tick >= next_cycle_tick) {
+            next_cycle_tick += kRoomCycleIntervalTicks;
+            cycle_requested = true;
+            // Every third cycle proves the failure path, not just the happy one.
+            g_room_inject_load_failure =
+                (g_room_lifecycle.retirements % 3U) == 2U;
+        }
+        if(cycle_requested) {
+            cycle_requested = false;
+            // pvr_scene_finish returns before the render has finished reading
+            // textures, so nothing may be freed until this returns.
+            pvr_wait_ready();
+            retire_room(audio);
+            if(!load_room(audio)) {
+                std::printf("re4dc-room: load failed, cleaning up and retrying\n");
+                retire_room(audio);
+                if(!load_room(audio)) {
+                    std::printf("re4dc-room: retry failed, stopping\n");
+                    break;
+                }
+            }
+            enemy_move_speed =
+                std::fabs(ganado.clips()[1].root_forward_speed_mps) > 0.0001f
+                    ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
+                    : kFallbackEnemyMoveSpeed;
+            reset_encounter(player, enemy);
+            float reloaded_floor = player.y;
+            if(find_floor(collision, player.x, player.z, player.y,
+                          reloaded_floor)) {
+                player.y = reloaded_floor;
+            }
+            // A load is a deliberate stop, exactly as the original's fade is.
+            // Re-seed the clock so the pause is not replayed as catch-up, and
+            // drop anything the player pressed while it was loading.
+            previous_time = timer_us_gettime64();
+            simulation_accumulator_us = kSimulationStepUs;
+            simulation_wall_time_us = previous_time;
+            if(!autoplay.enabled) {
+                discard_input_until(input_service, simulation_wall_time_us);
+            }
+        }
         const std::uint64_t now = timer_us_gettime64();
         const std::uint64_t current_work_start = now;
         g_collision_runtime_stats = {};
@@ -6914,6 +7311,25 @@ int main() {
             stats.transformed_vertices;
         g_re4dc_demo_telemetry.room_triangles = stats.triangles;
         g_re4dc_demo_telemetry.actor_triangles = stats.character_triangles;
+        g_re4dc_demo_telemetry.room_loads = g_room_lifecycle.loads;
+        g_re4dc_demo_telemetry.room_retirements = g_room_lifecycle.retirements;
+        g_re4dc_demo_telemetry.room_failed_loads = g_room_lifecycle.failed_loads;
+        g_re4dc_demo_telemetry.room_arena_capacity =
+            static_cast<std::uint32_t>(g_room_arena.capacity());
+        g_re4dc_demo_telemetry.room_arena_used =
+            static_cast<std::uint32_t>(g_room_arena.used());
+        g_re4dc_demo_telemetry.room_arena_high_water =
+            static_cast<std::uint32_t>(g_room_arena.high_water());
+        g_re4dc_demo_telemetry.room_read_bytes = g_room_lifecycle.read_bytes;
+        g_re4dc_demo_telemetry.room_read_us = g_room_lifecycle.read_us;
+        g_re4dc_demo_telemetry.room_validate_us = g_room_lifecycle.validate_us;
+        g_re4dc_demo_telemetry.room_upload_us = g_room_lifecycle.upload_us;
+        g_re4dc_demo_telemetry.room_install_us = g_room_lifecycle.install_us;
+        g_re4dc_demo_telemetry.room_retire_us = g_room_lifecycle.retire_us;
+        g_re4dc_demo_telemetry.pvr_free_now =
+            static_cast<std::uint32_t>(pvr_mem_available());
+        g_re4dc_demo_telemetry.aica_free_now =
+            static_cast<std::uint32_t>(snd_mem_available());
         g_re4dc_demo_telemetry.frame_us = saturate_u32(current_work_us);
         g_re4dc_demo_telemetry.submit_us = saturate_u32(stats.submit_us);
         g_re4dc_demo_telemetry.simulation_tick =

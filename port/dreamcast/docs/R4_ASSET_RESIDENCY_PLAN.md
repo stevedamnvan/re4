@@ -371,3 +371,32 @@ transparency, collision, timing or audio. Startup and load-time work is never
 credited as a per-frame saving. Physical Dreamcast timing, GD-ROM read rates
 and VRAM allocation behaviour must be measured on hardware before residency
 sizes are fixed; Flycast can validate correctness and memory arithmetic only.
+
+## What 5A changed about these assumptions
+
+Measured while building the r100 load/retire/reload lifecycle
+(`R4_5A_ROOM_LIFECYCLE_CHECKPOINT.md`):
+
+* **The 13.79 MB ceiling does not apply while persistent assets stay embedded.**
+  Room-owned bytes leaving the linked romdisk buys nothing in resident RAM on
+  its own, because the arena that replaces them is statically reserved. Moving
+  5,836,118 bytes out of the romdisk and adding a 5,767,168-byte arena left the
+  resident image 5,256 bytes *larger* (10,908,585 to 10,913,841). What it buys
+  is that those bytes are now reclaimable rather than permanent, and that the
+  executable read at boot is 5.8 MB smaller. The ceiling arithmetic only
+  becomes available once the persistent packages leave the romdisk too.
+* **r100's room content needs 5,671,772 bytes**, measured, arriving as six
+  packages, with the arena high water at 5,671,872 after alignment padding.
+  The room-owned share of the disc is 5,836,118 bytes including four enemy
+  samples that AICA owns rather than the arena.
+* **Install, not read, dominates a load.** Under Flycast a full load is roughly
+  45 ms of reading, 1.16 s of validation and 1.67 s of install (header
+  compilation, static lighting, primitive bounds, batch locals); retirement is
+  1.3 ms. Item 5's warning that an asynchronous read followed by an unbounded
+  main-thread install still stutters is confirmed with numbers: the read is the
+  small part. These are emulator timings.
+* **Storage path.** KOS mounts `/cd` from the low-density table of contents, so
+  the image is a single-session CD-R rather than a GD-ROM, and its
+  `1ST_READ.BIN` must be scrambled. KOS's streaming read also does not return
+  for a package smaller than one read chunk. Both are documented in the 5A
+  checkpoint; both constrain how item 5's asynchronous reads can be built.

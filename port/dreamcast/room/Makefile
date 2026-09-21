@@ -1,5 +1,5 @@
 TARGET = re4dc-room-viewer.elf
-OBJS = main.o room_package.o collision_package.o character_package.o texture_package.o route_package.o source_hud_package.o romdisk.o
+OBJS = main.o room_storage.o room_package.o collision_package.o character_package.o texture_package.o route_package.o source_hud_package.o romdisk.o
 ROOM_PACKAGE ?= ../build/private/r10d.re4room
 COLLISION_PACKAGE ?= ../build/private/r10d.re4sat
 CHARACTER_PACKAGE ?= ../build/private/leon.re4chr
@@ -11,6 +11,10 @@ HUD_PACKAGE ?= ../build/private/source-hud.re4hud
 HUD_TEXTURE_PACKAGE ?= ../build/private/source-hud.re4tex
 ROUTE_PACKAGE ?=
 AUTOPLAY_FLAG ?=
+# R4 5A: present in the romdisk, the room load/retire/reload cycle runs
+# automatically. Absent, the room loads once, so a frame-time baseline is
+# not polluted by deliberate load pauses.
+CYCLE_FLAG ?=
 FIRE_SOUND_0 ?=
 FIRE_SOUND_2 ?=
 RELOAD_SOUND ?=
@@ -28,6 +32,35 @@ R100_ROOM_PACKAGE ?= ../build/private/r100-source-cell-4.re4room
 # The older r10d engineering fixture stays at 240p unless explicitly overridden.
 DEMO_RESOLUTION ?= $(if $(filter r100,$(DEMO_SCENE)),480p,240p)
 KOS_ROMDISK_DIR = ../build/room-romdisk
+
+# R4 5A. Room-owned packages leave the linked romdisk and are read from the
+# disc into the room arena, so retiring the room returns real memory. Keeping an
+# embedded copy as well would defeat the point, so these are moved out of the
+# romdisk staging directory rather than copied. Persistent packages (Leon, his
+# textures, the HUD and its atlas, weapon and player audio) stay embedded for
+# this checkpoint.
+ROOM_DISK_DIR = ../build/room-disk
+ROOM_DISK_FILES = \
+	r10d.re4room \
+	r10d.re4sat \
+	r10d.re4tex \
+	ganado.re4chr \
+	ganado.re4tex
+ifneq ($(ROUTE_PACKAGE),)
+ROOM_DISK_FILES += route.re4rtp
+endif
+ifneq ($(ENEMY_SWING_SOUND),)
+ROOM_DISK_FILES += em12-swing-3d.wav
+endif
+ifneq ($(ENEMY_HIT_SOUND),)
+ROOM_DISK_FILES += em12-body-hit-0c.wav
+endif
+ifneq ($(ENEMY_DAMAGE_VOICE),)
+ROOM_DISK_FILES += em12-damage-voice-47.wav
+endif
+ifneq ($(ENEMY_DEATH_VOICE),)
+ROOM_DISK_FILES += em12-death-voice-16.wav
+endif
 BUILD_CONFIG = .build-config
 
 romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
@@ -65,9 +98,9 @@ CPPFLAGS += -DRE4DC_SUBMIT_DIGEST
 endif
 KOS_GCCVER_MIN = 12.0.0
 
-.PHONY: all clean rm-elf run prepare-romdisk r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit r100-autoplay-digest FORCE
+.PHONY: all clean rm-elf run prepare-romdisk split-room-disk disc r100-autoplay-cycle r100-cycle r100-autoplay-cycle-disc r100-cycle-disc r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit r100-autoplay-digest FORCE
 
-all: prepare-romdisk rm-elf $(TARGET)
+all: prepare-romdisk split-room-disk rm-elf $(TARGET)
 
 r100:
 	$(MAKE) all DEMO_SCENE=r100 \
@@ -95,6 +128,15 @@ r100:
 
 r100-autoplay:
 	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag
+
+# The room lifecycle evidence run: loads, retires and reloads r100 repeatedly.
+r100-autoplay-cycle:
+	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag \
+		CYCLE_FLAG=../build/private/autoplay.flag
+
+# Manual play with the same lifecycle enabled, for the human check.
+r100-cycle:
+	$(MAKE) r100 CYCLE_FLAG=../build/private/autoplay.flag
 
 r100-autoplay-profile:
 	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag SUBMIT_PROFILE=1
@@ -155,7 +197,7 @@ endif
 		test -f "$(ROUTE_PACKAGE)" || { echo 'missing private route package: $(ROUTE_PACKAGE)' >&2; exit 1; }; \
 		cp "$(ROUTE_PACKAGE)" $(KOS_ROMDISK_DIR)/route.re4rtp; \
 	fi
-	rm -f $(KOS_ROMDISK_DIR)/autoplay.flag
+	rm -f $(KOS_ROMDISK_DIR)/autoplay.flag $(KOS_ROMDISK_DIR)/cycle.flag
 	rm -f $(KOS_ROMDISK_DIR)/wep02-fire-0.wav \
 		$(KOS_ROMDISK_DIR)/wep02-fire-2.wav \
 		$(KOS_ROMDISK_DIR)/wep02-reload-16.wav \
@@ -170,6 +212,10 @@ endif
 	@if [ -n "$(AUTOPLAY_FLAG)" ]; then \
 		test -f "$(AUTOPLAY_FLAG)" || { echo 'missing autoplay flag: $(AUTOPLAY_FLAG)' >&2; exit 1; }; \
 		cp "$(AUTOPLAY_FLAG)" $(KOS_ROMDISK_DIR)/autoplay.flag; \
+	fi
+	@if [ -n "$(CYCLE_FLAG)" ]; then \
+		test -f "$(CYCLE_FLAG)" || { echo 'missing cycle flag: $(CYCLE_FLAG)' >&2; exit 1; }; \
+		cp "$(CYCLE_FLAG)" $(KOS_ROMDISK_DIR)/cycle.flag; \
 	fi
 	@if [ -n "$(FIRE_SOUND_0)$(FIRE_SOUND_2)$(RELOAD_SOUND)" ]; then \
 		test -n "$(FIRE_SOUND_0)" -a -n "$(FIRE_SOUND_2)" -a -n "$(RELOAD_SOUND)" || \
@@ -213,6 +259,40 @@ romdisk.img: prepare-romdisk
 clean: rm-elf
 	-rm -f $(OBJS) $(OBJS:.o=.d) romdisk.img $(BUILD_CONFIG) $(BUILD_CONFIG).tmp
 	-rm -rf $(KOS_ROMDISK_DIR)
+
+# Separates the two residencies: whatever is listed in ROOM_DISK_FILES is taken
+# out of the romdisk image and placed where the disc build will pick it up.
+split-room-disk: prepare-romdisk
+	@mkdir -p $(ROOM_DISK_DIR)
+	@rm -f $(ROOM_DISK_DIR)/*
+	@for f in $(ROOM_DISK_FILES); do \
+		if [ -f $(KOS_ROMDISK_DIR)/$$f ]; then \
+			mv $(KOS_ROMDISK_DIR)/$$f $(ROOM_DISK_DIR)/$$f; \
+		else \
+			echo "room-owned file missing from the romdisk stage: $$f" >&2; \
+			exit 1; \
+		fi; \
+	done
+	@echo "room-owned bytes moved to $(ROOM_DISK_DIR):"
+	@du -sb $(ROOM_DISK_DIR) | cut -f1
+	@echo "romdisk stage now holds:"
+	@du -sb $(KOS_ROMDISK_DIR) | cut -f1
+
+# Bootable GD-ROM image carrying the executable and the room-owned packages.
+# Deliberately not dependent on $(TARGET): the scene targets below pass their
+# own defines, and rebuilding here would silently package a different scene.
+disc:
+	@test -f $(TARGET) || { echo 'build a scene target first: $(TARGET) is missing' >&2; exit 1; }
+	bash ../tools/mkdisc.sh $(TARGET) $(ROOM_DISK_DIR) ../build/room-gdi
+
+# Build then package, in one step, for the two lifecycle configurations.
+r100-autoplay-cycle-disc:
+	$(MAKE) r100-autoplay-cycle
+	$(MAKE) disc
+
+r100-cycle-disc:
+	$(MAKE) r100-cycle
+	$(MAKE) disc
 
 rm-elf:
 	-rm -f $(TARGET)

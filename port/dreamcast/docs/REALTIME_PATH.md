@@ -250,7 +250,19 @@ before/after timing and memory, and end in a keep-or-revert decision.
    **This branch is stopped after R4i.** The accepted runtime is unchanged and
    the 2.018 ms regression stands, with four routes to it closed by measurement:
    build policy in R4f, the translation-unit split in R4g, per-entry input
-   caching in R4h and general per-type light records in R4i.
+   caching in R4h and general per-type light records in R4i. The primary workstream
+   moved to residency after R4i: the authored model in
+   [D4](R4_D4_RESIDENCY_MODEL_CHECKPOINT.md), then
+   [5A](R4_5A_ROOM_LIFECYCLE_CHECKPOINT.md), which makes r100 load from the
+   disc into an owned arena, retire and reload. Sixteen reloads with seven
+   injected failures return the CPU heap, VRAM, AICA memory and the arena to a
+   byte-identical state every time, and frame time is unchanged at 57,569 us
+   p50 against R4f's 57,565. Presentation was checked as state rather than as a
+   submission digest, because texture addresses move with the allocation
+   layout: over 3,038 matched simulation ticks every rendering and simulation
+   field is identical. That checkpoint also measures where a load actually
+   goes, which is not where the plan assumed: roughly 45 ms reading against
+   1.16 s validating and 1.67 s installing.
 
    One **deferred candidate** is recorded rather than built. Both actors in this
    scene run exactly four lights from a single selection mask each that never

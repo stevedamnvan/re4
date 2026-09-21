@@ -35,6 +35,27 @@ bool Package::open(const char* path) {
         close();
         return false;
     }
+    return validate();
+}
+
+// R4 5A. The same package, parsed out of memory the caller owns rather than a
+// mapping into .rodata, so a room can be read into its arena and released by
+// resetting it. The bytes are not copied and are not freed here: the arena owns
+// them, and close() only drops this object's view of them.
+bool Package::adopt(const std::uint8_t* data, std::size_t size) {
+    close();
+    if(data == nullptr || size < sizeof(LegacyHeaderV4)) {
+        error_ = "adopted buffer is smaller than the header";
+        return false;
+    }
+    data_ = data;
+    size_ = size;
+    return validate();
+}
+
+// The body of open() as it stood, unchanged, so both paths accept and
+// reject exactly the same packages.
+bool Package::validate() {
     const auto* legacy = reinterpret_cast<const LegacyHeaderV4*>(data_);
     if(std::memcmp(legacy->magic, kMagic, sizeof(kMagic)) != 0) {
         error_ = "magic mismatch";
@@ -42,7 +63,7 @@ bool Package::open(const char* path) {
         return false;
     }
     if(legacy->version == kVersion) {
-        if(total < static_cast<ssize_t>(sizeof(Header))) {
+        if(size_ < sizeof(Header)) {
             error_ = "file is smaller than the v5 header";
             close();
             return false;
@@ -55,7 +76,7 @@ bool Package::open(const char* path) {
         }
         normalized_header_ = *current;
     } else if(legacy->version == kLegacyVersion5) {
-        if(total < static_cast<ssize_t>(sizeof(LegacyHeaderV5))) {
+        if(size_ < sizeof(LegacyHeaderV5)) {
             error_ = "file is smaller than the v5 header";
             close();
             return false;

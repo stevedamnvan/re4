@@ -52,6 +52,27 @@ bool Package::open(const char* path) {
         close();
         return false;
     }
+    return validate();
+}
+
+// R4 5A. The same package, parsed out of memory the caller owns rather than a
+// mapping into .rodata, so a room can be read into its arena and released by
+// resetting it. The bytes are not copied and are not freed here: the arena owns
+// them, and close() only drops this object's view of them.
+bool Package::adopt(const std::uint8_t* data, std::size_t size) {
+    close();
+    if(data == nullptr || size < sizeof(Header)) {
+        error_ = "adopted buffer is smaller than the header";
+        return false;
+    }
+    data_ = data;
+    size_ = size;
+    return validate();
+}
+
+// The body of open() as it stood, unchanged, so both paths accept and
+// reject exactly the same packages.
+bool Package::validate() {
     header_ = reinterpret_cast<const Header*>(data_);
     if(std::memcmp(header_->magic, kMagic, sizeof(kMagic)) != 0 ||
        header_->version != kVersion || header_->header_size != sizeof(Header)) {
