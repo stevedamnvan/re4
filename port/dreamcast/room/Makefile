@@ -93,12 +93,18 @@ CPPFLAGS += -DRE4DC_CULL_AUDIT
 endif
 # Diagnostic checksum of the submitted vertex stream. Not part of any accepted
 # build: it reads back every submitted byte and is far too slow to time with.
+# Reads the finished framebuffer back out of VRAM at chosen ticks, so
+# presentation can be compared as pixels rather than as counters. Never used
+# for timing: the read-back is slow.
+ifneq ($(FB_SNAPSHOT),)
+CPPFLAGS += -DRE4DC_FB_SNAPSHOT
+endif
 ifneq ($(SUBMIT_DIGEST),)
 CPPFLAGS += -DRE4DC_SUBMIT_DIGEST
 endif
 KOS_GCCVER_MIN = 12.0.0
 
-.PHONY: all clean rm-elf run prepare-romdisk split-room-disk disc r100-autoplay-cycle r100-cycle r100-autoplay-cycle-disc r100-cycle-disc r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit r100-autoplay-digest FORCE
+.PHONY: all clean rm-elf run prepare-romdisk split-room-disk disc r100-autoplay-cycle r100-cycle r100-autoplay-cycle-disc r100-cycle-disc r100-autoplay-snapshot r100-autoplay-cycle-snapshot r100-autoplay-snapshot-disc r100-autoplay-cycle-snapshot-disc r100 r100-autoplay r100-autoplay-profile r100-autoplay-cull-audit r100-autoplay-digest FORCE
 
 all: prepare-romdisk split-room-disk rm-elf $(TARGET)
 
@@ -286,6 +292,23 @@ disc:
 	bash ../tools/mkdisc.sh $(TARGET) $(ROOM_DISK_DIR) ../build/room-gdi
 
 # Build then package, in one step, for the two lifecycle configurations.
+# Pixel evidence. -snapshot loads the room once; -cycle-snapshot reloads it so
+# the same ticks are captured again in each generation.
+r100-autoplay-snapshot:
+	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag FB_SNAPSHOT=1
+
+r100-autoplay-cycle-snapshot:
+	$(MAKE) r100 AUTOPLAY_FLAG=../build/private/autoplay.flag \
+		CYCLE_FLAG=../build/private/autoplay.flag FB_SNAPSHOT=1
+
+r100-autoplay-snapshot-disc:
+	$(MAKE) r100-autoplay-snapshot
+	$(MAKE) disc
+
+r100-autoplay-cycle-snapshot-disc:
+	$(MAKE) r100-autoplay-cycle-snapshot
+	$(MAKE) disc
+
 r100-autoplay-cycle-disc:
 	$(MAKE) r100-autoplay-cycle
 	$(MAKE) disc

@@ -144,6 +144,10 @@ struct DemoTelemetry {
     // return to its baseline shows up as drift across cycles.
     std::uint32_t pvr_free_now;
     std::uint32_t aica_free_now;
+    // Retirements refused because the GPU fence did not come back clean, and
+    // the injected failure point the last failed load exercised.
+    std::uint32_t room_retire_fence_failures;
+    std::uint32_t room_last_failure_point;
 #if defined(RE4DC_CULL_AUDIT)
     std::uint32_t cull_audit_on_screen_strips;
     std::uint32_t cull_audit_on_screen_vertices;
@@ -198,26 +202,26 @@ struct DemoTelemetry {
 };
 
 #if defined(RE4DC_SUBMIT_DIGEST)
-static_assert(sizeof(DemoTelemetry) == 440U);
-#elif defined(RE4DC_SUBMIT_PROFILE)
-static_assert(sizeof(DemoTelemetry) == 568U);
-#elif defined(RE4DC_CULL_AUDIT)
 static_assert(sizeof(DemoTelemetry) == 448U);
+#elif defined(RE4DC_SUBMIT_PROFILE)
+static_assert(sizeof(DemoTelemetry) == 576U);
+#elif defined(RE4DC_CULL_AUDIT)
+static_assert(sizeof(DemoTelemetry) == 456U);
 #else
-static_assert(sizeof(DemoTelemetry) == 432U);
+static_assert(sizeof(DemoTelemetry) == 440U);
 #endif
 
 constexpr DemoTelemetry initial_demo_telemetry() {
     DemoTelemetry telemetry{};
     telemetry.magic = 0x52453444U;
 #if defined(RE4DC_SUBMIT_DIGEST)
-    telemetry.version = 19U;
+    telemetry.version = 23U;
 #elif defined(RE4DC_SUBMIT_PROFILE)
-    telemetry.version = 17U;
+    telemetry.version = 21U;
 #elif defined(RE4DC_CULL_AUDIT)
-    telemetry.version = 18U;
+    telemetry.version = 22U;
 #else
-    telemetry.version = 16U;
+    telemetry.version = 20U;
 #endif
     telemetry.byte_size = sizeof(DemoTelemetry);
     return telemetry;
@@ -6125,6 +6129,97 @@ FrameStats render_scene(const re4dc::room::Package& room,
 }
 
 
+#if defined(RE4DC_FB_SNAPSHOT)
+// ---------------------------------------------------------------------------
+// Frozen frames for pixel comparison.
+//
+// Counters can match while pixels do not. Flycast does not write the finished
+// image back into emulated VRAM, so the guest cannot read its own framebuffer;
+// what it can do is hold one frame still long enough for the host to capture
+// the window. At each chosen tick the simulation stops advancing for a fixed
+// wall-clock window while rendering continues, and the header below says which
+// tick and which generation is on screen.
+//
+// This build is never used for timing.
+// ---------------------------------------------------------------------------
+
+// Ticks into the route, chosen to cover room materials, both characters, the
+// HUD and the transparent passes rather than one convenient frame. They fit
+// inside one cycle interval so every generation captures the same set.
+constexpr std::uint32_t kSnapshotTicks[] = {40U, 80U, 120U, 170U, 220U, 270U};
+constexpr std::uint32_t kSnapshotTickCount =
+    sizeof(kSnapshotTicks) / sizeof(kSnapshotTicks[0]);
+// Long enough for the host to notice the freeze, let the display settle and
+// take its grab.
+constexpr std::uint64_t kSnapshotFreezeUs = 2500000ULL;
+
+struct SnapshotHeader {
+    std::uint32_t magic;
+    std::uint32_t sequence;
+    std::uint32_t tick;
+    std::uint32_t generation;
+    std::uint32_t frozen;
+    std::uint32_t index;
+    std::uint32_t reserved_0;
+    std::uint32_t reserved_1;
+};
+
+alignas(32) SnapshotHeader g_fb_snapshot_header{};
+std::uint32_t g_fb_snapshot_next = 0U;
+std::uint32_t g_fb_snapshot_generation = 0U;
+// Ticks are counted from the start of this generation: a reload restarts the
+// route but not the global tick counter.
+std::uint32_t g_fb_snapshot_tick_base = 0U;
+std::uint64_t g_fb_snapshot_thaw_at_us = 0U;
+
+bool snapshot_frozen(std::uint64_t now_us) {
+    if(g_fb_snapshot_thaw_at_us == 0U) {
+        return false;
+    }
+    if(now_us < g_fb_snapshot_thaw_at_us) {
+        return true;
+    }
+    g_fb_snapshot_thaw_at_us = 0U;
+    g_fb_snapshot_header.frozen = 0U;
+    return false;
+}
+
+// Called once the frame for this tick has been submitted, so the next frames
+// redraw the same state while the host captures it.
+void snapshot_tick_reached(std::uint32_t tick, std::uint64_t now_us) {
+    if(g_fb_snapshot_next >= kSnapshotTickCount ||
+       g_fb_snapshot_thaw_at_us != 0U || tick < g_fb_snapshot_tick_base) {
+        return;
+    }
+    const std::uint32_t route_tick = tick - g_fb_snapshot_tick_base;
+    if(route_tick < kSnapshotTicks[g_fb_snapshot_next]) {
+        return;
+    }
+    g_fb_snapshot_header.magic = 0x53464246U;
+    g_fb_snapshot_header.tick = kSnapshotTicks[g_fb_snapshot_next];
+    g_fb_snapshot_header.generation = g_fb_snapshot_generation;
+    g_fb_snapshot_header.index = g_fb_snapshot_next;
+    g_fb_snapshot_header.frozen = 1U;
+    ++g_fb_snapshot_next;
+    g_fb_snapshot_thaw_at_us = now_us + kSnapshotFreezeUs;
+    // Published last: the host waits on this changing.
+    ++g_fb_snapshot_header.sequence;
+    std::printf("re4dc-room: frozen at route tick %lu generation %lu\n",
+                static_cast<unsigned long>(g_fb_snapshot_header.tick),
+                static_cast<unsigned long>(g_fb_snapshot_generation));
+}
+
+// A reload restarts the route, so the same tick set is captured again and the
+// two sets compare pixel for pixel.
+void restart_snapshots(std::uint32_t tick) {
+    g_fb_snapshot_next = 0U;
+    g_fb_snapshot_tick_base = tick;
+    g_fb_snapshot_thaw_at_us = 0U;
+    g_fb_snapshot_header.frozen = 0U;
+    ++g_fb_snapshot_generation;
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // R4 5A: the room residency.
 //
@@ -6194,12 +6289,38 @@ struct RoomLifecycle {
     std::uint32_t install_us = 0;
     std::uint32_t retire_us = 0;
     std::uint32_t read_bytes = 0;
+    std::uint32_t retire_fence_failures = 0;
+    std::uint32_t last_failure_point = 0;
 };
 RoomLifecycle g_room_lifecycle{};
 
 // Set to make the next load fail on purpose, so the cleanup and retry paths are
 // exercised rather than assumed.
-bool g_room_inject_load_failure = false;
+// Which bounded failure point the next load should take, 0 for none. The
+// points sit at the stages that own progressively more: nothing yet, CPU
+// packages adopted, room texture memory uploaded, derived state allocated.
+enum RoomFailurePoint : std::uint32_t {
+    kFailNone = 0U,
+    kFailBeforeAnyResource = 1U,
+    kFailAfterCpuPackages = 2U,
+    kFailAfterTextureUpload = 3U,
+    kFailAfterDerivedAllocations = 4U,
+    kFailPointCount = 5U,
+};
+std::uint32_t g_room_inject_failure_point = kFailNone;
+
+// Returns true when this load should stop at this point. Consumes the request,
+// so the retry that follows runs to completion.
+bool room_failure_injected(std::uint32_t point, const char* what) {
+    if(g_room_inject_failure_point != point) {
+        return false;
+    }
+    g_room_inject_failure_point = kFailNone;
+    ++g_room_lifecycle.failed_loads;
+    g_room_lifecycle.last_failure_point = point;
+    std::printf("re4dc-room: injected load failure %s\n", what);
+    return true;
+}
 // Simulation ticks between automatic load/retire/reload cycles in the
 // unattended route. A manual run triggers one with the Y button instead.
 constexpr std::uint64_t kRoomCycleIntervalTicks = 300U;
@@ -6353,15 +6474,45 @@ bool compile_character_headers_for(
 // texture memory, drop the package views, invalidate every table keyed by
 // package indices, then return the arena.
 //
-// The caller must already have waited for the previous render. pvr_scene_finish
-// returns before the PVR has finished reading textures, so freeing texture
-// memory is only safe once pvr_wait_ready has returned.
+// The GPU fence is this function's own responsibility, not the caller's:
+// room_gpu_quiesced() runs first and nothing is freed unless it succeeds.
+// pvr_scene_finish() returns before the PVR has finished reading textures, and
+// pvr_wait_ready() is not enough either -- it waits on ta_busy, which the
+// pinned KOS clears when the queued render *starts*. Only pvr_wait_render_done()
+// means the render has finished with the textures.
 //
 // Safe to call on a half-loaded room: every pointer is checked and every
 // package tolerates being closed twice, which is what makes a failed load
 // recoverable.
-void retire_room(DemoAudio& audio) {
+// The fence every retirement passes before a byte of room memory is released.
+// pvr_wait_ready() alone is not enough: at the pinned KOS revision it waits on
+// ta_busy, which is cleared when queued rendering *starts*, so a texture freed
+// on that signal can still be being read. pvr_wait_render_done() waits on
+// render_busy, which is what actually means the render has finished with it.
+// Both may time out, and a timeout must not be mistaken for an idle GPU.
+bool room_gpu_quiesced() {
+    if(pvr_wait_ready() < 0) {
+        std::printf("re4dc-room: TA did not go idle; keeping the room\n");
+        return false;
+    }
+    if(pvr_wait_render_done() < 0) {
+        std::printf("re4dc-room: render did not finish; keeping the room\n");
+        return false;
+    }
+    return true;
+}
+
+// The only way a room is retired. Call it between scenes, with room submission
+// for this frame not yet started: it waits for the GPU to finish reading before
+// it frees anything. Returns false without freeing anything if the wait fails,
+// which leaves the room fully resident and usable.
+bool retire_room(DemoAudio& audio) {
     const std::uint64_t began = timer_us_gettime64();
+
+    if(!room_gpu_quiesced()) {
+        ++g_room_lifecycle.retire_fence_failures;
+        return false;
+    }
 
     unload_enemy_audio(audio);
 
@@ -6413,28 +6564,30 @@ void retire_room(DemoAudio& audio) {
     ++g_room_lifecycle.retirements;
     g_room_lifecycle.retire_us =
         static_cast<std::uint32_t>(timer_us_gettime64() - began);
+    return true;
 }
 
 // Loads the room from the disc into the arena and rebuilds everything derived
 // from it. On failure the caller retires the room, which cleans up whatever
 // this managed to install, and may then try again.
 bool load_room(DemoAudio& audio) {
-    if(g_room_inject_load_failure) {
-        // Deliberately unreadable, to prove the failure path cleans up and that
-        // a retry afterwards succeeds.
-        g_room_inject_load_failure = false;
-        ++g_room_lifecycle.failed_loads;
+    if(room_failure_injected(kFailBeforeAnyResource, "before any resource")) {
+        // Through the real reader, so the failure is a real open failure.
         RoomResourceId missing = kRoomGeometry;
         missing.path = "/cd/absent.re4room";
-        std::printf("re4dc-room: injecting a load failure\n");
-        if(!load_room_resource(room, missing)) {
-            return false;
-        }
+        (void) load_room_resource(room, missing);
+        return false;
     }
     if(!load_room_resource(room, kRoomGeometry) ||
        !load_room_resource(collision, kRoomCollision) ||
-       !load_room_resource(route, kRoomRoute) ||
-       !load_room_resource(ganado, kRoomEnemy) ||
+       !load_room_resource(route, kRoomRoute)) {
+        return false;
+    }
+    // Arena occupied and three packages adopted, no VRAM or AICA memory yet.
+    if(room_failure_injected(kFailAfterCpuPackages, "after the CPU packages")) {
+        return false;
+    }
+    if(!load_room_resource(ganado, kRoomEnemy) ||
        !load_room_resource(textures, kRoomTextures) ||
        !load_room_resource(ganado_textures, kRoomEnemyTex)) {
         return false;
@@ -6461,6 +6614,11 @@ bool load_room(DemoAudio& audio) {
     if(!textures.upload()) {
         std::printf("re4dc-room: room texture upload failed: %s\n",
                     textures.error());
+        return false;
+    }
+    // Room texture memory is now owned; retirement has to give it back.
+    if(room_failure_injected(kFailAfterTextureUpload,
+                             "after the room texture upload")) {
         return false;
     }
     if(!ganado_textures.upload()) {
@@ -6491,6 +6649,12 @@ bool load_room(DemoAudio& audio) {
        material_alpha == nullptr || material_punchthrough == nullptr ||
        ganado_headers == nullptr || ganado_alpha == nullptr) {
         std::printf("re4dc-room: room header allocation failed\n");
+        return false;
+    }
+    // Header arrays allocated but not yet compiled, so retirement has to free
+    // arrays that nothing points into yet.
+    if(room_failure_injected(kFailAfterDerivedAllocations,
+                             "after the derived allocations")) {
         return false;
     }
     if(!compile_room_material_headers()) {
@@ -6976,24 +7140,32 @@ int main() {
                 room_cycle_enabled ? "enabled" : "disabled");
     std::uint64_t next_cycle_tick = kRoomCycleIntervalTicks;
     bool cycle_requested = false;
+    std::uint32_t next_failure_point = kFailNone;
     while(true) {
         if(room_cycle_enabled && simulation_tick >= next_cycle_tick) {
             next_cycle_tick += kRoomCycleIntervalTicks;
             cycle_requested = true;
-            // Every third cycle proves the failure path, not just the happy one.
-            g_room_inject_load_failure =
-                (g_room_lifecycle.retirements % 3U) == 2U;
+            // Rotate through the failure points so every one of them is proved,
+            // with a clean load in between.
+            g_room_inject_failure_point = next_failure_point;
+            next_failure_point = (next_failure_point + 1U) % kFailPointCount;
         }
         if(cycle_requested) {
             cycle_requested = false;
-            // pvr_scene_finish returns before the render has finished reading
-            // textures, so nothing may be freed until this returns.
-            pvr_wait_ready();
-            retire_room(audio);
+            // retire_room() owns the GPU fence. If it refuses, the room is
+            // untouched and still playable, so the cycle is abandoned rather
+            // than pressed on with.
+            if(!retire_room(audio)) {
+                std::printf("re4dc-room: retirement refused, keeping the room\n");
+                g_room_inject_failure_point = kFailNone;
+                // Render this frame as normal; the long interval a skipped
+                // cycle would otherwise leave behind is not the clock's fault.
+                previous_time = timer_us_gettime64();
+                continue;
+            }
             if(!load_room(audio)) {
                 std::printf("re4dc-room: load failed, cleaning up and retrying\n");
-                retire_room(audio);
-                if(!load_room(audio)) {
+                if(!retire_room(audio) || !load_room(audio)) {
                     std::printf("re4dc-room: retry failed, stopping\n");
                     break;
                 }
@@ -7003,6 +7175,18 @@ int main() {
                     ? std::fabs(ganado.clips()[1].root_forward_speed_mps)
                     : kFallbackEnemyMoveSpeed;
             reset_encounter(player, enemy);
+            // Re-entering the room restarts the encounter, so the script that
+            // drives it restarts too. Without this the reloaded room resumes
+            // mid-script and no two generations reach the same state at the
+            // same tick, which is the state a comparison depends on.
+            const bool autoplay_was_enabled = autoplay.enabled;
+            autoplay = Autoplay{};
+            autoplay.enabled = autoplay_was_enabled;
+#if defined(RE4DC_FB_SNAPSHOT)
+            // The route restarts, so the same ticks are captured again and the
+            // two sets compare pixel for pixel.
+            restart_snapshots(static_cast<std::uint32_t>(simulation_tick));
+#endif
             float reloaded_floor = player.y;
             if(find_floor(collision, player.x, player.z, player.y,
                           reloaded_floor)) {
@@ -7029,6 +7213,11 @@ int main() {
             outer_interval_us, maximum_accepted_interval);
         const std::uint64_t clamped_interval =
             outer_interval_us - accepted_interval;
+#if defined(RE4DC_FB_SNAPSHOT)
+        // While a frame is held for capture the clock still runs but the
+        // simulation does not, so the host photographs exactly this tick.
+        if(!snapshot_frozen(now))
+#endif
         simulation_accumulator_us += accepted_interval;
         simulation_clamped_us += clamped_interval;
         simulation_dropped_us += clamped_interval;
@@ -7278,6 +7467,10 @@ int main() {
             g_leon_lighting, g_ganado_lighting,
 #endif
             g_character_submit_vertices);
+#if defined(RE4DC_FB_SNAPSHOT)
+        snapshot_tick_reached(static_cast<std::uint32_t>(simulation_tick),
+                              timer_us_gettime64());
+#endif
         pvr_stats_t pvr_stats{};
         const bool have_pvr_stats = pvr_get_stats(&pvr_stats) == 0;
         const std::uint64_t current_work_us =
@@ -7330,6 +7523,10 @@ int main() {
             static_cast<std::uint32_t>(pvr_mem_available());
         g_re4dc_demo_telemetry.aica_free_now =
             static_cast<std::uint32_t>(snd_mem_available());
+        g_re4dc_demo_telemetry.room_retire_fence_failures =
+            g_room_lifecycle.retire_fence_failures;
+        g_re4dc_demo_telemetry.room_last_failure_point =
+            g_room_lifecycle.last_failure_point;
         g_re4dc_demo_telemetry.frame_us = saturate_u32(current_work_us);
         g_re4dc_demo_telemetry.submit_us = saturate_u32(stats.submit_us);
         g_re4dc_demo_telemetry.simulation_tick =
