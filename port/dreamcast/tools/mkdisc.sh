@@ -50,7 +50,8 @@ chmod +x "$KOS/utils/makeip/makeip" 2>/dev/null || true
 "$KOS/utils/makeip/makeip" -f "$WORK/ip.txt" "$WORK/IP.BIN" >/dev/null
 
 if [ -d "$DATA" ]; then
-  cp "$DATA"/* "$WORK/cdroot/" 2>/dev/null || true
+  # the whole tree: the game target keeps the GameCube directory layout
+  cp -r "$DATA"/. "$WORK/cdroot/" 2>/dev/null || true
 fi
 
 # One MODE1/2048 data track starting at LBA 0, with IP.BIN occupying the first

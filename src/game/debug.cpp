@@ -20,6 +20,9 @@
 #include "dvd.h"
 #include "snd.h"
 #include "debug.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 
 void bio4_GXSetCopyClear(GXColor color, u32 z);   // game/gx_sub.cpp
 void DbMenuExitAfterCheck();                        // game/db_menu.cpp
@@ -60,7 +63,11 @@ int proc_tick_idx;
 int proc_tick_idx_bak;
 int g_proc_cnt;
 
+#if defined(__PPC__)
 #define OS_BUS_CLOCK (((OSClock*) 0x80000000)->busClock)
+#else
+#define OS_BUS_CLOCK RE4DC_BUS_CLOCK
+#endif
 struct OSClock {
     u8 pad_0[0xF8];
     u32 busClock;   // 0xF8

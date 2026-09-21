@@ -865,6 +865,9 @@ int cEmWindow::SetBreakEsp(int dir, int kind, int flag)
     r.y += ang.y;
     r.z += ang.z;
     EstSet(0, -1, &p, &r, eff, (u8) id, 0x801, 0, 0, 0);
+#if !defined(__PPC__)
+    return 0;  // no caller uses the value; the GameCube build leaves r3 as is
+#endif
 }
 
 // Enables / disables weapon damage (etc bit 0 = disabled).

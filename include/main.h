@@ -86,7 +86,13 @@ void systemHardReset();
 void systemSoftReset();
 void setLanguage();
 }
+#if defined(__PPC__)
 extern int vsync_cnt;
+#else
+// Busy-waited on by main() and dvd.cpp while the vblank handler advances it:
+// the Dreamcast compiler must re-read it on every iteration.
+volatile extern int vsync_cnt;
+#endif
 extern char* pUser_name;
 extern void* roomInfoAddr;
 extern u32 MainOt[5];

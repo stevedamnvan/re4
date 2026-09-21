@@ -121,7 +121,10 @@ static TSceItemWorkPtr sceItemWk;
 struct SceAtWorkPtr {
     SceAtWork* p;
 };
-static SceAtWorkPtr sceItemCur;
+#if defined(__PPC__)
+static
+#endif
+SceAtWorkPtr sceItemCur;
 #define pCur (sceItemCur.p)
 
 extern "C" {

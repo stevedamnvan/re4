@@ -80,7 +80,7 @@ static inline void PlRoutineSet(cPlayer* pl, int r0, int r1, int r2, int r3)
 
 // Partner (id 3) dead while the player is in routine 0: routine 6 (die), damage info 0x80. An
 // inline member of the class whose vtable this unit owns: emitted here after the destructor.
-inline void cPlayer::subCharLiveCheck()
+RE4_INLINE void cPlayer::subCharLiveCheck()
 {
     cEm* sub = pSubEm;
     if (sub && sub->id == 3 && sub->hp <= 0 && r_no_0 == 0) {

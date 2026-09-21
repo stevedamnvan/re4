@@ -34,6 +34,9 @@
 #include "math_sub.h"
 #include "eprintf.h"
 #include "flr_at.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 
 extern "C" void ADXT_SetOutputMono(int sw);
 void* GetDataExt(void* arc, const char* tag, int no);
@@ -61,7 +64,11 @@ static inline u32 RefU32(u32& x)
 
 #define SND_FILE "D:/Bio4/Prog/snd.cpp"
 #define ALIGN32(x) (((x) + 0x1F) & ~0x1F)
+#if defined(__PPC__)
 #define SND_DATA_TOP 0x80370000
+#else
+#define SND_DATA_TOP (re4dc_mem.sound)
+#endif
 #define LOOP_IDX(x, max) ((x) < 0 ? (max) : ((x) > (max) ? 0 : (x)))
 #define CLAMP(x, lo, hi) ((x) < (lo) ? (lo) : ((x) > (hi) ? (hi) : (x)))
 

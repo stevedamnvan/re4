@@ -13,6 +13,9 @@
 #include "eprintf.h"
 #include "file.h"
 #include "libgpu.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 
 extern "C" {
 void OSReport(const char* fmt, ...);
@@ -111,6 +114,7 @@ void operator delete[](void* p)
 // tagged "_reset_keep_" that survives soft resets).
 void SystemMemInit()
 {
+#if defined(__PPC__)
     SysMem.heap_end = 0x817F4000;
     SysMem.elf_end = 0x80350000;
     SysMem.dvd = 0x80370000;
@@ -123,13 +127,36 @@ void SystemMemInit()
     SysMem.weapon = 0x80974000;
     SysMem.usb = 0x81800000;
     SysMem.debug = 0x8181FB00;
+#else
+    // The platform carves the same regions out of its arena (platform/mem.cpp).
+    SysMem.heap_end = re4dc_mem.heap_end;
+    SysMem.elf_end = re4dc_mem.arena_lo;
+    SysMem.dvd = re4dc_mem.dvd;
+    SysMem.sound = re4dc_mem.sound;
+    SysMem.fifo = (u32) re4dc_gx_fifo();
+    SysMem.xfb = (u32) re4dc_frame_buffer(0);
+    SysMem.core = re4dc_mem.core;
+    SysMem.option = re4dc_mem.option;
+    SysMem.player = re4dc_mem.player;
+    SysMem.weapon = re4dc_mem.weapon;
+    SysMem.usb = re4dc_mem.arena_hi;
+    SysMem.debug = re4dc_mem.arena_hi;
+#endif
     SysMem.arena_lo = (u32) OSGetArenaLo();
+#if defined(__PPC__)
     if (SysMem.arena_lo > 0x8034FFFF) {
+#else
+    if (SysMem.arena_lo > re4dc_mem.dvd) {
+#endif
         OSReport("ELF size overflow\n");
 #line 100 "D:/Bio4/Prog/main_mem.cpp"
         HALT();
     }
+#if defined(__PPC__)
     arenaLo = SysMem.weapon;
+#else
+    arenaLo = re4dc_mem.heap;  // SysMem.weapon + 0x70000 on the GameCube
+#endif
     arenaHi = (u32) OSGetArenaHi();
     if (SysMem.heap_end > arenaHi) {
         arenaHi = SysMem.heap_end;

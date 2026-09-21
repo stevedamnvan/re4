@@ -2467,6 +2467,9 @@ int cItemMgr::partsCombine(ItemWork* wep, ItemWork* part)
 int cItemMgr::available(u16 id)
 {
     m_pAvailable[id >> 5] |= 0x80000000 >> (id & 0x1F);
+#if !defined(__PPC__)
+    return 0;  // no caller uses the value; the GameCube build leaves r3 as is
+#endif
 }
 
 // Clears the usable-item mask.

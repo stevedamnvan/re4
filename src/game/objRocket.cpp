@@ -498,3 +498,7 @@ void cManager<T>::destroyNow(T* p)
     destroy(p);
     flag = f;
 }
+
+#if !defined(__PPC__)
+template void cManager<cObj>::destroyNow(cObj* p);
+#endif

@@ -19,6 +19,9 @@
 #include "eprintf.h"
 #include "tpl.h"
 #include "tv_mode.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 
 typedef s64 OSTime;
 
@@ -95,7 +98,11 @@ struct OSLowMem {
     u8 pad_0[0xF8];
     u32 busClock;  // 0xF8
 };
+#if defined(__PPC__)
 #define OS_BUS_CLOCK (((OSLowMem*) 0x80000000)->busClock)
+#else
+#define OS_BUS_CLOCK RE4DC_BUS_CLOCK
+#endif
 #define OS_TIMER_CLOCK (OS_BUS_CLOCK / 4)
 #define OSTicksToSeconds(ticks) ((ticks) / OS_TIMER_CLOCK)
 #define OSTicksToMicroseconds(ticks) (((ticks) * 8) / (OS_TIMER_CLOCK / 125000))
@@ -158,10 +165,16 @@ void Render_init()
     GXRenderModeObj* rm = &Rmode;
 
     SetTvMode(rm);
+#if defined(__PPC__)
     pFrame_buff[0] = (void*) 0x80460000;
     pCurrent_buff = pFrame_buff[1] =
         (void*) (0x80460000 + VIPadFrameBufferWidth(rm->viWidth) * rm->xfbHeight * 2);
     DefaultFifo = (void*) 0x803F0000;
+#else
+    pFrame_buff[0] = re4dc_frame_buffer(0);
+    pCurrent_buff = pFrame_buff[1] = re4dc_frame_buffer(1);
+    DefaultFifo = re4dc_gx_fifo();
+#endif
     VIConfigure(rm);
     DefaultFifoObj = GXInit(DefaultFifo, 0x70000);
     ScreenGXSet();

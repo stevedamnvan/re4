@@ -143,7 +143,14 @@ ScreenInfo Screen;
 
 GlobalWork* pG = &Global;
 SystemWork* pSys = (SystemWork*) &SystemSave;
+#if defined(__PPC__)
 int vsync_cnt = 0;
+#else
+// Busy-waited on by main() and dvd.cpp while the vblank handler advances it:
+// the Dreamcast compiler must re-read it on every iteration.
+volatile int vsync_cnt = 0;
+#endif
+
 
 RK* pRK;
 char* pUser_name;

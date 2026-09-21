@@ -312,7 +312,7 @@ inline void cModel::setNoSuspend(int on)
 }
 
 // 1 when the model is drawn (be_flag bit 1).
-inline int cModel::isTrans()
+RE4_INLINE int cModel::isTrans()
 {
     int ret = 0;
 
@@ -324,7 +324,7 @@ inline int cModel::isTrans()
 
 // Parts `no` (-1: the model itself); NULL and a log when the chain is shorter. Defined here so
 // that the callers below inline it while setPartsParent above calls it.
-inline cModel* cModel::getPartsPtr(int no)
+RE4_INLINE cModel* cModel::getPartsPtr(int no)
 {
     cModel* p = pParts;
     int cnt;

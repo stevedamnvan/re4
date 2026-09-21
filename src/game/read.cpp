@@ -19,6 +19,9 @@
 #include "eprintf.h"
 #include "player.h"
 #include "read.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 
 extern "C" {
 void OSReport(const char* fmt, ...);
@@ -117,12 +120,28 @@ ReadModule WepReadModule __attribute__((aligned(32)));
 
 #define READ_BUFF_OFS 0x142800
 #define ROOM_ARC_SIZE 0x300000
+#if defined(__PPC__)
 #define CORE_DATA_ADDR ((void*) 0x80578000)
+#else
+#define CORE_DATA_ADDR ((void*) re4dc_mem.core)
+#endif
 #define CORE_DATA_MAX 0x234000
+#if defined(__PPC__)
 #define OPTION_DATA_ADDR ((void*) 0x807AC000)
+#else
+#define OPTION_DATA_ADDR ((void*) re4dc_mem.option)
+#endif
 #define OPTION_DATA_MAX 0x40000
+#if defined(__PPC__)
 #define PL_DATA_ADDR 0x807EC000
+#else
+#define PL_DATA_ADDR (re4dc_mem.player)
+#endif
+#if defined(__PPC__)
 #define WEP_DATA_ADDR ((void*) 0x80904000)
+#else
+#define WEP_DATA_ADDR ((void*) re4dc_mem.weapon)
+#endif
 #define WEP_DATA_MAX 0x70000
 #define DLL_BSS_MAX 0x80
 

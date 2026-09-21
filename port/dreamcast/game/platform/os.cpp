@@ -1,0 +1,637 @@
+// Dolphin OS interface over KallistiOS: threads, thread queues, semaphores,
+// interrupts, time, stopwatches, arena/heaps (heaps are the SDK's own OSAlloc.c
+// compiled in platform/sdk), reset, font, console queries.
+//
+// Threading model. The game's scheduler (src/game/scheduler.cpp) is
+// cooperative: one OSThread per task slot, created suspended, resumed by the
+// main thread, handing control back with OSSuspendThread(parent) /
+// OSResumeThread(parent) / OSSleepThread(queue) / OSSignalSemaphore. KOS is
+// preemptive, so the GameCube rules are reproduced with priorities (tasks
+// outrank the main thread and run as soon as they are resumed) and by taking
+// a suspended thread off the run queue; see the threads section.
+#include <kos.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+
+#include "re4dc_platform.h"
+
+typedef signed char s8;
+typedef unsigned char u8;
+typedef signed short s16;
+typedef unsigned short u16;
+typedef signed long s32;
+typedef unsigned long u32;
+typedef signed long long s64;
+typedef unsigned long long u64;
+typedef float f32;
+typedef int BOOL;
+typedef s64 OSTime;
+typedef u32 OSTick;
+typedef s32 OSPriority;
+
+struct OSThreadQueue {
+    struct OSThread* head;
+    struct OSThread* tail;
+};
+
+// The SDK's OSThread is 0x318 bytes (an OSContext, then the fields the game's
+// headers name: state at 0x2C8, suspend at 0x2CC, priority at 0x2D0 ...). The
+// platform keeps its own bookkeeping in the context area, which nothing else
+// reads, and maintains `state` / `suspend` for code that inspects them.
+struct OSThread {
+    kthread_t* kt;            // 0x000
+    s32 gateCount;            // 0x004  positive: blocked on the gate until resumed
+    void* (*func)(void*);     // 0x008
+    void* param;              // 0x00C
+    u8 pad[0x2C8 - 0x10];
+    u16 state;                // 0x2C8
+    u16 attr;                 // 0x2CA
+    s32 suspend;              // 0x2CC
+    OSPriority priority;      // 0x2D0
+    OSPriority base;          // 0x2D4
+    void* val;                // 0x2D8
+    OSThreadQueue* queue;     // 0x2DC
+    u8 pad2[0x304 - 0x2E0];
+    u8* stackBase;            // 0x304
+    u32* stackEnd;            // 0x308
+    s32 error;                // 0x30C
+    void* specific[2];        // 0x310
+};
+
+struct OSSemaphore {
+    s32 count;
+    OSThreadQueue queue;
+};
+
+struct OSStopwatch {
+    const char* name;
+    u32 hits;
+    OSTime total;
+    OSTime min;
+    OSTime max;
+    OSTime last;
+    BOOL running;
+    u32 _padding;
+};
+
+struct OSCalendarTime {
+    int sec, min, hour, mday, mon, year, wday, yday, msec, usec;
+};
+
+enum { OS_THREAD_STATE_READY = 1, OS_THREAD_STATE_RUNNING = 2, OS_THREAD_STATE_WAITING = 4, OS_THREAD_STATE_MORIBUND = 8 };
+
+static OSThread g_mainThread;
+static OSThread* g_threads[32];
+static int g_threadCount;
+
+extern "C" {
+
+// ---------------------------------------------------------------- reporting
+void OSReport(const char* fmt, ...)
+{
+    char line[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    re4dc_log("%s", line);
+}
+
+void OSPanic(const char* file, int line, const char* msg, ...)
+{
+    va_list ap;
+    printf("OSPanic %s:%d: ", file, line);
+    va_start(ap, msg);
+    vprintf(msg, ap);
+    va_end(ap);
+    printf("\n");
+    fflush(stdout);
+    re4dc_set_stage(0xDEAD0001ul);
+    irq_disable();
+    for (;;) {
+    }
+}
+
+// ---------------------------------------------------------------- threads
+//
+// GameCube thread semantics on the (always preemptive) KOS scheduler:
+//  * priorities map one to one (both: lower number = higher priority); the
+//    main thread is OS_PRIORITY_DEFAULT 16, the game's tasks 15 (a task above
+//    15 is waited for on the scheduler semaphore by the game itself);
+//  * a suspended thread is off the run queue (KOS STATE_WAIT on g_gate, a
+//    marker no genwait queue holds), so it is never picked; resuming puts it
+//    back and yields when it outranks the caller, the SDK behaviour that
+//    the scheduler relies on (a resumed higher-priority thread runs at once,
+//    and the resumer continues only when it blocks or suspends the resumer);
+//  * a thread suspended while it sleeps in a queue/semaphore re-checks its
+//    count when it wakes and parks itself (checkGate).
+static int g_gate;
+
+static OSThread* threadOf(kthread_t* kt)
+{
+    for (int i = 0; i < g_threadCount; i++) {
+        if (g_threads[i]->kt == kt) {
+            return g_threads[i];
+        }
+    }
+    return &g_mainThread;
+}
+
+// The current thread leaves the CPU until its suspend count is zero.
+static void parkSelf(OSThread* t)
+{
+    int old = irq_disable();
+    while (t->suspend > 0) {
+        kthread_t* me = thd_current;
+        t->state = OS_THREAD_STATE_WAITING;
+        me->state = STATE_WAIT;
+        me->wait_obj = &g_gate;
+        me->wait_msg = "os-suspend";
+        thd_block_now(&me->context);
+    }
+    t->state = OS_THREAD_STATE_RUNNING;
+    irq_restore(old);
+}
+
+// Takes another thread off the run queue (interrupts disabled by the caller).
+static void parkOther(OSThread* t)
+{
+    kthread_t* kt = t->kt;
+    if (kt == NULL) {
+        return;
+    }
+    if (kt->state == STATE_READY) {
+        thd_remove_from_runnable(kt);
+        kt->state = STATE_WAIT;
+        kt->wait_obj = &g_gate;
+        kt->wait_msg = "os-suspend";
+        t->state = OS_THREAD_STATE_WAITING;
+    } else if (kt->state == STATE_RUNNING) {
+        // Only from an interrupt that pre-empted kt: it leaves the CPU now.
+        kt->state = STATE_WAIT;
+        kt->wait_obj = &g_gate;
+        kt->wait_msg = "os-suspend";
+        t->state = OS_THREAD_STATE_WAITING;
+        thd_schedule(false);
+    }
+    // STATE_WAIT inside a genwait: checkGate parks it when it wakes.
+}
+
+// Puts a parked thread back; returns 1 when the caller should yield to it.
+static int unpark(OSThread* t)
+{
+    kthread_t* kt = t->kt;
+    if (kt == NULL || !(kt->state == STATE_WAIT && kt->wait_obj == &g_gate)) {
+        return 0;
+    }
+    kt->wait_obj = NULL;
+    kt->wait_msg = NULL;
+    kt->state = STATE_READY;
+    thd_add_to_runnable(kt, false);
+    t->state = OS_THREAD_STATE_READY;
+    if (irq_inside_int()) {
+        thd_schedule(true);  // pre-empts the interrupted thread if kt outranks it
+        return 0;
+    }
+    return kt->prio < thd_current->prio;
+}
+
+static void checkGate(OSThread* t)
+{
+    if (t->suspend > 0) {
+        parkSelf(t);
+    }
+    t->state = OS_THREAD_STATE_RUNNING;
+}
+
+static void* threadEntry(void* p)
+{
+    OSThread* t = (OSThread*) p;
+    t->state = OS_THREAD_STATE_RUNNING;
+    void* r = t->func(t->param);
+    t->state = OS_THREAD_STATE_MORIBUND;
+    return r;
+}
+
+int OSCreateThread(OSThread* thread, void* (*func)(void*), void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr)
+{
+    memset(thread, 0, sizeof(*thread));
+    thread->func = func;
+    thread->param = param;
+    thread->priority = priority;
+    thread->base = priority;
+    thread->attr = attr;
+    thread->suspend = 1;
+    thread->gateCount = 1;
+    thread->state = OS_THREAD_STATE_READY;
+    thread->stackBase = (u8*) stack;                       // the SDK takes the stack top
+    thread->stackEnd = (u32*) ((u8*) stack - stackSize);
+    *thread->stackEnd = 0xDEADBABE;  // OS_THREAD_STACK_MAGIC: scheduler.cpp StackOverflowCheck reads it
+    kthread_attr_t a;
+    memset(&a, 0, sizeof(a));
+    a.stack_size = stackSize;
+    a.stack_ptr = (u8*) stack - stackSize;
+    a.prio = priority > 0 ? priority : 1;
+    a.label = "re4-task";
+    a.disable_tls = true;
+    int old = irq_disable();
+    thread->kt = thd_create_ex(&a, threadEntry, thread);
+    if (thread->kt != NULL) {
+        parkOther(thread);  // created suspended
+    }
+    irq_restore(old);
+    if (thread->kt == NULL) {
+        re4dc_log("OSCreateThread: thd_create_ex failed (stack %u)\n", (unsigned) stackSize);
+        return 0;
+    }
+    re4dc_log("OSCreateThread: tid %d prio %ld stack top %p size %u\n", (int) thread->kt->tid, (long) priority, stack,
+              (unsigned) stackSize);
+    if (g_threadCount < 32) {
+        g_threads[g_threadCount++] = thread;
+    }
+    return 1;
+}
+
+s32 OSResumeThread(OSThread* thread)
+{
+    int old = irq_disable();
+    s32 prev = thread->suspend;
+    int yield = 0;
+    if (thread->suspend > 0) {
+        thread->suspend--;
+        thread->gateCount = thread->suspend;
+        if (thread->suspend == 0) {
+            yield = unpark(thread);
+        }
+    }
+    irq_restore(old);
+    if (yield) {
+        thd_pass();
+    }
+    return prev;
+}
+
+s32 OSSuspendThread(OSThread* thread)
+{
+    int old = irq_disable();
+    s32 prev = thread->suspend;
+    thread->suspend++;
+    thread->gateCount = thread->suspend;
+    if (thread->kt == thd_current && !irq_inside_int()) {
+        irq_restore(old);
+        parkSelf(thread);
+    } else {
+        parkOther(thread);
+        irq_restore(old);
+    }
+    return prev;
+}
+
+OSThread* OSGetCurrentThread(void)
+{
+    return threadOf(thd_current);
+}
+
+void OSExitThread(void* val)
+{
+    OSThread* t = threadOf(thd_current);
+    t->val = val;
+    t->state = OS_THREAD_STATE_MORIBUND;
+    thd_exit(val);
+}
+
+void OSCancelThread(OSThread* thread)
+{
+    if (thread->kt != NULL && thread->kt != thd_current) {
+        int old = irq_disable();
+        if (thread->kt->state == STATE_WAIT && thread->kt->wait_obj == &g_gate) {
+            thread->kt->wait_obj = NULL;
+            thread->kt->state = STATE_READY;
+            thd_add_to_runnable(thread->kt, false);
+        }
+        irq_restore(old);
+        thd_destroy(thread->kt);
+        thread->kt = NULL;
+    }
+    thread->state = OS_THREAD_STATE_MORIBUND;
+}
+
+OSPriority OSGetThreadPriority(OSThread* thread)
+{
+    return thread->priority;
+}
+
+BOOL OSSetThreadPriority(OSThread* thread, OSPriority priority)
+{
+    thread->priority = priority;
+    thread->base = priority;
+    if (thread->kt != NULL) {
+        thd_set_prio(thread->kt, priority > 0 ? priority : 1);
+    }
+    return 1;
+}
+
+void OSInitThreadQueue(OSThreadQueue* queue)
+{
+    queue->head = queue->tail = NULL;
+}
+
+void OSSleepThread(OSThreadQueue* queue)
+{
+    OSThread* t = threadOf(thd_current);
+    t->queue = queue;
+    t->state = OS_THREAD_STATE_WAITING;
+    genwait_wait(queue, "os-queue", 0);
+    t->queue = NULL;
+    checkGate(t);
+}
+
+// After a wake: a woken thread that outranks the caller runs at once.
+static void afterWake(void)
+{
+    if (irq_inside_int()) {
+        thd_schedule(true);
+    } else {
+        thd_pass();
+    }
+}
+
+void OSWakeupThread(OSThreadQueue* queue)
+{
+    genwait_wake_all(queue);
+    afterWake();
+}
+
+s32 OSEnableScheduler(void)
+{
+    return 0;
+}
+
+// ---------------------------------------------------------------- semaphores
+void OSInitSemaphore(OSSemaphore* sem, s32 count)
+{
+    sem->count = count;
+    sem->queue.head = sem->queue.tail = NULL;
+}
+
+s32 OSWaitSemaphore(OSSemaphore* sem)
+{
+    OSThread* t = threadOf(thd_current);
+    int old = irq_disable();
+    while (sem->count <= 0) {
+        t->state = OS_THREAD_STATE_WAITING;
+        genwait_wait(sem, "os-sema", 0);
+    }
+    s32 c = sem->count--;
+    irq_restore(old);
+    checkGate(t);
+    return c;
+}
+
+s32 OSSignalSemaphore(OSSemaphore* sem)
+{
+    int old = irq_disable();
+    s32 c = sem->count++;
+    genwait_wake_one(sem);
+    irq_restore(old);
+    afterWake();
+    return c;
+}
+
+// ---------------------------------------------------------------- interrupts
+BOOL OSDisableInterrupts(void)
+{
+    return (BOOL) irq_disable();
+}
+
+BOOL OSEnableInterrupts(void)
+{
+    BOOL was = (BOOL) irq_disable();
+    irq_enable();
+    return was;
+}
+
+BOOL OSRestoreInterrupts(BOOL level)
+{
+    irq_restore((irq_mask_t) level);
+    return level;
+}
+
+// ---------------------------------------------------------------- time
+OSTime OSGetTime(void)
+{
+    // microseconds -> 40.5 MHz ticks
+    u64 us = timer_us_gettime64();
+    return (OSTime) (us * 81 / 2);
+}
+
+OSTick OSGetTick(void)
+{
+    return (OSTick) OSGetTime();
+}
+
+static const int kDaysBeforeMonth[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+
+static int isLeap(int y)
+{
+    return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+}
+
+void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* td)
+{
+    // ticks since 2000-01-01 00:00:00
+    s64 secs = ticks / RE4DC_TIMER_CLOCK;
+    s64 rem = ticks - secs * RE4DC_TIMER_CLOCK;
+    td->usec = (int) (rem * 1000000 / RE4DC_TIMER_CLOCK) % 1000;
+    td->msec = (int) (rem * 1000 / RE4DC_TIMER_CLOCK);
+    s64 days = secs / 86400;
+    int sod = (int) (secs - days * 86400);
+    td->sec = sod % 60;
+    td->min = (sod / 60) % 60;
+    td->hour = sod / 3600;
+    td->wday = (int) ((days + 6) % 7);  // 2000-01-01 was a Saturday
+    int year = 2000;
+    for (;;) {
+        int len = isLeap(year) ? 366 : 365;
+        if (days < len) {
+            break;
+        }
+        days -= len;
+        year++;
+    }
+    td->year = year;
+    td->yday = (int) days;
+    int mon = 11;
+    while (mon > 0 && days < kDaysBeforeMonth[mon] + (mon > 1 && isLeap(year) ? 1 : 0)) {
+        mon--;
+    }
+    td->mon = mon;
+    td->mday = (int) days - kDaysBeforeMonth[mon] - (mon > 1 && isLeap(year) ? 1 : 0) + 1;
+}
+
+OSTime OSCalendarTimeToTicks(OSCalendarTime* td)
+{
+    s64 days = 0;
+    for (int y = 2000; y < td->year; y++) {
+        days += isLeap(y) ? 366 : 365;
+    }
+    days += kDaysBeforeMonth[td->mon] + (td->mon > 1 && isLeap(td->year) ? 1 : 0) + td->mday - 1;
+    s64 secs = days * 86400 + td->hour * 3600 + td->min * 60 + td->sec;
+    return secs * RE4DC_TIMER_CLOCK + (s64) td->msec * (RE4DC_TIMER_CLOCK / 1000) + (s64) td->usec * RE4DC_TIMER_CLOCK / 1000000;
+}
+
+// ---------------------------------------------------------------- stopwatches
+void OSInitStopwatch(OSStopwatch* sw, const char* name)
+{
+    sw->name = name;
+    sw->hits = 0;
+    sw->total = 0;
+    sw->min = 0x7FFFFFFFFFFFFFFFLL;
+    sw->max = 0;
+    sw->last = 0;
+    sw->running = 0;
+}
+
+void OSResetStopwatch(OSStopwatch* sw)
+{
+    OSInitStopwatch(sw, sw->name);
+}
+
+void OSStartStopwatch(OSStopwatch* sw)
+{
+    if (!sw->running) {
+        sw->running = 1;
+        sw->last = OSGetTime();
+    }
+}
+
+void OSStopStopwatch(OSStopwatch* sw)
+{
+    if (sw->running) {
+        OSTime d = OSGetTime() - sw->last;
+        sw->total += d;
+        sw->hits++;
+        if (d < sw->min) sw->min = d;
+        if (d > sw->max) sw->max = d;
+        sw->running = 0;
+    }
+}
+
+// ---------------------------------------------------------------- arena
+static void* g_arenaLo;
+static void* g_arenaHi;
+
+void* OSGetArenaLo(void) { return g_arenaLo; }
+void* OSGetArenaHi(void) { return g_arenaHi; }
+void OSSetArenaLo(void* lo) { g_arenaLo = lo; }
+void OSSetArenaHi(void* hi) { g_arenaHi = hi; }
+
+// ---------------------------------------------------------------- misc OS
+void OSInit(void)
+{
+    static int done;
+    if (done) {
+        return;
+    }
+    done = 1;
+    re4dc_fault_init();
+    re4dc_set_stage(1);
+    // KOS threads are always preemptive (thd_set_mode is a no-op in this
+    // KOS); the game's cooperative hand-offs work because every game thread
+    // blocks in a platform primitive until the scheduler resumes it.
+    g_mainThread.kt = thd_current;
+    g_mainThread.priority = g_mainThread.base = 16;  // OS_PRIORITY_DEFAULT
+    thd_set_prio(thd_current, 16);
+    g_mainThread.state = OS_THREAD_STATE_RUNNING;
+    re4dc_mem_init();
+    g_arenaLo = (void*) re4dc_mem.arena_lo;
+    g_arenaHi = (void*) re4dc_mem.arena_hi;
+    re4dc_log("OSInit: arena %08lx-%08lx (%lu KB)\n", re4dc_mem.arena_lo, re4dc_mem.arena_hi,
+              (re4dc_mem.arena_hi - re4dc_mem.arena_lo) / 1024);
+}
+
+void OSInitAlarm(void) {}
+
+// Boot diagnostics: where every game thread is parked (saved PC of each KOS
+// thread, and the interrupted PC for the running one); called from the
+// vblank handler while the boot is being traced.
+void re4dc_threads_dump(void)
+{
+    irq_context_t* cur = irq_get_context();
+    re4dc_log("threads: running %s pc=%08lx pr=%08lx\n", thd_current ? thd_current->label : "?",
+              cur ? (unsigned long) cur->pc : 0ul, cur ? (unsigned long) cur->pr : 0ul);
+    for (int i = 0; i < g_threadCount; i++) {
+        OSThread* t = g_threads[i];
+        if (t->kt == NULL) {
+            continue;
+        }
+        re4dc_log("  thread %d kos-state %d os-state %d suspend %ld gate %ld pc=%08lx pr=%08lx\n", i,
+                  (int) t->kt->state, (int) t->state, (long) t->suspend, (long) t->gateCount,
+                  (unsigned long) t->kt->context.pc, (unsigned long) t->kt->context.pr);
+    }
+}
+
+u32 OSGetConsoleType(void)
+{
+    return 0x00000003;  // retail-class console: no dev mode (bits 0xF0000000 clear)
+}
+
+u32 OSGetConsoleSimulatedMemSize(void)
+{
+    return 0x01800000;  // the game divides its FST size out of a 24 MB figure
+}
+
+u32 OSGetResetButtonState(void) { return 0; }
+u32 OSGetProgressiveMode(void) { return 0; }
+void OSSetProgressiveMode(u32 on) { (void) on; }
+static u32 g_soundMode = 1;
+u32 OSGetSoundMode(void) { return g_soundMode; }
+void OSSetSoundMode(u32 mode) { g_soundMode = mode; }
+void OSSetSaveRegion(void* start, void* end) { (void) start; (void) end; }
+
+typedef void (*OSErrorHandler)(u16 error, void* context, ...);
+OSErrorHandler OSSetErrorHandler(u16 error, OSErrorHandler handler)
+{
+    (void) error; (void) handler;
+    return NULL;
+}
+
+void OSResetSystem(int reset, u32 resetCode, BOOL forceMenu)
+{
+    re4dc_log("OSResetSystem(%d, %lx, %d)\n", reset, resetCode, forceMenu);
+    arch_exit();
+}
+
+// Fonts: the ROM font is not available; the game falls back to its own text.
+int OSInitFont(void* fontData) { (void) fontData; return 0; }
+u16 OSGetFontEncode(void) { return 0; }
+char* OSGetFontTexture(const char* string, void** image, s32* x, s32* y, s32* width)
+{
+    *image = NULL; *x = 0; *y = 0; *width = 0;
+    return (char*) string + (*string ? 1 : 0);
+}
+
+// Modules: every REL is linked into this image; OSLink only validates. The
+// module table (platform/modules.cpp) redirects prolog/epilog to the compiled
+// code once that slice exists; until then the loader reports it.
+BOOL OSLink(void* module, void* bss)
+{
+    (void) bss;
+    re4dc_log("OSLink(%p): module id %lu\n", module, *(u32*) module);
+    return 1;
+}
+
+BOOL OSUnlink(void* module)
+{
+    (void) module;
+    return 1;
+}
+
+// DBIsDebuggerPresent: the hang detector halts after 3600 idle vsyncs when no
+// debugger is attached; keep it armed like retail.
+BOOL DBIsDebuggerPresent(void) { return 0; }
+
+}  // extern "C"

@@ -291,6 +291,9 @@ FileTblEntry FileTbl[] = {
 #include "pad.h"
 #include "eprintf.h"
 #include "gx.h"
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 
 extern "C" {
 void OSReport(const char* fmt, ...);
@@ -313,7 +316,13 @@ void readcancel_cb(s32 result, DVDCommandBlock* cb);
 void EprintfFlush();
 }
 
+#if defined(__PPC__)
 extern int vsync_cnt;
+#else
+// Busy-waited on by main() and dvd.cpp while the vblank handler advances it:
+// the Dreamcast compiler must re-read it on every iteration.
+volatile extern int vsync_cnt;
+#endif
 extern int eprintf_init;
 
 // Read through a reference: a MEM with neither the struct nor the scalar flag, so the load is
@@ -330,7 +339,11 @@ struct OSLowMem {
     u8 pad_0[0xF8];
     u32 busClock;  // 0xF8
 };
+#if defined(__PPC__)
 #define OS_BUS_CLOCK (((OSLowMem*) 0x80000000)->busClock)
+#else
+#define OS_BUS_CLOCK RE4DC_BUS_CLOCK
+#endif
 #define OS_TIMER_CLOCK (OS_BUS_CLOCK / 4)
 #define OSTicksToMilliseconds(ticks) ((ticks) / (OS_TIMER_CLOCK / 1000))
 
@@ -1490,7 +1503,14 @@ int cDvd::ReadCheck(int req, int* result, int* size, void** addr)
 {
     DvdReadInfo info;
 
+#if defined(__PPC__)
     if (readCheckMain(req, &info) == 1) {
+#else
+    // The GameCube build returns readCheckMain's value through r3 without a
+    // return statement; say so explicitly for the Dreamcast compiler.
+    int ret = readCheckMain(req, &info);
+    if (ret == 1) {
+#endif
         if (result) {
             *result = info.mramSize;
         }
@@ -1501,6 +1521,9 @@ int cDvd::ReadCheck(int req, int* result, int* size, void** addr)
             *addr = (void*) info.addr[0][0];
         }
     }
+#if !defined(__PPC__)
+    return ret;
+#endif
 }
 
 // Poll variant used by read.cpp that also fills a DvdReadInfo (see the header note).
@@ -1508,6 +1531,12 @@ int cDvd::ReadCheck(int req)
 {
     DvdReadInfo* info;
 
+#if !defined(__PPC__)
+    // The GameCube build passes whatever r4 holds; give the poll a real
+    // scratch record so a completed read has somewhere to copy its tables.
+    DvdReadInfo scratch;
+    info = &scratch;
+#endif
     return readCheckMain(req, info);
 }
 

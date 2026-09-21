@@ -118,7 +118,10 @@ static ScrollWork scrollWork;
 struct ScrollWorkPtr {
     ScrollWork* p;
 };
-static ScrollWorkPtr scrollWorkPtr;
+#if defined(__PPC__)
+static
+#endif
+ScrollWorkPtr scrollWorkPtr;
 #define pWork scrollWorkPtr.p
 // second view of the same symbol: an asm-labelled decl gets the assembler name "*scrollWorkPtr", a different
 // string from "scrollWorkPtr", so gcse/cse hash `high(sym)` of the two views as different expressions while

@@ -148,7 +148,10 @@ static TSceAtWorkPtr sceAtWk;
 struct SceAtWorkPtr {
     SceAtWork* p;
 };
-static SceAtWorkPtr sceAtCur;
+#if defined(__PPC__)
+static
+#endif
+SceAtWorkPtr sceAtCur;
 #define pCur (sceAtCur.p)
 
 static const char* tSceAtTypeName[21] = {"NORMAL", "DOOR",     "EXEC",      "",           "FLG",       "MESSAGE",  "PLANTER",

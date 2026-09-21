@@ -2,6 +2,11 @@
 #ifndef VA_PPC_H
 #define VA_PPC_H
 
+#if !defined(__PPC__)
+// Other targets use the compiler's own variable-argument ABI.
+#include <stdarg.h>
+#else
+
 typedef struct __va_list_tag {
     char gpr;   /* SN: signed (gcc's ginclude has unsigned char) */
     char fpr;
@@ -87,4 +92,5 @@ __extension__ (*({							\
 }))
 #endif /* VA_PPC_ARG */
 
-#endif
+#endif  // __PPC__
+#endif  // VA_PPC_H

@@ -363,7 +363,10 @@ static inline cLight* curLight()
 #ifdef DB_LIGHT_SET_TOOL_LIGHT
 // Tools / t_esp / t_sce / t_movie builds: load tool%02x.lit as the current light set (-1: reapply the
 // current camera area's lit). The first function of those objects.
-static int SetToolLight(int no)
+#if defined(__PPC__)
+static
+#endif
+int SetToolLight(int no)
 {
     char path[0x100];
 

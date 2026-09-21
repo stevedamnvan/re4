@@ -22,6 +22,14 @@ typedef int BOOL;
 #define PPC_REG(r)
 #endif
 
+// `inline` members whose out-of-line copy the original compiler emitted for other
+// units (GCC 2.95 -fkeep-inline-functions behaviour): ordinary definitions elsewhere.
+#if defined(__PPC__) || defined(__powerpc__)
+#define RE4_INLINE inline
+#else
+#define RE4_INLINE
+#endif
+
 #ifndef NULL
 #define NULL 0
 #endif

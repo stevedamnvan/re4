@@ -2,3 +2,4 @@ obj/
 census.txt
 *.elf
 *.d
+platform/sdk/gen/

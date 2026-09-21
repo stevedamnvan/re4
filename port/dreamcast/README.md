@@ -5,11 +5,16 @@ the behavioral and authored-presentation authority; Dreamcast-native data,
 precomputation, visibility, math, texture, and PVR paths determine how that work
 runs on the target.
 
-**Current objective (2026-09-20): sustain a responsive 30 fps at 640x480 for the
-accepted r100 cabin encounter without reducing its room, lighting, complete
-characters, camera/FOV, transparency, source-timed gameplay, or audio.** The
-[real-time plan](docs/REALTIME_PATH.md) is scheduled from measured bottlenecks.
-Historical R0-R3 labels are checkpoint records rather than the task order.
+**Current objective (2026-09-21): advance the source-driven playable port from
+normal boot** (cold boot, title, game init, opening gameplay, events and
+combat, room transitions) by compiling the recovered game through explicit
+Dreamcast platform interfaces, keeping the accepted room/character/lighting
+presentation and the 30 fps at 640x480 target of the
+[real-time plan](docs/REALTIME_PATH.md). The recovered game now boots into its
+frame loop with the title task running on the target
+([R4 game boot checkpoint](docs/R4_GAME_BOOT_CHECKPOINT.md)); the
+[playable path](docs/PLAYABLE_PATH.md) sets the milestones. Historical R0-R3
+labels are checkpoint records rather than the task order.
 
 ## Current status
 
