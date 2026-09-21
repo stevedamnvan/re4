@@ -51,7 +51,29 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D304 (2026-09-21)
+## Latest bounded result: D305 (2026-09-21)
+
+The qualified r100 archive now passes the existing mirror gate and is consumed
+by recovered ReadAreaData/gameRoomInit. The 55-second scripted Flycast capture
+in `C:\Flycast-Evidence\re4-dreamcast\d305-qualified-r100` records the
+4,669,568-byte archive and ROOM/FOOT sound-block dispatch. Initialization then
+exhausts the room heap: two 0x1680 collision-manager requests see 0x1120 free;
+the 0x4b00 event-table request sees 0x6a0 free. Loading is not playable acceptance.
+Sound dispatch is not proof of audible output. `read_us=0` is not valid timing.
+
+Next main task: account for source pool/primitive-buffer allocations and loading
+lifetimes, then remove demonstrated target overhead without arbitrary gameplay
+pool cuts. Preserve the qualified loader and required sound semantics. See the D305 detailed checkpoint for conversion limits, verification and exact
+build identities.
+r101 remains unqualified because EVS is incomplete. No visible recovered-game
+room, manual-play, performance or physical-hardware acceptance is claimed.
+
+Required follow-up after the first room is fully working: create and validate a
+reusable agent skill for Astra light (`gpt-6-astra`, low), as specified in
+AGENTS.md. Capture the proven procedure and evidence, not this incomplete state.
+Keep the existing three-room objective and backlogs active.
+
+## Historical bounded result: D304 (2026-09-21)
 
 The existing mirror now converts source ITM model packs, BLK residency tables,
 and named ETM members. FCV/SEQ support reuses the established motion codec;

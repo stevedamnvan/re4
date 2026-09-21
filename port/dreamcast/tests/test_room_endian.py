@@ -279,7 +279,7 @@ class RoomFormats(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<11f', out, 40), tuple(range(11)))
         self.assertEqual(struct.unpack_from('<2i2Hi', out, 88), (-10,200,3,4,90))
 
-    def test_sequence_scalars_keep_byte_colors_and_unknown_union_incomplete(self):
+    def test_sequence_scalars_keep_byte_colors_and_parameter_words(self):
         data=bytearray(48+300)
         struct.pack_into('>H',data,0,1)
         struct.pack_into('>6f',data,12,*range(6))
@@ -297,9 +297,231 @@ class RoomFormats(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<4h',out,p+272),(-1,2,-3,4))
         data[p+205]=123
         out,entry=self.convert(data,le.fmt_sequence)
+        self.assertTrue(entry['complete'])
+        self.assertEqual(struct.unpack_from('<2I',out,p+204),
+                         struct.unpack_from('>2I',data,p+204))
+
+    @unittest.skipUnless(shutil.which('g++'), 'host compiler required')
+    def test_effect_parameter_and_etc_slot_views_match_source_word_lanes(self):
+        def declarations(esp, etc):
+            return (esp[esp.index('struct EspGenPrmW'):esp.index('// Effect generator record')] +
+                    etc[etc.index('struct EtcSetData'):etc.index('// EtcModel.cpp is C++')])
+        esp=(ROOT/'include/esp.h').read_text()
+        etc=(ROOT/'include/etc_model.h').read_text()
+        body=declarations(esp,etc)
+        prefix='#include <cassert>\nusing u8=unsigned char;using u16=unsigned short;using u32=unsigned;struct Vec{float x,y,z;};\n'
+        check = """
+int main(){
+ static_assert(sizeof(EspGenPrm)==8 && sizeof(EtcSetData)==40, "source size");
+ EspGenPrm p{};p.w.xCC=0x12345678;p.w.xD0=0x9abcdef0;
+ assert(p.h.xCC==0x1234 && p.h.xCE==0x5678 && p.h.xD0==0x9abc && p.h.xD2==0xdef0);
+ assert(p.b.xCC==0x12 && p.b.xCD==0x34 && p.b.xCE==0x56 && p.b.xCF==0x78);
+ assert(p.b.xD0==0x9a && p.b.xD1==0xbc && p.b.xD2==0xde && p.b.xD3==0xf0);
+ EtcSetData e{};e.no=37;assert(e.type==37 && e.pad_2==0);
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp);(path/'test.cpp').write_text(prefix+body+check)
+            subprocess.run(['g++',str(path/'test.cpp'),'-o',str(path/'test')],check=True)
+            subprocess.run([str(path/'test')],check=True)
+        # Shared recovered PPC declarations must remain exactly as at D304.
+        old=[]
+        for name in ('esp.h','etc_model.h'):
+            old.append(subprocess.check_output(['git','show','aa35382:include/'+name],cwd=ROOT,text=True))
+        def ppc(text):
+            return subprocess.check_output(['g++','-E','-P','-x','c++','-D__PPC__','-'],input=text,text=True)
+        self.assertEqual(ppc(body),ppc(declarations(*old)))
+
+    @unittest.skipUnless(shutil.which('g++'), 'host compiler required')
+    def test_native_effect_area_mask_retains_ppc_shift_semantics(self):
+        header=(ROOT/'include/espgen.h').read_text()
+        begin=header.index('inline u32 NativeSstAreaBit(')
+        end=header.index('\n}',begin)+2
+        body=header[begin:end]
+        code='using u8=unsigned char;using u32=unsigned;\n'+body+"""
+int main(){for(unsigned i=0;i<256;i++){
+ unsigned count=i%64, expected=count>=32?0:1u<<count;
+ if(NativeSstAreaBit(i)!=expected)return 1;
+}return NativeSstAreaBit(255)!=0;}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp);(path/'test.cpp').write_text(code)
+            subprocess.run(['g++','-fsanitize=undefined',str(path/'test.cpp'),'-o',str(path/'test')],check=True)
+            subprocess.run([str(path/'test')],check=True)
+        # Both native consumers use the defined operation; PPC bodies unchanged.
+        for name in ('est.cpp','esp_app.cpp'):
+            text=(ROOT/'src/game'/name).read_text()
+            self.assertIn('flag |= NativeSstAreaBit(ent->area_no);',text)
+            old=subprocess.check_output(['git','show','aa35382:src/game/'+name],cwd=ROOT,text=True)
+            # Strip include directives only, then preprocess target guards. This
+            # checks these edits, not a full ProDG object comparison.
+            def ppc(source):
+                source='\n'.join(l for l in source.splitlines() if not l.startswith('#include'))
+                return subprocess.check_output(['g++','-E','-P','-x','c++','-D__PPC__','-'],input=source,text=True)
+            self.assertEqual(ppc(text),ppc(old))
+
+    def test_etc_placements_and_area_records_keep_source_identity(self):
+        data=bytearray(56);struct.pack_into('>H',data,0,1)
+        struct.pack_into('>HH',data,16,3,37)
+        data[20:32]=bytes(range(12))
+        struct.pack_into('>6f',data,32,0,1,2,-100,5,10)
+        out,entry=self.convert(data,le.fmt_ets)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(struct.unpack_from('<HH',out,16),(3,37))
+        self.assertEqual(out[20:32],data[20:32])
+        self.assertEqual(struct.unpack_from('<6f',out,32),(0,1,2,-100,5,10))
+        for handler,stride in ((le.fmt_ear,152),(le.fmt_sar,216)):
+            data=bytearray(16+stride);struct.pack_into('>I',data,0,1)
+            data[16:20]=bytes([1,1,255,9]);data[20:24]=bytes([1,2,0,0])
+            struct.pack_into('>11f',data,24,*range(11))
+            struct.pack_into('>I',data,68,0x12345678)
+            data[72:74]=bytes([0xe2,0xff])
+            out,entry=self.convert(data,handler)
+            self.assertTrue(entry['complete'],entry)
+            self.assertEqual(out[16:22],data[16:22])
+            self.assertEqual(struct.unpack_from('<11f',out,24),tuple(range(11)))
+            self.assertEqual(out[72:],data[72:])
+            if handler is le.fmt_ear:self.assertEqual(struct.unpack_from('<I',out,68)[0],0x12345678)
+            data[21]=255
+            out,entry=self.convert(data,handler)
+            self.assertFalse(entry['complete']);self.assertEqual(out,data)
+
+    def effect_model_pack(self):
+        data=bytearray(608)
+        struct.pack_into('>12I',data,0,11,64,0,0,0,96,0,0,0,0,0,128)
+        struct.pack_into('>IHHI',data,96,1,7,0,0)
+        struct.pack_into('>2I',data,128,1,32)
+        struct.pack_into('>5I',data,160,0,32,352,384,0)
+        data[192:512]=self.model_fixture()
+        struct.pack_into('>3I',data,512,0x20af30,0,12)
+        struct.pack_into('>2I',data,544,1,32)
+        data[576:]=le.motion_codec().serialise(le.motion_codec().Motion(2,[],[]))
+        return data
+
+    def test_effect_model_reuses_bounded_bin_and_motion_handlers(self):
+        data=self.effect_model_pack();out,entry=self.convert(data,le.fmt_eff)
+        self.assertTrue(entry['complete'],entry)
+        expected,_=self.convert(self.model_fixture(),le.fmt_bin)
+        self.assertEqual(out[192:512],expected)
+        self.assertEqual(struct.unpack_from('<2I',out,544),(1,32))
+        self.assertEqual(struct.unpack_from('<H',out,576)[0],2)
+        for where,value in ((164,610),(168,16),(548,4)):
+            data=self.effect_model_pack();struct.pack_into('>I',data,where,value)
+            out,entry=self.convert(data,le.fmt_eff)
+            self.assertFalse(entry['complete'],entry);self.assertEqual(out,data)
+        # A shape body remains explicitly incomplete, even when BIN/TPL/motion pass.
+        data=self.effect_model_pack()+bytes(32)
+        struct.pack_into('>I',data,176,448)
+        out,entry=self.convert(data,le.fmt_eff)
+        self.assertFalse(entry['complete']);self.assertEqual(entry['raw_parts'],['efm0 shape body'])
+
+    def route_pack(self):
+        data=bytearray(72)
+        struct.pack_into('>4s4H3I',data,0,b'2RTP',0,2,2,4,24,56,64)
+        struct.pack_into('>3f2H3f2H',data,24,1,2,3,0,1,-4,-5,-6,1,1)
+        struct.pack_into('>4H',data,56,1,0,0,0)
+        data[64:68]=bytes([255,1,0,255])
+        return data
+
+    def test_source_routes_preserve_links_order_and_unreachable_sentinels(self):
+        data=self.route_pack();out,entry=self.convert(data,le.fmt_rtp)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(struct.unpack_from('<3f2H3f2H',out,24),
+                         struct.unpack_from('>3f2H3f2H',data,24))
+        self.assertEqual(struct.unpack_from('<4H',out,56),(1,0,0,0))
+        self.assertEqual(out[64:],data[64:])
+        for where,fmt,value in ((36,'>H',2),(56,'>H',2),(65,'>B',2),(20,'>I',56)):
+            data=self.route_pack();struct.pack_into(fmt,data,where,value)
+            out,entry=self.convert(data,le.fmt_rtp)
+            self.assertFalse(entry['complete'],entry);self.assertEqual(out,data)
+
+    def test_source_sound_curves_share_tables_without_changing_values(self):
+        data=bytearray(608)
+        for i in range(2):struct.pack_into('>4H6f',data,i*32,1,2,3,4,0.1,0.2,0.3,0.4,0.5,0.6)
+        struct.pack_into('>2I',data,64,576,576)
+        data[576:582]=bytes([255,1,2,3,4,5])
+        for index in (32,33,64,96):struct.pack_into('>I',data,64+index*4,584)
+        struct.pack_into('>If fHh fHh',data,584,2,1.5,100,0,-37,200,0,127)
+        out,entry=self.convert(data,le.fmt_stb)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(out[576:584],data[576:584])
+        self.assertEqual(struct.unpack_from('<If fHh fHh',out,584),
+                         struct.unpack_from('>If fHh fHh',data,584))
+        struct.pack_into('>I',data,64+32*4,580)
+        out,entry=self.convert(data,le.fmt_stb)
+        self.assertFalse(entry['complete']);self.assertEqual(out,data)
+
+    def test_source_sound_emitters_and_door_sounds(self):
+        data=bytearray(60)
+        struct.pack_into('>4sHH',data,0,b'ESE\0',0x100,1)
+        data[16:18]=bytes([1,7]);struct.pack_into('>H3f10h',data,18,1,10,20,30,0,6,0,17,60,5,8,-1,3,10)
+        out,entry=self.convert(data,le.fmt_ese)
+        self.assertTrue(entry['complete'],entry)
+        self.assertEqual(struct.unpack_from('<H3f10h',out,18),struct.unpack_from('>H3f10h',data,18))
+        self.assertEqual(out[16:18],data[16:18])
+        out,entry=self.convert(data[:-9],le.fmt_ese)
         self.assertFalse(entry['complete'])
-        self.assertNotIn('error',entry)  # preserve already-qualified EFF fields
-        self.assertEqual(out[p+204:p+212],data[p+204:p+212])
+        data=struct.pack('>I6H',1,0x101,4,65535,2,65535,7)
+        out,entry=self.convert(data,le.fmt_dse)
+        self.assertTrue(entry['complete'])
+        self.assertEqual(struct.unpack('<I6H',out),(1,0x101,4,65535,2,65535,7))
+
+    def test_enemy_info_and_empty_only_contracts_fail_closed(self):
+        data=bytearray(72);struct.pack_into('>I',data,0,1);data[8:12]=bytes([5,1,2,0])
+        struct.pack_into('>4f',data,12,1,-2,3,1.5)
+        out,entry=self.convert(data,le.fmt_emi)
+        self.assertTrue(entry['complete'])
+        self.assertEqual(struct.unpack_from('<4f',out,12),(1,-2,3,1.5))
+        self.assertEqual(out[8:12],data[8:12])
+        data[28]=3;out,entry=self.convert(data,le.fmt_emi)
+        self.assertFalse(entry['complete'])
+        for data in (bytes(1408),bytes(1407),bytes(1407)+b'1'):
+            out,entry=self.convert(data,le.fmt_osd)
+            self.assertEqual(entry['complete'],len(data)==1408 and not any(data))
+            self.assertEqual(out,data)
+        data=bytearray(struct.pack('>4s4HI',b'DRA\0',0x100,0,0,0,16)+bytes([205])*16)
+        out,entry=self.convert(data,le.fmt_dra);self.assertTrue(entry['complete'])
+        struct.pack_into('>H',data,6,1)
+        out,entry=self.convert(data,le.fmt_dra);self.assertFalse(entry['complete'])
+
+    def scenario_pack(self, kind, item=False):
+        data=bytearray(172)
+        struct.pack_into('>4sHH',data,0,b'ITA\0' if item else b'AEV\0',0x105 if item else 0x104,1)
+        data[20:24]=bytes([1,1,0,0]);struct.pack_into('>11f',data,24,*range(11))
+        data[16+53]=kind;data[16+68]=7
+        struct.pack_into('>I',data,16+60,0x10203)
+        struct.pack_into('>h',data,16+80,-1)
+        return data
+
+    def test_scenario_door_item_message_and_collision_payloads(self):
+        for kind in (1,3,5,11):
+            data=self.scenario_pack(kind,item=kind==3);d=16+92
+            if kind==1:
+                struct.pack_into('>4f4B',data,d,-100,200,300,1.5,1,1,2,7)
+                struct.pack_into('>i',data,d+28,-13)
+            elif kind==3:
+                struct.pack_into('>3f',data,d,1,2,3);struct.pack_into('>3f4H',data,d+16,4,5,6,7,8,9,10)
+                struct.pack_into('>h4f',data,d+42,-1,100,0,1,2)
+            elif kind==5:struct.pack_into('>hhBBH',data,d,-1,17,3,6,19)
+            else:struct.pack_into('>4I',data,d+12,0x80008000,0x12345678,1,0)
+            out,entry=self.convert(data,le.fmt_sce_at)
+            self.assertTrue(entry['complete'],entry)
+            self.assertEqual(struct.unpack_from('<I',out,76)[0],0x10203)
+            self.assertEqual(struct.unpack_from('<h',out,96)[0],-1)
+            if kind==1:
+                self.assertEqual(struct.unpack_from('<4f4B',out,d),(-100,200,300,1.5,1,1,2,7))
+                self.assertEqual(struct.unpack_from('<i',out,d+28)[0],-13)
+            elif kind==3:
+                self.assertEqual(struct.unpack_from('<3f4H',out,d+16),(4,5,6,7,8,9,10))
+                self.assertEqual(struct.unpack_from('<h4f',out,d+42),(-1,100,0,1,2))
+            elif kind==5:self.assertEqual(struct.unpack_from('<hhBBH',out,d),(-1,17,3,6,19))
+            else:self.assertEqual(struct.unpack_from('<4I',out,d+12),(0x80008000,0x12345678,1,0))
+        data=self.scenario_pack(2);struct.pack_into('>I',data,80,0x80123456)
+        out,entry=self.convert(data,le.fmt_sce_at)
+        self.assertFalse(entry['complete']);self.assertEqual(out,data)
+        data=self.scenario_pack(255)
+        out,entry=self.convert(data,le.fmt_sce_at)
+        self.assertFalse(entry['complete']);self.assertIn('type255',entry['raw_parts'][0])
 
     def test_r120_unused_normal_work_contract_is_scoped(self):
         data=bytearray(16+144); data[1]=1; data[16+20]=17

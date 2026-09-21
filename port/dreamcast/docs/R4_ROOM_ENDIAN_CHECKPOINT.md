@@ -1,6 +1,64 @@
 # D297: decoded room mirror and source collision layout
 
 
+## D305: qualified r100 reaches source room allocation (2026-09-21)
+
+Keep the existing prepared-room boundary. All required r100 archive entries now
+qualify; the recovered game consumes its 4,669,568-byte archive through normal
+ReadAreaData/gameRoomInit. The original DVD container still dispatches ROOM and
+FOOT MRAM/ARAM sound blocks. No compressed geometry or decode scratch buffer is
+loaded beside the archive. Sound transport is not proof of audible output.
+
+The mirror now handles source ETS placements, EAR/SAR volumes, AEV/ITA triggers,
+RTP routes, STB curves/reverb, ESE emitters, DSE door sound IDs and bounded EMI
+records. Effect model/motion bodies reuse existing BIN/TPL/FCV handlers. Source
+EspGenPrm word/halfword/byte views and EtcSetData's slot/type union retain their
+numeric meanings on SH-4; the PowerPC declarations are unchanged.
+
+Qualification remains conservative. Only the observed 1408-byte all-zero OSD
+and authored empty DRA lists qualify; this is not general OSD/DRA support.
+Unknown trigger types, nonzero runtime pointers, extra EMI work and effect
+shape bodies remain rejected. r101 still has an incomplete EVS region, so its
+native DAR stays absent. Two legacy core SAT errors remain explicit.
+
+EAR uses area_no 255 on interior volumes. The original DOL's EffAreaUpdate and
+AreaSstSet use PPC slw: low six shift-count bits, zero for counts 32..63. Native
+code reproduces that rule instead of relying on undefined C++ shifts. Original
+instruction inspection and a PPC execution fixture cover all 256 byte counts;
+255 contributes no effect bitmap bit, while the interior flag still applies.
+
+Validation: 40 room-format, nine mirror, two native-loader and two opening-skip
+tests pass; the recovered game builds with six pre-existing missing-symbol
+stubs. Tests cover mixed union views, sharing/bounds, signed route sentinels,
+malformed data rollback, trigger pointer rejection and unsupported variants.
+PowerPC preprocessing of the two changed source functions matches the prior
+checkpoint; this is not a fresh full ProDG object comparison.
+
+The 55-second scripted Flycast replay reaches the next exact failure:
+- Room heap: 0x8c8cfa60..0x8cf9a200 (7,120,800 bytes).
+- Two collision-manager requests: 0x1680 bytes each, 0x1120 free.
+- Event data-table request: 0x4b00 bytes, 0x6a0 free.
+- Later allocations also fail; successful room initialization is not established.
+
+Next: account for initialization allocations, primitive-buffer demand and
+resource lifetimes, then fix demonstrated target overhead. Do not arbitrarily
+halve gameplay pools or bypass missing source systems. `read_us=0` is an invalid
+stopwatch result, not a loading-time measurement. No visible recovered-game
+room, manual play, real-time performance or physical-hardware acceptance yet.
+
+Private evidence: `C:\Flycast-Evidence\re4-dreamcast\d305-qualified-r100` contains
+paired ELF/disc/assets, mirror report, build/package logs, exact dirty patch,
+symbol offsets, scripted capture and identity manifests. Fixture:
+`/root/probe/d292-fixtures`; disc build: `/root/probe/d305-disc`.
+Toolchain: SH GCC 15.2.0; KOS 804b3195ebd1a06a27cc2b3a5eacf7a2429040a3.
+
+| Artifact | SHA-256 |
+|---|---|
+| ELF | c0d18deb88a70c8573d4cf8c7cf843430448ee6adf69fbc3236fb721e1c6ef09 |
+| Disc | 0dd3c281fc22ee83e4cccb6a48e3ed1a44e6c5b9d1023b8d90ea42680fc15daa |
+| r100.dar | 1f80accf5be62432b45a1b7b7e3b7ee630af6449183f1afc582e2155ae6b7739 |
+| Flycast | 64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a |
+
 ## D304: source model packs, residency and motion conversion (2026-09-21)
 
 Offline qualification advances the normal r100 loading dependency without

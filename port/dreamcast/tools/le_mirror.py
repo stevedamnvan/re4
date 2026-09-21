@@ -594,8 +594,234 @@ def fmt_fse(sw, off, size, ctx):
             raise ValueError('unsupported floor attribute type')
 
 
+def fmt_osd(sw, off, size, ctx):
+    """Only the observed all-zero OSD is endian-invariant and qualified.
+
+    ReadAreaData retains its pointer; the recovered source has no dereference.
+    A nonzero/new-sized variant still needs a source consumer/layout contract.
+    """
+    sw._check(off, size)
+    if size != 1408 or any(sw.data[off:off + size]):
+        raise ValueError('nonzero or unknown OSD requires source layout recovery')
+
+
+def fmt_sce_at(sw, off, size, ctx):
+    """sce_at.h SceAtWork: shared trigger header plus typed source payload."""
+    sw._check(off, 16)
+    tag = bytes(sw.data[off:off + 4])
+    version = sw.u16(off + 4)
+    if (tag, version) not in ((b'AEV\0', 0x104), (b'ITA\0', 0x105)):
+        raise ValueError('unsupported scenario/item trigger header')
+    count = sw.u16(off + 6)
+    sw._check(off + 16, count * 156)
+    raw = []
+    def null_pointer(p):
+        if sw.u32(p):
+            raise ValueError('scenario file contains a runtime/PPC pointer')
+    for i in range(count):
+        p = off + 16 + i * 156
+        sw.u32(p)  # replaced by source OT registration
+        fmt_area(sw, p + 4)
+        kind = sw.data[p + 53]
+        if sw.data[p + 68] >= 16:
+            raise ValueError('scenario ordering-table index outside source table')
+        sw.u32(p + 60)
+        null_pointer(p + 64)
+        null_pointer(p + 76)
+        sw.u16(p + 80)
+        d = p + 92
+        if kind in (0, 2, 6, 7, 20):
+            # Normal hit-model list or source-installed callback, never an
+            # executable pointer copied from the GameCube data file.
+            if any(sw.data[d:d + 64]):
+                raw.append('scenario%d runtime work is nonzero' % i)
+        elif kind == 1:  # SceAtDoor
+            sw.f32s(d, 4)
+            null_pointer(d + 20)
+            sw.u32(d + 28)
+        elif kind == 3:  # SceAtItem
+            sw.f32s(d, 3)
+            null_pointer(d + 12)
+            sw.f32s(d + 16, 3)
+            sw.u16s(d + 28, 4)
+            sw.u16(d + 42)
+            sw.f32s(d + 44, 4)
+        elif kind == 4:
+            sw.u16(d + 2)
+        elif kind == 5:  # SceAtMesData
+            sw.u16s(d, 2)
+            sw.u16(d + 6)
+        elif kind == 8:
+            sw.u32(d)
+        elif kind == 11:  # runtime SAT/EAT objects plus authored collision attrs
+            null_pointer(d)
+            null_pointer(d + 4)
+            sw.u32s(d + 12, 4)
+        elif kind == 13:
+            sw.u32(d)
+            null_pointer(d + 4)
+        elif kind == 16:
+            sw.f32s(d, 4)
+        elif kind == 17:
+            sw.u16s(d, 2)
+        else:
+            raw.append('scenario%d type%d payload' % (i, kind))
+    return raw
+
+
+def fmt_rtp(sw, off, size, ctx):
+    """route_ck.h: keep the authored graph and signed-byte next-hop matrix."""
+    sw._check(off, 24)
+    if sw.data[off:off + 4] != b'2RTP':
+        raise ValueError('unsupported route point header')
+    sw.u16(off + 4)
+    count = sw.u16(off + 6)
+    links, hops = sw.u16s(off + 8, 2)
+    points, lines, nexts = [off + v for v in sw.u32s(off + 12, 3)]
+    if count > 128 or hops != count * count:
+        raise ValueError('route next-hop dimensions disagree')
+    ranges = sorted((a, n) for a, n in ((points, count*16), (lines, links*4), (nexts, hops)) if n)
+    end = off + 24
+    for start, n in ranges:
+        if start < end:
+            raise ValueError('overlapping route tables')
+        sw._check(start, n)
+        end = start + n
+    for i in range(count):
+        p = points + i * 16
+        sw.f32s(p, 3)
+        first, n = sw.u16s(p + 12, 2)
+        if first + n > links:
+            raise ValueError('route point link range outside table')
+    for i in range(links):
+        target, _ = sw.u16s(lines + i * 4, 2)
+        if target != 65535 and target >= count:
+            raise ValueError('invalid route link target')
+    if any(v != 255 and v >= count for v in sw.data[nexts:nexts + hops]):
+        raise ValueError('invalid route next hop')
+
+
+def fmt_stb(sw, off, size, ctx):
+    """snd.h SndRoomHdr: reverb, byte curve selectors, shared numeric curves."""
+    sw._check(off, 576)
+    for i in range(2):
+        sw.u16s(off + i * 32, 4)
+        sw.f32s(off + i * 32 + 8, 6)
+    offsets = sw.u32s(off + 64, 128)
+    targets = sorted(set(off + v for v in offsets if v))
+    for start in targets:
+        if start < off + 576:
+            raise ValueError('sound curve overlaps room header')
+        sw._check(start, 1)
+    limits = dict(zip(targets, targets[1:] + [off + size]))
+    selectors = set(off + v for v in offsets[:32] if v)
+    curves = set(off + v for v in offsets[32:] if v)
+    if selectors & curves:
+        raise ValueError('sound selector aliases numeric curve')
+    for start in selectors:
+        with sw.bounded(start, limits[start] - start):
+            sw._check(start, 6)  # all signed byte selectors, -1 means none
+    for start in curves:
+        with sw.bounded(start, limits[start] - start):
+            count = sw.u32(start)
+            sw.f32(start + 4)
+            sw._check(start + 8, count * 8)
+            for i in range(count):
+                p = start + 8 + 8 * i
+                sw.f32(p)
+                sw.u16s(p + 4, 2)  # val read numerically, then cast by snd.cpp
+
+
+def fmt_ese(sw, off, size, ctx):
+    """snd.h SeAtHead/SeAt; timers, repeats and source sound identifiers."""
+    sw._check(off, 16)
+    if sw.data[off:off + 4] != b'ESE\0' or sw.u16(off + 4) != 0x100:
+        raise ValueError('unsupported sound emitter header')
+    count = sw.u16(off + 6)
+    sw._check(off + 16, count * 44)
+    for i in range(count):
+        p = off + 16 + i * 44
+        sw.u16(p + 2)
+        sw.f32s(p + 4, 3)
+        sw.u16s(p + 16, 10)
+
+
+def fmt_dse(sw, off, size, ctx):
+    """snd.cpp SndDoorSe: destination room plus five source door sound ids."""
+    count = sw.u32(off)
+    sw._check(off + 4, count * 12)
+    sw.u16s(off + 4, count * 6)
+
+
+def fmt_emi(sw, off, size, ctx):
+    """embarrel.h EmiData/Entry; reject extra work with no established layout."""
+    count = sw.u32(off)
+    sw.u32(off + 4)
+    sw._check(off + 8, count * 64)
+    raw = []
+    for i in range(count):
+        p = off + 8 + i * 64
+        sw.f32s(p + 4, 4)
+        if any(sw.data[p + 20:p + 64]):
+            raw.append('enemy info%d additional work' % i)
+    return raw
+
+
+def fmt_dra(sw, off, size, ctx):
+    """Tools/t_dr.cpp DrHeader; only the authored empty list is qualified."""
+    sw._check(off, 16)
+    if sw.data[off:off + 4] != b'DRA\0' or sw.u16(off + 4) != 0x100:
+        raise ValueError('unsupported dynamic read area header')
+    areas, files, _ = sw.u16s(off + 6, 3)
+    sw.u32(off + 12)
+    if areas or files:
+        return ['dynamic read areas and file names']
+
+
+def fmt_ets(sw, off, size, ctx):
+    """EtcModelListSet / EtcSetData: count, source ids, angles and positions."""
+    count = sw.u16(off)
+    sw._check(off + 16, count * 40)
+    for i in range(count):
+        p = off + 16 + i * 40
+        ident, slot = sw.u16s(p, 2)
+        if ident >= 0x68 or slot >= 0x40:
+            raise ValueError('invalid source etc model id or slot')
+        # +4..+15 is opaque pad_4 in the recovered consumer, never read by
+        # EtcModelSet/Et*_init. Retain it; do not invent an applied scale.
+        sw.f32s(p + 16, 6)
+
+
+def fmt_area(sw, off):
+    """area.h AreaData, common to source effect and light trigger volumes."""
+    sw._check(off, 48)
+    if sw.data[off + 1] not in (0, 1, 2, 3):
+        raise ValueError('unsupported source area type')
+    sw.u16(off + 2)
+    sw.f32s(off + 4, 11)
+
+
+def fmt_ear(sw, off, size, ctx):
+    """espgen.h SstArea/SstAreaEnt; preserve source effect display flags."""
+    count, version = sw.u32s(off, 2)
+    sw._check(off + 16, count * 152)
+    for i in range(count):
+        p = off + 16 + i * 152
+        fmt_area(sw, p + 4)
+        sw.u32(p + 52)
+        # The remaining record bytes are opaque padding in SstAreaEnt.
+
+
+def fmt_sar(sw, off, size, ctx):
+    """light_area.cpp LightAreaHed/Data; class ids and signed power are bytes."""
+    count = sw.u32(off)
+    sw._check(off + 16, count * 216)
+    for i in range(count):
+        fmt_area(sw, off + 16 + i * 216 + 4)
+
+
 def fmt_sequence(sw, off, size, ctx):
-    """esp.h EspSeqData/EspGenWork; unknown union payloads stay rejected."""
+    """esp.h EspSeqData/EspGenWork, with source-semantic parameter word lanes."""
     raw = []
     count = sw.u16(off)
     sw.u16(off + 8)
@@ -609,8 +835,8 @@ def fmt_sequence(sw, off, size, ctx):
         sw.f32s(p + 160, 4)
         sw.u16s(p + 176, 6)
         sw.u16(p + 190)
-        if any(sw.data[p + 204:p + 212]):
-            raw.append('sequence%d effect parameter union' % i)
+        # EspGenPrm native halfword/byte views retain each source word lane.
+        sw.u32s(p + 204, 2)
         sw.u32(p + 212)
         sw.f32s(p + 216, 9)
         sw.u16s(p + 272, 4)
@@ -631,7 +857,8 @@ def fmt_eff(sw, off, size, ctx):
         +0xA..+0xF, then the byte pattern / frame-time tables, untouched),
       - the effect model id table and the model offset table (EffEfmEnt: five
         u32 from the entry, model / TPL / motion bodies relative to it) whose
-        TPL is converted and whose model and motion bodies stay raw (recorded),
+        BIN/TPL/motion bodies use the existing source codecs; shape extras
+        remain explicit incomplete coverage,
       - the est / sst / path lists and data blocks, raw when present (recorded).
     Image and palette data keep their GameCube encoding (fmt_tpl contract)."""
     hdr = sw.u32s(off, 12)
@@ -693,14 +920,34 @@ def fmt_eff(sw, off, size, ctx):
         efms = ofs_table(off + ofs_efm)
         if len(efm_ids) != len(efms):
             raise ValueError("%s: effect model tables disagree" % ctx)
-        for i, e in enumerate(efms):
+        for i, e in enumerate(sorted(set(efms))):
             x0, o_model, o_tpl, o_mot, o_x = sw.u32s(e, 5)
-            fmt_tpl(sw, e + o_tpl, off + size - (e + o_tpl), ctx + "/efm%d" % i)
-            raw.append("efm%d model body" % i)
-            if o_mot:
-                raw.append("efm%d motion body" % i)
-            if o_x:
-                raw.append("efm%d extra body" % i)
+            if not o_model or not o_tpl:
+                raise ValueError('effect model has no model or texture body')
+            end = min(p for p in [off + size] + efms +
+                      [off + v for v in hdr[1:] if v] if p > e)
+            bodies = [(e + v, kind) for v, kind in
+                      ((o_model, 'model'), (o_tpl, 'tpl'), (o_mot, 'motion'), (o_x, 'shape')) if v]
+            bodies.sort()
+            for j, (start, kind) in enumerate(bodies):
+                limit = bodies[j + 1][0] if j + 1 < len(bodies) else end
+                if start < e + 20 or limit <= start:
+                    raise ValueError('overlapping effect model bodies')
+                with sw.bounded(start, limit - start):
+                    if kind in ('model', 'tpl'):
+                        pending = (fmt_bin if kind == 'model' else fmt_tpl)(
+                            sw, start, limit - start, ctx + '/efm%d/%s' % (i, kind))
+                        raw.extend('efm%d %s' % (i, item) for item in (pending or []))
+                    elif kind == 'motion':
+                        motions = sorted(set(ofs_table(start)))
+                        for k, motion in enumerate(motions):
+                            stop = motions[k + 1] if k + 1 < len(motions) else limit
+                            if motion < start + 4 + 4 * sw.val32(start):
+                                raise ValueError('effect motion overlaps table')
+                            with sw.bounded(motion, stop - motion):
+                                fmt_fcv(sw, motion, stop - motion, ctx + '/efm%d/motion%d' % (i, k))
+                    else:
+                        raw.append('efm%d shape body' % i)
     for name, o_list, o_data in (("est", ofs_est_list, ofs_est_data), ("sst", ofs_sst_list, ofs_sst_data),
                                  ("path", ofs_path_list, ofs_path_data)):
         if not o_list:
@@ -1164,6 +1411,18 @@ def fmt_smx(sw, off, size, ctx):
     return raw
 
 TAG_FORMATS = {
+    b"OSD\0": fmt_osd,
+    b"AEV\0": fmt_sce_at,
+    b"ITA\0": fmt_sce_at,
+    b"RTP\0": fmt_rtp,
+    b"STB\0": fmt_stb,
+    b"ESE\0": fmt_ese,
+    b"DSE\0": fmt_dse,
+    b"EMI\0": fmt_emi,
+    b"DRA\0": fmt_dra,
+    b"ETS\0": fmt_ets,
+    b"EAR\0": fmt_ear,
+    b"SAR\0": fmt_sar,
     b"FCV\0": fmt_fcv,
     b"SEQ\0": fmt_fcvseq,
     b"ITM\0": fmt_itm,

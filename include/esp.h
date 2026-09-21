@@ -12,14 +12,25 @@ struct EspGenPrmW {
     u32 xD0;           // 0xD0
 };
 struct EspGenPrmH {
+#if defined(__PPC__)
     u16 xCC;           // 0xCC
     u16 xCE;           // 0xCE
     u16 xD0;           // 0xD0
     u16 xD2;           // 0xD2
+#else
+    // Names identify source word lanes, not native byte offsets.
+    u16 xCE, xCC;
+    u16 xD2, xD0;
+#endif
 };
 struct EspGenPrmB {
+#if defined(__PPC__)
     u8 xCC, xCD, xCE, xCF;  // 0xCC
     u8 xD0, xD1, xD2, xD3;  // 0xD0
+#else
+    u8 xCF, xCE, xCD, xCC;
+    u8 xD3, xD2, xD1, xD0;
+#endif
 };
 union EspGenPrm {
     EspGenPrmW w;

@@ -50,23 +50,25 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D303 replay / D304 conversion, 2026-09-21)
+## Current boot frontier (D305 replay, 2026-09-21)
 
-D302 proved full qualified r120 archive transport into recovered gameRoomInit,
-then source pool exhaustion. D303 implements the authorized first-play opening
-skip using R120Event's movie-skip branch completion effects before cinematic
-allocation. The existing normal stage path reaches r100 and explicitly rejects
-its still-incomplete `.dar`. Finish r100 source-format qualification next, then
-replay initialization and measure its representative gameplay working set.
-D304 qualifies source ITM/BLK and tagged/named FCV/SEQ data using existing
-codecs; r100's incomplete regions decrease from 24 to 14. ETM reports remaining
-effect members explicitly. See the current endian checkpoint for exact coverage;
-no qualified r100 DAR or newer emulator result exists yet.
-D302 stays the full r120 reference; no source gameplay pools were cut. Existing
-save entry and NG+ merchant behavior are unchanged and not accepted by D303.
-See [R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md) for exact source
-contract, tests, capture identities and limitations. No completed-room, visible
-menu, manual-play, performance or physical-hardware acceptance is implied.
+D305 qualifies r100 and loads its 4,669,568-byte archive through the recovered
+ReadAreaData/gameRoomInit path, retaining ROOM/FOOT sound-container dispatch.
+Source initialization then exhausts the room heap at collision-manager arrays
+and the event table. Next work is allocation/lifetime accounting and a measured
+native memory correction, without arbitrary gameplay-pool reductions. r101
+remains explicitly rejected for incomplete EVS conversion.
+
+D303's source-derived first-play opening skip still reaches r100 through normal
+stage initialization; r120 is cinematic staging, not a playable room. Its D302
+qualified transport remains a separate reference. D304/D305 extend the existing
+mirror rather than adding a decoder or loading system. See
+[R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md) for exact identities,
+coverage limits and tests. No visible menu, completed room, manual play, audio
+output, performance or physical-hardware acceptance is implied by these logs.
+
+After first-room manual acceptance, package the proven approach as an Astra
+light skill according to AGENTS.md; keep the three-room goal and wider backlogs.
 
 ## Binding correction
 

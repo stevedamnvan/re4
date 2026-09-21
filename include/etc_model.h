@@ -18,8 +18,13 @@ struct EtcSetData {
     union {
         u16 no;      // 0x02  g_EtcTbl slot (< 0x40)
         struct {
+#if defined(__PPC__)
             u8 pad_2;
             u8 type; // 0x03  low byte of `no`: the etc number the Set* functions take (WindowData row)
+#else
+            u8 type; // low byte of native numeric no
+            u8 pad_2;
+#endif
         };
     };
     u8 pad_4[0x10 - 0x4];

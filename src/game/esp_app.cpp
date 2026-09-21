@@ -351,7 +351,11 @@ void EffAreaUpdate()
     ent = sys->pSstArea->ent;
     for (i = 0; i < sys->pSstArea->num; i++, ent++) {
         if (AreaHitCheck(ent->area, &pos) == 1) {
+#if defined(__PPC__)
             flag |= 1 << ent->area_no;
+#else
+            flag |= NativeSstAreaBit(ent->area_no);
+#endif
             if (ent->flag & 1) {
                 pG->Status_flg[1] |= 0x02000000;
             }

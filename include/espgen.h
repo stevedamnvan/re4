@@ -56,6 +56,16 @@ struct SstTbl {
     int owner;         // 0x08 0xD2 = unused entry
 };
 
+#if !defined(__PPC__)
+// Match the source DOL's slw (low six count bits, zero for shifts 32..63).
+// Room EAR uses 0xff for interior volumes that select no effect bitmap bit.
+inline u32 NativeSstAreaBit(u8 id)
+{
+    u32 shift = id & 63;
+    return shift < 32 ? 1u << shift : 0;
+}
+#endif
+
 // Area list for the room effect display flags (game/est.cpp AreaSstSet): 0x10 header, 0x98 byte entries.
 struct SstAreaEnt {
     u8 no;//  (PS2 ESP_AREA.no)

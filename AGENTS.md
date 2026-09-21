@@ -127,6 +127,29 @@ Do not mutate an evidence folder belonging to a running or accepted capture.
 - Source gameplay/events remain active when rendering is culled. Preserve source
   timing, collision and input ordering instead of buying speed by dropping work.
 
+## Required reusable skill after first-room acceptance
+
+User instruction, 2026-09-21: once the recovered game's first playable room is
+fully working, save the proven approach as an agent skill that Astra light
+(`gpt-6-astra`, low reasoning effort) can follow. This is a required follow-up,
+not a prerequisite that delays current boot-forward implementation.
+
+Do not publish a successful-room recipe from archive loading or initialization
+alone. First verify normal menu/New Game entry and visible manual room gameplay:
+complete characters, source camera/collision, required combat/events and exit
+conditions, HUD/audio, and death/retry. Record exact evidence and remaining
+performance/hardware limits separately; this does not complete the three-room goal.
+
+At that gate, use the skill-creator workflow to capture the working folders,
+authoritative source and existing implementations, reproducible commands,
+qualified conversion and ownership contracts, memory/lifecycle checks, known
+failure signatures, and the bounded implement/build/replay/checkpoint loop.
+Make each step concrete enough for Astra low, with expected observations and
+explicit rejection conditions. Link the existing backlogs and acceptance evidence;
+do not duplicate a decoder, loader, renderer or competing roadmap. Validate the
+skill against the successful room before applying it to the next room. Keep
+proprietary assets, captures and credentials outside the skill package.
+
 ## Workspace and Git discipline
 
 Use the Linux checkout `/root/work/re4-dreamcast` under WSL Ubuntu-24.04. The
