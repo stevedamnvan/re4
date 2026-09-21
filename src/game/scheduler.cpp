@@ -27,6 +27,25 @@ TASK* pCTask = CTASK_MAIN;
 OSThread* pParentThread;
 static int iTask_exec_flg = 0;
 
+#if !defined(__PPC__)
+// KOS file I/O can yield after the frame scheduler changes its global cursor.
+// Self-directed task operations must retain the actual thread owner instead.
+static OSThread* nativeSchedulerThread;
+static TASK* NativeExecutingTask()
+{
+    OSThread* self = OSGetCurrentThread();
+    for (u32 i = 0; i < TASK_NUM; ++i) {
+        if (&Task[i].Thread == self) return &Task[i];
+    }
+    OSPanic(__FILE__, __LINE__, "Task operation outside a game task");
+    return NULL;
+}
+static OSThread* NativeTaskParent(TASK* t)
+{
+    return t == &Task[TASK_ISR] ? NULL : nativeSchedulerThread;
+}
+#endif
+
 void TaskKill(TASK* t);
 
 // Boot: gives every task slot its stack (one allocation, filled with 0xB3 for the usage check),
@@ -87,6 +106,9 @@ void TaskScheduler()
     TASK* t;
 
     pParentThread = OSGetCurrentThread();
+#if !defined(__PPC__)
+    nativeSchedulerThread = pParentThread;
+#endif
     for (i = 0, t = Task; i <= TASK_ISR; i++, t++) {
         if (i == TASK_ISR) {
             continue;
@@ -180,9 +202,16 @@ void StackOverflowCheck(TASK* t)
 // paired-single loads, and calls the task function with its argument.
 void* TaskExec_hook(void* value)
 {
+#if defined(__PPC__)
     if (ParentThread() != NULL) {
         OSSuspendThread(ParentThread());
     }
+#else
+    TASK* t = NativeExecutingTask();
+    if (t == NULL) return NULL;
+    OSThread* parent = NativeTaskParent(t);
+    if (parent != NULL) OSSuspendThread(parent);
+#endif
 #if defined(__PPC__)
     asm("li 3, 4\n"
         "oris 3, 3, 4\n"
@@ -201,7 +230,11 @@ void* TaskExec_hook(void* value)
         : "r3");
 #endif
     GXSetCurrentGXThread();
+#if defined(__PPC__)
     CTASK->pFunc((int) value);
+#else
+    t->pFunc((int) value);
+#endif
     return NULL;
 }
 
@@ -229,6 +262,7 @@ TASK* TaskExec(int prio, TaskFunc func, int arg)
 // sleeps on its queue until TaskSchedulerMain wakes it.
 void TaskSleep(int frames)
 {
+#if defined(__PPC__)
     if (frames == 0) {
         return;
     }
@@ -245,12 +279,35 @@ void TaskSleep(int frames)
         OSSuspendThread(ParentThread());
     }
     GXSetCurrentGXThread();
+#else
+    TASK* t = NativeExecutingTask();
+    if (t == NULL) return;
+    OSThread* parent = NativeTaskParent(t);
+
+    if (frames == 0) {
+        return;
+    }
+    t->SleepCtr = frames;
+    t->Status = (t->Status & TASK_SUSPEND) | TASK_SLEEP;
+    if (parent != NULL) {
+        OSResumeThread(parent);
+    }
+    if (t->Priority > 0xF) {
+        OSSignalSemaphore(&Sema);
+    }
+    OSSleepThread(&t->Queue);
+    if (parent != NULL) {
+        OSSuspendThread(parent);
+    }
+    GXSetCurrentGXThread();
+#endif
 }
 
 // Called from a task: replaces itself with `func(arg)` in the same slot (started next frame) and
 // ends the current thread.
 void TaskChain(TaskFunc func, int arg)
 {
+#if defined(__PPC__)
     CTASK->hook = TaskExec_hook;
     CTASK->pFunc = (void (*)(int)) func;
     CTASK->Status = TASK_EXEC;
@@ -262,11 +319,29 @@ void TaskChain(TaskFunc func, int arg)
         OSSignalSemaphore(&Sema);
     }
     OSExitThread(&pCTask->Thread);
+#else
+    TASK* t = NativeExecutingTask();
+    if (t == NULL) return;
+    OSThread* parent = NativeTaskParent(t);
+
+    t->hook = TaskExec_hook;
+    t->pFunc = (void (*)(int)) func;
+    t->Status = TASK_EXEC;
+    t->arg = arg;
+    if (parent != NULL) {
+        OSResumeThread(parent);
+    }
+    if (t->Priority > 0xF) {
+        OSSignalSemaphore(&Sema);
+    }
+    OSExitThread(&t->Thread);
+#endif
 }
 
 // Called from a task: frees the slot and ends the thread (the scheduler thread resumes).
 void TaskExit()
 {
+#if defined(__PPC__)
     TASK* t = pCTask;
 
     t->Status = TASK_NONE;
@@ -278,6 +353,16 @@ void TaskExit()
         OSSignalSemaphore(&Sema);
     }
     OSExitThread(&pCTask->Thread);
+#else
+    TASK* t = NativeExecutingTask();
+    if (t == NULL) return;
+    OSThread* parent = NativeTaskParent(t);
+    t->Status = TASK_NONE;
+    t->suspend_cnt = 0;
+    if (parent != NULL) OSResumeThread(parent);
+    if (t->Priority > 0xF) OSSignalSemaphore(&Sema);
+    OSExitThread(&t->Thread);
+#endif
 }
 
 // Kills the task in slot `prio`.
@@ -417,3 +502,18 @@ int iTaskStatus()
 {
     return iTask_exec_flg;
 }
+
+#if !defined(__PPC__)
+#include "re4dc_platform.h"
+// Diagnostics: the task table as the scheduler sees it (platform thread dump).
+extern "C" void re4dc_task_dump(void)
+{
+    re4dc_log("tasks: pCTask %p parent %p itask %d\n", (void*) pCTask, (void*) pParentThread, iTask_exec_flg);
+    for (u32 i = 0; i < TASK_NUM; i++) {
+        TASK* t = &Task[i];
+        if (t->Status == TASK_NONE) continue;
+        re4dc_log("  task %lu status %02x sleep %d prio %d thread %p\n", (unsigned long) i, (unsigned) t->Status,
+                  (int) t->SleepCtr, (int) t->Priority, (void*) &t->Thread);
+    }
+}
+#endif

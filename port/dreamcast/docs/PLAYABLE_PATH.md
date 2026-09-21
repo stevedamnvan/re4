@@ -50,6 +50,14 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
+## Current boot frontier (D295, 2026-09-21)
+
+Native task ownership correction clears the captured exit/sleep stalls and loads
+Leon resources. The next observed dependency is missing `st1/r120.das` in both
+private source extraction and mirror. Locate original disc data, validate mirror
+coverage and replay; see CLAUDE.md for identities and evidence. No visible menu
+or playable-room acceptance is implied.
+
 ## Binding correction
 
 **Advance the recovered game from normal startup through continuously playable

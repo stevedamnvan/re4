@@ -51,7 +51,35 @@ those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded implementation result: D291 (2026-09-21)
+## Latest bounded result: D295 (2026-09-21)
+
+The native scheduler now resolves self-directed entry, sleep, chain and exit from
+OSGetCurrentThread rather than the mutable pCTask scheduling cursor, and retains
+the main scheduler parent separately from the interrupt-task cursor. D293 proved
+TaskExit ran with pCTask=-1; D294 exposed TaskSleep waiting on address 0x32f.
+D295 clears both observed stalls, finishes em/pl00.drs, and reaches the next
+explicit failure: `DVD: File not found : st1/r120.das`. Neither the extracted
+source tree nor the little-endian mirror contains that file at this checkpoint.
+
+Evidence: `C:\Flycast-Evidence\re4-dreamcast\d295-task-owner`, 55-second scripted
+Flycast run using `/root/probe/d292-fixtures`; disc `/root/probe/d295b-disc`.
+Build and host execution of the actual native sleep/chain/exit bodies passed.
+The scheduler's PowerPC-preprocessed source is identical to HEAD before this
+change; this is not a new ProDG object-comparison result. Keep this correction.
+Broader KOS suspension semantics, task reuse and transitions remain unqualified.
+
+Next: locate/extract the source room archive from the private disc, inspect its
+consumer and mirror coverage, package it, and replay. Do not fabricate room data
+or treat r120 cinematic staging as one of the three playable rooms. Visible menus,
+rendered recovered-game gameplay, audio and manual acceptance are still open.
+
+ELF SHA-256: `7127776f2d0620f703e64b7fddc8460810ad60062a075bc40b6b9234a1b24041`.
+Disc SHA-256: `2ba7625bda9a9e89901a4a5263d6d6a58ba01057c3568f215948304ba4665ed3`.
+Flycast SHA-256: `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`.
+The evidence folder retains the tracked dirty patch; other runtime integration
+changes remain uncommitted and are not accepted by this scheduler checkpoint.
+
+## Historical bounded implementation result: D291 (2026-09-21)
 
 The current dirty game target now links real stage entry points. The generator
 uses `--force-group-allocation` during the partial link before symbol localization;
@@ -106,9 +134,8 @@ not infer that the recovered game's menu or room is visibly playable from a
 frame-loop trace or from the separate room viewer's graphics. Inspect current
 adapters and integrate the existing renderer/audio paths as needed.
 
-Next bounded slice: validate stage-module entries and explicit failure handling,
-reproduce the boot with current data, then resolve the first actual blocking
-room/light-path dependency. Record real room init/update execution as an
+Next bounded slice: follow the D295 missing-room-archive frontier above;
+the D291 stage-entry failure has already been cleared. Record real room init/update execution as an
 intermediate checkpoint. Subsequently return to normal menu/New Game entry,
 verify the opening route, and advance through its three rooms.
 
