@@ -696,6 +696,18 @@ void cDvdQueue::readMain()
             } else {
                 m_TransAddr = m_AramAddr;
             }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+            // Reject a full core paired with a smaller selectable reservation
+            // BEFORE its first transfer. CoreDataRead's later size check cannot
+            // protect the adjacent option/player regions from an oversized read.
+            if ((*ph)->type == 0 && m_TransAddr == re4dc_mem.core &&
+                m_LeftSize > re4dc_mem.option - re4dc_mem.core) {
+                OSReport("native core read REJECTED: request=%u capacity=%u before transfer\n",
+                         m_LeftSize, re4dc_mem.option - re4dc_mem.core);
+                re4dc_missing("core asset exceeds selected resident budget");
+                return;
+            }
+#endif
             addrTbl[m_NestDepth][cnt[m_NestDepth]] = m_TransAddr;
             m_Offset = m_BaseOffset[m_NestDepth] + (*ph)->ofs;
             step++;

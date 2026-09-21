@@ -1,14 +1,14 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D320c recovers856,992 real r100 source-heap bytes by loading qualified compact
-backing directly. The required1,126,272-byte block pool now fits. First em12
-request3,577,728 still fails with147,360 free. Source-native textures upload
-through the existing64 KiB bounce without full package staging. The menu remains
-visible; emitted model packets are still held by source presentation state.
-See [D320](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md). No gameplay frame-budget or
-physical-hardware acceptance follows from these loading/memory results.
+D322 adds335,136 measured source-heap bytes by compacting the qualified core HUD
+texture family and reducing its actual fixed reservation. D320's856,992-byte
+room recovery and successful1,126,272-byte block pool remain. First em12 request
+3,577,728 still fails with482,496 free. The source menu and shared bounded native
+texture path pass; source presentation still holds emitted model packets.
+See [D322](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md). ELF grows656 resident bytes;
+no gameplay CPU/frame-budget, full peak/retry or hardware acceptance follows.
 
-Updated 2026-09-21; current integration candidate D320c.
+Updated 2026-09-21; current integration candidate D322.
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file
 is the supporting performance/validation policy, not a separate scene-first

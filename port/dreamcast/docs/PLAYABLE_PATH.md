@@ -1,14 +1,14 @@
 # RE4 Dreamcast: boot-forward playable integration
 
-D316 recovers 319,488 real r100 heap bytes by reusing one native source primitive
-buffer after synchronous consumption, retaining full per-frame capacity. The
-source menu remains visible; required block/enemy allocations still fail.
-Their combined 4,704,000-byte request exceeds the current 427,008 free bytes by
-4,276,992 before overhead/intervening allocations. Continue the source-to-native
-world/actor connection and actual resource backing recovery, using the existing
-room renderer and the UI-owned PVR frame. See
-[D316](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
-
+Current measured candidate D322 retains the visible source menu and D320's
+856,992-byte r100 archive recovery. The required1,126,272-byte block pool now
+allocates. Compact qualified core HUD backing and a smaller fixed reservation
+recover another335,136 source-heap bytes. First em12 still needs3,577,728 with
+482,496 free:3,095,232 short before overhead. Source model packets are emitted,
+but the sampled source presentation hold yields zero model presentations.
+Continue actual resource backing recovery and the source-driven native scene/
+actor/event connection. This is not room/gameplay acceptance. See
+[D322 and historical checkpoints](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
 
 Updated 2026-09-21. **This is the authoritative execution plan.** It supersedes
 previous instructions to finish or optimize an isolated scene before integrating
@@ -60,7 +60,7 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## D314 presentation checkpoint; D315 current initialization frontier
+## Historical D314 presentation and D315 stack correction
 
 D314 is the first verified source-to-native warning/main-menu presentation;
 [its checkpoint](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md) pins corrected captures
@@ -70,7 +70,8 @@ See [D315](R4_SUBSCREEN_BOOT_CHECKPOINT.md) for stack/memory costs and precise
 subscreen dependencies. Preload control flow is restored; ARAM storage, archive
 qualification and Sscrn binding still prevent inventory acceptance. Continue
 source-selected native resource ownership and visible output without dropping
-content. Source archives remain resident; 3D/audio/manual play stay open.
+content. D320/D322 subsequently reclaim selected source backing as recorded above;
+3D/audio/manual play stay open.
 
 ## Historical D312-D313 boot frontier (D312 integration / D313 storage candidate, 2026-09-21)
 

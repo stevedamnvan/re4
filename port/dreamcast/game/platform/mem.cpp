@@ -18,7 +18,11 @@
 struct Re4dcMemLayout re4dc_mem;
 
 static const unsigned long kSoundSize = 0x80000;    // SND_DATA_TOP 0x80370000 to GX FIFO 0x803F0000
-static const unsigned long kCoreSize = 0x234000;    // CORE_DATA_MAX
+// Makefile regenerates the one-object budget header when the selected profile
+// changes. Default remains the full reference; candidate bytes come from the
+// compact-core report, including identity records/table and 32-byte alignment.
+static const unsigned long kCoreSize = RE4DC_CORE_RESIDENT_BYTES;
+static_assert(kCoreSize >= 32 && kCoreSize <= 0x234000 && kCoreSize % 32 == 0);
 static const unsigned long kOptionSize = 0x40000;
 static const unsigned long kPlayerSize = 0x118000;  // 0x807EC000-0x80904000
 static const unsigned long kWeaponSize = 0x70000;
@@ -34,6 +38,7 @@ void re4dc_mem_init(void)
     if (re4dc_mem.arena_lo) {
         return;
     }
+    printf("re4dc_mem: selected core reservation %lu bytes\n", kCoreSize);
     unsigned long fixed = kSoundSize + kCoreSize + kOptionSize + kPlayerSize + kWeaponSize;
     // Take the largest arena the KOS heap gives us, leaving the runtime some room.
     unsigned long want = 13 * 1024 * 1024;

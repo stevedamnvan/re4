@@ -284,6 +284,13 @@ void CoreDataRead()
 #line 219 "D:/Bio4/Prog/read.cpp"
     req = DVD_READ(3, CORE_DATA_ADDR, 0, 0, 0, 0x8001);
     Dvd.ReadCheckInfo(req, &info);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Bind offline identities before source TPL initialization relocates fields.
+    if (!re4dc_ui_bind_core(pG->pArc, info.size[0][0])) {
+        re4dc_missing("invalid prepared native core identities");
+        return;
+    }
+#endif
     SpecularInit(ARC_PTR(ofs_10), ARC_PTR(ofs_44), ARC_PTR(ofs_48), ARC_PTR(ofs_4C));
     GlobalIlmTexInit(ARC_PTR(ofs_40));
     if (info.size[0][0] > CORE_DATA_MAX) {

@@ -125,3 +125,15 @@ $(OBJDIR)/ui_bridge.o: ui_bridge.cpp
 $(OBJDIR)/model_bridge.o: model_bridge.cpp
 	@mkdir -p $(dir $@)
 	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@
+
+# Select the full source reference by default. A compact core candidate must
+# match its report; the source DVD queue rejects oversized input before copying.
+CORE_RESIDENT_BYTES ?= 0x234000
+.PHONY: core-budget-force
+$(OBJDIR)/core-budget.h: core-budget-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_CORE_RESIDENT_BYTES %s\n' '$(CORE_RESIDENT_BYTES)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/mem.o: $(OBJDIR)/core-budget.h
+$(OBJDIR)/platform/mem.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/core-budget.h

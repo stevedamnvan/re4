@@ -20,7 +20,7 @@ struct Key { unsigned crc,fnv; bool operator==(const Key& b)const{return crc==b.
 struct Entry { re4dc::texture::Package package; Key key{}; unsigned frame=0; bool valid=false; };
 struct Source { Re4dcUiImage image{}; Key key{}; };
 Entry entries[kTextureCount]; Source sources[256]; unsigned nsource;
-re4dc::texture::SourceIdentityTable room_identities;unsigned identity_hits;
+re4dc::texture::SourceIdentityTable room_identities,core_identities;unsigned identity_hits;
 Re4dcUiQuad quads[kQuadCount]; Entry* handles[kQuadCount]; unsigned nquad,frame,used,peak,staging_peak;
 unsigned dropped,unsupported,missing,drawn,culled,loads,reclaimed; bool ready,frame_ready;
 extern "C" int re4dc_vi_black();
@@ -57,12 +57,13 @@ bool same_image(const Re4dcUiImage& a,const Re4dcUiImage& b) {
 bool image_key(const Re4dcUiImage& image,Key& key) {
     for(unsigned n=0;n<nsource;++n) if(same_image(sources[n].image,image)) {key=sources[n].key;return true;}
     Key external{};
-    const int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
+    int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
+    if(!native)native=core_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
     if(native<0 || (native && (image.palette || image.palette_bytes))) {
-        re4dc_log("native room identity: incompatible descriptor rejected\n");return false;
+        re4dc_log("native source identity: incompatible descriptor rejected\n");return false;
     }
     if(native) {
-        if(identity_hits++<3)re4dc_log("native room identity: %08x-%08x (no source-texel hash)\n",external.crc,external.fnv);
+        if(identity_hits++<3)re4dc_log("native source identity: %08x-%08x (no source-texel hash)\n",external.crc,external.fnv);
         if(nsource<256)sources[nsource++]={image,external};
         key=external;return true;
     }
@@ -123,6 +124,12 @@ Entry* load(const Re4dcUiImage& image) {
 }
 }
 extern "C" void re4dc_ui_invalidate_sources(){nsource=0;}
+extern "C" int re4dc_ui_bind_core(void* archive,unsigned bytes){
+    nsource=0;
+    const bool ok=core_identities.adopt(archive,bytes);
+    re4dc_log("native core identities: %s count=%u archive=%u metadata_owner=core\n",ok?"ok":"REJECTED",core_identities.count(),bytes);
+    return ok;
+}
 extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
     nsource=0;identity_hits=0;
     const bool ok=room_identities.adopt(archive,bytes);
@@ -134,6 +141,7 @@ extern "C" void re4dc_ui_retire_room(){
         re4dc_missing("native room retire fence failed");
     // No queued draw may outlive its source room. Shared cached uploads may be
     // reloaded from their stable identities; no archive texels are needed.
+    // Core descriptors belong to the persistent core region and survive this reset.
     nquad=0;model_used=0;nsource=0;room_identities.clear();identity_hits=0;
     for(auto& entry:entries)close_entry(entry);
 }

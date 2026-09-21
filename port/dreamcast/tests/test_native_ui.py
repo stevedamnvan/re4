@@ -181,7 +181,9 @@ for(int arg=3;arg<6;++arg){
 }
 std::ifstream rf(argv[6],std::ios::binary);
 std::vector<unsigned char> room((std::istreambuf_iterator<char>(rf)),{});
-re4dc::texture::SourceIdentityTable identities;
+std::vector<unsigned char> core(room);
+re4dc::texture::SourceIdentityTable identities,core_identities;
+assert(core_identities.adopt(core.data(),core.size()));
 assert(identities.adopt(room.data(),room.size()) && identities.count()==1);
 unsigned crc=0,fnv=0;
 assert(identities.lookup(room.data()+128,8,8,14,crc,fnv));
@@ -189,6 +191,8 @@ assert(crc==0x12345678U && fnv==0xabcdef01U);
 assert(identities.lookup(room.data()+129,8,8,14,crc,fnv)==-1);
 assert(identities.lookup(room.data()+128,16,8,14,crc,fnv)==-1);
 identities.clear();assert(!identities.lookup(room.data()+128,8,8,14,crc,fnv));
+assert(core_identities.lookup(core.data()+128,8,8,14,crc,fnv)==1); // room retirement leaves persistent core binding intact
+assert(core_identities.lookup(room.data()+128,8,8,14,crc,fnv)==0);
 for(unsigned byte:{0U,160U,168U,172U,176U,180U,188U,192U,128U,144U,96U,121U}){
  room[byte]^=0x80;assert(!identities.adopt(room.data(),room.size()));assert(!identities.count());room[byte]^=0x80;
 }
@@ -248,7 +252,7 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
         key,_=UI.image_identity(image);crc,fnv=[int(x,16) for x in key.split("-")]
         fixture='#include "native_ui.h"\n#include <cassert>\n'
         fixture+='struct Key{unsigned crc,fnv;};struct Source{Re4dcUiImage image;Key key;};Source sources[256];unsigned nsource;\n'
-        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
+        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
         fixture+=body
         fixture+=r"""
 int main(){
@@ -259,7 +263,7 @@ Re4dcUiImage image{pixels,palette,8,4,9,0,16};Key key{};assert(image_key(image,k
 assert(image_size(image)==32);
 """
         fixture+=f"assert(key.crc=={crc}U && key.fnv=={fnv}U);"
-        fixture+='assert(nsource==1);assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;image.pixels=(void*)1;assert(!image_key(image,key));assert(nsource==0);}\n'
+        fixture+='assert(nsource==1);assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;image.pixels=(void*)1;assert(!image_key(image,key));assert(nsource==0);room_identities.state=0;core_identities.state=-1;assert(!image_key(image,key));assert(nsource==0);core_identities.state=1;image.palette=nullptr;image.palette_bytes=0;assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;assert(!image_key(image,key));}\n'
         with tempfile.TemporaryDirectory() as d:
             root=pathlib.Path(d);cpp=root/"key.cpp";cpp.write_text(fixture);exe=root/"key"
             subprocess.run(["g++","-std=c++17","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)

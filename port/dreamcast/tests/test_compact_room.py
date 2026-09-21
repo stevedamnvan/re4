@@ -85,4 +85,44 @@ class CompactRoom(unittest.TestCase):
             with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:original)}):
                 with self.assertRaisesRegex(ValueError,'non-reference'):ui.compact_room(source,textures,root/'wrong-image')
 
+class CompactCore(unittest.TestCase):
+    def test_selected_family_compacts_without_qualifying_or_mutating_other_families(self):
+        room,_,image=fixture()
+        old_offsets=struct.unpack_from('>51I',room,16)
+        eff=bytearray(room[old_offsets[8]:old_offsets[9]])
+        struct.pack_into('>H',eff,52,7) # upload-only HUD ID, not CPU noise 0xFE
+        archive=bytearray(320);struct.pack_into('>I',archive,0,36)
+        for i in range(36):
+            struct.pack_into('>I',archive,16+4*i,len(archive))
+            archive[160+4*i:164+4*i]=b'EFF\0' if i==25 else b'VIB\0' if i==1 else b'CNS\0'
+            archive+=eff if i==25 else bytes([1 if i==1 else 0])*32
+        container=bytearray(ui.mirror.CONTAINER_MAGIC+bytes(1024-32))+archive
+        struct.pack_into('>4I',container,32,0,len(archive),0,1024)
+        struct.pack_into('>I',container,64,ui.mirror.END_OF_TABLE)
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'core.das';source.write_bytes(container);textures=root/'tex';textures.mkdir()
+            key,_=ui.image_identity(image)
+            package,_=tpl.build_package([image],[tpl.MaterialBinding('source',0,None)],twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
+            (textures/(key+'.re4tex')).write_bytes(package)
+            report=ui.compact_core(source,textures,root/'out')
+            self.assertEqual(len(report['selected']),1)
+            self.assertEqual(report['archive_recovery_bytes'],160)
+            self.assertEqual([e['sub'] for e in report['retained_unqualified']],['etc/core.das:0#1'])
+            small=(root/'out/core.arc').read_bytes();packed=(root/'out/core.das').read_bytes()
+            size,base=struct.unpack_from('<I4xI',packed,36)
+            self.assertEqual(packed[base:base+size],small)
+            self.assertEqual(source.read_bytes(),container)
+            before=bytearray(container);ui.mirror.convert_file('etc/core.das',before)
+            self.assertEqual(packed[64:1024],before[64:1024]) # DVD sound/header transport unchanged
+            selected=report['selected'][0]
+            self.assertEqual(small[selected['resident_payload']:selected['resident_payload']+8],b'R4NREF\0\0')
+            # Unknown selected data is rejected; an unrelated raw family is not
+            # silently presented as qualified merely because compaction worked.
+            bad=bytearray(container);bad[1024+160+25*4:1024+164+25*4]=b'BAD\0';source.write_bytes(bad)
+            with self.assertRaisesRegex(ValueError,'unqualified selected'):
+                ui.compact_core(source,textures,root/'bad')
+            self.assertFalse((root/'bad').exists())
+            source.write_bytes(container)
+            with self.assertRaises(FileExistsError):ui.compact_core(source,textures,root/'out')
+
 if __name__=='__main__':unittest.main()

@@ -398,3 +398,130 @@ bytes falls short of the34% target before metadata/buffers. A66%-size enemy body
 still would not fit the current147,360-byte free region. Continue source-backed
 resource recovery across the actual working set; do not turn a mesh substitution
 or a compressed file size into a claim that the allocation now fits.
+
+
+## D322 - compact persistent core HUD backing (2026-09-21)
+
+Keep D320's compact room, successful block pool and source menu. D322 reuses the
+same offline identity/offset compaction, native texture packages and bounded
+Package/storage uploader for the already-qualified `etc/core.das:0#25` HUD EFF
+texture table. No textures are generated again: all 26 selected native packages
+already exist and match the deterministic converter. No resizing, mesh changes,
+PS2 substitution, palette conversion or VQ promotion occurs in this candidate.
+
+### Connection and ownership
+
+- Existing implementation reused: `prepare_native_ui` offset/identity compaction,
+  `le_mirror` conversion/qualification and DVD payload replacement,
+  `SourceIdentityTable`, `Package::open_streamed/upload/release_payload`, shared
+  storage bounce and GPU-fenced texture cache.
+- Source connection: `CoreDataRead` reads source file 3 to `CORE_DATA_ADDR`, binds
+  identities before original TPL relocation, then continues normal SpecularInit
+  and GlobalIlmTexInit. Existing source ID/model texture consumers resolve the
+  same offline keys through the shared native cache.
+- New adapter: one persistent core identity view alongside the existing room
+  view; `re4dc_ui_bind_core`; a selectable fixed-core reservation; an oversized
+  core guard in the DVD queue before any payload transfer. Room retirement
+  clears room identities/cache after the existing fence, retaining the core
+  view because its source region remains resident. No second resource cache.
+- The smaller container reads directly into the smaller final fixed region.
+  Original type-0 bytes remain on disc only, as in the existing room transport;
+  original sound headers/data and source sound dispatch remain intact. This is
+  RAM recovery, not a smaller disc image or proof of audible output.
+
+Only EFF #25's qualified upload-only, single-level, nonpaletted images are
+selected. Noise ID 0xFE, palettes, mip chains, specular/illumination and other
+families remain resident. Every unselected converted core body is checked
+byte-identical, even when its top-level offset moves. All source slot ordinals
+remain stable. The core's EFF #1 path list, VIB #3 and SAT #9/#10 are still
+unqualified; their status is explicitly retained in the report. This does not
+activate their consumers or label the entire core archive qualified. The
+existing boot-deps selector already requires #25 separately.
+
+### Measured cost, with the same D320 room/input/native packages
+
+| Metric, bytes | D320c | D322 |
+|---|---:|---:|
+| Core type-0 payload | 2,295,616 | 1,975,008 |
+| Fixed core reservation | 2,310,144 | 1,975,008 |
+| Source heap capacity | 8,667,136 | 9,002,272 |
+| Free before required block request | 1,284,000 | 1,619,136 |
+| Free after successful block allocation | 157,664 | 492,800 |
+| Free at first em12 request | 147,360 | 482,496 |
+| Required em12 request | 3,577,728 (fails) | 3,577,728 (fails) |
+| Sampled room-upload free, before/after | 75,072 | 410,208 |
+
+Actual source-heap gain is **335,136 bytes at both matched allocation points**:
+320,608 net payload bytes plus 14,528 formerly unused reserved bytes. The compact
+core includes 832 token bytes and a 352-byte identity index. The executable's
+text/data/BSS total grows 656 bytes, including 32 BSS bytes; report that separate
+cost rather than treating the source-heap gain as a whole-machine peak result.
+The source arena allocation stays the same size. No second full core or new
+texture staging buffer is allocated. Existing source DVD staging, native 64 KiB
+bounce and per-texture metadata remain. Ten room uploads succeed with unchanged
+source-heap free bytes. Sampled menu VRAM peak remains 4,192,256 bytes, with the
+same native package files and shared 4 MiB cache policy.
+
+CPU trade: one 26-record validation at load and a bounded core identity lookup
+on a source-image cache miss. Hot source/texture caches are unchanged. No extra
+per-frame model preparation, encoder or decompressor was added. This run does
+not establish gameplay CPU/frame-time distributions, input responsiveness or
+full loading/retry peak headroom.
+
+The remaining enemy deficit is **3,095,232 bytes before overhead**, not solved
+by this change. Source menu is visibly intact at 640x480. The asynchronous model
+snapshot is frame 1234, Rno0=3, System=0x800, 16 processed parts, 5,507 input and
+87 output triangles, 8,512 peak packet bytes, 0 invalid/overflow, 8 resource
+rejections, **0 model presentations**. It is not a matched draw-count comparison
+with D320's later snapshot. The source hold stays intact; no visible cabin or
+moving HUD/actor acceptance. Existing effect-path errors, required enemy/event,
+ARAM/audio/inventory and route/retry requirements remain open.
+
+### Selection, rejection and verification
+
+The build default remains the full 0x234000-byte core reservation. The Makefile
+regenerates the single-object budget header when the profile changes, so stale
+mem.o cannot silently retain the other profile. Switching to default and back
+was tested; the restored candidate ELF was byte-identical. Reproduce candidate:
+
+```sh
+python3 port/dreamcast/tools/prepare_native_ui.py \
+  --compact-core /root/re4data/etc/core.das \
+  --textures /root/probe/d318d-fixtures/tex --output <fresh-core-output>
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/game -j4 CORE_RESIDENT_BYTES=1975008
+```
+
+Install that core.das in a fresh selectable mirror, retaining D320's compact
+r100.arc/.dar and unchanged other assets. Current candidate paths:
+`/root/probe/d322-core`, `/root/probe/d322-mirror`, `/root/probe/d322-disc`;
+fixtures remain `/root/probe/d318d-fixtures`. Original mirrors are preserved.
+
+The negative pairing uses the same candidate ELF with the full original core:
+`native core read REJECTED: request=2295616 capacity=1975008 before transfer`.
+It halts explicitly before binding/initialization, preventing an overwrite of
+the adjacent option/player regions. The 20-second capture deadline ends that
+intentional rejection. Positive capture ends at 90 seconds, not a native fault.
+
+Focused checks: 2 compact source fixtures (including unchanged raw families,
+qualified-family rejection, CPU-noise/mip/ITM offsets and no source overwrite),
+5 native UI/package tests with real shared implementations under ASan/UBSan,
+2 native room-load checks, 25 mirror and 40 room-endian checks. Persistent core
+identity lookup survives room-view retirement; incompatible identities reject
+before raw hashing. Game links with the same 5 known missing stubs. read.cpp and
+dvd.cpp PowerPC preprocessed tokens match pre-slice files; full ProDG not rerun.
+
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d322-compact-core` and
+`d322-core-budget-rejection`, with validated manifests, exact executable/disc,
+assets, fixtures, capture tools/configuration, dirty source patch, logs and menu
+readback. KOS remains804b3195ebd1a06a27cc2b3a5eacf7a2429040a3, SH GCC15.2.0;
+Flycast remains64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a.
+Candidate ELF SHA25632d8674fd1ff5f0cfbc41b525adde9b45633908847756f565423d6a036c34383.
+Disc SHA256c0c97387d040087ba2da4ba3267d6f95bd6aaac2e8a61190896c4708eafb5839.
+The manifest pins all remaining identities. Commit alone does not
+identify inherited dirty integration work used in the build.
+
+Keep this selectable equivalent backing reduction. Continue recovering the
+actual enemy/active resource working set and completing source-controlled native
+presentation. Smaller reviewed render assets remain authorized where measured
+cost justifies them; whole-room/source-system requirements are not waived.

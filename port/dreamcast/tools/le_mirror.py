@@ -1846,17 +1846,9 @@ def prepare_room_archive(rel, data):
 
 
 
-def prepare_native_room(rel, converted_container, decoded, entries):
-    """Qualified native DVD container: replace only top-level type 0.
-
-    Keep nested sound headers/offsets and payloads exactly as converted. Appending
-    the room avoids relocating those tables; old compressed bytes occupy disc
-    space only and are never read into RAM. No hardcoded GameCube destination is
-    permitted. Qualification includes every decoded subfile and sound entry.
-    """
-    native_rel = rel[:-4] + '.dar'
-    arc_rel = rel[:-4] + '.arc'
-    data = bytearray(converted_container)
+def native_payload_slot(converted_container):
+    """Validate the existing one-main-payload DVD transport contract."""
+    data = converted_container
     if len(data) < HEADER_TABLE or data[:32] != CONTAINER_MAGIC:
         raise ValueError('native room requires a converted DVD container')
     payload_headers = []
@@ -1874,6 +1866,35 @@ def prepare_native_room(rel, converted_container, decoded, entries):
             raise ValueError('native room has an unexpected top-level entry')
     if not ended or payload_headers != [ENTRY_SIZE]:
         raise ValueError('native room requires one room payload in the first slot')
+    return payload_headers[0]
+
+
+def replace_native_payload(converted_container, payload):
+    """Replace a previously qualified payload, preserving nested sound bytes.
+
+    Qualification belongs to the caller; this shared transport helper only
+    checks the DVD boundary. It is not an archive conversion success gate.
+    """
+    slot=native_payload_slot(converted_container)
+    data=bytearray(converted_container)
+    offset=(len(data)+31)&~31
+    data+=bytes(offset-len(data))+payload
+    data+=bytes((-len(data))&31)
+    struct.pack_into('<4I',data,slot,0,len(payload),0,offset)
+    return data
+
+
+def prepare_native_room(rel, converted_container, decoded, entries):
+    """Qualified native DVD container: replace only top-level type 0.
+
+    Keep nested sound headers/offsets and payloads exactly as converted. Appending
+    the room avoids relocating those tables; old compressed bytes occupy disc
+    space only and are never read into RAM. No hardcoded GameCube destination is
+    permitted. Qualification includes every decoded subfile and sound entry.
+    """
+    native_rel = rel[:-4] + '.dar'
+    arc_rel = rel[:-4] + '.arc'
+    native_payload_slot(converted_container)
     covered = [e for e in entries if e['file'] == arc_rel or
                (e['file'] == rel and not (e.get('type') == 0 and
                                          '/' not in str(e.get('part', ''))))]
@@ -1884,11 +1905,7 @@ def prepare_native_room(rel, converted_container, decoded, entries):
            if not e.get('handled') or e.get('complete') is not True or e.get('error')]
     if bad:
         raise ValueError('unqualified native room dependencies: ' + ', '.join(map(str, bad)))
-    offset = (len(data) + 31) & ~31
-    data += bytes(offset - len(data)) + decoded
-    data += bytes((-len(data)) & 31)
-    struct.pack_into('<4I', data, payload_headers[0], 0, len(decoded), 0, offset)
-    return native_rel, data
+    return native_rel, replace_native_payload(converted_container, decoded)
 
 
 # Native descriptor uses the existing OSModuleHeader layout, with no PPC sections.

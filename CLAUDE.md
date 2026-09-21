@@ -13,7 +13,28 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D320 block pool fits; enemy and source presentation remain
+## Current resumption point - D322 core recovery; enemy and source presentation remain
+
+D322 extends the existing compact texture identity path to the already-qualified
+core HUD EFF #25 only. Actual fixed core reservation2,310,144 ->1,975,008;
+source heap grows335,136 to9,002,272 bytes. Required block pool still allocates,
+leaving492,800; first enemy3,577,728 still fails with482,496 free (shortfall
+3,095,232 before overhead). Title/menu remains visible; sampled model packets
+still have zero presentations under source hold. No room/gameplay acceptance.
+
+Read D322 in R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md. Candidate mirror
+/root/probe/d322-mirror, disc /root/probe/d322-disc, core/report /root/probe/d322-core;
+unchanged fixtures /root/probe/d318d-fixtures. Build with CORE_RESIDENT_BYTES=1975008.
+Default remains full core0x234000. A full asset paired with the smaller profile
+is proven to halt BEFORE copying; profile switching rebuilds mem.o correctly.
+Evidence: C:/Flycast-Evidence/re4-dreamcast/d322-compact-core and
+/d322-core-budget-rejection. The persistent core identity view survives room
+retirement; shared native cache/uploads/fences are unchanged. All26 textures
+were already present, no generation/resizing/VQ/PS2 promotion. Core EFF #1 path,
+VIB #3 and SAT #9/#10 remain explicitly unqualified and byte-identical.
+ELF grows656 text/data/BSS bytes; no gameplay CPU/peak-memory/hardware acceptance.
+Continue enemy/resource backing recovery alongside the source render/event
+connection. Do not reopen stack, readback, decoder or native-backend work.
 
 D314 remains the first verified source-driven warning/main-menu UI presentation
 checkpoint. Adapter 4123a85 and focused capture/interaction validation 8f1578b
