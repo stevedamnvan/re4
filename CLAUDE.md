@@ -29,14 +29,21 @@ free. The required 1,126,272-byte block-model pool also fails with 465,920 free.
 See [R4_STATIC_MODULE_STORAGE_CHECKPOINT.md](port/dreamcast/docs/R4_STATIC_MODULE_STORAGE_CHECKPOINT.md)
 for command, source/data equivalence checks, identities and exact next work.
 
-Next primary task: source-active texture/resource lifetimes and bounded native
-ownership, using the existing storage/texture sharing/upload/retirement code.
-Base images in core+r100+actors total about 4.31 MiB in source archives, but a
-naive 16-bit upload of every image needs 13.76 MiB before mipmaps/framebuffers.
-Determine the actual active set; do not replace main-RAM overflow with VRAM
-overflow. Keep source metadata, required behavior and CPU texture users valid;
-only reclaim backing storage after ownership transfers successfully. Also account
-for source block and event staging; ARAM dispatch is still a placeholder.
+Next primary task: integrate the recovered resource-to-render path using the
+existing native implementation as a whole. Follow PLAYABLE_PATH.md's
+"Integration correction" and make one bounded source-to-native ownership map
+before more isolated allocation/conversion patches. Connect source model/camera/
+material/pose inputs with existing PVR, texture and storage mechanisms. The
+viewer render entry takes prototype Player/Enemy state; reuse its mechanisms
+without importing that gameplay. Budget core/UI, actors, blocks, effects/events,
+staging and GPU/audio storage together, including transition/retry lifetimes.
+
+D313's source-image totals (about 4.31 MiB; 13.76 MiB if all expanded to 16-bit)
+are capacity leads, not the optimized native package budget or active set.
+Determine actual source-selected resources; preserve CPU texture users and reclaim
+backing only after successful ownership transfer. ARAM dispatch remains a
+placeholder. Do not delay native presentation until all headless source coverage
+is finished, and do not build another decoder, texture pipeline or renderer.
 
 The room's door/window tasks are active despite failed initialization. Required
 Ganado creation, block residency, ID/effect issues, r101 EVS and native graphics/

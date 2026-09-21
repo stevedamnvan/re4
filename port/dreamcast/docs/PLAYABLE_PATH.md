@@ -85,6 +85,43 @@ output, performance or physical-hardware acceptance is implied by these logs.
 After first-room manual acceptance, package the proven approach as an Astra
 light skill according to AGENTS.md; keep the three-room goal and wider backlogs.
 
+## Integration correction: reuse the whole available implementation
+
+User clarification, 2026-09-21: step back from one-failure-at-a-time archive
+integration and use the recovered source and working native systems together.
+This changes task selection, not the menu/three-room objective or fidelity rules.
+Whole qualified room archives already load; the fragmentation is in subsystem
+integration. Do not confuse conversion progress with renderer/resource readiness.
+
+The next implementation unit is the recovered game's resource-to-render path.
+Before editing it, make one bounded source-to-native dependency/ownership map
+for the current opening route, then implement against that map. Use current code
+and accepted artifacts; do not reconstruct completed mechanisms or audit the
+entire game's source as a new prerequisite. Keep focused checks inside the slice,
+but choose the slice by the combined gameplay, memory and presentation result.
+
+| Existing implementation to reuse | Connection still required |
+|---|---|
+| `src/game/trans.cpp` model eligibility, selected lights, pose/normal preparation and material setup | Feed source-authoritative current models/camera/material state into native rendering; preserve gameplay/event updates. |
+| `room/main.cpp` clipping, PVR packets/strips, lighting helpers and submission | Reuse applicable helpers with recovered-game inputs. Its `render_scene` currently takes prototype Player/Enemy/package state; copying that gameplay loop would be a regression. |
+| `tools/convert_tpl.py` and `room/texture_package.*` native layout, sharing, upload and payload release | Maintain source texture/material identity and CPU users; connect upload success and handles to source-owned resources. Do not invent another converter. |
+| `room/room_storage.*`, `load_room_texture`, `room_gpu_quiesced`, `retire_room` | Adapt these ownership/failure/fence contracts to core, player, weapon, room, block and event lifetimes; avoid a second full resident copy or an unreclaimed reservation. |
+| Recovered source collision, streaming selection, actor/event/module logic; existing native input/audio mechanisms | Keep source behavior, identify adapters and actual missing consumers together. ARAM staging is not AICA memory; current no-copy/audio stubs remain missing functionality. |
+
+Budget the combined menu-to-room working set: core/UI, Leon, weapon, authored
+enemies, source-selected blocks, effects/events, staging, main RAM, VRAM and
+AICA. Include pause/retry/transition ownership. The D313 image inventory is a
+capacity lead, not the active set. Do not reject the optimized pipeline using an
+all-images-expanded estimate, or assume all existing viewer assets cover source
+menu/event/material semantics. Preserve original/GameCube and accepted native
+references; only explicit measured tradeoffs may change presentation.
+
+Require a source-driven visible result and measured resident/loading costs as
+the next integration milestone. Use smaller fixtures to validate adapters, but
+do not require every remaining source subsystem to run headlessly before wiring
+native graphics/audio. Keep missing data conversions explicit and resume normal
+boot/New Game progression in the same target; no separate replacement game.
+
 ## Opening-route evidence (partial; third room and exit gates open)
 
 | Position | Room | Entry/progression evidence | Required exit / acceptance |
