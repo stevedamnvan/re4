@@ -1,0 +1,13 @@
+diff --git a/RE4_GCWII_BIN_TOOL/SHARED_GCWII_BIN/MainAction.cs b/RE4_GCWII_BIN_TOOL/SHARED_GCWII_BIN/MainAction.cs
+index 1c13b2d..67493db 100644
+--- a/RE4_GCWII_BIN_TOOL/SHARED_GCWII_BIN/MainAction.cs
++++ b/RE4_GCWII_BIN_TOOL/SHARED_GCWII_BIN/MainAction.cs
+@@ -290,7 +290,7 @@ namespace SHARED_GCWII_BIN
+                     byte ObjFileUseBone = (byte)idxbin.ObjFileUseBone;
+                     bool CompressVertices = true; // é sempre true
+                     SHARED_TOOLS.REPACK.Structures.IntermediaryStructure intermediaryStructure;
+-                    REPACK.BinRepack.RepackOBJ(objFile, CompressVertices, ObjFileUseBone, out intermediaryStructure, false, ref FarthestVertex);
++                    REPACK.BinRepack.RepackOBJ(objFile, CompressVertices, ObjFileUseBone, out intermediaryStructure, idxbin.UseVertexColor, ref FarthestVertex);
+                     REPACK.Structures.IntermediaryLevel2 level2 = REPACK.BinRepack.MakeIntermediaryLevel2(intermediaryStructure,
+                         idxbin.UseAlternativeNormals, idxbin.IsRe1Style, FarthestVertex, out vertex_scale);
+                     final = REPACK.BinRepack.MakeFinalStructure(level2);

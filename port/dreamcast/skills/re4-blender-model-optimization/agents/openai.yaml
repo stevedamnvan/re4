@@ -1,0 +1,4 @@
+interface:
+  display_name: "RE4 Blender Model Optimization"
+  short_description: "Local Blender mesh optimization and FPS validation"
+  default_prompt: "Use $re4-blender-model-optimization to prepare a source-compatible model optimization candidate and measure its FPS effect after residency is stable."
