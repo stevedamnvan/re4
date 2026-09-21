@@ -18,6 +18,10 @@
 #include "character_package.hpp"
 #include "collision_package.hpp"
 #include "room_package.hpp"
+#if defined(RE4DC_PS2_OPAQUE_EXPERIMENT)
+#include "ps2_candidate_generated.hpp"
+static_assert(ps2_candidate::version == 1);
+#endif
 #include "room_storage.hpp"
 #include "route_package.hpp"
 #include "source_hud_package.hpp"
@@ -296,10 +300,18 @@ constexpr float kEnemySpawnYaw = -1.39f;
 // State fixture: first visit (Item_find_flg 0x2000 clear, Rsf 6/7 clear), so
 // R101Init's evt00 encounter, obj00 placement and enemy set are the source
 // path; none of those actors or events exist in this runtime yet.
+#if defined(RE4DC_PS2_ASSET_FIXTURE)
+// Test-scoped fixed placement near the oven; not the source room-entry fixture.
+constexpr float kSpawnX = 0.6f;
+constexpr float kSpawnY = 0.0f;
+constexpr float kSpawnZ = -13.5f;
+constexpr float kSpawnYaw = kPi;
+#else
 constexpr float kSpawnX = -52.1444023f;
 constexpr float kSpawnY = 0.0905708008f;
 constexpr float kSpawnZ = 22.5242734f;
 constexpr float kSpawnYaw = 2.12202168f;
+#endif
 constexpr float kGoalX = kSpawnX;
 constexpr float kGoalY = kSpawnY;
 constexpr float kGoalZ = kSpawnZ;
@@ -3693,6 +3705,20 @@ std::uint32_t source_actor_light_selection(float x, float y, float z,
 // vertex beyond them is not baked and not wrong: light_room_vertex() evaluates
 // it exactly, per use, which is the same path a conflicted vertex takes.
 bool prepare_room_static_lighting(const re4dc::room::Package& room) {
+#if defined(RE4DC_PS2_OPAQUE_EXPERIMENT)
+    // The immutable diagnostic table owns no arena pointers. Validate again on
+    // every installation/reload so it can never bind to a different package.
+    if(room.header().payload_crc32 != ps2_candidate::room_crc ||
+       ps2_candidate::first > room.header().vertex_count ||
+       ps2_candidate::count != room.header().vertex_count - ps2_candidate::first) {
+        std::printf("re4dc-room: PS2 sidecar identity/bounds mismatch\n");
+        return false;
+    }
+    std::printf("re4dc-room: PS2 sidecar v1 colors=%lu resident=%lu CRC=%08lx\n",
+                static_cast<unsigned long>(ps2_candidate::count),
+                static_cast<unsigned long>(sizeof(ps2_candidate::colors)),
+                static_cast<unsigned long>(ps2_candidate::room_crc));
+#endif
     if(room.header().group_count > kRoomLightingConflicted) {
         return false;
     }
@@ -3712,6 +3738,11 @@ bool prepare_room_static_lighting(const re4dc::room::Package& room) {
     g_room_normals_are_unit = true;
     for(std::uint32_t vertex_index = 0U;
         vertex_index < room.header().vertex_count; ++vertex_index) {
+#if defined(RE4DC_PS2_OPAQUE_EXPERIMENT)
+        if(vertex_index >= ps2_candidate::first) {
+            continue; // Color-only records do not invalidate GC normal fast paths.
+        }
+#endif
         const auto& vertex = vertices[vertex_index];
         const float length_squared = vertex.nx * vertex.nx +
                                      vertex.ny * vertex.ny +
@@ -4402,6 +4433,16 @@ inline void light_room_vertex(const re4dc::room::Vertex& input,
                               std::uint32_t light_selection,
                               float& light_red, float& light_green,
                               float& light_blue) {
+#if defined(RE4DC_PS2_OPAQUE_EXPERIMENT)
+    if(vertex_index >= ps2_candidate::first &&
+       vertex_index - ps2_candidate::first < ps2_candidate::count) {
+        const auto& color = ps2_candidate::colors[vertex_index - ps2_candidate::first];
+        light_red = color[0];
+        light_green = color[1];
+        light_blue = color[2];
+        return; // Authored color-only modulation; existing texture/fog path follows.
+    }
+#endif
     light_red = 0.0f;
     light_green = 0.0f;
     light_blue = 0.0f;
@@ -7858,6 +7899,9 @@ int main() {
         // simulation does not, so the host photographs exactly this tick.
         if(!snapshot_frozen(now))
 #endif
+#if defined(RE4DC_PS2_FIXED_STATE)
+        if(simulation_tick < 40U)
+#endif
         simulation_accumulator_us += accepted_interval;
         simulation_clamped_us += clamped_interval;
         simulation_dropped_us += clamped_interval;
@@ -7914,6 +7958,9 @@ int main() {
                 std::printf("re4dc-room: encounter restarted tick=%llu\n",
                             static_cast<unsigned long long>(simulation_tick));
             }
+#if defined(RE4DC_PS2_ASSET_FIXTURE)
+            input = Input{}; // Identical stationary player; deterministic moving camera.
+#endif
 #if defined(RE4DC_DIAGNOSTIC_SWEEP)
             // Eight seconds forward, two turning, repeating: enough to leave
             // the entry point, meet geometry and face a different way each
@@ -7999,6 +8046,12 @@ int main() {
             simulation_wall_time_us = tick_input_time_us;
             ++simulation_tick;
             ++catchup_ticks;
+#if defined(RE4DC_PS2_FIXED_STATE)
+            if(simulation_tick == 40U) {
+                simulation_accumulator_us = 0U;
+                break; // Matched snapshot timing, no framebuffer/digest instrumentation.
+            }
+#endif
 #if defined(RE4DC_FB_SNAPSHOT)
             if(snapshot_tick_due(static_cast<std::uint32_t>(simulation_tick))) {
                 break;
@@ -8174,6 +8227,16 @@ int main() {
                 player.z + fz * 2.0f, 1.0f};
 #endif
         }
+#if defined(RE4DC_PS2_ASSET_FIXTURE)
+        // Three seconds normal view, then a six-second lateral/grazing sweep.
+        // Same tick gives exactly the same projection and camera in A and B.
+        const float phase = static_cast<float>(simulation_tick % 270U);
+        const float amount = phase < 90.0f ? 0.0f : (phase - 90.0f) / 180.0f;
+        eye = {2.24f + 2.6f * amount, 1.65f - 0.7f * amount,
+               -13.5f - 3.0f * amount, 1.0f};
+        target = {2.238387f, 1.34f, -17.287094f, 1.0f};
+        half_fov = 50.0f * kPi / 360.0f;
+#endif
 #if defined(RE4DC_SOURCE_SCENE)
         set_source_lighting_camera(eye, target, half_fov);
 #endif
