@@ -360,7 +360,11 @@ void Ctrl12SetS(cCtrl* c, int idx, s16 val) asm("Ctrl12Set__FP5cCtrliUs");
 // COMPILER-DIFF: narrow-argument truncation (docs/matching.md item 4): int-view of the u16 se number / block.
 u32 Ctrl11SetSe2I(cCtrl* c, cModel* m, s16 time, int no, int idx, int blk) asm("Ctrl11SetSe2__FP5cCtrlP6cModelsUsiUs");
 // COMPILER-DIFF: narrow-argument truncation (docs/matching.md item 4): int-view of em10CallVoiceSe's u16 se number (em10SetDamageVoice).
+#if defined(__PPC__)
 extern "C" void em10CallVoiceSeI(cEm10* em, int no) asm("em10CallVoiceSe");
+#else
+extern "C" void em10CallVoiceSeI(cEm10* em, int no) asm("_em10CallVoiceSe");
+#endif
 // COMPILER-DIFF: argument-move order (docs/matching.md item 1): em10_R1_R10FGondola's setThrow issues the
 // `addi r5, Em10AtkTbl` before `fmr f1, t`; the GPR-args-first redeclaration is ABI-identical.
 void cEmWepSetThrowF(cEmWep* wep, Vec* spd, EmAtkInfo* atk, f32 grav) asm("setThrow__6cEmWepP3VecfP9EmAtkInfo");

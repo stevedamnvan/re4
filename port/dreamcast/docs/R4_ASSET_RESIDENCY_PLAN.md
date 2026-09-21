@@ -1,6 +1,6 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-Updated 2026-09-21; current integration reference D311 (weapon/cloth startup reaches R100Init).
+Updated 2026-09-21; current integration reference D312 (required block/enemy memory allocations fail).
 Historical resource measurements retain their original revision identities.
 This policy supports the authoritative [PLAYABLE_PATH.md](PLAYABLE_PATH.md).
 R4 is not an independent prerequisite project that must be perfected before
@@ -50,9 +50,11 @@ r100 and dispatches its sound blocks; D306 measures the ensuing pool exhaustion.
 D307 reclaims a duplicate platform reservation, returning 458,752 bytes without
 cutting gameplay pools or render capacity. Collision/event allocations succeed;
 D309 qualifies player/weapon data and D311 repairs cloth scratch addressing.
-The next frontier is R100Init's constructor/event/enemy integration; see
-[R4_WEAPON_CLOTH_CHECKPOINT.md](R4_WEAPON_CLOTH_CHECKPOINT.md). This is startup
-recovery, not final gameplay headroom or a rendering speedup.
+D312 now qualifies required EVD files and binds em12, but its 4,006,016-byte body
+fails with 409,152 bytes free; the source's 1,126,272-byte block-model pool also
+fails. Account for both before accepting room initialization. See
+[R4_EVENT_ENEMY_CHECKPOINT.md](R4_EVENT_ENEMY_CHECKPOINT.md). This is a measured
+resource blocker, not justification for arbitrary source-pool or content cuts.
 Custom `.re4room`/`.re4sat` and native textures serve the scene renderer and are
 not interchangeable with the source archive behind `pG->pRoom`. The recovered
 target still links GX/audio placeholders; explicit connection and normal

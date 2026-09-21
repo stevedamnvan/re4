@@ -50,20 +50,21 @@ required systems, stub/unimplemented hits, manual gameplay results, transition
 and retry results, exact build/assets and capture location. Keep missing entries
 open rather than assigning guessed IDs or declaring completion from compilation.
 
-## Current boot frontier (D311 replay, 2026-09-21)
+## Current boot frontier (D312 replay, 2026-09-21)
 
-Qualified r100, Leon and weapon loading now reach the authored R100Init. D307's
-arena correction remains; D309 reuses the existing DRS parser and static-module
-mechanism for handgun module 4. D311 corrects cloth scratch to use the existing
-native locked-cache buffer, preserving the PowerPC path and cloth behavior.
+D312 qualifies required EVD/FCV variants and binds native em12 using the existing
+module mechanism. The R100Em constructor alias passes its SH-4 layout check.
+The replay reaches authored room check tasks, but R100Init fails enemy creation:
+4,006,016 bytes requested with 409,152 free. Earlier the required block-model
+pool also fails: 1,126,272 requested with 419,456 free. Repeated enemy loads see
+343,552 free. This is incomplete initialization, not a playable room.
 
-R100Init reports missing em12/event files, then stops in the pre-existing
-`R100Em` constructor stub. Those five source files are now extracted privately;
-the expanded gate rejects the four unhandled EVD archives. Em12 data conversion
-is probed but its native module is not linked. Resolve the constructor/layout
-contract and qualify the required event/enemy dependencies next. No blanket
-cinematic/event bypass. See [R4_WEAPON_CLOTH_CHECKPOINT.md](R4_WEAPON_CLOTH_CHECKPOINT.md).
-r101 remains rejected for incomplete EVS conversion.
+Next: account for and adapt the actual block/enemy/resource working set without
+removing required geometry, animation, effects or gameplay capacity. Use native
+resource ownership and existing mechanisms; preserve qualified loader semantics.
+See [R4_EVENT_ENEMY_CHECKPOINT.md](R4_EVENT_ENEMY_CHECKPOINT.md). The required
+D312 mirror manifest passes; r101 still rejects unsupported EVS. GX/audio stubs,
+ID/effect errors and module reload/reset behavior remain open.
 
 D303's source-derived first-play opening skip still reaches r100 through normal
 stage initialization; r120 is cinematic staging, not a playable room. Its D302

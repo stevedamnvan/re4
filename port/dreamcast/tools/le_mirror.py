@@ -1557,6 +1557,82 @@ def find_handler(table, key):
     return None
 
 
+def fmt_evd(sw, off, size, ctx):
+    """event.h EvtHeader/packet stream/named assets. Source layout, no event skip."""
+    sw._check(off, 80)
+    if bytes(sw.data[off:off+5]) != b'event':
+        raise ValueError('invalid event header tag')
+
+    def name_at(pos, count):
+        sw._check(pos, count)
+        raw = bytes(sw.data[pos:pos+count])
+        if b'\0' not in raw:
+            raise ValueError('unterminated event name')
+        return raw.split(b'\0')[0].decode('ascii')
+
+    name_at(off, 32); name_at(off+32, 8); name_at(off+40, 12)
+    sw.u32(off+52)  # sndFlag; the event name and sound-id byte stay intact
+    po, ps, count, bo = sw.u32s(off+64, 4)
+    if po < 80 or ps < 16 or bo < po+ps or count > size//64:
+        raise ValueError('invalid event packet/bin regions')
+    sw._check(off+po, ps); sw._check(off+bo, count*64)
+    sizes = {0:16, 3:128, 4:144, 6:64, 9:80, 11:80, 12:80,
+             14:64, 15:32, 17:32, 26:16, 27:16, 28:64, 32:64}
+    pos, end = off+po, off+po+ps
+    terminated = False
+    while pos < end:
+        with sw.bounded(pos, end-pos):
+            kind, flags = sw.u32s(pos, 2)
+            cut, frame, length, pad = sw.u16s(pos+8, 4)
+            if kind not in sizes or length != sizes[kind] or pos+length > end:
+                raise ValueError('unsupported/invalid event packet %d size %d' % (kind,length))
+            if kind in (6,14,28,32): name_at(pos+16,48)
+            elif kind in (3,11,12):
+                name_at(pos+16,12); name_at(pos+28,48)
+                if kind == 3: name_at(pos+76,48)
+            elif kind == 4:
+                name_at(pos+16,12); name_at(pos+28,12)
+                name_at(pos+40,48); name_at(pos+88,48)
+            elif kind == 9:
+                name_at(pos+16,12); name_at(pos+28,12); sw.u32s(pos+40,7)
+            elif kind in (15,17): sw.u32s(pos+16,3)
+            if kind == 27:
+                if pos+length != end:
+                    raise ValueError('event EndPac does not terminate stream')
+                terminated = True
+        pos += length
+    if not terminated: raise ValueError('event stream lacks EndPac')
+    assets = []
+    for i in range(count):
+        entry = off+bo+64*i
+        name = name_at(entry,48)
+        start = sw.u32(entry+48)
+        if start < bo+64*count or start >= size:
+            raise ValueError('event asset overlaps tables or outside file')
+        assets.append((name,start))
+    bounds = sorted(set(o for _,o in assets)) + [size]
+    formats = {'bin':fmt_bin, 'tpl':fmt_tpl, 'fcv':fmt_fcv,
+               'eff':fmt_eff, 'lit':fmt_lit, 'mdt':fmt_mdt}
+    aliases = {}
+    for i,(name,start) in enumerate(assets):
+        length = bounds[bounds.index(start)+1]-start
+        ext = name.rsplit('.',1)[-1].lower()
+        handler = formats.get(ext)
+        if start in aliases and aliases[start] != ext:
+            raise ValueError('conflicting event asset types at shared offset')
+        aliases[start] = ext
+        entry = {'file':sw.label,'sub':ctx+'#%d'%i, 'name':name,
+                 'ofs':off+start,'size':length,'tag':ext.upper(),
+                 'handled':handler is not None}
+        if handler and not sw.swapped(off+start):
+            # Shape and skeletal FCV share this byte/key layout; the original
+            # packet selects ShapeSet vs MotionSetCore, unchanged by conversion.
+            guarded(sw,handler,off+start,length,ctx+'#%d'%i,entry)
+        elif handler:
+            entry['complete'] = True
+        REPORT.append(entry)
+
+
 def fmt_drs_body(sw, off, size, ctx):
     # tools/drs.py validated the original container before any endian edits.
     # The final tagged entry ends at rel_offset, not at the end of PPC code.
@@ -1646,7 +1722,8 @@ def convert_container(sw, rel, drs_body=False):
 
 def convert_file(rel, data):
     sw = Swapper(data, rel)
-    handler = fmt_drs if fnmatch.fnmatchcase(rel, "em/*.drs") else find_handler(FILE_FORMATS, rel)
+    handler = (fmt_drs if fnmatch.fnmatchcase(rel, "em/*.drs") else
+               fmt_evd if fnmatch.fnmatchcase(rel, "evd/*.evd") else find_handler(FILE_FORMATS, rel))
     if handler:
         entry = {"file": rel, "handled": True, "size": len(data)}
         guarded(sw, handler, 0, len(data), rel, entry)

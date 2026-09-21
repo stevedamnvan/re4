@@ -2632,7 +2632,11 @@ int EventMgr::SetEvt(void* data, u32* key)
         pLog->err(0, 0, "EventMgr::SetEvs : non addr[%x]", hdr);
         return 0;
     }
+#if defined(__PPC__)
     if (*(u32*) hdr->tag != 0x6576656E || hdr->tag[4] != 't') {
+#else
+    if (strncmp(hdr->tag, "event", 5) != 0) {
+#endif
         pLog->err(0, 0, "EventMgr::SetEvt : invalid data");
         return 0;
     }
@@ -2815,7 +2819,11 @@ int EventMgr::SetEvd(char* nm, void* data, void* dat2, int flag)
         pLog->err(0, 0, "EventMgr::SetEvd : non addr[%s]", nm);
         return 0;
     }
+#if defined(__PPC__)
     if (*(u32*) hdr->tag != 0x6576656E || hdr->tag[4] != 't') {
+#else
+    if (strncmp(hdr->tag, "event", 5) != 0) {
+#endif
         pLog->err(0, 0, "EventMgr::SetEvd : invalid data[%s]", nm);
         return 0;
     }

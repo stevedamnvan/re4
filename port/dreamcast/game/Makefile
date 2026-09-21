@@ -46,7 +46,7 @@ OBJDIR = obj
 # turns every module in MODULES into one partially linked object whose only
 # global symbols are its renamed entry points (obj/modules.mk), and
 # platform/modules.cpp maps the REL header ids to them for OSLink.
-MODULES = st1_0 st1_1 st1_2 st1_3 wep02
+MODULES = st1_0 st1_1 st1_2 st1_3 wep02 em12
 MODULE_OBJS =
 MODULES_MK = $(OBJDIR)/modules.mk
 GAME_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS))

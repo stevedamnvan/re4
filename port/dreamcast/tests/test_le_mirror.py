@@ -317,6 +317,75 @@ class DrsBoundaryTest(unittest.TestCase):
             self.assertIn('em/wep02.drs:0#0: no handler (tag XYZ)', LE.check_required(LE.REPORT,deps))
 
 
+class EventArchiveTest(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        packets = bytearray()
+        for kind,length in ((0,16),(9,80),(15,32),(27,16)):
+            packet = bytearray(length)
+            struct.pack_into('>IIhhhh',packet,0,kind,0x80000000,-1,125,length,0)
+            if kind == 9:
+                packet[16:20]=b'cam\0'; packet[28:32]=b'oya\0'
+                struct.pack_into('>7i',packet,40,-200,300,-400,90,-180,45,7)
+            if kind == 15:struct.pack_into('>3i',packet,16,2,17,-1)
+            packets += packet
+        bo=80+len(packets);asset=bo+64
+        head=bytearray(80);head[:16]=b'event/test.evd\0\0'
+        head[32:37]=b'r100\0';head[40:44]=b's40\0';head[51]=18
+        struct.pack_into('>I',head,52,0x80000000)
+        # Explicit header writes (EvtHeader is exactly 80 bytes).
+        head=head[:80];struct.pack_into('>4I',head,64,80,len(packets),1,bo)
+        record=bytearray(64);record[:10]=b'model.tpl\0';struct.pack_into('>I',record,48,asset)
+        return bytes(head+packets+record+make_tpl([(8,8,5,IMAGE[:128])])),bo,asset
+
+    def test_packet_scalars_names_and_named_asset(self):
+        raw,bo,asset=self.fixture();out=bytearray(raw);LE.REPORT.clear()
+        LE.convert_file('evd/test.evd',out)
+        self.assertTrue(all(e.get('complete') for e in LE.REPORT),LE.REPORT)
+        self.assertEqual(out[:52],raw[:52])
+        self.assertEqual(struct.unpack_from('<I',out,52)[0],0x80000000)
+        self.assertEqual(struct.unpack_from('<IIhhhh',out,96),(9,0x80000000,-1,125,80,0))
+        self.assertEqual(struct.unpack_from('<7i',out,136),(-200,300,-400,90,-180,45,7))
+        self.assertEqual(struct.unpack_from('<3i',out,192),(2,17,-1))
+        self.assertEqual(struct.unpack_from('<I',out,bo+48)[0],asset)
+        self.assertEqual(struct.unpack_from('<I',out,asset)[0],0x0020af30)
+
+    def test_unknown_packet_and_asset_overlap_reject(self):
+        raw,bo,_=self.fixture()
+        for offset,value in ((80,0x7f),(bo+48,80),(80+8,0)):
+            out=bytearray(raw)
+            if offset==88:struct.pack_into('>h',out,92,0) # zero packet stride
+            else:struct.pack_into('>I',out,offset,value)
+            original=bytes(out);LE.REPORT.clear();LE.convert_file('evd/test.evd',out)
+            self.assertFalse(LE.REPORT[-1]['complete']);self.assertEqual(out,original)
+
+    def test_missing_end_marker_rejects(self):
+        raw,bo,_=self.fixture();out=bytearray(raw);struct.pack_into('>I',out,bo-16,0)
+        LE.REPORT.clear();LE.convert_file('evd/test.evd',out)
+        self.assertIn('lacks EndPac',LE.REPORT[-1]['error'])
+
+
+class EventCurveVariantTest(unittest.TestCase):
+    def test_empty_curve_preserves_frames_and_zero_fill(self):
+        f=LE.motion_codec();raw=struct.pack('>HBBI',0x1234,0,0,32)+bytes(24)
+        curve=f.parse(raw);self.assertEqual(f.serialise(curve),raw)
+        native=f.serialise(curve,'<')
+        self.assertEqual(struct.unpack_from('<HBBI',native),(0x1234,0,0,32))
+        self.assertEqual(native[8:],raw[8:])
+
+    def test_zero_size_and_aligned_keys_roundtrip(self):
+        f=LE.motion_codec()
+        joint=lambda:f.Joint(4,0,10,0,[f.Axis([0],[(1,2,3)]) for _ in range(3)])
+        curve=f.Motion(4,[joint(),joint()],[0,1],zero_size=True,block_padding={1:bytes(3)})
+        raw=f.serialise(curve);decoded=f.parse(raw)
+        self.assertEqual(f.serialise(decoded),raw)
+        native=f.serialise(decoded,'<');self.assertEqual(struct.unpack_from('<I',native,12)[0],0)
+        second=struct.unpack_from('>I',raw,20)[0]
+        self.assertEqual(native[second-3:second],bytes(3))
+        broken=bytearray(raw);broken[second-1]=1
+        with self.assertRaises(ValueError):f.parse(broken)
+
+
 class RequireTest(unittest.TestCase):
     def test_required_parts_must_be_complete_or_safe_raw(self):
         report = [

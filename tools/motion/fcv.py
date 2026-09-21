@@ -117,8 +117,10 @@ class Motion:
     max_frame: int
     joints: list
     layout: list          # joint indices in file (key block) order
-    zero_size: bool = False   # empty-motion variant with a zero size word (see parse)
+    zero_size: bool = False   # source variant with a zero size word (see parse)
     padding_byte: int = FILL  # named ETC archives use zero alignment padding
+    empty_padding: bytes | None = None  # preserve the source empty-header fill
+    block_padding: dict = field(default_factory=dict)  # optional 4-byte block alignment
 
     @property
     def n_frames(self):
@@ -137,10 +139,8 @@ def parse(d: bytes) -> Motion:
         size, = struct.unpack('>I', d[4:8])
         if d[3] != 0 or len(d) != ALIGN:
             raise ValueError('empty motion: bad pad byte or size')
-        if size == ALIGN and d[8:] == bytes([FILL]) * (ALIGN - 8):
-            return Motion(max_frame, [], [])
-        if size == 0 and d[8:16] == b'\0' * 8 and d[16:] == bytes([FILL]) * 16:
-            return Motion(max_frame, [], [], zero_size=True)
+        if size in (0, ALIGN) and d[8:] in (bytes([FILL]) * 24, bytes(24), bytes(8) + bytes([FILL]) * 16):
+            return Motion(max_frame, [], [], zero_size=size == 0, empty_padding=d[8:])
         raise ValueError('empty motion: unexpected bytes after the header')
     if max_frame & 0xC000:
         raise ValueError(f'maxFrame high bits set: {max_frame:#x}')
@@ -149,7 +149,7 @@ def parse(d: bytes) -> Motion:
     o = (3 + 3 * n + 3) & ~3
     size, = struct.unpack('>I', d[o:o + 4])
     o += 4
-    if size != len(d):
+    if size not in (0, len(d)):
         raise ValueError(f'size word {size:#x} != entry size {len(d):#x}')
     key_ofs = struct.unpack(f'>{n}I', d[o:o + 4 * n])
     o += 4 * n
@@ -164,7 +164,7 @@ def parse(d: bytes) -> Motion:
         if p + 6 > len(d):
             raise ValueError(f'joint {i} (kind {info:#06x}, parts {parts_no[i]}) key block offset {p:#x} is at or past the end')
         for _ in range(3):
-            if p + 2 > size - ALIGN + 1 and d[p:p + 2] == bytes([FILL]) * 2:
+            if p + 2 > len(d) - ALIGN + 1 and d[p:p + 2] == bytes([FILL]) * 2:
                 raise ValueError(f'joint {i} (kind {info:#06x}, parts {parts_no[i]}) key block at {key_ofs[i]:#x} lies in the 0xCD padding')
             k, = struct.unpack('>H', d[p:p + 2])
             if p + 2 + 2 * k + ks * k > len(d):
@@ -177,17 +177,21 @@ def parse(d: bytes) -> Motion:
         joints.append(j)
         ends.append(p)
     layout = sorted(range(n), key=lambda i: key_ofs[i])
-    # Blocks must be contiguous from the header to the end, then 0xCD padding to 32 bytes.
+    # Blocks are contiguous or explicitly 4-byte aligned; the tail is padded to 32 bytes.
     p = o
+    block_padding = {}
     for i in layout:
         if key_ofs[i] != p:
-            raise ValueError(f'joint {i} key block at {key_ofs[i]:#x}, expected {p:#x}')
+            gap = key_ofs[i] - p
+            if gap not in (1, 2, 3) or key_ofs[i] != ((p + 3) & ~3) or d[p:key_ofs[i]] not in (bytes(gap), bytes([FILL]) * gap):
+                raise ValueError(f'joint {i} key block at {key_ofs[i]:#x}, expected {p:#x}')
+            block_padding[i] = d[p:key_ofs[i]]
         p = ends[i]
     pad = len(d) - p
     fill = 0 if pad and d[p:] == bytes(pad) else FILL
     if pad < 0 or pad >= ALIGN or d[p:] != bytes([fill]) * pad:
         raise ValueError(f'trailing bytes at {p:#x} are not uniform 0xCD/zero padding to 32')
-    return Motion(max_frame, joints, layout, padding_byte=fill)
+    return Motion(max_frame, joints, layout, zero_size=size == 0, padding_byte=fill, block_padding=block_padding)
 
 
 def serialise(m: Motion, endian='>') -> bytes:
@@ -195,9 +199,10 @@ def serialise(m: Motion, endian='>') -> bytes:
     same layout) the native helper evaluates with the game's byte-wise readers."""
     n = len(m.joints)
     if n == 0:
-        if m.zero_size:
-            return b'\0' * 16 + bytes([FILL]) * 16
-        return struct.pack(endian + 'HBBI', m.max_frame, 0, 0, ALIGN) + bytes([FILL]) * (ALIGN - 8)
+        tail = m.empty_padding
+        if tail is None:
+            tail = bytes(8) + bytes([FILL]) * 16 if m.zero_size else bytes([FILL]) * 24
+        return struct.pack(endian + 'HBBI', m.max_frame, 0, 0, 0 if m.zero_size else ALIGN) + tail
     out = bytearray(struct.pack(endian + 'HB', m.max_frame, n))
     out += struct.pack(f'{endian}{n}H', *(j.info for j in m.joints))
     out += bytes(j.parts_no for j in m.joints)
@@ -208,6 +213,9 @@ def serialise(m: Motion, endian='>') -> bytes:
     blocks = []
     for i in m.layout:
         j = m.joints[i]
+        padding = m.block_padding.get(i, b'')
+        blocks.append(padding)
+        p += len(padding)
         ofs[i] = p
         st = fcc_struct(j.fcc_type, endian)
         b = bytearray()
@@ -218,7 +226,7 @@ def serialise(m: Motion, endian='>') -> bytes:
         blocks.append(bytes(b))
         p += len(b)
     total = (p + ALIGN - 1) & ~(ALIGN - 1)
-    out += struct.pack(endian + 'I', total)
+    out += struct.pack(endian + 'I', 0 if m.zero_size else total)
     out += struct.pack(f'{endian}{n}I', *ofs)
     for b in blocks:
         out += b

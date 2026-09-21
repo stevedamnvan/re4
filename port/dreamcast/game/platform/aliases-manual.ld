@@ -12,3 +12,7 @@ ___builtin_delete = __ZdlPv;
 ___builtin_vec_delete = __ZdaPv;
 memset = _memset;                                 /* route_ck.cpp memset_v(...) asm("memset") */
 _m3r = m3r;                                       /* pl_knife.cpp: defined under asm("m3r") */
+
+/* r100 compact cEm (0x3e0): same source constructor, asm label ignored by SH GCC. */
+__ZN6R100EmC1Ev = __ZN3cEmC1Ev;
+__ZN6R100EmC2Ev = __ZN3cEmC1Ev;

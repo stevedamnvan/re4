@@ -13,28 +13,26 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D311 authored room initialization
+## Current resumption point - D312 required working-set failure
 
-Branch `dreamcast-port`; D308/`605c5ec` qualified Leon. D309 qualifies the original
-weapon DRS using the existing parser and binds embedded module 4 to compiled
-SH-4 handgun sources. D310 diagnoses the next stall; D311 moves cloth collision
-scratch from the Gekko address to the existing native locked-cache buffer.
-The replay now reaches R100Init after player/weapon startup and BGM dispatch.
+Branch `dreamcast-port`; D312 passes the former R100Em constructor stub, links
+native em12 using the existing module mechanism, and qualifies the four required
+r100 EVD archives. The expanded `/root/probe/d312-required.txt` gate now passes.
+See [R4_EVENT_ENEMY_CHECKPOINT.md](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md)
+for the actual source/data checks, exact artifacts and remaining coverage.
 
-Next primary task: resolve the existing `R100Em` constructor-name stub after
-checking its compact stack-object layout against cEm construction; reuse
-platform/aliases-manual.ld's compiler-asm alias mechanism. Required em12 and
-r100s40/41/43/44 event files have been extracted from the original ISO into
-`/root/re4data` after D311. Em12 data passes an isolated conversion probe but its
-native module is not linked; all four EVD files remain unhandled. Qualify their
-required consumers and module before another native replay. Do not omit authored
-events or treat these files as already on the captured disc.
+Next primary task: make the required source working set fit without pool/content
+cuts. The 55-second replay fails a 1,126,272-byte block-model reservation with
+419,456 bytes free, then em12's 4,006,016-byte body with 409,152 bytes free.
+Retries see 343,552 free. R100Init reports enemy creation failure; active room
+check tasks are not proof of successful initialization. EVD ARAM_LOAD is a
+placeholder dispatch, not resident/played event data. ID/effect errors persist.
 
-`/root/probe/d309-required.txt` passed dependencies through the weapon. Expanded
-`/root/probe/d312-required.txt` rejects the newly observed EVD dependencies.
-See [R4_WEAPON_CLOTH_CHECKPOINT.md](port/dreamcast/docs/R4_WEAPON_CLOTH_CHECKPOINT.md)
-for D309-D311 exact evidence and limits. The last logged room allocation leaves
-343,552 bytes, not final peak headroom. No source pools or visible content were cut.
+Inspect actual archive contents and source ownership before changing loading.
+Reuse the existing native storage/texture mechanisms when connecting resources;
+retain qualified source structures behind recovered consumers. D307 recovered
+458,752 bytes without source pool cuts, but does not solve this larger working
+set. r101 EVS still rejects. No additional decoder or generic GX engine needed.
 
 Current limits: the game target still links `platform/gx_stub.cpp` and
 `platform/audio_stub.cpp`; source execution does not establish visible menus,
