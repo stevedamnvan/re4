@@ -4,7 +4,9 @@ game target.
 
 --decode-rooms also writes decoded, converted st*/r*.arc sidecars using the
 recovered offline decoder. They remain unqualified until --require coverage
-passes for each sidecar; the current runtime does not yet load these files.
+passes for each sidecar. --native-rooms additionally emits qualified .dar DVD
+containers for the native loader, retaining the original sound dispatch. A
+rejected room has no .dar output (including removal of an older generated one).
 
     le_mirror.py <src-tree> <dst-tree> [--force] [--require <deps.txt>]
 
@@ -1169,6 +1171,51 @@ def prepare_room_archive(rel, data):
     return native_rel, decoded
 
 
+
+def prepare_native_room(rel, converted_container, decoded, entries):
+    """Qualified native DVD container: replace only top-level type 0.
+
+    Keep nested sound headers/offsets and payloads exactly as converted. Appending
+    the room avoids relocating those tables; old compressed bytes occupy disc
+    space only and are never read into RAM. No hardcoded GameCube destination is
+    permitted. Qualification includes every decoded subfile and sound entry.
+    """
+    native_rel = rel[:-4] + '.dar'
+    arc_rel = rel[:-4] + '.arc'
+    data = bytearray(converted_container)
+    if len(data) < HEADER_TABLE or data[:32] != CONTAINER_MAGIC:
+        raise ValueError('native room requires a converted DVD container')
+    payload_headers = []
+    ended = False
+    for pos in range(ENTRY_SIZE, HEADER_TABLE, ENTRY_SIZE):
+        kind, size, dest, offset = struct.unpack_from('<4I', data, pos)
+        if kind == END_OF_TABLE:
+            ended = True
+            break
+        if kind == 0:
+            if dest or offset < HEADER_TABLE or offset + size > len(data):
+                raise ValueError('native room has an invalid type-0 destination/range')
+            payload_headers.append(pos)
+        elif kind not in (NESTED, SKIP_ENTRY):
+            raise ValueError('native room has an unexpected top-level entry')
+    if not ended or payload_headers != [ENTRY_SIZE]:
+        raise ValueError('native room requires one room payload in the first slot')
+    covered = [e for e in entries if e['file'] == arc_rel or
+               (e['file'] == rel and not (e.get('type') == 0 and
+                                         '/' not in str(e.get('part', ''))))]
+    if not any(e['file'] == arc_rel and 'sub' not in e for e in covered):
+        raise ValueError('native room has no decoded archive coverage')
+    # Explicit success, rather than absence of an error, is required here.
+    bad = [e.get('sub', e.get('part', e['file'])) for e in covered
+           if not e.get('handled') or e.get('complete') is not True or e.get('error')]
+    if bad:
+        raise ValueError('unqualified native room dependencies: ' + ', '.join(map(str, bad)))
+    offset = (len(data) + 31) & ~31
+    data += bytes(offset - len(data)) + decoded
+    data += bytes((-len(data)) & 31)
+    struct.pack_into('<4I', data, payload_headers[0], 0, len(decoded), 0, offset)
+    return native_rel, data
+
 def main():
     argv = sys.argv[1:]
     require = None
@@ -1178,7 +1225,8 @@ def main():
         del argv[i:i + 2]
     args = [a for a in argv if not a.startswith("--")]
     force = "--force" in argv
-    decode_rooms = "--decode-rooms" in argv
+    native_rooms = "--native-rooms" in argv
+    decode_rooms = "--decode-rooms" in argv or native_rooms
     if len(args) != 2:
         sys.exit(__doc__)
     src, dst = args
@@ -1200,7 +1248,7 @@ def main():
                 native_path = os.path.join(dst, native_rel)
                 with open(native_path, "wb") as f:
                     f.write(decoded)
-            if not force and os.path.exists(dp) and rel in previous:
+            if not force and not (native_rooms and fnmatch.fnmatchcase(rel, "st*/r*.das")) and os.path.exists(dp) and rel in previous:
                 dm = os.path.getmtime(dp)
                 if dm >= os.path.getmtime(sp) and dm >= tool_mtime:
                     REPORT.extend(previous[rel])
@@ -1210,6 +1258,23 @@ def main():
             convert_file(rel, data)
             with open(dp, "wb") as f:
                 f.write(data)
+            if native_rooms and fnmatch.fnmatchcase(rel, "st*/r*.das"):
+                native_path = os.path.join(dst, rel[:-4] + '.dar')
+                try:
+                    native_rel, packaged = prepare_native_room(rel, data, decoded, REPORT)
+                except ValueError as exc:
+                    # Do not leave an older qualified package beside a newly
+                    # rejected conversion. This is an exact generated path.
+                    if os.path.exists(native_path):
+                        os.unlink(native_path)
+                    REPORT.append({'file': rel[:-4]+'.dar', 'handled': False,
+                                   'complete': False, 'error': str(exc)})
+                else:
+                    with open(native_path + '.tmp', 'wb') as f:
+                        f.write(packaged)
+                    os.replace(native_path + '.tmp', native_path)
+                    REPORT.append({'file': native_rel, 'handled': True,
+                                   'complete': True, 'size': len(packaged)})
             converted += 1
     with open(report_path, "w") as f:
         json.dump(REPORT, f, indent=1)

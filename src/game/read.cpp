@@ -209,6 +209,7 @@ void ReadAreaData()
     if (pG->System_flg & 0x02000000) {
         pG->System_flg &= ~0x02000000;
     } else {
+#if defined(__PPC__)
         StopwatchStart();
 #line 147 "D:/Bio4/Prog/read.cpp"
         req = DVD_READ_N(name, (void*) (MemGetHeapEndAddr(MemGetCurrentHeap()) - READ_BUFF_OFS), 0, 0, 0, 0x8120);
@@ -230,6 +231,33 @@ void ReadAreaData()
             pLog->err(0, 0, "ReadAreaData(): DvdReadReqNAlloc error! R%03x", pG->room_id);
             return;
         }
+#else
+        // Native room containers contain an already-decoded LE type-0 payload
+        // plus the original sound entries. The source queue allocates the final
+        // room buffer and still dispatches sound blocks in their authored order.
+        // Never fall back to compressed PPC data or an unqualified .arc sidecar.
+        sprintf(name, "st%x/r%03x.dar", pG->stage_no, pG->room_id);
+        StopwatchStart();
+        req = DVD_READ_N(name, 0, 0, 0, 0, 0x8104);
+        if (req < 0) {
+            re4dc_missing("native room request failed");
+            return;
+        }
+        DvdReadInfo roomInfo;
+        int status;
+        while ((status = Dvd.ReadCheckInfo(req, &roomInfo)) == 0) {
+            TaskSleep(1);
+        }
+        if (status != 1 || roomInfo.addr[0][0] == 0 || roomInfo.size[0][0] == 0) {
+            OSReport("Native room load failed: %s status=%d\n", name, status);
+            re4dc_missing("qualified native room container missing or invalid");
+            return;
+        }
+        PSet(pG->pRoom, (void*) roomInfo.addr[0][0]);
+        out_data_size = roomInfo.size[0][0];
+        readTime = StopwatchStop(NULL);
+        OSReport("Native room: %s bytes=%u read_us=%u\n", name, out_data_size, readTime);
+#endif
     }
     PSet(pG->Rtp, GetDataExt(pG->pRoom, "RTP", 0));
     PSet(pG->RoomMes, GetDataExt(pG->pRoom, "MDT", 0));

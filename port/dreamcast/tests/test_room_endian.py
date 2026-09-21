@@ -75,6 +75,34 @@ class RoomFormats(unittest.TestCase):
             self.assertIn('error', entry)
             self.assertEqual(out, raw)
 
+    def test_native_room_preserves_sound_and_requires_complete_coverage(self):
+        # A native sound table and bytes retain their absolute/relative offsets;
+        # the replacement room becomes the only top-level MRAM allocation.
+        data = bytearray(le.CONTAINER_MAGIC + bytes(2048-32))
+        struct.pack_into('<8I', data, 32, 0, 32, 0, 1024, 0, 0, 0, 0)
+        struct.pack_into('<8I', data, 64, 4, 512, 0, 1536, 0, 0, 0, 0)
+        struct.pack_into('<I', data, 96, le.END_OF_TABLE)
+        data[1536:] = bytes(range(256))*2
+        arc = b'converted room data'
+        entries = [dict(file='st1/r100.arc', handled=True, complete=True),
+                   dict(file='st1/r100.arc', sub='st1/r100.arc#0', handled=True, complete=True),
+                   dict(file='st1/r100.das', part='0', type=0, handled=False),
+                   dict(file='st1/r100.das', part='1/0', type=1, handled=True, complete=True)]
+        name, out = le.prepare_native_room('st1/r100.das', data, arc, entries)
+        self.assertEqual(name, 'st1/r100.dar')
+        self.assertEqual(out[64:2048], data[64:])
+        self.assertEqual(struct.unpack_from('<4I', out, 32), (0, len(arc), 0, 2048))
+        self.assertEqual(out[2048:2048+len(arc)], arc)
+        self.assertEqual(len(out) % 32, 0)
+        for i in (1, 3):
+            failed = [dict(e) for e in entries]
+            failed[i]['complete'] = False
+            with self.assertRaisesRegex(ValueError, 'unqualified'):
+                le.prepare_native_room('st1/r100.das', data, arc, failed)
+        struct.pack_into('<I', data, 40, 0x80500000)
+        with self.assertRaisesRegex(ValueError, 'destination'):
+            le.prepare_native_room('st1/r100.das', data, arc, entries)
+
     def test_room_sidecar_uses_normal_handlers_and_keeps_container(self):
         # A minimal CNS archive, plus a nested sound container entry which must
         # remain in the original .das rather than being interpreted as YZ2.

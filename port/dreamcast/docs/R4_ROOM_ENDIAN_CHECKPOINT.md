@@ -1,5 +1,52 @@
 # D297: decoded room mirror and source collision layout
 
+## D301: native room loading boundary (2026-09-21)
+
+The non-PPC `ReadAreaData` now reads prepared `stX/rNNN.dar` containers with
+source DVD mode `0x8104`: headered, interrupt-task, main-heap allocation. The
+queue allocates the final room payload and dispatches the original nested
+sound blocks in order. No compressed-room allocation or YZ2 scratch/decode is
+needed. `ReadCheckInfo` supplies the room entry's own pointer/size, not the
+aggregate transfer size (which includes sound). Allocation/read errors fail
+explicitly rather than entering the old endless poll. The existing resident
+room flag still bypasses reading and resolves the four source subfiles.
+
+`le_mirror.py --native-rooms` extends the existing builder (implies decoded
+sidecars). It emits `.dar` only when all decoded archive and sound dependencies
+report explicit complete coverage. It replaces the first type-0 header with
+an appended, aligned converted archive; nested sound headers, offsets and bytes
+stay unchanged. Old compressed bytes remain on disc only, never loaded. Later
+disc-space repacking is optional. A rejected rebuild removes the exact older
+generated `.dar`, preventing stale packages from hiding conversion failures.
+
+Validation: 17 room-format tests, 9 mirror tests, 2 native-loader tests passed.
+The loader tests compile its actual body and exercise delayed completion,
+request/read failures and already-resident state. The PPC-preprocessed room
+body equals d75144c (not a full ProDG comparison). Native game build passes;
+six pre-existing generated stubs remain. GCC 15.2.0, KOS
+`804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`.
+
+55-second scripted Flycast replay reaches source R120 module 74 and player
+loading, then logs `Native room load failed: st1/r120.dar status=-1` and the
+explicit missing-qualified-container halt. This verifies the failure boundary
+and preserves the previous boot frontier, **not successful room loading**.
+All three current `.dar` packages are correctly rejected. r120 still needs
+SHD, EFF, TEX, FSE and two SMX callback-work records qualified. Source cutscene
+completion adaptation remains in scope; r120 is cinematic staging, not counted
+as one of the three playable rooms. GX/audio placeholder coverage remains open.
+
+Evidence: `C:\Flycast-Evidence\re4-dreamcast\d301-native-room-load`, including
+boot log, exact ELF/disc, asset SHA256 manifest, conversion report and build log.
+Fixture `/root/probe/d292-fixtures`; staged disc `/root/probe/d301-disc`.
+ELF SHA256 `3ad2846530c9b938e6b28b2b89b9a4ffae27e3ad8aecf56a9953aa7eab57c36f`;
+disc `da4db4b8cf604195b4a05355f2d6044ff8f5cf00677ffaaaee5cf3416c085b7e`.
+Flycast `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`.
+No manual-play, render-performance or physical-hardware acceptance is claimed.
+
+Keep the boundary. Next qualify remaining required room formats, emit a real
+`.dar`, replay the normal entry and measure final allocation/room initialization.
+Do not rebuild a decoder or bypass sound. Retry/residency remain unverified.
+
 ## D300: camera, lighting and source light paths (2026-09-21)
 
 The mirror converts CameraData B402/B403/B404 record links, hit polygons,

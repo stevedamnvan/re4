@@ -46,12 +46,23 @@ The reported clean tree was immediately after that commit, not the current tree.
 No source assets or evidence were included; launcher changes stayed private.
 
 That committed checkpoint names EFF conversion as its next dependency. The
-current dirty `le_mirror.py` already defines `fmt_eff` and `fmt_rel`. Inspect
+subsequently committed `le_mirror.py` defines `fmt_eff` and `fmt_rel`. Inspect
 those handlers and `test_le_mirror.py`, validate real ID data, then replay the
 same boot before deciding whether EFF remains the blocker. Do not write a second
 handler or treat uncommitted room-120 progress as accepted solely from the report.
 
-## Latest bounded result: D300 (2026-09-21)
+## Latest bounded result: D301 (2026-09-21)
+
+Native ReadAreaData now consumes qualified `.dar` DVD containers directly,
+with source sound dispatch and final-buffer allocation. The builder's
+`--native-rooms` mode refuses incomplete packages. The D301 Flycast replay
+preserves startup/module/player progress and explicitly rejects the missing
+qualified r120 package; successful room loading is still pending. See
+[R4_ROOM_ENDIAN_CHECKPOINT.md](port/dreamcast/docs/R4_ROOM_ENDIAN_CHECKPOINT.md).
+Next: remaining r120 SHD/EFF/TEX/FSE and SMX callback coverage, then real native
+room loading; preserve source cutscene completion effects. Last build/replay D301.
+
+## Historical bounded result: D300 (2026-09-21)
 
 Room cameras, light cuts and the core source brightness-path table now convert.
 The apparent legacy core BIN failure was a consumer-specific light-path format;
