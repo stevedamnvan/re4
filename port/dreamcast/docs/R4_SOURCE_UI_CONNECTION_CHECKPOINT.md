@@ -1,7 +1,8 @@
 # D314: recovered ID output connected to native textures and PVR
 
-2026-09-21, on b303de1. Keep as an integration candidate, **not complete menu
-or room acceptance and not a replacement for the accepted room renderer**.
+2026-09-21. Adapter committed as 4123a85. D314 is the **first verified
+source-to-native UI presentation checkpoint**, not complete menu or room
+acceptance and not a replacement for the accepted room renderer.
 
 ## Observable result and limits
 
@@ -18,10 +19,28 @@ entries. This is scripted selection, not manual control acceptance.
 The source attract timer still attempts missing demo movies during the hold.
 
 The ordinary boot-forward fixture in d314e-ui-framebuffer selected New Game
-and entered title exit. It then rebooted/exited after requests for rel/Sscrn.rel
-and SS/eng/ss_cmmn.dat, without a complete fault report. **Cause unresolved.**
-This candidate has not re-established D313's later r100 frontier. Investigate
-that failure before promotion; the last requests are not a proven root cause.
+and entered title exit. The preserved Flycast log records **Fatal: SH4 exception
+when blocked at 00:50:526**, before the requested 105-second capture deadline.
+The log reader observes process exit before boot2.ps1 calls Stop-Process.
+This is an actual guest/emulator failure, not the capture harness ending its
+run. The reader's "guest rebooted" message only observes a ring-head reset;
+it does not establish a source reset. The exact fault remains to be diagnosed.
+This build has not re-established D313's later r100 frontier.
+
+### Focused interaction evidence (existing run, no recapture)
+
+| Delivered raw input / source frame | Established source result |
+|---|---|
+| Start 0x1000 / 2469 | Title is 5/0; titleMain case 0 itself initializes the menu. Do not claim this input alone opened it. |
+| Up 0x0008 / 2589 | In 5/1, titleMenuInit starts the three-entry cursor at 1 (LOAD); TITLE_MENU_MOVE moves it to 0 (START). |
+| A 0x0100 / 2649 | titleMenuSelect returns 1 for cursor 0. titleMain sets Rno1=3; the same-frame log is 5/3, then 7/3 at 2651. |
+| Start 0x1000 / 2849 | Confirms titleExit's separate debug room-selection wait (Joy[0].trg & 0x1100). This is not the main START-item confirmation. |
+
+The existing pad fixture, delivery log and recovered title.cpp establish this
+bounded selection/confirmation check. titleExit releases title resources and
+TaskChain(GameTask, 0) leads to SubScreenGameInit/SubScreenAramRead. Full manual
+menu interaction is still unaccepted. No additional historical capture campaign
+was needed.
 
 ## Existing implementation connected, minimum new adapter
 
@@ -107,7 +126,27 @@ Pinned KOS pvr_misc.c returns PVR_RAM_BASE + 2 * frame_offset. The corrected
 adapter reverses that calculation, then reuses the existing
 d221-actor-normal-alias-fix-visual/capture_vram.py bank mapping/RGB565 reader.
 Flycast rend.EmulateFramebuffer=yes enables readback. This fixes capture,
-not output colours. Preserve bad images labelled for diagnosis.
+not output colours. Preserve bad images labelled for diagnosis. In this tested
+KOS/Flycast configuration, framebuffer readback **is available**; a blanket
+"unavailable" rule does not apply. Hidden PrintWindow failure is a different
+capture path and does not disqualify VRAM readback. This result is not a claim
+about every emulator backend or physical hardware.
+
+Logged pointers a514e900/a594e900 map to raw offsets 0a7480/4a7480. Masking
+both with 007fffff aliases them at the wrong offset 14e900. The existing D221
+bank reader then maps correct raw offsets to VRAM64 addresses 14e900/14e904.
+The checked-in tools/capture_ui_vram.py preserves that reader and adds the
+explicit inverse plus bounded inputs and Windows handle types. Two focused
+fixtures check front/back distinction, invalid ranges, bank mapping and RGB565
+primary colours. It is a reader, not another runtime renderer or capture harness.
+
+[D314_VALIDATION_IDENTITIES.json](D314_VALIDATION_IDENTITIES.json) pins ELF,
+discs, emulator/config, fixture payloads, asset manifests, dirty patch, exact
+private capture adapter and its D221 helper, logs and the two accepted images.
+The supplement C:/Flycast-Evidence/re4-dreamcast/d314-validation preserves a
+copy of the manifest/helper without changing accepted captures. The new public
+reader did not generate the historical images; their exact tool is separately
+pinned. No audible output, source-archive recovery or room gameplay is claimed.
 
 ## Reproduction and next work
 
