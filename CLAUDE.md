@@ -13,6 +13,20 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
+## Authorized future phase - gated visual profile
+
+User authorization (2026-09-22) is preserved in
+[PS2_INSPIRED_DREAMCAST_PROFILE.md](port/dreamcast/docs/PS2_INSPIRED_DREAMCAST_PROFILE.md).
+After prepare-once/reuse-many integration and measured residual Dreamcast cost,
+substantial PS2-inspired/Dreamcast-specific visual changes are authorized to meet
+performance goals. GameCube gameplay/AI/collision/camera/animation decisions,
+events, progression and room semantics remain authoritative; PS2 is a compromise
+reference/optional visual input, and Dreamcast-native assets are the final form.
+Do not activate substitutions to conceal renderer/lifetime defects. This is a
+future gated phase, not a new active experiment; continue the integrated D349
+preparation/reuse work now. Preserve this rule in subsequent handoffs alongside
+the existing menu/three-room persistent goal and deferred backlogs.
+
 ## Immediate resumption - D350 strips measured, D351 cache not promoted
 
 The user requests the historical renderer's preparation and hot kernels fed by

@@ -1,5 +1,16 @@
 # RE4 Dreamcast: boot-forward playable integration
 
+**Future gated phase, authorized 2026-09-22:**
+[PS2-inspired Dreamcast visual profile](PS2_INSPIRED_DREAMCAST_PROFILE.md).
+After historical prepare-once/reuse-many integration, substantial elimination of
+accidental repeated work/lifetime defects and measurement of residual CPU/RAM/PVR
+cost, visual representation may change substantially while GameCube source
+behavior and room semantics remain authoritative. PS2 is a lower-spec reference
+and optional visual source; offline Dreamcast-native assets are the final form.
+Do not start substitutions to hide unresolved renderer integration bugs. The
+brief preserves the candidate compromises, hardware gate and qualification costs;
+this is not an immediate competing task or a change to the three-room objective.
+
 D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
 through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap
 free rises **169,600 bytes** at the required block and Ganado body allocations,
