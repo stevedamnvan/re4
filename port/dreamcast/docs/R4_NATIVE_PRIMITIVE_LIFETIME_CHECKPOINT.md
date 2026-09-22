@@ -1656,3 +1656,78 @@ Build `CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_
 object capacity or gameplay content is removed. Continue the newly exposed
 scenario handoff and connected scene path. No playable room, FPS, manual combat,
 correct audio or physical-console acceptance; the three-room objective is active.
+
+
+## D333: preserve the source nested scenario parent
+
+D332's native helper replaced every non-ISR source parent with the main thread.
+But `cSceSys::scheduler` deliberately selects null for nested scenario tasks.
+That mismatch left main suspended at source frame1239. The native-only adapter
+now records the source parent per `TaskSchedulerMain` dispatch, including null;
+`TaskSleep` obtains the new dispatch's parent again after waking. It reuses the
+existing scheduler and per-thread task-owner lookup; no new scheduler or global
+hold override. Shared PowerPC preprocessing matches the pre-edit source.
+
+The focused existing task-owner fixture executes actual scheduler/helper bodies:
+root and nested dispatch, 100 sleep/wake cycles, parent changes during a wait,
+TaskChain/TaskExit, ISR, stale global cursor and foreign-thread rejection. Native
+SH-4 build passes. This is a source semantics correction, not an FPS claim.
+
+### Observed progression and remaining rendering failure
+
+Same normal menu/New Game fixture and assets. D332 stayed at frame1239 with
+main suspend/gate1 and zero model presentations. D333 snapshots advance from
+1246 to1346, main suspend/gate0; model presentations grow8 to108. The run ends
+at its135-second capture deadline, not an observed crash. System0x800 remains.
+The model and final framebuffer captures inspected at640x480 show **HUD over
+black**, not a visible cabin. Source model submission is established; visible
+room/complete-character acceptance is not. Counters at the final snapshot:
+2,451 committed parts, 3,097,862 input triangles,73,406 emitted,0 invalid,
+21,132 resource rejections,5,803 packet overflow failures,65,504 peak packet
+bytes. Counts are cumulative and the snapshot can be mid-frame. The64KiB
+prototype diagnostic cap and unsupported material/resource paths remain, as do
+native lighting/TEV/fog/water. Do not hide the black world behind the word rendered.
+
+### Actual memory, event transport and motion residency
+
+Source arena remains10,127,872; required block and enemy body allocation points
+retain2,582,048 and1,466,528 free respectively. Final relevant free41,472.
+D332's source manager backing remains: parts276,992; model-info73,504;
+objects212,704, with all slot-to-owner pointers verified and no manager failures.
+This scheduler edit adds64 BSS bytes and removes48 text bytes; it recovers no
+additional archive bytes. No new geometry/texture/staging representation.
+
+Three new allocation failures are694,560,669,248 and309,632, each with41,472 free.
+These are `datactrl.cpp(452)` ARAM-to-ARAM compaction scratch requests for
+r100s41/s43/s44 after r100s40 is cleared, not three charged simultaneous heaps.
+On allocation failure the source clears/re-reads that unit; logs show those
+reads repeating. Critically, native `ARQPostRequest` currently completes without
+copying: even an ARAM_OK log does not prove stored event data. Any replacement
+must preserve actual file bytes, source ownership/swap and completion effects;
+avoid a fake direct move or a new13MiB RAM allocation. Real event transport,
+activation and audio remain unqualified. This checkpoint only fixes scheduling.
+
+Motion cache:75 misses/loads,6 hits,0 evictions/failures,952,768 current/peak/read
+bytes,22,400 peak pinned,0 current pins,2,336 metadata,270,940 us worst wait.
+All145 retained headers,75 cached payloads and1,904 relocated key pointers match
+the source data. Warm family cost2,067,616; net original recovery1,510,176.
+Later/final cache counters unchanged with no new evaluation activity: no repeated
+reload, but not a completed active-combat/concurrency audit. Keep the original
+prefetch audit and D332 source-only delta; D328b supplies separate warm/eviction
+fixture coverage. Do not shrink the hot set based on this held source state.
+
+### Identity and decision
+
+Base a885e51 plus captured inherited/owned edits. Evidence
+`C:/Flycast-Evidence/re4-dreamcast/d333-scenario-parent`; private disc
+`/root/probe/d333-disc`; unchanged D330 mirror/core and D327 fixtures. Exact source,
+executable, assets, emulator/config/input/capture tools and snapshots preserved.
+ELF SHA256 `3100e911a02e777f104812b0ff305ae83d756b0027fc0c0f6d6fb8a3bbcfce7b`;
+disc SHA256 `74e11a79a0a0cfe5414b4c9e6d4d8d7fc38bd815c13a769390246cc22c8b403d`.
+Build `CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 PARTS_DEMAND=1 MODELINFO_DEMAND=1 OBJECT_DEMAND=1`. KOS804b3195, SH GCC15.2;
+text/data/BSS2,287,340 /75,620 /672,920. No physical hardware run.
+
+**Keep.** Continue existing world/UI connection and real event transport;
+no manual gameplay, complete encounter memory, sound, FPS or water acceptance.
+The first-three-rooms goal remains active. Simpler water remains an authorized
+selectable candidate; D331's64x64 allocation is not an implemented PS2-style effect.

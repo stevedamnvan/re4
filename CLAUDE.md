@@ -1,6 +1,6 @@
 # RE4 Dreamcast working handoff
 
-Updated 2026-09-21. Read and follow [AGENTS.md](AGENTS.md), the shared instruction
+Updated 2026-09-22. Read and follow [AGENTS.md](AGENTS.md), the shared instruction
 entry point for Sol, Astra and Claude. It defines scope, implementation workflow,
 acceptance and preservation rules. This file records where to resume.
 
@@ -13,52 +13,56 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D332 room allocations pass; nested scenario scheduler stalls
+## Current resumption point - D333 scenario scheduler proceeds; world and ARAM remain
 
-D332 adds selectable **object backing on demand** using the existing manager
-allocator. All 340 logical slots remain available. Pages stay at stable addresses
-through the source room lifetime, including unconstructed/dead slots retained by
-indexed readers. Final backing is **212,704 instead of 334,624 bytes**: **121,920
-actual source-heap bytes recovered**, including directory/page/allocator costs.
+D333 fixes the native nested-scenario parent handoff. The existing source task
+scheduler now retains each dispatch's actual parent, including the null parent
+chosen by `cSceSys::scheduler`, while preserving thread-owned task identity.
+The former frame-1239 stall is resolved: snapshots advance 1246 -> 1346, main
+suspend/gate remain zero, and 108 diagnostic model frames reach presentation.
 
-The normal menu/New Game replay now passes the previously failing required
-model-parts and collision/path allocations. All 527 model parts are backed;
-no manager allocation failure occurs in this run, and 41,472 source-heap bytes
-remain. This is initialization progress, not a complete encounter memory peak.
+**The inspected output is still HUD over black, not the restored cabin.** The
+64 KiB diagnostic queue has 5,803 overflow and 21,132 resource failures by the
+final snapshot; their visible consequences and material causes remain open.
+Source hold/black flags were not overridden. Source menu output survives.
 
-The next reproduced blocker is a **scheduler handoff**: source frame 1239,
-Rno0=3, main thread suspended, zero native model presentations and black output
-remain unchanged through the 125-second snapshot. The source nested scenario
-scheduler sets `pParentThread=0`; `NativeTaskParent` instead hardcodes the main
-thread. Preserve per-dispatch source parent semantics without restoring stale
-cursor ownership or forcing source hold/black flags. Native scene/material/water,
-event/ARAM/audio and manual gameplay remain unqualified.
+Required room/model/collision allocations still pass with 41,472 source-heap
+bytes free. New failures request 694,560, 669,248 and 309,632 bytes for ARAM
+compaction scratch in `cDataUnit::setLoadToAram`, not three concurrent permanent
+allocations. The current native ARQ transfer is a no-copy placeholder; event
+bytes are not qualified resident data. Connect real event transport/lifetimes
+without pretending that removing the scratch request implements storage.
 
-Motion residency is unchanged: 75 misses/loads, 6 hits, no eviction/failure,
-952,768 cached/peak/read bytes, 22,400 peak pinned, 2,336 metadata, 270,939 us worst
-wait. All 145 source headers and 1,904 relocated key pointers validate. Warm
-enemy-family net recovery stays 1,510,176 bytes. Six hits followed by a stalled
-frame do not prove live stability; retain the D328b fixture and incomplete source
-prefetch/concurrency audit. D324 remains the accepted integration reference;
-D325-D332 are selectable candidates, not playable-room acceptance.
-See [D332](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d332-stable-object-pages-pass-the-room-allocation-frontier).
+Warm enemy-family recovery remains 1,510,176 bytes; cache 952,768 current/peak,
+22,400 peak pinned, 75 misses/loads, six hits, no eviction/failure, 952,768 bytes
+read and 270,940 us worst wait. All 145 headers and 1,904 relocated pointers
+validate. No new evaluation/cache activity occurs after warm-up in this held
+state; the response/concurrency audit and D328b repeated-use fixture remain.
+D324 is the accepted integration reference; these are integration candidates,
+not manual room, FPS, water, audio or physical-hardware acceptance.
+See [D333](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d333-preserve-the-source-nested-scenario-parent).
 
-D332 final evidence: `C:/Flycast-Evidence/re4-dreamcast/d332b-object-pages`;
-initial `d332-object-pages` retained. Disc `/root/probe/d332b-disc`, unchanged
-D330 mirror/core and D327 fixtures. Add `OBJECT_DEMAND=1` to the build below;
-its default 0 keeps the full pool. Both native modes link; restored candidate
-matches the captured ELF. Eight host option combinations pass guarded manager
-lifetime tests. Source PPC preprocessing is unchanged across 18 shared files.
+D333 evidence: `C:/Flycast-Evidence/re4-dreamcast/d333-scenario-parent`;
+disc `/root/probe/d333-disc`, unchanged D330 mirror/core and D327 fixtures.
+Use all three demand flags below. Native scheduler changes only; ELF
+text/data/BSS 2,287,340 /75,620 /672,920. Actual source arena remains10,127,872.
+The focused existing task-owner test covers null/root/nested and changing parent
+across sleep/wake, repeated dispatch, stale cursor and foreign-thread rejection.
+PPC preprocessing is unchanged. Run ends at the capture deadline, not a crash.
 
-Resume at `scheduler.cpp::NativeTaskParent/TaskSchedulerMain` and
-`sce_sys.cpp::cSceSys::scheduler`. The latter intentionally disables the parent
-for nested priority-14 tasks; the native helper incorrectly returns main for all
-non-ISR tasks. Main gate/suspend=1 while game/scenario tasks sleep; source frame
-1239 remains unchanged across later/final RAM snapshots. Preserve per-dispatch
-parent identity alongside per-thread task ownership. Do not clear System 0x800
-or VI black as a workaround. Eight diagnostic model resource failures and zero
-presentations also need follow-through after the scheduler proceeds.
+Next source dependencies: `datactrl.cpp::checkAramSort/setLoadToAram` attempts
+whole-event MRAM scratch to move r100s41/s43/s44 ARAM units. Native
+`audio_stub.cpp::ARQPostRequest` acknowledges transfers without copying; do not
+accept those event bodies or fix this with another success stub. Preserve source
+preload/skip/completion effects and actual bytes through the existing storage
+path. Separately trace why submitted native geometry yields black while HUD is
+visible; fix the existing model/UI connection, not a second renderer. Its 64KiB
+queue overflows and material/resource rejections are diagnostic limitations.
+Do not clear System0x800 or source presentation flags to manufacture acceptance.
 
+D332 reference remains `C:/Flycast-Evidence/re4-dreamcast/d332b-object-pages`,
+disc `/root/probe/d332b-disc`. Its parent-handoff stall is resolved by D333;
+object/parts/model-info allocations and pointer checks remain valid.
 
 D331 evidence: `C:/Flycast-Evidence/re4-dreamcast/d331-water-size`, disc
 `/root/probe/d331-disc`, unchanged D330 mirror/core and D327 fixtures below.

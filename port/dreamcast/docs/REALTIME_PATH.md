@@ -1,35 +1,34 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D332 adds selectable **object backing on demand** using the existing manager
-allocator. All 340 logical slots remain available. Pages stay at stable addresses
-through the source room lifetime, including unconstructed/dead slots retained by
-indexed readers. Final backing is **212,704 instead of 334,624 bytes**: **121,920
-actual source-heap bytes recovered**, including directory/page/allocator costs.
+D333 fixes the native nested-scenario parent handoff. The existing source task
+scheduler now retains each dispatch's actual parent, including the null parent
+chosen by `cSceSys::scheduler`, while preserving thread-owned task identity.
+The former frame-1239 stall is resolved: snapshots advance 1246 -> 1346, main
+suspend/gate remain zero, and 108 diagnostic model frames reach presentation.
 
-The normal menu/New Game replay now passes the previously failing required
-model-parts and collision/path allocations. All 527 model parts are backed;
-no manager allocation failure occurs in this run, and 41,472 source-heap bytes
-remain. This is initialization progress, not a complete encounter memory peak.
+**The inspected output is still HUD over black, not the restored cabin.** The
+64 KiB diagnostic queue has 5,803 overflow and 21,132 resource failures by the
+final snapshot; their visible consequences and material causes remain open.
+Source hold/black flags were not overridden. Source menu output survives.
 
-The next reproduced blocker is a **scheduler handoff**: source frame 1239,
-Rno0=3, main thread suspended, zero native model presentations and black output
-remain unchanged through the 125-second snapshot. The source nested scenario
-scheduler sets `pParentThread=0`; `NativeTaskParent` instead hardcodes the main
-thread. Preserve per-dispatch source parent semantics without restoring stale
-cursor ownership or forcing source hold/black flags. Native scene/material/water,
-event/ARAM/audio and manual gameplay remain unqualified.
+Required room/model/collision allocations still pass with 41,472 source-heap
+bytes free. New failures request 694,560, 669,248 and 309,632 bytes for ARAM
+compaction scratch in `cDataUnit::setLoadToAram`, not three concurrent permanent
+allocations. The current native ARQ transfer is a no-copy placeholder; event
+bytes are not qualified resident data. Connect real event transport/lifetimes
+without pretending that removing the scratch request implements storage.
 
-Motion residency is unchanged: 75 misses/loads, 6 hits, no eviction/failure,
-952,768 cached/peak/read bytes, 22,400 peak pinned, 2,336 metadata, 270,939 us worst
-wait. All 145 source headers and 1,904 relocated key pointers validate. Warm
-enemy-family net recovery stays 1,510,176 bytes. Six hits followed by a stalled
-frame do not prove live stability; retain the D328b fixture and incomplete source
-prefetch/concurrency audit. D324 remains the accepted integration reference;
-D325-D332 are selectable candidates, not playable-room acceptance.
-See [D332](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d332-stable-object-pages-pass-the-room-allocation-frontier).
+Warm enemy-family recovery remains 1,510,176 bytes; cache 952,768 current/peak,
+22,400 peak pinned, 75 misses/loads, six hits, no eviction/failure, 952,768 bytes
+read and 270,940 us worst wait. All 145 headers and 1,904 relocated pointers
+validate. No new evaluation/cache activity occurs after warm-up in this held
+state; the response/concurrency audit and D328b repeated-use fixture remain.
+D324 is the accepted integration reference; these are integration candidates,
+not manual room, FPS, water, audio or physical-hardware acceptance.
+See [D333](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d333-preserve-the-source-nested-scenario-parent).
 
 
-Updated 2026-09-21; accepted integration D324; selectable residency experiment D332.
+Updated 2026-09-22; accepted integration D324; integration experiment D333.
 
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file

@@ -31,7 +31,9 @@ static int iTask_exec_flg = 0;
 #include "native_io.h"
 // KOS file I/O can yield after the frame scheduler changes its global cursor.
 // Self-directed task operations must retain the actual thread owner instead.
-static OSThread* nativeSchedulerThread;
+// Parent choice belongs to each source dispatch. Nested scenario scheduling
+// deliberately uses NULL; it must not suspend/resume the outer main thread.
+static OSThread* nativeTaskParents[TASK_NUM];
 static TASK* NativeExecutingTask()
 {
     OSThread* self = OSGetCurrentThread();
@@ -43,7 +45,7 @@ static TASK* NativeExecutingTask()
 }
 static OSThread* NativeTaskParent(TASK* t)
 {
-    return t == &Task[TASK_ISR] ? NULL : nativeSchedulerThread;
+    return t == &Task[TASK_ISR] ? NULL : nativeTaskParents[t - Task];
 }
 #endif
 
@@ -120,9 +122,6 @@ void TaskScheduler()
     TASK* t;
 
     pParentThread = OSGetCurrentThread();
-#if !defined(__PPC__)
-    nativeSchedulerThread = pParentThread;
-#endif
     for (i = 0, t = Task; i <= TASK_ISR; i++, t++) {
         if (i == TASK_ISR) {
             continue;
@@ -145,6 +144,11 @@ void TaskScheduler()
 // main thread then waits (semaphore for priority > 0xF tasks) until the task sleeps / exits.
 void TaskSchedulerMain(TASK* t)
 {
+#if !defined(__PPC__)
+    // Preserve source cSceSys::scheduler's null-parent dispatch while retaining
+    // thread-owned task identity across KOS I/O and interrupt-task yields.
+    nativeTaskParents[t - Task] = pParentThread;
+#endif
     if ((pG->Status_flg[1] & 0x10000000) && !(t->flag & 2)) {
         return;
     }
@@ -310,6 +314,7 @@ void TaskSleep(int frames)
         OSSignalSemaphore(&Sema);
     }
     OSSleepThread(&t->Queue);
+    parent = NativeTaskParent(t); // current wake dispatch, as source ParentThread()
     if (parent != NULL) {
         OSSuspendThread(parent);
     }
