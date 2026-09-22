@@ -1,0 +1,12 @@
+# Additional data reached after the current qualified boot/room baseline.
+# This is not a complete room manifest. Use le_mirror.check_required / --require.
+etc/emleon00.esl       # stage.cpp readEmList -> source enemy placement/room checks
+evd/r100s40.evd        # R100Init / r100_StartEvent immutable preload
+evd/r100s41.evd        # R100Init, opening route branch
+evd/r100s43.evd        # R100Init, opening route branch
+evd/r100s44.evd        # R100Init, opening route branch
+evd/r100s03.evd        # R100Main area 6 -> readEvent(0); later r100_Sce_look
+evd/r100s20.evd        # R100Main area 6 -> readEvent(3); later Ganado death
+# The EVENT_FILES transport also requires a matching .evq made by
+# prepare_event_reference from each returned, fully qualified payload.
+# A successful dependency check/preload is not event execution or room acceptance.

@@ -13,7 +13,58 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D340 immutable event preloads; activation remains
+## Current resumption point - D341 corrected list exposes required crow dependency
+
+D341 corrects the opening enemy-list conversion in the existing mirror tool.
+The old native list interpreted the house entry as room0x001/HP59395 instead of
+room0x100/HP1000. All255 original records compare field-for-field after conversion;
+target snapshots verify the corrected house entry. Required byte fields, indices,
+record count and reserved bytes remain intact. Thirty-four focused tests pass.
+
+This exposes required content previously suppressed by the bad room checks:
+the authored crow archive now requests239,904 bytes, and its REL module7 is not
+in the image. The first cold boot allocates that body, leaving147,168 free at
+that point, but subsequent model-info requests4704 fail with4064 free. Required
+block pool/em12 early points remain2,582,048/1,466,528 free. This is **zero new
+heap recovery**, not a fit for the corrected encounter. After a guest reboot,
+crow retries fail with75,936 free; do not combine those separate boot states.
+
+The longer old-data approach also reaches missing r100s03/r100s20 requests.
+Both files now pass the existing EVD converter/certificate producer (156 complete
+records), but the corrected-list run stops earlier at crow initialization. Their
+target preload/installation is not newly accepted. No event, combat, visual,
+performance, audio, manual-play or hardware acceptance is claimed by D341.
+
+Continue with the existing static module generator/registry for em23 (module7)
+and the additional source working set. The module failure logs HALT and then
+continues/reboots: the PPC invalid-address halt is not a reliable native stop.
+Close that failure path before accepting new module consumers. Keep the corrected
+list; do not regain the old image by suppressing required crows. EVENT_FILES
+activation/mutable snapshots, source lighting/materials and all existing backlogs
+remain. Simpler water is selectable and unimplemented; PS2 equivalence is unverified.
+
+Current ELF remains byte-identical D340c (`c482b23419c3feba2a96b43cba791bb8e1678eba9e294e6d49514adfd5a38539`).
+There are no new native code/layout/toolchain changes. The original primary mirror
+and accepted evidence are untouched. D341c selectable inputs are
+`/root/probe/d341c-mirror`, disc `/root/probe/d341c-disc`, fixtures
+`/root/probe/d341a-fixtures`. Evidence is
+`C:/Flycast-Evidence/re4-dreamcast/d341c-enemy-list`: blocked, not promoted.
+The reference900-second run `d341a-cabin-approach` reboots twice; its later images
+are not uninterrupted progression. `d341b-opening-events` was staged but never
+run: superseded when raw ESL data was discovered. The candidate was deliberately
+stopped after the reproduced dependency (209.853 seconds), not its600-second deadline.
+No emulator run remains active at this checkpoint.
+
+Private preparation/validation: `/root/probe/d341-events.py`,
+`d341c-prepare.py`, `d341-source-check.py`, `d341-analyze.py`.
+Do not rerun preparation scripts against their existing output directories.
+Use `port/dreamcast/fixtures/r100-event-deps.txt` with the existing qualification
+check; it adds reached dependencies, not a complete room manifest. Only required
+`etc/emleon00.esl` was regenerated. Other mirrors/lists are not implicitly qualified.
+Keep the source-derived hot-motion/prefetch audit and retained-pointer checks:
+this new dependency does not justify evicting hot keys after each evaluation.
+
+## Previous D340 checkpoint - immutable event preloads; activation remains
 
 D340 adds selectable `EVENT_FILES=1` backing for qualified immutable EVD
 preloads. It reuses `le_mirror` qualification, the native DVD root, existing

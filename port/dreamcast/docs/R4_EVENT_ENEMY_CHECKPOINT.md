@@ -210,3 +210,99 @@ texture/effect bindings and capacity handled together. Do not blindly re-read
 the original archive over live pointers. General ARQ still does not store bytes;
 this adapter does not turn all source ARAM into backed memory. Keep lighting/
 materials, audio, inventory, combat, retry/transitions and physical gates visible.
+
+## D341: opening enemy list and event inputs
+
+2026-09-22. Keep the converter correction; the selectable full-input candidate
+is blocked and is not a new accepted scene. Original source data remains private.
+
+D341 corrects the opening enemy-list conversion in the existing mirror tool.
+The old native list interpreted the house entry as room0x001/HP59395 instead of
+room0x100/HP1000. All255 original records compare field-for-field after conversion;
+target snapshots verify the corrected house entry. Required byte fields, indices,
+record count and reserved bytes remain intact. Thirty-four focused tests pass.
+
+This exposes required content previously suppressed by the bad room checks:
+the authored crow archive now requests239,904 bytes, and its REL module7 is not
+in the image. The first cold boot allocates that body, leaving147,168 free at
+that point, but subsequent model-info requests4704 fail with4064 free. Required
+block pool/em12 early points remain2,582,048/1,466,528 free. This is **zero new
+heap recovery**, not a fit for the corrected encounter. After a guest reboot,
+crow retries fail with75,936 free; do not combine those separate boot states.
+
+The longer old-data approach also reaches missing r100s03/r100s20 requests.
+Both files now pass the existing EVD converter/certificate producer (156 complete
+records), but the corrected-list run stops earlier at crow initialization. Their
+target preload/installation is not newly accepted. No event, combat, visual,
+performance, audio, manual-play or hardware acceptance is claimed by D341.
+
+Continue with the existing static module generator/registry for em23 (module7)
+and the additional source working set. The module failure logs HALT and then
+continues/reboots: the PPC invalid-address halt is not a reliable native stop.
+Close that failure path before accepting new module consumers. Keep the corrected
+list; do not regain the old image by suppressing required crows. EVENT_FILES
+activation/mutable snapshots, source lighting/materials and all existing backlogs
+remain. Simpler water is selectable and unimplemented; PS2 equivalence is unverified.
+
+Existing connection: `stage.cpp::readEmList` reads directly into `pG->Em_list`;
+`em_set.cpp::EmSetFromList/EmSetFromList2` consumes `EmListData`. The new code is
+only `le_mirror.fmt_esl`, dispatched through its existing guarded converter.
+Files have no header: require a nonzero whole number of32-byte records, at most
+256. Convert flags, HP, six signed position/rotation values, numeric room ID and
+signed guard radius; preserve byte fields and four reserved bytes. The actual
+opening list contains255 records/8160 bytes and remains exactly that size.
+No gameplay workaround, model change, new loader, renderer or runtime allocation.
+
+Old target entry37: flags603979776, HP59395, position(13791,21248,8435),
+rotation(0,768,0), room1. New target entry37: flags36, HP1000,
+position(-8395,83,-3296), rotation(0,3,0), room256, matching source. The old room
+check returns `errEm` (null); the house event later invokes a virtual method on
+that result. This is a source-traced explanation candidate for the old approach
+reboot, not a captured fault-PC proof. The new list independently exposes earlier
+crow loading, so D341 does not prove the later house event fixed end-to-end.
+
+The reference uses existing controller fixture plus raw UP+B0208 at retrace9000,
+held60000 retraces. At340s it reaches(-86262,-12,-8610); at800s, after a reboot,
+it reaches(-81697,29,-12288). Flycast REIOS logs corroborate guest reboot rather
+than treating log-head decrease alone as proof. Missing s03/s20 are requested by
+`R100Main` area6 -> `readEvent(0/3)`. The existing original-disc reader and
+`prepare_event_reference` produce the added qualified files:1341504 and689632
+bytes. No new decoder or conversion framework is introduced. These additions
+remain on disc; no event installation/read payload saving is claimed.
+
+Corrected list restores five initially enabled r100 crow entries (IDs15,16,17,
+32,33; enemy ID0x23). `em/em23.drs` already exists and has complete conversion
+records, including its raw REL descriptor requiring static binding. Its main
+payload is239904 bytes; its2016-byte MRAM and166759-byte ARAM sound payloads
+remain distinct. The current generic ARQ path does not prove those ARAM bytes
+resident or audible. Do not count the whole410752-byte file as main-heap usage.
+
+First candidate cold boot: required block/em12 still allocate. Crow body then
+allocates239904; model-info backing requests4704 fail with4064 free, blocking
+complete block objects. Module7 fails binding; source `DLL_Link` logs HALT,
+then incorrectly logs completion and the guest reboots. After reboot the crow
+body instead fails with75936 free. Those retries are not additional allocations.
+Stopped deliberately after209.853 seconds; stopped/title/room snapshots after
+reset do not establish successful cold-boot progression. No frame-time comparison.
+
+Validation: `python3 -m unittest -v test_esl test_event_file test_le_mirror`
+(34 passed); all255 private records compare source BE against native LE scalar
+values; actual target entry37 verified before initialization and after reset.
+The new required-dependency fixture passes against the selected mirror.
+No C++/PowerPC source changed, so no new ProDG comparison or native build claimed.
+
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d341a-cabin-approach` and
+`d341c-enemy-list`, with exact source/executable/assets/toolchain/input/capture
+identities. `d341b-opening-events/NOT-RUN.txt` labels the unexecuted intermediate.
+Prior accepted references and63 inherited tracked edits remain preserved.
+
+Next bounded connection: reuse `gen_modules.py`, MODULES and `modules.cpp` to
+bind recovered em23; establish a reliable native failed-link stop. Account for
+the newly active crow body plus actors/effects and remaining complete room
+objects through existing resource ownership/compaction. Do not silently disable
+the birds, lower capacities, trim hot enemy motions or call old raw ESL safe.
+Then resume source-controller movement to qualified event preload/activation.
+
+d341a-cabin-approach disc SHA256 `ad70958b9cc0db8979a78307e9be665107f25556163ad39308bf1ffd2c818c00`.
+
+d341c-enemy-list disc SHA256 `37853c6293767e56b811c74be3ef7ad89fff4175b2d1dfd4a38a66597d768aa4`.

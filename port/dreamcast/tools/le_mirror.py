@@ -778,6 +778,21 @@ def fmt_dse(sw, off, size, ctx):
     sw.u16s(off + 4, count * 6)
 
 
+def fmt_esl(sw, off, size, ctx):
+    """stage.cpp readEmList -> em_set.h EmListData, at most 256 records.
+
+    Files have no header/count; the opening list contains 255 records. Keep
+    byte flags, IDs, character selectors and reserved bytes unchanged. Source
+    room IDs are numeric u16 values, not a pair of native-order byte fields.
+    """
+    if not size or size > 0x2000 or size % 0x20:
+        raise ValueError('invalid ESL record extent for source enemy list')
+    for p in range(off, off + size, 0x20):
+        sw.u32(p + 4)       # cEm flags
+        sw.u16(p + 8)       # HP
+        sw.u16s(p + 12, 8)  # signed position/rotation, room, signed guard radius
+
+
 def fmt_emi(sw, off, size, ctx):
     """embarrel.h EmiData/Entry; reject extra work with no established layout."""
     count = sw.u32(off)
@@ -1781,7 +1796,8 @@ def convert_container(sw, rel, drs_body=False):
 def convert_file(rel, data):
     sw = Swapper(data, rel)
     handler = (fmt_drs if fnmatch.fnmatchcase(rel, "em/*.drs") else
-               fmt_evd if fnmatch.fnmatchcase(rel, "evd/*.evd") else find_handler(FILE_FORMATS, rel))
+               fmt_evd if fnmatch.fnmatchcase(rel, "evd/*.evd") else
+               fmt_esl if fnmatch.fnmatchcase(rel, "etc/*.esl") else find_handler(FILE_FORMATS, rel))
     if handler:
         entry = {"file": rel, "handled": True, "size": len(data)}
         guarded(sw, handler, 0, len(data), rel, entry)

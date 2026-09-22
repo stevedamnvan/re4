@@ -24,6 +24,38 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
+D341 corrects the opening enemy-list conversion in the existing mirror tool.
+The old native list interpreted the house entry as room0x001/HP59395 instead of
+room0x100/HP1000. All255 original records compare field-for-field after conversion;
+target snapshots verify the corrected house entry. Required byte fields, indices,
+record count and reserved bytes remain intact. Thirty-four focused tests pass.
+
+This exposes required content previously suppressed by the bad room checks:
+the authored crow archive now requests239,904 bytes, and its REL module7 is not
+in the image. The first cold boot allocates that body, leaving147,168 free at
+that point, but subsequent model-info requests4704 fail with4064 free. Required
+block pool/em12 early points remain2,582,048/1,466,528 free. This is **zero new
+heap recovery**, not a fit for the corrected encounter. After a guest reboot,
+crow retries fail with75,936 free; do not combine those separate boot states.
+
+The longer old-data approach also reaches missing r100s03/r100s20 requests.
+Both files now pass the existing EVD converter/certificate producer (156 complete
+records), but the corrected-list run stops earlier at crow initialization. Their
+target preload/installation is not newly accepted. No event, combat, visual,
+performance, audio, manual-play or hardware acceptance is claimed by D341.
+
+Continue with the existing static module generator/registry for em23 (module7)
+and the additional source working set. The module failure logs HALT and then
+continues/reboots: the PPC invalid-address halt is not a reliable native stop.
+Close that failure path before accepting new module consumers. Keep the corrected
+list; do not regain the old image by suppressing required crows. EVENT_FILES
+activation/mutable snapshots, source lighting/materials and all existing backlogs
+remain. Simpler water is selectable and unimplemented; PS2 equivalence is unverified.
+
+See [D341](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d341-opening-enemy-list-and-event-inputs).
+
+### Retained integration checkpoints
+
 D320 loads a compact qualified r100 archive directly: **4,669,568 ->3,812,576
 bytes**, recovering **856,992 source-heap bytes**. The required **1,126,272-byte
 block pool now allocates** and blocks0-2 load/create. Source title/menu remains
