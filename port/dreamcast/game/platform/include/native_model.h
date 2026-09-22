@@ -36,3 +36,11 @@ extern "C" void re4dc_model_result(unsigned reason,unsigned input_triangles,unsi
 
 extern "C" int re4dc_model_packet_streaming();
 extern "C" void re4dc_model_packet_abort();
+
+// Source cModel 0/1 selects GX_CULL_FRONT/BACK, not the viewer helper's
+// screen-area values. GXSetCullMode swaps the two hardware bits; with GX's
+// negative viewport Y scale, FRONT rejects positive screen area, BACK negative.
+// Preserve the shared helper/accepted viewer convention at this adapter boundary.
+inline unsigned re4dc_model_cull(unsigned source_mode,bool force_front){
+    return force_front?2U:(source_mode==0?2U:source_mode==1?1U:0U);
+}

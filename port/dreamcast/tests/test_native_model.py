@@ -124,6 +124,24 @@ int main(){
  p.cull=3;unsigned before_binds=binds;run(longstrip);assert(status==0 && output==0 && binds==before_binds);
  p.cull=0;p.modelview[11]=1000;run(longstrip);assert(status==0 && !output && binds==before_binds);
 
+ // Source SDK cull boundary, independently checked in clip space. The SDK
+ // flips FRONT/BACK hardware fields and stores a negative viewport Y scale.
+ // For all-positive W, GX FRONT rejects non-positive projected XY determinant;
+ // that becomes positive screen area. Do not use the viewer enum as the oracle.
+ p.positions=(unsigned char*)many;p.position_count=66;p.modelview[11]=-128;
+ uscale=vscale=predicted_u=predicted_v=1;capacity=2048;
+ for(unsigned trial=0;trial<200;++trial){
+  for(unsigned i=0;i<3;++i){many[i][0]=int(rng()%61)-30;many[i][1]=int(rng()%61)-30;many[i][2]=0;}
+  const long area=(long(many[1][0])-many[0][0])*(long(many[2][1])-many[0][1])-(long(many[1][1])-many[0][1])*(long(many[2][0])-many[0][0]);
+  if(!area)continue;
+  auto triangle=stream(0x90,{0,1,2});
+  for(unsigned mode=0;mode<3;++mode)for(bool force:{false,true}){
+   p.cull=re4dc_model_cull(mode,force);run(triangle);
+   const bool rejected=(force || mode==0)?area<=0:mode==1?area>=0:false;
+   assert(status==0 && output==(rejected?0U:1U));
+  }
+ }
+ p.cull=re4dc_model_cull(2,false);assert(p.cull==0);
  // Stream across small artificial boundaries and compare exact expanded
  // triangles against the existing unbounded oracle, including seams/clipping.
  p.modelview[11]=-128;p.cull=0;streaming=true;

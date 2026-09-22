@@ -40,7 +40,7 @@ extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
     p.position_stride=rigid?8:6;p.position_count=d->nVtx;p.normal_count=d->nNrm;
     p.uv=(const unsigned char*)d->pTex;p.stream=(const unsigned char*)part+32;p.stream_bytes=part->size;
     p.shift=d->shift;p.flags=d->flags;p.material_flags=part->flags;
-    p.cull=(pG->Debug_flg[0]&0x20000000)?1:(m->CullMode==0?1:m->CullMode==1?2:0);
+    p.cull=re4dc_model_cull(m->CullMode,(pG->Debug_flg[0]&0x20000000)!=0);
     p.blend=info->blend_mode;p.depth_mode=m->z_mode;
     memcpy(p.modelview,mv,sizeof(p.modelview));GXGetProjectionv(p.projection);GXGetViewportv(p.viewport);
     p.image=selected;p.uv_offset[0]=scroll_u;p.uv_offset[1]=scroll_v;p.wrap_s=wrap_s;p.wrap_t=wrap_t;

@@ -2132,3 +2132,103 @@ default promotion, source-heap recovery, complete room, FPS or hardware claim.
 Continue exact source materials/head presentation and real event storage. Water
 simplification remains a separate selectable candidate with reviewed appearance;
 neither PS2 equivalence nor savings have been demonstrated. Goal remains active.
+
+## D338: source cull mapping restores ground and head surfaces
+
+Date2026-09-22; base `1e996dc4b39b8956702e047cd380e4bd758396ec` (D337).
+The prior goal turn made source-controlled, bounded submission progress. This
+turn resolves the demonstrated missing-ground/backwards-face presentation bug.
+
+### Cause and narrow correction
+
+The adapter supplied source `cModel::CullMode` values to the existing viewer
+clipper as if the conventions matched. `commonModelTrans` selects GX_FRONT for
+model mode0 and GX_BACK for1. The local source SDK `GXGeometry.c::GXSetCullMode`
+swaps these API bits in the hardware field; `GXTransform.c::__GXSetViewport`
+sets negative viewport Y scale. Consequently GX_FRONT rejects positive native
+screen area and GX_BACK negative area. The shared helper's2/1 values perform
+those respective tests; the old adapter passed1/2 and rejected the opposite faces.
+
+Only `model_bridge.cpp`'s mapping changes, via `re4dc_model_cull` in its existing
+interface. Debug force-front uses the same corrected conversion; no-cull remains
+no-cull. Existing shared clipper/renderer and accepted viewer data are unchanged.
+There is no head rotation, pose/animation selection, camera adjustment, geometric
+reduction, changed texture or source gameplay edit. The old source test used the
+same viewer convention as its oracle and therefore missed this adapter mismatch.
+
+The independent reference is the recovered SDK above and Dolphin's pinned
+software clip-space facing test plus hardware cull fields. No third-party code
+is incorporated into the product; only the verified behavior guides the mapping.
+Pinned [Dolphin Clipper](https://github.com/dolphin-emu/dolphin/blob/233b2dfe6d6427bed6874d641dfab04ccac2974e/Source/Core/VideoBackends/Software/Clipper.cpp), commit233b2dfe6d6427bed6874d641dfab04ccac2974e;
+private reference source/hashes are retained with the evidence.
+
+### Verification and visible result
+
+Eleven focused tests pass. The existing actual-renderer fixture adds200 randomized
+clip-space winding cases through the real adapter mapping, all source modes and
+debug override. Its determinant expectation is independent of viewer enum values.
+Prior clipping, UV seams, source-buffer lifetime, bounded chunks and failure/fence
+tests remain. Default original-KOS and optional patched-KOS native builds both
+pass; restored candidate ELF matches captured bytes. No new unresolved symbols,
+recovered source or PowerPC-path changes; five prior missing stubs remain.
+
+Same135s menu/New Game fixture, no assets changed. Corrected final640x480 image
+shows textured ground, cabin, trees, the back of Leon's head/body and handgun,
+plus HUD. The previous backwards-face appearance is gone in this view. This
+does not prove every character component/angle/pose or correct alpha/lighting.
+Menu pixels match D337;217,216 final pixels intentionally change.
+
+Both final RAM snapshots are source frame1255. Camera, projection, viewport,
+player root matrices,119 parts' world/local matrices and transform fields,
+and8 source model/prepared-position arrays compare byte-for-byte. Thus the visual
+change comes from rendering rejection, not moving the head, changing animation
+or selecting a more favorable camera. This comparison covers those source fields,
+not every game state or a matched original-GameCube framebuffer.
+
+Final native frame1256 with30 completed model presentations. Input triangles
+3,447,460 /output1,094,912,5,378 parts (cumulative, includes current preparation).
+0 invalid geometry,0 overflows/capacity/texture/wrap/scale failures. State rejects
+2,740 remain:2,709 separate-alpha and31 no-base-image/size. The missing-ground
+and head artifacts are resolved; these material families remain independent.
+
+### Cost, remaining source dependencies and identity
+
+Text/data/BSS unchanged2,292,080 /76,836 /673,016. Native scratch64KiB and existing
+texture64 handles/4MiB budget unchanged. Current texture bytes3,244,032 versus
+D3373,112,960 (+131,072 newly visible content),97 uploads versus96,0 missing;
+earlier peak4,192,256 unchanged. Logged free VRAM1,494,984. Maximum submitted model
+commands2,440,448 versus2,415,040. Physical TA/OPB capacity remains unqualified:
+Flycast's zero usage is invalid, and internal TA bytes are not command bytes.
+Keep D336's single-owner PVR streaming opt-in. Last completed interval1,823,323us,
+registration1,794,281us, reported render7,504us; these overlap and do not establish
+a hardware budget or real-time playability. No speedup is claimed.
+
+Source arena10,127,872; post-block2,582,048 free, post-enemy1,466,528, later41,472.
+Required allocations/manager owners still pass; no new source-heap recovery.
+Enemy warm recovery1,510,176; cache952,768 current/peak/read,2,336 metadata,
+22,400 peak pinned,75 misses/loads,6 hits,0 evictions/failures,270,938us worst wait.
+All145 retained headers and1,904 relocated key pointers verify. No new motion
+evaluations between later/final samples: combat hot-set/prefetch/concurrency
+qualification remains open. Event scratch694,560/669,248/309,632 still fails and
+ARQ has no actual byte backing. Audio/manual encounter/progression stay open.
+
+Next native material connections must preserve `alphaSetup`'s selected alpha
+texture, previous-alpha multiplication, model/part alpha threshold and possible
+different UV source. `ModelTexInfo` blending is a separate mechanism. Do not
+flatten all these into the existing viewer alpha replacement. Reuse compatible
+native conversion/upload/ownership paths while tracing actual consumers.
+
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d338-source-cull`, disc
+`/root/probe/d338-disc`; unchanged D330 mirror/core/D327 fixtures. Native O1,
+SH GCC15.2, pinned KOS804b3195 with unchanged D336 optional patch. Same residency
+and PVR_STREAM=1 options as D337; exact executable, private assets, emulator,
+config, fixture, capture tools and inherited dirty-source identities retained.
+
+ELF SHA256 `8ed836ffb2c18986979ba2a218515ed6560c54b9cea753a1d22d4521765eaed3`;
+disc SHA256 `39d9a9191f0826ebbb5e3bbe2dac8c558b52839c390f0f68acbec51827ec53e8`.
+
+**Keep the source cull correction.** Retain the earlier captures as invalid face-
+selection evidence, not a visual reference to reproduce. Full materials/lighting,
+event storage/audio, manual three-room play and physical hardware remain open.
+Water simplification is still a separate unimplemented candidate, not this fix.
+The persistent menu-plus-three-room goal remains active.
