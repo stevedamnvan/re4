@@ -1318,7 +1318,11 @@ static inline cParts* PartsMgrWork(cPartsMgr* m, u32 no)
     if (no >= m->nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    return m->workAt(no);
+#else
     return (cParts*) ((u8*) m->pArray + m->size * no);
+#endif
 }
 
 // Allocates n consecutive free parts slots (linked as pList) so the model can index them directly;
@@ -1329,18 +1333,29 @@ cParts* cPartsMgr::createSequential(u32 n)
     u32 j;
     u32 lim;
 
+#if !defined(__PPC__)
+    if (n >= nArray || nArray - n <= 1) return 0;
+#endif
     // `lim` is recomputed in the loop test: the entry guard's `n + 1` and the hoisted loop copy
     // give the `addi r0; mr r7, r0` pair. A `lim = n + 1` before the loop folds them into one
     // register; `nArray - (n + 1)` is reassociated by fold to `(nArray - 1) - n`.
     for (i = 0; lim = n + 1, i < nArray - lim; i++) {
         int ok;
 
+#if !defined(__PPC__)
+        if (PartsMgrWork(this, i) && (PartsMgrWork(this, i)->be_flag & 0x601)) {
+#else
         if (PartsMgrWork(this, i)->be_flag & 0x601) {
+#endif
             continue;
         }
         ok = 1;
         for (j = 0; j < n; j++) {
+#if !defined(__PPC__)
+            if (PartsMgrWork(this, i + j) && (PartsMgrWork(this, i + j)->be_flag & 0x601)) {
+#else
             if (PartsMgrWork(this, i + j)->be_flag & 0x601) {
+#endif
                 ok = 0;
             }
         }
@@ -1348,6 +1363,11 @@ cParts* cPartsMgr::createSequential(u32 n)
             cParts* first;
             cParts* p;
 
+#if !defined(__PPC__)
+            // A live part outside this run may share its allocation. Fall back
+            // to the original linked-list path instead of relocating it.
+            if (!prepareWork(i, n ? n : 1)) return 0;
+#endif
             first = create(0, i);
             p = first;
             for (j = 1; j < n; j++) {

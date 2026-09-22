@@ -23,7 +23,12 @@ void cManager<T>::beginEvent(int mode)
     u32 i;
 
     for (i = 0; i < nArray; i++) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+        if (!p) continue;
+#else
         T* p = (T*) ((u8*) pArray + size * i);
+#endif
         if (p->isAlive()) {
             ((cUnitEventView*) p)->beginEvent(mode);
         }
@@ -36,7 +41,12 @@ void cManager<T>::endEvent(int mode)
     u32 i;
 
     for (i = 0; i < nArray; i++) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+        if (!p) continue;
+#else
         T* p = (T*) ((u8*) pArray + size * i);
+#endif
         if (p->isAlive()) {
             ((cUnitEventView*) p)->endEvent(mode);
         }

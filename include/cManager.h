@@ -77,6 +77,12 @@ public:
     void destroyNow(T* p);   // objRocket.cpp instantiates it (pl_wep weaponRelease)
     T* getPrevWork(T* p);
     int dieCheck();
+#if !defined(__PPC__)
+    // Native parts storage preserves logical slots, with backing only for used runs.
+    // Every other manager still uses its original contiguous array.
+    T* workAt(u32 no) { return (T*)((u8*)pArray + size * no); }
+    bool prepareWork(u32 no, u32 count) { return no < nArray && count <= nArray - no; }
+#endif
     int arrayAlloc(u32 n);   // memFree + memAlloc(size * n) + memClear (em.cpp, game.cpp instantiate them)
     int arrayFree();         // 1 when there was an array
     // Debug print "alive/peak/total" (each minus `sub`) at (x, y) in colour `col`; returns the alive
@@ -146,6 +152,15 @@ public:
         p->setNext(0);
     }
 };
+
+#if !defined(__PPC__)
+class cParts;
+template<> int cManager<cParts>::arrayAlloc(u32 n);
+template<> int cManager<cParts>::arrayFree();
+template<> cParts* cManager<cParts>::workAt(u32 no);
+template<> bool cManager<cParts>::prepareWork(u32 no, u32 count);
+template<> cParts* cManager<cParts>::getPrevWork(cParts* p);
+#endif
 
 // Member initializer list, in this order: the stores come out in this order (body assignments
 // would be rescheduled: the last use of the zero register first).
@@ -219,7 +234,14 @@ int cManager<T>::dieCheck()
 {
     u32 i;
     for (i = 0; i < nArray; i++) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+#else
         T* p = (T*)((u8*)pArray + size * i);
+#endif
+#if !defined(__PPC__)
+        if (!p) continue;
+#endif
         if (p->be_flag & 0x601) {
             if (p->be_flag & 0x400) {
                 delete p;
@@ -238,7 +260,14 @@ u32 cManager<T>::countActiveWork()
     u32 n = 0;
     u32 i;
     for (i = 0; i < nArray; i++) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+#else
         T* p = (T*)((u8*)pArray + size * i);
+#endif
+#if !defined(__PPC__)
+        if (!p) continue;
+#endif
         if (p->be_flag & 0x601) {
             n++;
         }
@@ -257,8 +286,17 @@ T* cManager<T>::create(int id)
 {
     u32 i;
     for (i = 0; i < nArray; i++) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+#else
         T* p = (T*)((u8*)pArray + size * i);
+#endif
+#if !defined(__PPC__)
+        if (!p || !(p->be_flag & 0x601)) {
+            if (!prepareWork(i, 1) || !(p = workAt(i))) return 0;
+#else
         if (!(p->be_flag & 0x601)) {
+#endif
             memClear(p, size);
             if (construct(p, id) == 0) {
                 log("create()->construct() failed. %s id:%d", name, id);
@@ -285,7 +323,13 @@ T* cManager<T>::create(int id, u32 no)
     if (no >= nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    if (!prepareWork(no, 1)) return 0;
+    T* p = workAt(no);
+    if (!p) return 0;
+#else
     T* p = (T*)((u8*)pArray + size * no);
+#endif
     if (p->be_flag & 0x601) {
         log("create() failed %s id:%d", name, id);
         return 0;
@@ -335,7 +379,14 @@ void cManager<T>::destroyAll()
 {
     u32 i;
     for (i = 0; i < nArray; i++) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+#else
         T* p = (T*)((u8*)pArray + size * i);
+#endif
+#if !defined(__PPC__)
+        if (!p) continue;
+#endif
         if (p->isAlive()) {
             destroy(p);
         }
@@ -391,8 +442,17 @@ T* cManager<T>::createBack(int id)
 {
     int i;
     for (i = nArray - 1; i >= 0; i--) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+#else
         T* p = (T*)((u8*)pArray + size * i);
+#endif
+#if !defined(__PPC__)
+        if (!p || !(p->be_flag & 0x601)) {
+            if (!prepareWork(i, 1) || !(p = workAt(i))) return 0;
+#else
         if (!(p->be_flag & 0x601)) {
+#endif
             memClear(p, size);
             if (construct(p, id) == 0) {
                 log("create()->construct() failed. %s id:%d", name, id);

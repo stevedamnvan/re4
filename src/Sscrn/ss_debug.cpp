@@ -433,7 +433,12 @@ int cManager<T>::dispWorkNum(int x, int y, int col, int sub)
     }
     n = 0;
     for (i = 0; i < nArray; i++) {
+#if !defined(__PPC__)
+        T* p = workAt(i);
+        if (!p) continue;
+#else
         T* p = (T*) ((u8*) pArray + size * i);
+#endif
         if (p->be_flag & 0x601) {
             n++;
         }

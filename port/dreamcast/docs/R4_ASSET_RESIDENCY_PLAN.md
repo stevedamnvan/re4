@@ -1,43 +1,46 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-D328 recovers another **321,152 actual source-heap bytes** with selectable,
-lossless resident enemy effect records. All 161 sequences / 1,854 records remain;
-1,846 records use zero-word elision, eight retain their original representation.
-Source headers/IDs, timing/RNG and retained repeating-generator references survive.
-The enemy body loads directly at **1,105,152 bytes**, leaving **362,176 free**.
-The source menu, sound-container dispatch, 37 texture identities and required
-1,126,272-byte block pool remain intact; no hold/gameplay bypass was added.
+D329 adds selectable demand backing for the source parts manager, without
+reducing its **1,310 logical slots** or moving live model parts. At the matched
+block/enemy allocation points it recovers **540,352 actual source-heap bytes**.
+Further source block creation consumes 98,496 of those bytes: the sustained
+saving before motion prefetch is **441,856 bytes**, with 319 live parts in 198
+stable runs using **176,544 bytes** including metadata, alignment and allocator
+costs. The original full pool cost 618,400 bytes including allocator overhead.
 
-The next failure is still required hot-key prefetch: **29 keys / 356,416 bytes**
-load, then a 9,664-byte payload fails with 544 bytes free. The selected cache,
-metadata and conservative allocator budget still needs **662,112 more bytes**,
-before later actor/event/audio costs or additional source-required hot clips.
-The 75-clip source prefetch/concurrency audit remains incomplete; keep it visible
-and do not shrink the set or evict on evaluation release to force a pass.
-The refreshed SH-4 fixture verifies 7,500 warm evaluations with **zero additional
-misses or reads**, plus relocated-key/retained-pointer/pose checks under pressure.
-D324 remains the accepted integration reference; D325-D328 are selectable
-residency candidates. Full enemy initialization, visible effects/complete 3D,
-manual room gameplay, audio, retry and physical hardware remain open.
-See [D328](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d328-resident-effect-records-and-retained-generator-references).
+The enemy archive remains **1,105,152 bytes** (D328); it is not smaller again.
+The unchanged diagnostic hot profile reaches **63 clips / 793,984 cached bytes**
+before the next required key fails. The selected cache/metadata/conservative
+allocator budget still lacks **220,256 bytes**, before later actor/event/audio
+allocations, additional model parts or broader source-required hot clips.
+No evaluation-release eviction or smaller response set was used to force a fit.
+
+The source title/menu, required block pool, enemy body, texture identities and
+sound-container dispatch survive. D324 remains the accepted integration reference;
+D325-D329 are selectable residency candidates. Enemy initialization, full native
+3D, audible/manual gameplay, transitions/retry and hardware acceptance remain
+open. The D328 SH-4 fixture's 7,500 warm evaluations with no extra misses/reads
+remains the cache reference; this game still cannot finish warm-up. Preserve the
+source prefetch/concurrency audit and validate repeated-use/response coverage.
+See [D329](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d329-demand-backed-source-parts).
 
 
-Updated 2026-09-21; accepted integration reference D324; experiment D328. Historical budgets below
+Updated 2026-09-21; accepted integration reference D324; experiment D329. Historical budgets below
 retain their named checkpoints. This supports PLAYABLE_PATH and REALTIME_PATH;
 it is not a competing prerequisite roadmap.
 
 ### Where the remaining memory can come from
 
-D328 loads the enemy body, leaving 362,176 bytes before cache preparation.
-The 1,007,936-byte diagnostic capacity plus 2,336 metadata and conservative
-14,016 allocator bytes leaves a 662,112-byte deficit. That includes the observed
-body allocation overhead; future actor/event/audio, retry and additional required
-hot/concurrent clips need more. There is no verified complete-fit budget yet.
-Do not count already recovered room/core/static-REL/primitive/player/weapon bytes
-again or shrink the immediate-response set to make a diagnostic pass.
+D329 leaves 902,528 free at the enemy-body allocation, then 804,032 before
+motion metadata after the remaining block parts are created. The full diagnostic
+capacity 1,007,936 plus metadata 2,336 and conservative allocator cost 14,016
+still needs 220,256 more bytes. Future parts/enemies/events/audio and response
+coverage need additional headroom. Parts savings are separate from D328's enemy
+archive reduction; do not count the early 540,352 saving as sustained recovery.
 
 | Existing measured backing | Bytes | Proposed lever and acceptance limit |
 |---|---:|---|
+| Source PartsMgr backing | 618,400 including allocator | D329 preserves1,310 slots but uses176,544 for319 live parts/198 runs at the prefetch frontier:441,856 sustained recovery. Metadata5,376 and per-run overhead/alignment included. Later parts may grow; no full-encounter peak or FPS acceptance. |
 | em12 FCV bank (153 source entries) | 1,823,552 | D325 externalizes145 entries /1,702,176 unique transport bytes, retaining headers/events. Main body drops1,670,272, but provisional hot+reserve costs1,007,936 plus metadata/allocator costs: roughly645,984 net at conservative capacity bound.75-clip profile incomplete; full-bank prefetch costs more than reference. Close source repeated-use/response/concurrency set before promotion; no tiny cache assumption. |
 | em12 selected nonpalette/nonmip texture backing | 482,816 | D326 removes these payloads directly, retaining1,184 token bytes and480 index bytes. Combined body request drops481,152; texture-only drops481,120 including extra header growth. Embedded EFM6,144 bytes stay resident.36 native packages total1,869,824 VRAM payload bytes if all resident; no simultaneous-world fit or visual acceptance claimed. This saving is already included above. |
 | em12 EST records and sequence alignment | 566,304 original | D328 replaces these with 243,168 resident packed/raw bytes and a 1,984-byte borrowed index: net321,152 actual source-heap recovery. All records remain. New binding/statics cost96 BSS bytes; one300-byte local decode scratch, up to four nested. No effect I/O/cache; in-game effect appearance/lifecycle remains unqualified. This saving is already included above. |

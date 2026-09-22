@@ -1,28 +1,31 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D328 recovers another **321,152 actual source-heap bytes** with selectable,
-lossless resident enemy effect records. All 161 sequences / 1,854 records remain;
-1,846 records use zero-word elision, eight retain their original representation.
-Source headers/IDs, timing/RNG and retained repeating-generator references survive.
-The enemy body loads directly at **1,105,152 bytes**, leaving **362,176 free**.
-The source menu, sound-container dispatch, 37 texture identities and required
-1,126,272-byte block pool remain intact; no hold/gameplay bypass was added.
+D329 adds selectable demand backing for the source parts manager, without
+reducing its **1,310 logical slots** or moving live model parts. At the matched
+block/enemy allocation points it recovers **540,352 actual source-heap bytes**.
+Further source block creation consumes 98,496 of those bytes: the sustained
+saving before motion prefetch is **441,856 bytes**, with 319 live parts in 198
+stable runs using **176,544 bytes** including metadata, alignment and allocator
+costs. The original full pool cost 618,400 bytes including allocator overhead.
 
-The next failure is still required hot-key prefetch: **29 keys / 356,416 bytes**
-load, then a 9,664-byte payload fails with 544 bytes free. The selected cache,
-metadata and conservative allocator budget still needs **662,112 more bytes**,
-before later actor/event/audio costs or additional source-required hot clips.
-The 75-clip source prefetch/concurrency audit remains incomplete; keep it visible
-and do not shrink the set or evict on evaluation release to force a pass.
-The refreshed SH-4 fixture verifies 7,500 warm evaluations with **zero additional
-misses or reads**, plus relocated-key/retained-pointer/pose checks under pressure.
-D324 remains the accepted integration reference; D325-D328 are selectable
-residency candidates. Full enemy initialization, visible effects/complete 3D,
-manual room gameplay, audio, retry and physical hardware remain open.
-See [D328](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d328-resident-effect-records-and-retained-generator-references).
+The enemy archive remains **1,105,152 bytes** (D328); it is not smaller again.
+The unchanged diagnostic hot profile reaches **63 clips / 793,984 cached bytes**
+before the next required key fails. The selected cache/metadata/conservative
+allocator budget still lacks **220,256 bytes**, before later actor/event/audio
+allocations, additional model parts or broader source-required hot clips.
+No evaluation-release eviction or smaller response set was used to force a fit.
+
+The source title/menu, required block pool, enemy body, texture identities and
+sound-container dispatch survive. D324 remains the accepted integration reference;
+D325-D329 are selectable residency candidates. Enemy initialization, full native
+3D, audible/manual gameplay, transitions/retry and hardware acceptance remain
+open. The D328 SH-4 fixture's 7,500 warm evaluations with no extra misses/reads
+remains the cache reference; this game still cannot finish warm-up. Preserve the
+source prefetch/concurrency audit and validate repeated-use/response coverage.
+See [D329](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d329-demand-backed-source-parts).
 
 
-Updated 2026-09-21; accepted integration D324; selectable residency experiment D328.
+Updated 2026-09-21; accepted integration D324; selectable residency experiment D329.
 
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file

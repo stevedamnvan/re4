@@ -1204,3 +1204,112 @@ and complete source working-set closure alongside the existing 3D adapter.
 Source hold, complete actor/effect rendering, required audio/events, manual combat,
 transitions/retry and physical hardware remain open. A resource fixture or a
 loaded archive does not establish those outcomes.
+
+
+## D329: demand-backed source parts
+
+Selectable `PARTS_DEMAND=1` reuses `cPartsMgr::createSequential()`, the source
+`cManager` create/destroy/list rules and `cModel::makePartsList()` fallback.
+`parts_bridge.cpp` is the new native backing adapter. It retains the original
+logical slot order/capacity, native472-byte cParts layout, constructors, stable
+per-model contiguous runs and linked-list fallback. Other managers keep their
+original contiguous backing. No asset, animation cache/profile, renderer,
+source pose, gameplay, event, collision or model-content change was made.
+
+The manager's pArray is a private slot directory in this candidate. Audited
+consumers are PartsMgrWork, create/createBack/indexed create, dieCheck,
+countActiveWork/destroyAll, debug count displays, event-loop templates and
+getPrevWork. Model consumers retain cParts pointers and the existing be_flag
+0x2000 contiguous-versus-linked contract. All array scans use the native slot
+accessor; unbacked slots are free, not dummy objects. `createSequential(0)` keeps
+its source one-slot behavior; invalid oversized requests fail safely.
+
+Partial/deferred deletion cannot release a chunk containing live/reserved parts.
+Freed runs normally stay cached for reuse; fully dead overlapping runs can be
+replaced, and allocation pressure can reclaim other wholly dead runs. No live
+part moves. The directory records the owning source heap/handle; new runs use
+that heap and retirement frees to that owner. Source roomInit continues to forget
+backing after its room heap reset; arrayFree follows the original caller-owned
+destruction order. Ordinary subscreen managers are independent. Debug array
+push/pop parks/restores the directory and uses the original raw tool array.
+Debug_flg[3]0x200000 bulk tool-memory sweeping is explicitly unqualified and
+rejected by this opt-in candidate. Default `PARTS_DEMAND=0` retains full backing.
+
+### Matched source heap results (Flycast)
+
+| Measurement | D328 | D329b |
+|---|---:|---:|
+| Source heap arena |9,987,168|9,987,168|
+| Required block pool request |1,126,272 succeeds|1,126,272 succeeds|
+| Free after block request |1,477,696|2,018,048|
+| Enemy archive request |1,105,152 succeeds|1,105,152 succeeds|
+| Free after enemy request |362,176|902,528|
+| Parts resident at prefetch, including allocator |618,400|176,544|
+| Motion successful loads / bytes |29 /356,416|63 /793,984|
+| Free at next failed key |544|1,568|
+| Remaining full diagnostic cache-budget deficit |662,112|220,256|
+
+The **540,352-byte** gain at both request points is real, but later block parts
+consume another98,496. Sustained recovery before prefetch is **441,856 bytes**.
+319 live slots in198 chunks use176,544 bytes, including5,376 directory bytes,
+per-chunk32-byte headers, alignment and64-byte source allocator/tag overhead.
+All1,310 target slot entries were checked against chunk bounds;319 were valid
+live pointers and991 unbacked. Peak parts backing so far176,544; no reclaims or
+parts allocation failures in this run. Future source parts may grow; this is
+not an encounter-wide peak. No full pool is retained alongside the directory.
+
+The enemy body remains1,105,152, reduced2,472,576 from3,577,728 by D325-D328.
+This candidate's additional savings belong to PartsMgr, not the enemy archive.
+Full selected cache1,007,936 +metadata2,336 +conservative allocation14,016 minus
+804,032 free before motion metadata leaves220,256 still needed. Provisional
+net enemy-family reduction remains1,448,288 with that complete cache budget;
+actual complete-enemy/encounter peak and source hot/concurrency closure remain open.
+
+Game cache:64 misses,63 loads,0 hits/evictions,793,984 resident/peak/read bytes,
+0 current/peak pins (evaluation was not reached), one failed5,696-byte payload
+requesting5,728 before source allocator costs. Worst successful resource wait
+**241133us**. Failure is an explicit missing-allocation halt;
+the90-second capture deadline terminates the already halted diagnostic. It is
+not another stack/subscreen crash and not completed warm-up.
+
+The D328b SH-4 cache fixture remains the unchanged reference:75 prefetch misses,
+952,768 bytes;7,500 warm evaluations add no misses/reads. Pressure testing reaches
+981,440 peak cache,32,416 peak pins,185 cumulative misses/2,743,392 read bytes,
+34 evictions and273,518us worst successful wait, checking every relocated key
+and retained source key-table pointer. Those are separate fixture numbers,
+not D329 game scheduling/performance. Source prefetch audit remains
+`/root/probe/d325-prefetch-final.json`: indirect R1/event/Work aliases and full
+instance/blend/shape/camera response/concurrency coverage are still incomplete.
+
+### Verification, identities and disposition
+
+Final evidence `C:/Flycast-Evidence/re4-dreamcast/d329b-parts-demand`; initial
+candidate retained separately in `d329-parts-demand`. Corrected source menu
+capture, RAM snapshots, complete selected asset manifest, symbols, build source,
+dirty diff, fixtures, emulator/config/capture tools and result.json accompany it.
+ELF SHA256 `a4903f8dfe386935e16612c6e8b113d06b2f385f414c1e100e35ceb8470cbf25`;
+disc SHA256 `4136a9dd2109824769ff63decaee34f20864b36c1b2241dcc23522b3791679f6`.
+Base32abdcf plus the recorded candidate/inherited dirty work. KOS804b3195,
+SH GCC15.2; text/data/BSS2,283,540/75,620/672,856 (+2,200 code, unchanged BSS).
+Build with prior core/player/weapon budgets plusPARTS_DEMAND=1. Mirror and fixture
+are unchanged `/root/probe/d328-mirror`, `/root/probe/d327-fixtures`;
+private packaged disc `/root/probe/d329b-disc`.
+
+Host ASan/UBSan (excluding vptr for the source pool's unconstructed slots)
+executes the real manager/sequence algorithms and adapter against synthetic
+parts, in full and demand modes. It checks contiguous/partial/deferred lifetimes,
+source zero-count behavior, repeated reuse without allocation, full capacity,
+failure without moving live parts, debug park/restore, independent heap owners
+and room-reset invalidation. Four motion and three effect regression tests pass.
+PowerPC preprocessed output is unchanged across all six edited shared files.
+Host ABI shims and target319-slot inspection do not certify played retry.
+
+**Keep selectable**, with no default promotion. Source menu, required blocks,
+body load,37 texture identities and sound-container dispatch remain intact.
+No complete enemy initialization, visible full3D, audible/manual gameplay or
+physical hardware acceptance. Additional directory lookups/creation scans and
+allocation work have no measured rendered-workload CPU/FPS claim yet. Next
+resource recovery must close the220,256-byte lower bound and later actor/event/
+audio needs while preserving this hot set, its source audit and native3D work.
+Core/effect record packing was priced at roughly150KB additional potential,
+not implemented or qualified for other owners; do not count it as freed memory.

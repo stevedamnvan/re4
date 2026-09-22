@@ -13,30 +13,46 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D328 resident effects; hot set still does not fit
+## Current resumption point - D329 parts backing; hot set still does not fit
 
-D328 recovers another **321,152 actual source-heap bytes** with selectable,
-lossless resident enemy effect records. All 161 sequences / 1,854 records remain;
-1,846 records use zero-word elision, eight retain their original representation.
-Source headers/IDs, timing/RNG and retained repeating-generator references survive.
-The enemy body loads directly at **1,105,152 bytes**, leaving **362,176 free**.
-The source menu, sound-container dispatch, 37 texture identities and required
-1,126,272-byte block pool remain intact; no hold/gameplay bypass was added.
+D329 adds selectable demand backing for the source parts manager, without
+reducing its **1,310 logical slots** or moving live model parts. At the matched
+block/enemy allocation points it recovers **540,352 actual source-heap bytes**.
+Further source block creation consumes 98,496 of those bytes: the sustained
+saving before motion prefetch is **441,856 bytes**, with 319 live parts in 198
+stable runs using **176,544 bytes** including metadata, alignment and allocator
+costs. The original full pool cost 618,400 bytes including allocator overhead.
 
-The next failure is still required hot-key prefetch: **29 keys / 356,416 bytes**
-load, then a 9,664-byte payload fails with 544 bytes free. The selected cache,
-metadata and conservative allocator budget still needs **662,112 more bytes**,
-before later actor/event/audio costs or additional source-required hot clips.
-The 75-clip source prefetch/concurrency audit remains incomplete; keep it visible
-and do not shrink the set or evict on evaluation release to force a pass.
-The refreshed SH-4 fixture verifies 7,500 warm evaluations with **zero additional
-misses or reads**, plus relocated-key/retained-pointer/pose checks under pressure.
-D324 remains the accepted integration reference; D325-D328 are selectable
-residency candidates. Full enemy initialization, visible effects/complete 3D,
-manual room gameplay, audio, retry and physical hardware remain open.
-See [D328](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d328-resident-effect-records-and-retained-generator-references).
+The enemy archive remains **1,105,152 bytes** (D328); it is not smaller again.
+The unchanged diagnostic hot profile reaches **63 clips / 793,984 cached bytes**
+before the next required key fails. The selected cache/metadata/conservative
+allocator budget still lacks **220,256 bytes**, before later actor/event/audio
+allocations, additional model parts or broader source-required hot clips.
+No evaluation-release eviction or smaller response set was used to force a fit.
 
-Evidence: `C:/Flycast-Evidence/re4-dreamcast/d328-resident-effects` (normal-game
+The source title/menu, required block pool, enemy body, texture identities and
+sound-container dispatch survive. D324 remains the accepted integration reference;
+D325-D329 are selectable residency candidates. Enemy initialization, full native
+3D, audible/manual gameplay, transitions/retry and hardware acceptance remain
+open. The D328 SH-4 fixture's 7,500 warm evaluations with no extra misses/reads
+remains the cache reference; this game still cannot finish warm-up. Preserve the
+source prefetch/concurrency audit and validate repeated-use/response coverage.
+See [D329](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d329-demand-backed-source-parts).
+
+D329 final evidence: `C:/Flycast-Evidence/re4-dreamcast/d329b-parts-demand`.
+Private disc `/root/probe/d329b-disc`; reuse `/root/probe/d328-mirror` and
+`/root/probe/d327-fixtures`. Add `PARTS_DEMAND=1` to the existing build:
+`CORE_RESIDENT_BYTES=1501312 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776`.
+The default `PARTS_DEMAND=0` retains full backing. `parts_bridge.cpp` adapts only
+cParts storage; source model create/destroy, capacities, pose and gameplay remain.
+All 319 target slot pointers were checked against their owned runs. Host tests
+cover partial/deferred destruction, repeated reuse, pressure failure, full
+capacity, debug array push/pop and independent subscreen heap ownership.
+Live retry/subscreen gameplay and frame-cost acceptance remain unqualified;
+tool-memory bulk sweeping (Debug_flg[3] 0x200000) is explicitly rejected by this
+candidate. Do not confuse ordinary subscreen managers with that debug mode.
+
+Prior D328 reference evidence: `C:/Flycast-Evidence/re4-dreamcast/d328-resident-effects` (normal-game
 loading, corrected menu capture, exact ELF/disc/assets, RAM, source heap/counters)
 and `d328b-residency-fixture` (separate SH-4 effect/motion resource qualification).
 Game cache:30 misses,29 successful loads,0 evictions/pins,356,416 cached/read bytes,
