@@ -29,13 +29,13 @@ static int iTask_exec_flg = 0;
 
 #if !defined(__PPC__)
 #include "native_io.h"
-// KOS file I/O can yield after the frame scheduler changes its global cursor.
-// Self-directed task operations must retain the actual thread owner instead.
-// Parent choice belongs to each source dispatch. Nested scenario scheduling
-// uses NULL on GameCube, where priority keeps the caller blocked. KOS can
-// schedule that caller during native I/O, so retain the actual nested caller
-// as its handoff owner instead of accidentally resuming the outer main thread.
-static OSThread* nativeTaskParents[TASK_NUM];
+// KOS may schedule a caller before a newly resumed child has entered its
+// hook, or after the child yields for I/O. A counted dispatch/yield handshake
+// preserves the source run-until-sleep contract in both orders. A separate
+// resume token also prevents a wake being lost before the child starts waiting.
+// The interrupt-driven task retains its independent source scheduling path.
+static OSSemaphore nativeTaskResume[TASK_NUM];
+static OSSemaphore nativeTaskYielded[TASK_NUM];
 static TASK* NativeExecutingTask()
 {
     OSThread* self = OSGetCurrentThread();
@@ -45,9 +45,9 @@ static TASK* NativeExecutingTask()
     OSPanic(__FILE__, __LINE__, "Task operation outside a game task");
     return NULL;
 }
-static OSThread* NativeTaskParent(TASK* t)
+static void NativeYieldTask(TASK* t)
 {
-    return t == &Task[TASK_ISR] ? NULL : nativeTaskParents[t - Task];
+    if (t != &Task[TASK_ISR]) OSSignalSemaphore(&nativeTaskYielded[t - Task]);
 }
 #endif
 
@@ -146,17 +146,6 @@ void TaskScheduler()
 // main thread then waits (semaphore for priority > 0xF tasks) until the task sleeps / exits.
 void TaskSchedulerMain(TASK* t)
 {
-#if !defined(__PPC__)
-    // A scenario dispatch has a null source parent and relies on GC priority
-    // to run until the child sleeps/exits. KOS I/O may schedule its caller while
-    // status is still TASK_RUN; cSceSys would then unlink that living task.
-    // Reuse the existing explicit handoff, owned by this nested caller, never
-    // by a stale outer-main pointer. ISR tasks remain independently scheduled.
-    OSThread* parent = pParentThread;
-    if (parent == NULL && t != &Task[TASK_ISR]) parent = OSGetCurrentThread();
-    if (parent == &t->Thread) OSPanic(__FILE__, __LINE__, "Task dispatch to itself");
-    nativeTaskParents[t - Task] = parent;
-#endif
     if ((pG->Status_flg[1] & 0x10000000) && !(t->flag & 2)) {
         return;
     }
@@ -165,6 +154,12 @@ void TaskSchedulerMain(TASK* t)
     }
     switch (t->Status) {
     case TASK_EXEC:
+#if !defined(__PPC__)
+        if (t != &Task[TASK_ISR]) {
+            OSInitSemaphore(&nativeTaskResume[t - Task], 0);
+            OSInitSemaphore(&nativeTaskYielded[t - Task], 0);
+        }
+#endif
         OSCreateThread(&t->Thread, t->hook, (void*) t->arg, t->pStack, t->StackSize, t->Priority, 1);
         t->Status = TASK_RUN;
         OSResumeThread(&t->Thread);
@@ -176,6 +171,10 @@ void TaskSchedulerMain(TASK* t)
             return;
         }
         t->Status = TASK_RUN;
+#if !defined(__PPC__)
+        if (t != &Task[TASK_ISR]) OSSignalSemaphore(&nativeTaskResume[t - Task]);
+        else
+#endif
         OSWakeupThread(&t->Queue);
         GXSetCurrentGXThread();
         break;
@@ -186,10 +185,17 @@ void TaskSchedulerMain(TASK* t)
     default:
         return;
     }
+#if defined(__PPC__)
     if (CTASK->Priority > 0xF) {
         OSWaitSemaphore(&Sema);
         GXSetCurrentGXThread();
     }
+#else
+    if (t != &Task[TASK_ISR]) {
+        OSWaitSemaphore(&nativeTaskYielded[t - Task]);
+        GXSetCurrentGXThread();
+    }
+#endif
     StackOverflowCheck(t);
 }
 
@@ -235,8 +241,6 @@ void* TaskExec_hook(void* value)
 #else
     TASK* t = NativeExecutingTask();
     if (t == NULL) return NULL;
-    OSThread* parent = NativeTaskParent(t);
-    if (parent != NULL) OSSuspendThread(parent);
 #endif
 #if defined(__PPC__)
     asm("li 3, 4\n"
@@ -260,12 +264,8 @@ void* TaskExec_hook(void* value)
     CTASK->pFunc((int) value);
 #else
     t->pFunc((int) value);
-    // Scenario functions may return normally. Keep TASK_RUN for the source
-    // cSceSys completion/unlink check, but release the actual nested caller
-    // just as TaskSleep/TaskExit do; otherwise the finished child strands it.
-    parent = NativeTaskParent(t);
-    if (parent != NULL) OSResumeThread(parent);
-    if (t->Priority > 0xF) OSSignalSemaphore(&Sema);
+    // Normal return leaves TASK_RUN for cSceSys's completion/unlink check.
+    NativeYieldTask(t);
 #endif
     return NULL;
 }
@@ -313,24 +313,14 @@ void TaskSleep(int frames)
     GXSetCurrentGXThread();
 #else
     TASK* t = NativeExecutingTask();
-    if (t == NULL) return;
-    OSThread* parent = NativeTaskParent(t);
-
-    if (frames == 0) {
-        return;
-    }
+    if (t == NULL || frames == 0) return;
     t->SleepCtr = frames;
     t->Status = (t->Status & TASK_SUSPEND) | TASK_SLEEP;
-    if (parent != NULL) {
-        OSResumeThread(parent);
-    }
-    if (t->Priority > 0xF) {
-        OSSignalSemaphore(&Sema);
-    }
-    OSSleepThread(&t->Queue);
-    parent = NativeTaskParent(t); // current wake dispatch, as source ParentThread()
-    if (parent != NULL) {
-        OSSuspendThread(parent);
+    if (t == &Task[TASK_ISR]) {
+        OSSleepThread(&t->Queue);
+    } else {
+        NativeYieldTask(t);
+        OSWaitSemaphore(&nativeTaskResume[t - Task]);
     }
     GXSetCurrentGXThread();
 #endif
@@ -355,18 +345,12 @@ void TaskChain(TaskFunc func, int arg)
 #else
     TASK* t = NativeExecutingTask();
     if (t == NULL) return;
-    OSThread* parent = NativeTaskParent(t);
 
     t->hook = TaskExec_hook;
     t->pFunc = (void (*)(int)) func;
     t->Status = TASK_EXEC;
     t->arg = arg;
-    if (parent != NULL) {
-        OSResumeThread(parent);
-    }
-    if (t->Priority > 0xF) {
-        OSSignalSemaphore(&Sema);
-    }
+    NativeYieldTask(t);
     OSExitThread(&t->Thread);
 #endif
 }
@@ -389,11 +373,9 @@ void TaskExit()
 #else
     TASK* t = NativeExecutingTask();
     if (t == NULL) return;
-    OSThread* parent = NativeTaskParent(t);
     t->Status = TASK_NONE;
     t->suspend_cnt = 0;
-    if (parent != NULL) OSResumeThread(parent);
-    if (t->Priority > 0xF) OSSignalSemaphore(&Sema);
+    NativeYieldTask(t);
     OSExitThread(&t->Thread);
 #endif
 }

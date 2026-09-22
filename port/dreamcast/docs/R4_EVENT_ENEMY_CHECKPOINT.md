@@ -714,3 +714,117 @@ actors, hot motion, title and normal progression. Audio, inventory, combat,
 transitions/retry, full frame budget, physical acceptance and first-room skill
 qualification remain open. Simpler water stays selectable, unimplemented and
 unmeasured; no PS2 equivalence has been established.
+
+
+## D346 counted task handoff and event-borrow preflight
+
+Keep the native source integration and its accepted presentation reference.
+This slice fixes two demonstrated ownership hazards; it does not reclaim more
+archive memory or activate a required cinematic.
+
+| Existing mechanism | Source connection | Small native adaptation |
+| --- | --- | --- |
+| OSInit/Wait/SignalSemaphore; actual thread lookup | TaskSchedulerMain, TaskSleep, TaskExit/Chain and normal return; nested cSceSys dispatch | counted per-slot completion/resume tokens instead of relying on child priority and late parent suspension |
+| SearchEmModule, waitLoadOk and re4dc_event_file_range | r100 readEvent borrowed events 0/4/9 before EspEmDataSwapPush/MemorySwap | preflight destination, capacity, load and immutable backing; explicit native rejection before effect release |
+
+D346a removes only the existing opt-in model-diagnostic flag to reach the source
+frontier faster. It reproduces a new order of the D345 handoff race: source frame
+1230 stops, Task17 is still executing r100_WindowBreakCk but its source status
+is NONE and the current cursor names GameTask. SceSleep consequently does not
+yield, and the watchdog reports main.cpp(548). The recorded 240-second end is
+the harness deadline, not successful source completion. This new reproduction
+justifies correcting the previously accepted bounded D345 fix.
+
+The caller must wait even when the child has not entered its hook. A counted
+completion semaphore records both early and late completion; a separate resume
+token cannot be lost if the next dispatch arrives before the child waits.
+Self-operations still use the actual OS thread. The independent ISR task keeps
+its source queue/resume path. Existing cancellation/drain remains in place.
+PowerPC code is untouched. No new scheduler framework, gameplay loop, input
+injection path, renderer or resource owner is introduced.
+
+D346b runs the same non-rendering diagnostic for 240 seconds without a watchdog
+halt or allocation failure. The source house-event path changes Leon's pose and
+position; normal input then reaches approximately (-76237,860,-33618), yaw2.99.
+The straight fixture stops at collision. Source R100Main requests and qualifies
+r100s03 (1,341,504 bytes) and r100s20 (689,632). Neither is activated. Final sampled
+source frame3774 has System0x800; the scenario tasks remain valid sleepers.
+This is source-progression evidence with 3D disabled, not a performance win,
+visual encounter or manual-control acceptance. No flags/poses were forced.
+
+The event preflight fixes a separate source assumption invalidated by archive
+compaction: readEvent released Ganado effects before testing the borrowed
+module's capacity and load result. Native missing/null destination, insufficient
+capacity, failed waitLoadOk and immutable file backing now stop explicitly before
+EspEmDataSwapPush/MemorySwap. A host test executes the actual readEvent/freeEvent
+bodies for all three borrowed IDs, including repeated byte-exact restore with a
+transport mock. The mock does not implement or qualify native mutable ARAM.
+This guard is not reached by the current target route; creation and other MRAM
+failure/activation paths still need their own source-consumer qualification.
+
+D346c reaches visible native output but its capture script fails at65 seconds
+with host ENOSPC while writing RAM. That partial snapshot is invalid; the game
+continues until the 240-second deadline. D346d repeats the visible run on D:
+with the exact same ELF/disc, verifies title/menu, room, Leon and HUD at640x480,
+and captures changed source position/camera during movement. It ends normally
+at240 seconds. Final RAM samples frame1324, System0x800, Leon approximately
+(-95917,-144,-2408). Five crows have valid24-part chains and active-list identity.
+No complete material/lighting, manual encounter, audible output or frame-budget
+acceptance is claimed; D345 remains the previous visual reference.
+
+| Measurement | D346b diagnostic | D346d visible |
+| --- | ---: | ---: |
+| Free after required block pool / em12 | 2,921,856 / 1,806,336 | 2,921,856 / 1,806,336 |
+| Final free / largest source heap | 43,232 / 43,232 | 66,592 / 66,592 |
+| Source heap capacity | 8,840,576 | 8,840,576 |
+| Source allocation failures / watchdog halts | 0 / 0 | 0 / 0 |
+| Hot resident / peak cache / bytes read | 952,768 / 952,768 / 952,768 | same |
+| Peak pinned / cache metadata bytes | 22,400 / 2,336 | same |
+| Misses / loads / evictions / failures | 75 / 75 / 0 / 0 | same |
+| Cache hits | 320 | 6 |
+| Worst observed resource wait, microseconds | 270,938 | 270,939 |
+
+All145 persistent motion headers and1,904 relocated key pointers validate; all75
+cached payloads compare after table relocation. Later/final snapshots show no
+additional read/miss/load/eviction. Hot data is retained after evaluation. This
+extends repeated-use evidence through the house approach, not every combat or
+immediate-response working set. Source prefetch/concurrency audit stays active.
+No new eviction/reload is claimed; previous host and SH4 fixtures cover that.
+The farther diagnostic's final heap is a different state, not a matched loss or
+saving. Net source/enemy-allocation reduction for this slice is **zero bytes**.
+Required pool1,126,272 and em12body1,105,152 both still allocate.
+
+Five focused tests pass with ASan/UBSan: actual task bodies with delayed start
+and completion-before-wait,50 repeated two-frame sleeps in each ordering,
+nested caller, normal return, chain/exit, slot reuse, stale cursor, source hold
+and independent ISR; borrowed-event rejection/restore; existing qualified-file
+transport and source-unit relocation. PPC preprocessed tokens in scheduler.cpp
+and r100.cpp are identical to D345. No fresh ProDG or physical-hardware run.
+All63 inherited tracked edits plus private boot-deps remain byte-preserved.
+
+Selected ELF SHA256 `c2047abf138bcc3570272a10d7243f279a685ee150bf50f25260bd4c99b8bbff`;
+text/data/BSS2,310,936 /77,016 /673,464, delta+144 /0 /+352 versus D345.
+D346d disc SHA256 `16081e9efc89488b746b5ed2698b7d0d35c2e75097358162f002deec9f1fd26f`.
+D346b disc SHA256 `04206789a16917a355bb93a89530ee4bc5c39a033eb5cb221073dd921955d182`.
+Parent0c2e9397ffe8e4bf947656b08ca03964d9f7f679. Existing patched KOS804b319,
+SH GCC15.2/O1, Flycast/config/readback, source build patch, fixture and assets
+are pinned in the sealed run manifests. No emulator remains running.
+
+Selected visible evidence: D:/Flycast-Evidence/re4-dreamcast/d346d-visible-handoff,
+with a C: junction for existing tools. The C: d346b-counted-handoff run is a
+separate diagnostic. D346a is retained as failed evidence (moved to D: with
+all837 hashes verified and original C: path preserved); D346c is capture-incomplete.
+Private reproduction/analysis scripts are /root/probe/d346*. Build options,
+/root/work/kos-re4dc-d336 and /root/probe/d343-mirror remain unchanged.
+
+Next activation still needs the s03 destination's additional236,352 bytes and
+valid writable snapshot ownership, or a specifically verified source completion
+adaptation for the authorized cutscene deferral. S20 needs689,632 bytes for its
+ordinary MRAM path. Preload alone proves neither. Do not unload hot keys, ignore
+required event effects or enlarge a reservation without a full lifetime budget.
+Separate material work retains soft masks and source threshold overrides: this
+live audit finds15 scenery occurrences with alpha_omit128 despite authored part
+alphaRef0. No binary-mask or water simplification was implemented. Simpler water
+remains a selectable, unmeasured quality candidate, not a verified PS2 match.
+Audio/inventory, combat, transitions/retry, full frame budget and hardware gates
+remain open; first-room skill qualification has not been reached.

@@ -13,7 +13,65 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D345 source alpha and nested handoff
+## Current resumption point - D346 counted task handoff
+
+D346 replaces the timing-dependent native task handoff with counted dispatch
+and resume signals using the existing semaphores. A faster diagnostic exposed a
+live window scenario wrongly marked finished; it now advances through the house
+approach and qualified s03/s20 preloads. The 3D-enabled 240-second run preserves
+visible source title/menu, room, Leon and HUD at 640x480. This remains diagnostic
+presentation, not full/manual encounter, material/lighting or audio acceptance.
+
+Required block/em12 allocations retain 2,921,856 / 1,806,336 free bytes. The
+visible run finishes with 66,592 free/largest; the farther diagnostic reaches
+43,232. D346 recovers **zero additional heap**. Hot motion stays cached at
+952,768 bytes with no later reloads. Event-borrow preflight now rejects a bad
+destination/load/immutable transport before unregistering Ganado effects; actual
+activation and writable snapshots remain unimplemented. The straight approach
+fixture stops at collision before that new rejection is exercised on target.
+
+Source masks/no-image materials, lighting, event activation, audio/inventory,
+manual combat, transitions/retry and hardware acceptance remain open. Simpler
+water stays an unimplemented selectable quality candidate, with no measured
+saving or verified PS2 equivalence.
+
+Selected visible evidence: `D:/Flycast-Evidence/re4-dreamcast/d346d-visible-handoff`
+(also reachable at the same `C:/Flycast-Evidence/re4-dreamcast/` suffix via a
+junction). Diagnostic with 3D disabled: `C:/Flycast-Evidence/re4-dreamcast/
+d346b-counted-handoff`. Both end at the 240-second harness deadline. No emulator
+is left running. The selected ELF SHA256 is
+`c2047abf138bcc3570272a10d7243f279a685ee150bf50f25260bd4c99b8bbff`;
+text/data/BSS 2,310,936 / 77,016 / 673,464 (+144 / 0 / +352 versus D345).
+Source heap capacity remains 8,840,576. Five focused tests pass, including
+actual threaded source task bodies in both completion orders, source event
+borrow/restore, immutable transport and source-unit relocation under sanitizers.
+Both edited source files have identical PowerPC preprocessed tokens; no new
+ProDG comparison. All 63 inherited tracked edits remain byte-preserved.
+
+Reuse `/root/probe/d346-build.sh`, `d346b-prepare.py`, `d346d-prepare.py`,
+`d346-analyze.py`, `d346-pointer-proofs.py` and `d346-check.py`; create fresh
+outputs. Build options/KOS/mirror remain D345's. D346b uses
+`/root/probe/d346a-fixtures` (only the existing model diagnostic opt-in removed);
+D346d uses unchanged `/root/probe/d344b-fixtures`. D346d reused the exact C ELF
+and disc after the C capture ran out of host storage. C's partial 65-second RAM
+snapshot is invalid, not a game failure. D346a is the reproduced scheduler
+failure, not an accepted run. It now resides on D: with its original C: path
+preserved by junction; all 837 moved files were hash-verified. Do not overwrite
+these runs or the D345 reference. Source parent is
+`0c2e9397ffe8e4bf947656b08ca03964d9f7f679`.
+
+Next source-event boundary: the qualified s03 request is 1,341,504 bytes,
+exceeding the compact em12 body (1,105,152) by 236,352 before accounting for a
+writable enemy snapshot. S20's 689,632-byte MRAM activation also does not fit
+current headroom. Retain hot keys and source prefetch/concurrency ownership;
+immutable preload is not activation. Continue a justified event lifetime or
+source-completion adaptation under the authorized cutscene deferral, and the
+separate native mask/lighting connections. Do not use a failed read as a skip.
+The D346 mask audit finds model alpha_omit=128 overrides in addition to soft
+mask texels, so part alphaRef=0 does not qualify binary punch-through.
+See [D346](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md#d346-counted-task-handoff-and-event-borrow-preflight).
+
+## Previous D345 checkpoint - source alpha and nested handoff
 
 D345 connects source-selected material/vertex alpha to the existing native model
 path and fixes a native nested-task handoff exposed by the changed render timing.

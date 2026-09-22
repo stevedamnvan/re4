@@ -24,23 +24,27 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D345 connects source-selected material/vertex alpha to the existing native model
-path and fixes a native nested-task handoff exposed by the changed render timing.
-The selected 240-second run preserves visible title/menu, HUD and source-controlled
-640x480 diagnostic room movement. The opening scenario finishes normally; no
-source allocation failures occur. This is not complete material/lighting,
-encounter, audio, manual-play or performance acceptance.
+D346 replaces the timing-dependent native task handoff with counted dispatch
+and resume signals using the existing semaphores. A faster diagnostic exposed a
+live window scenario wrongly marked finished; it now advances through the house
+approach and qualified s03/s20 preloads. The 3D-enabled 240-second run preserves
+visible source title/menu, room, Leon and HUD at 640x480. This remains diagnostic
+presentation, not full/manual encounter, material/lighting or audio acceptance.
 
-D344's memory result remains intact: free heap after required block/em12
-allocations is 2,921,856 / 1,806,336 bytes, final free/largest is 66,592, and all
-five crows retain valid 24-part chains. D345 recovers **zero additional heap**.
-Hot motion remains cached (952,768 bytes; no later reloads). Source mask materials
-(flag 0x04), a no-image part, lighting and event activation/mutable snapshots
-remain exact integration boundaries; retain their explicit checks. Simpler water
-is an unimplemented selectable quality candidate, not a current saving or a
-verified PS2 match.
+Required block/em12 allocations retain 2,921,856 / 1,806,336 free bytes. The
+visible run finishes with 66,592 free/largest; the farther diagnostic reaches
+43,232. D346 recovers **zero additional heap**. Hot motion stays cached at
+952,768 bytes with no later reloads. Event-borrow preflight now rejects a bad
+destination/load/immutable transport before unregistering Ganado effects; actual
+activation and writable snapshots remain unimplemented. The straight approach
+fixture stops at collision before that new rejection is exercised on target.
 
-See [D345](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d345-source-alpha-and-nested-handoff) and the retained [D344 memory checkpoint](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d344-stable-enemy-work-pages).
+Source masks/no-image materials, lighting, event activation, audio/inventory,
+manual combat, transitions/retry and hardware acceptance remain open. Simpler
+water stays an unimplemented selectable quality candidate, with no measured
+saving or verified PS2 equivalence.
+
+See [D346](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d346-counted-task-handoff-and-event-borrow-preflight); retain [D345](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d345-source-alpha-and-nested-handoff) as the previous presentation reference.
 
 ### Retained integration checkpoints
 

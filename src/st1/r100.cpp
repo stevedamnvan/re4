@@ -39,6 +39,11 @@
 #include "rnd.h"
 #include "room_data.h"
 #include "db_log.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_event_file.h"
+extern "C" void re4dc_log(const char*, ...);
+extern "C" void re4dc_missing(const char*);
+#endif
 
 // Room 1-00 (D:/Bio4/Prog/r100.cpp): the village approach; the police car, the two officers
 // (s03: the first Ganado kills one, s20: the truck runs the car off the bridge, s40: the ravine).
@@ -434,6 +439,19 @@ static char* r100_evtName[10] = {
     "evd/r100s41.evd", "evd/r100s42.evd", "evd/r100s43.evd", "evd/r100s44.evd", "evd/r100s40.evd",
 };
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+// The compact enemy body no longer implies capacity for a larger event. Do not
+// let a failed required event masquerade as the scenario's normal completion,
+// or push effect ownership before a destination/load/transport is usable.
+static void r100RequiredEventFailure(int no, u32 capacity, const char* reason)
+{
+    re4dc_log("required event borrow: %s request=%u capacity=%u reason=%s effects_unchanged=1\n",
+              r100_evtName[no], W->evt[no]->m_size, capacity, reason);
+    re4dc_missing("r100 required event borrow is unavailable");
+    __builtin_trap();
+}
+#endif
+
 // Loads event `no` (r100_evtName) through a data unit; with `wait` the data is swapped into the
 // Ganado module's block (events 0, 4, 9) or loaded in place, and `out` receives its address.
 extern "C" int readEvent(int no, int wait, void** out)
@@ -451,17 +469,40 @@ extern "C" int readEvent(int no, int wait, void** out)
         if (no == 0 || no == 4 || no == 9) {
             ReadModule* m;
 
+#if !defined(RE4DC_GAME) || defined(__PPC__)
             EspEmDataSwapPush(0x12);
+#endif
             m = SearchEmModule(0x12);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+            if (m == 0 || m->pArc == 0) {
+                r100RequiredEventFailure(no, m ? m->size : 0, "missing destination");
+            }
+#endif
             if (W->evt[no]->m_size > m->size) {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+                r100RequiredEventFailure(no, m->size, "capacity");
+#endif
                 pLog->err(0, 0, "readEvent() : event size too large!![%d]>[%d]", W->evt[no]->m_size, m->size);
                 goto fail;
             }
             if (W->evt[no]->waitLoadOk() == 0) {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+                r100RequiredEventFailure(no, m->size, "load incomplete");
+#endif
                 W->evt[no]->setCommand(CMND_CLEAR_DATA, 0, 0);
                 pLog->err(0, 0, "r100::readEvent() : out of memory");
                 goto fail;
             }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+            // Reuse MemorySwap's native transport gate before EspEmDataSwapPush;
+            // immutable file references cannot receive the live enemy snapshot.
+            const u32 bytes = W->evt[no]->m_size;
+            if (bytes > 0xffffffe0U ||
+                re4dc_event_file_range((u32) W->evt[no]->m_addr, (bytes + 31) & ~31U)) {
+                r100RequiredEventFailure(no, m->size, "mutable snapshot backing");
+            }
+            EspEmDataSwapPush(0x12);
+#endif
             MemorySwap(m->pArc, (u32) W->evt[no]->m_addr, W->evt[no]->m_size);
             {
                 void* arc = m->pArc;
