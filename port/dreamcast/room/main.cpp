@@ -4526,37 +4526,25 @@ void submit_room_strips(const re4dc::room::Package& room,
                 const std::uint16_t* local_indices =
                     g_room_local_indices + primitive.first_vertex;
                 const std::uint32_t strip_start = submit_count;
-                const std::uint32_t last = primitive.vertex_count - 1U;
                 std::uint32_t strip_misses = 0U;
                 std::uint32_t processed = 0U;
-                for(std::uint32_t local = 0U; local <= last; ++local) {
-                    RoomBatchSlot& slot =
-                        g_room_batch_slots[local_indices[local]];
-                    if(slot.serial != batch_serial) {
-                        ++strip_misses;
-                        fill_room_slot(source,
-                                       batch_vertices[local_indices[local]],
-                                       light_selection, slot);
-                        slot.serial = batch_serial;
-                    }
-                    ++processed;
-                    const float depth = slot.depth;
-                    if(depth < kNearClipDistance || depth > kFarClipDistance) {
-                        direct_strip = false;
-                        break;
-                    }
-                    submit_vertices[submit_count++] = {
-                        .flags = local == last ? PVR_CMD_VERTEX_EOL
-                                               : PVR_CMD_VERTEX,
-                        .x = slot.x,
-                        .y = slot.y,
-                        .z = slot.z,
-                        .u = slot.u,
-                        .v = slot.v,
-                        .argb = slot.argb,
-                        .oargb = 0U,
-                    };
-                }
+                direct_strip = re4dc::render::prepare_direct_strip(
+                    submit_vertices + strip_start, primitive.vertex_count,
+                    kNearClipDistance, kFarClipDistance,
+                    [&](std::uint32_t local, re4dc::render::DirectStripVertex& out) {
+                        RoomBatchSlot& slot = g_room_batch_slots[local_indices[local]];
+                        if(slot.serial != batch_serial) {
+                            ++strip_misses;
+                            fill_room_slot(source, batch_vertices[local_indices[local]],
+                                           light_selection, slot);
+                            slot.serial = batch_serial;
+                        }
+                        ++processed;
+                        out = {slot.depth, slot.x, slot.y, slot.z, slot.u, slot.v,
+                               slot.argb, 0U};
+                        return true;
+                    });
+                if(direct_strip) submit_count += primitive.vertex_count;
                 stats.room_index_references += processed;
                 stats.room_cache_misses += strip_misses;
                 stats.room_cache_hits += processed - strip_misses;
@@ -4583,30 +4571,20 @@ void submit_room_strips(const re4dc::room::Package& room,
                     flush();
                 }
                 const std::uint32_t strip_start = submit_count;
-                const std::uint32_t last = primitive.vertex_count - 1U;
-                for(std::uint32_t local = 0U; local <= last; ++local) {
-                    const std::uint32_t vertex_index =
-                        primitive_indices[primitive.first_vertex + local];
-                    const RoomVertexCacheEntry& entry = cached_room_entry(
-                        source, vertex_index, stats, light_selection);
-                    const RenderVertex& vertex = entry.vertex;
-                    const float depth = vertex.position.depth;
-                    if(depth < kNearClipDistance || depth > kFarClipDistance) {
-                        direct_strip = false;
-                        break;
-                    }
-                    submit_vertices[submit_count++] = {
-                        .flags = local == last ? PVR_CMD_VERTEX_EOL
-                                               : PVR_CMD_VERTEX,
-                        .x = vertex.position.x,
-                        .y = vertex.position.y,
-                        .z = vertex.position.z,
-                        .u = vertex.u,
-                        .v = vertex.v,
-                        .argb = entry.argb,
-                        .oargb = vertex.offset_color,
-                    };
-                }
+                direct_strip = re4dc::render::prepare_direct_strip(
+                    submit_vertices + strip_start, primitive.vertex_count,
+                    kNearClipDistance, kFarClipDistance,
+                    [&](std::uint32_t local, re4dc::render::DirectStripVertex& out) {
+                        const auto& entry = cached_room_entry(source,
+                            primitive_indices[primitive.first_vertex + local],
+                            stats, light_selection);
+                        const auto& vertex = entry.vertex;
+                        out = {vertex.position.depth, vertex.position.x,
+                               vertex.position.y, vertex.position.z, vertex.u,
+                               vertex.v, entry.argb, vertex.offset_color};
+                        return true;
+                    });
+                if(direct_strip) submit_count += primitive.vertex_count;
                 if(direct_strip) {
 #if defined(RE4DC_SUBMIT_PROFILE)
                     stats.room_gather_ns += timer_ns_gettime64() - gather_start;
@@ -5350,36 +5328,23 @@ std::uint32_t draw_character(const re4dc::character::Package& character,
                     flush();
                 }
                 const std::uint32_t strip_start = submit_count;
-                const std::uint32_t last_local = primitive.vertex_count - 1U;
-                for(std::uint32_t local = 0; local < primitive.vertex_count;
-                    ++local) {
-                    const std::uint16_t vertex =
-                        primitive_indices[primitive.first_vertex + local];
-                    const auto& draw = draw_vertices[vertex];
-                    const ProjectedVertex& position = projected[draw.position];
-                    if(position.depth < kNearClipDistance ||
-                       position.depth > kFarClipDistance) {
-                        submit_count = strip_start;
-                        direct_strip = false;
-                        break;
-                    }
+                direct_strip = re4dc::render::prepare_direct_strip(
+                    submit_vertices + strip_start, primitive.vertex_count,
+                    kNearClipDistance, kFarClipDistance,
+                    [&](std::uint32_t local, re4dc::render::DirectStripVertex& out) {
+                        const auto& draw = draw_vertices[
+                            primitive_indices[primitive.first_vertex + local]];
+                        const auto& position = projected[draw.position];
 #if defined(RE4DC_SOURCE_SCENE)
-                    const std::uint32_t color = colors[draw.normal];
+                        const std::uint32_t color = colors[draw.normal];
 #else
-                    const std::uint32_t color = 0xffffffffU;
+                        const std::uint32_t color = 0xffffffffU;
 #endif
-                    submit_vertices[submit_count++] = {
-                        .flags = local == last_local ? PVR_CMD_VERTEX_EOL
-                                                     : PVR_CMD_VERTEX,
-                        .x = position.x,
-                        .y = position.y,
-                        .z = position.z,
-                        .u = draw.u,
-                        .v = draw.v,
-                        .argb = color,
-                        .oargb = 0,
-                    };
-                }
+                        out = {position.depth, position.x, position.y, position.z,
+                               draw.u, draw.v, color, 0U};
+                        return true;
+                    });
+                if(direct_strip) submit_count += primitive.vertex_count;
                 if(direct_strip) {
                     stats.character_vertex_records += primitive.vertex_count;
                     ++stats.character_direct_strips;

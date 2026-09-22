@@ -12,12 +12,22 @@ class NativeModel(unittest.TestCase):
    code=r"""
 #include "native_model.h"
 #include "pvr_geometry.hpp"
+#include "native_draw_plan.hpp"
 #include <cassert>
 #include <cmath>
 #include <cstring>
 #include <vector>
 #include <random>
 extern "C" void re4dc_model_submit_reference(const Re4dcModelPart*);
+std::vector<std::uint32_t> plan_storage;
+extern "C" const re4dc::render::NativeDrawPlan* re4dc_model_acquire_draw_plan(const Re4dcModelPart* p,int* invalid){
+ re4dc::render::DrawPlanRequirements r;
+ *invalid=!re4dc::render::inspect_draw_plan(p->stream,p->stream_bytes,p->flags&0x80000000U,p->position_count,p->normal_count,r);
+ if(*invalid)return nullptr;
+ plan_storage.resize((r.bytes+3)/4);
+ return re4dc::render::prepare_draw_plan(plan_storage.data(),plan_storage.size()*4,p->stream,p->stream_bytes,p->flags&0x80000000U,r);
+}
+extern "C" void re4dc_model_release_draw_plan(){}
 unsigned status=99,capacity=100,committed=0,input,output,binds=0;float uscale=1,vscale=1,predicted_u=1,predicted_v=1;bool bind_fails=false,streaming=false,aborted=false;
 std::vector<pvr_vertex_t> all_chunks;
 pvr_vertex_t pending[4098],owned[4098];
@@ -62,7 +72,19 @@ int main(){
  assert(fabs(owned[0].x-256)<.001 && fabs(owned[0].y-288)<.001 && fabs(owned[0].z-.1)<.00001);
  assert(owned[1].u==1 && owned[2].v==1);
  p.cull=2;run(q);assert(committed==6);p.cull=1;run(q);assert(committed==0);p.cull=0;
- auto strips=stream(0x98,{0,1,3,2});p.cull=2;run(strips);assert(committed==4 && output==2);p.cull=0;
+ auto strips=stream(0x98,{0,1,3,2});p.cull=2;
+ const auto strip_before=*re4dc_model_work_stats();
+ run(strips);assert(committed==4 && output==2);p.cull=0;
+ const auto strip_after=*re4dc_model_work_stats();
+#if RE4DC_MODEL_ROOM_STRIPS
+ assert(strip_after.room_prepared_strips-strip_before.room_prepared_strips==1);
+ assert(strip_after.room_prepared_corners-strip_before.room_prepared_corners==4);
+ assert(strip_after.position_references-strip_before.position_references==4);
+#else
+ assert(strip_after.room_prepared_strips==strip_before.room_prepared_strips);
+ assert(strip_after.room_prepared_corners==strip_before.room_prepared_corners);
+ assert(strip_after.position_references-strip_before.position_references==6);
+#endif
  auto fan=stream(0xa0,{0,1,2,3});run(fan);assert(committed==6);
  // Captured native packet survives source preparation storage being overwritten.
  auto before=owned[0];pos[0][0]=0;assert(!memcmp(&before,&owned[0],32));run(q);assert(owned[0].x==320);pos[0][0]=-2;
@@ -221,9 +243,9 @@ int main(){
    reference=reference.replace('"../../room/pvr_geometry.hpp"','"pvr_geometry.hpp"').replace('void re4dc_model_submit(', 'void re4dc_model_submit_reference(')
    (root/"reference.cpp").write_text(reference)
    exe=root/"check"
-   for cache in (0,1):
-    subprocess.run(["g++","-std=c++20","-O2","-DRE4DC_MODEL_POSITION_CACHE="+str(cache),"-fsanitize=address,undefined","-fno-omit-frame-pointer",
+   for cache,strips,plans in ((0,0,0),(0,1,0),(1,0,0),(1,1,0),(0,0,1),(0,1,1),(1,0,1),(1,1,1)):
+    subprocess.run(["g++","-std=c++20","-O2","-DRE4DC_MODEL_DRAW_PLANS="+str(plans),"-DRE4DC_MODEL_ROOM_STRIPS="+str(strips),"-DRE4DC_MODEL_POSITION_CACHE="+str(cache),"-fsanitize=address,undefined","-fno-omit-frame-pointer",
     "-I"+str(root),"-I"+str(game/"platform/include"),"-I"+str(room),str(root/"fixture.cpp"),str(root/"reference.cpp"),
-    str(game/"platform/native_model.cpp"),str(room/"pvr_geometry.cpp"),"-o",str(exe)],check=True)
+    str(game/"platform/native_model.cpp"),str(room/"pvr_geometry.cpp"),str(room/"native_draw_plan.cpp"),"-o",str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
 if __name__=="__main__":unittest.main()

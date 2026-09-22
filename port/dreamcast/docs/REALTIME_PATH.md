@@ -1,27 +1,33 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-## Current renderer reference and priority - D349, 2026-09-22
+## Current native preparation checkpoint - D350/D351, 2026-09-22
 
-The user directed integration of the working room renderer substantially intact
-before further manual route testing. Preserve source gameplay/camera/pose and
-newer character-facing corrections. D347's sampled source render setup takes
-about 1.54 seconds of a 1.60-second CPU loop; the historical optimized room build
-is a separate workload and must not be quoted as current recovered-game FPS.
+[D350-D351](R4_NATIVE_PREPARATION_CHECKPOINT.md) records the implemented shared
+strip connection and prepared draw-plan experiment. D350 reduces the recovered
+scene's observed presented p50 from 1621.893 to 1003.415 ms with unchanged resident
+budgets. It retains the same unlit diagnostic output; it is not full cabin parity.
 
-[D349](R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md) recovers `5f42caa` in an isolated
-worktree with all 22 original asset inputs, pinned KOS and separate production
-`r100-autoplay`/manual `r100` external-file discs. Early-slice CPU p50 is
-48.880 ms; whole-trace CPU p50/p95 is 57.559/57.636 ms. Separately, page-flip
-interval p50/p95 is 50.049/66.728 ms; mean 55.158 ms (~18.13 presented FPS).
-No lifecycle reloads, profile/digest/snapshot overhead or discarded simulation
-time enter that 2,076-frame steady sample. This is Flycast evidence only.
+The D351 copied-plan cache is **not promoted**: its funded 16 KiB backing costs
+32 KiB source-arena capacity for only 3.33% observed median improvement to 970.051 ms.
+Only two installed parts are reused in the settled view, while 185 fall back.
+Installed plans decode zero GX bytes, but the whole scene still walks 2,990,528
+reference bytes per frame. Keep it selectable; do not scale duplicate storage
+without solving actual ownership/representation costs. Final source free/largest
+falls from 66,592 to 33,824. Required init succeeds; gameplay/retry peak is unproven.
 
-The user accepts the overall visual reference while rejecting its historical
-character-facing defect. Preserve the complete saved cabin/actor/HUD/lighting
-content and verified game-sound output; use newer corrected native orientation.
-The D348 shared-strip extraction remains uncommitted/default-off and unmeasured
-on target. It is not the complete room renderer integration or a performance win.
-The checkpoint records exact builds, scripts, assets, captures and limitations.
+Continue qualified native preparation, source material/pass classification,
+current selected-light preparation, then conservative visibility and batch-local
+transforms. Do not import historical camera/pose/gameplay or assume its depth+1
+projection convention applies here. Current hot vertex math is scalar; SH4ZAM
+is not linked and is a candidate for the explicit native transform connection.
+Stage attribution remains incomplete; PVR registration includes CPU preparation,
+and GPU intervals overlap. Settled-view timings do not qualify active combat.
+
+[D349](R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md) remains the preserved visual and
+performance reference: historical `5f42caa`, early CPU p50 48.880 ms, whole trace
+57.559 ms, mean presented interval 55.158 ms (~18.13 FPS). Its complete room/actor/
+HUD/lighting/sound workload differs from the recovered diagnostic. User rejected
+its old facing defect. Historical artifacts and private inputs remain untouched.
 
 ## Previous D344 memory checkpoint
 

@@ -13,6 +13,149 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
+## Immediate resumption - D350 strips measured, D351 cache not promoted
+
+The user requests the historical renderer's preparation and hot kernels fed by
+current recovered source state, not its gameplay/camera/sample animation loop.
+See [D350-D351](port/dreamcast/docs/R4_NATIVE_PREPARATION_CHECKPOINT.md) for the
+measured changes, exact identities and next bounded integration requirements.
+
+D350 shared `prepare_direct_strip`/`triangle_visible_xy` is implemented and target
+measured: presented p50 1621.893 ->1003.415 ms, no additional resident buffer.
+Both arms remain unlit diagnostics; the speedup did not remove lighting.
+D351 `MODEL_DRAW_PLANS=1` is a default-off implemented experiment. The first
+64 KiB cache did not fit; the funded 16 KiB candidate reaches visible room output
+but costs 32 KiB source arena for only 3.33% observed median improvement, with just
+two cached parts versus 185 fallbacks in steady samples. Do not promote/enlarge
+that cache policy. Use the preserved D350b ELF/disc for the preceding shared-strip
+reference. Current primary ELF is a build-only D351 cleanup (temporary DVD trace
+prints removed), SHA256
+`90980f2ea48b20dba63e32cc4e24f4065ec2442a2c5be85ac53c3026ae298974`.
+The target-tested D351c ELF remains in its evidence folder; do not conflate them.
+
+Private D351c evidence: `D:/Flycast-Evidence/re4-dreamcast/d351c-funded-draw-plans`
+(C: junction available), including exact owned source, inherited patch, fixtures,
+ELF/disc, capture tools, timings and memory. Final source free/largest 33,824 versus
+66,592 reference. No active combat, full image/material/lighting, audio or hardware
+acceptance. Host packet and owner/lifecycle sanitizer checks pass. Initial D351
+hit em12 queue step4 before the new path; b/c did not reproduce it. No DVD fix.
+
+Historical D349 remains pinned at `/root/work/re4-r100-reference-5f42caa` and
+`C:/Flycast-Evidence/re4-dreamcast/d349-r100-reference`, with all 22 original inputs.
+The user released and root closed the historical manual emulator. D350/D351 timed
+runs ended at their 160-second harness deadlines; no emulator remains running.
+Exclusive integration windows remain authorized, subject to live process checks
+and agent coordination. Do not revive D347e or reset the historical checkout.
+
+The prepared-cache storage/coverage limitation is concrete. Retain the existing
+pass/material -> lighting -> visibility/batch-local integration sequence and
+source ownership. SH4ZAM is not linked; native_model's scalar transform loop is
+a specific future native-kernel connection, while old room uses KOS FTRV.
+Do not restart extraction, a renderer or a general comparison harness.
+
+## Active uncommitted work after D346
+
+The [execution priority](port/dreamcast/docs/PLAYABLE_PATH.md#current-execution-priority-after-the-first-stage-audit)
+now reflects the completed first-stage audit. Event/combat remains pending behind the user-directed renderer integration; movie-owned cleanup proceeds in its isolated
+worktree. The auditor established r100 -> r101 -> r103 and identified the
+required exit/event/data contracts. Water is queued behind the demonstrated movie-to-room allocation
+failure. No experimental movie/water code has been promoted into this checkout.
+
+Local `R100_DEFER_EVENTS=1` is built and host-tested, with target acceptance still
+pending. It narrowly certifies r100 s03/s20 presentation references and retains
+their original source wrapper continuations; it is default-off. Reproduce with
+`/root/probe/d347-build.sh`; focused tests are `test_event_file.py`,
+`test_event_borrow.py`, and `test_r100_event_completion.py`. ELF text/data/BSS is
+2,311,908 / 77,016 / 673,464 (+972 text versus D346). R100 PowerPC tokens and all
+63 inherited tracked dirty-file hashes are unchanged, recorded in
+`/root/probe/d347-source-check.json`. D347a/b target runs preserve normal
+menu/room initialization and cached motion, but their controller routes hit
+collision before the event. No event acceptance or memory saving is claimed.
+D347c also missed the event: route timing was aligned to host time rather
+than logged input retraces. The D347e keyboard route was subsequently stopped at the user's request to prioritize native room-renderer reuse. No event acceptance was reached. Keep `/root/probe/d347-before` as the pre-edit ownership snapshot;
+do not commit inherited edits or call these host checks playable acceptance.
+
+The movie A6 candidate decodes all 1,971 pictures and restores source heap/VRAM
+and its owned stream service, but post-movie em12 loading stalls with DVD queue
+step=4 where the handler implements only 0..3. Reentry remains a hypothesis; the A7 stack-linked diagnostic must be revised
+because native thread cancellation does not unwind its scope. A4's later 65,536-byte native packet allocation
+failure remains an independent KOS-heap limit; source free bytes are not that
+budget. Audio starvation remains audible/unaccepted. A7 is a separate pending
+ownership diagnostic, not a qualified replacement.
+
+The base before this D350/D351 checkpoint was
+`ed9165bc7069232df840aba5a70150166b21989b`, pushed and remote-verified
+D349 reference/status documentation. Use git log/status for the current commit. Previous reviewed
+converter commit `961c51ef3e2ee51b2fd583cd213a0302705bccb7` qualifies r101's
+bounded empty EVS; 30 focused converter tests pass. Its private qualified DAR
+is `/root/probe/r101-empty-evs-nxv127uu/r101.dar`, 10,499,648 transport bytes,
+not heap demand. It has not been loaded
+by the target or installed in `/root/probe/d343-mirror`. R103 data, r101 s00/s21/
+s30 events, em15 data and em15/em26 native bindings remain explicit next-room
+requirements. See `R4_R101_EMPTY_EVS_CHECKPOINT.md` and the private
+`/root/probe/re4-opening-gap-audit-20260922/next-room-dependency-brief.md`.
+
+D347's runtime ELF is unchanged by this converter commit: it was built from
+D346 plus its recorded inherited overlay and the local event candidate. Its
+SHA256 is `f5f984abc1c3a2b1733614a3ef4f8bea2f2590a90b2e5cb021b136fb9490ddf6`.
+Keep executable identity separate from the later source HEAD.
+
+All agents require exclusive emulator windows. The user has released the
+historical manual window for root integration tests; check live ownership before
+launching. The completed D347a/b diagnostics were moved to the matching D:
+evidence suffixes; C: junctions preserve the original paths. All 1,697 files
+were hash-verified, 1,668,954,190 bytes relocated; manifests are in
+`/root/probe/d347-evidence-relocation.json` and per-run relocation hashes.
+No accepted evidence was deleted. Current audit reports are in
+`/root/probe/re4-opening-gap-audit-20260922`; reuse these, not a new inventory.
+
+## Ended manual observation session - D347e (historical)
+
+The primary candidate was opened for keyboard control and then stopped
+at the user's explicit request to prioritize renderer reuse
+in `C:/Flycast-Evidence/re4-dreamcast/d347e-manual-keyboard`, PID 20588 at launch.
+Verify that PID and executable path before interacting; it may change/exit.
+This D347e window and the later D349 manual reference are closed.
+`attach-observer.py` reuses the existing observer for up to one hour and
+leave Flycast open when observation ends. Do not apply the historical automatic
+240-second stop. Startup-only `padscript.txt` navigates card/title/New Game;
+there are no automated gameplay inputs. The existing model diagnostic flag is
+present, with source-state/material/lighting/audio acceptance limits unchanged.
+
+Private `mappings/SDL_Keyboard.cfg` explicitly supplies the standard keyboard
+mapping: arrows movement/turn, C run/cancel, X action/fire, V right trigger/aim,
+F left trigger/knife, Enter Start. No shared emulator preferences were changed.
+All delivered real pad edges are logged separately from the startup fixture.
+User flagged unacceptable slowness: current observed frame interval~1.62s,
+registration interval~1.58s, GPU interval~7.5ms. These overlapping/source-spanning
+intervals are not a precise stage profile. Earlier~58ms/17fps was the optimized
+room/ reference, not current recovered game/. Auditor has a read-only bounded
+follow-up on repeated work and existing timing/counter access. The run is ended. Four asynchronous saved source timer samples place RENDER
+SETUP at about 1.54 seconds of a 1.60-second CPU loop; see its private
+`manual-stop-profile.json`. Overlapping PVR registration is not pure draw CPU.
+
+This ELF is `3d56e49f1b3164c16a3aec52589002604e2f10945f9a0f40e3673d45f5ebdb92`,
+same 2,311,908 / 77,016 / 673,464 sizes, disc SHA256
+`ff35ec0127a53ccf0a4ed1c1965e8fe49558cedcc439b73f7cc3532e3390669e`.
+It additionally moves the s20 guard after the original event-availability wait.
+The focused sanitizer test includes a busy existing event and passes. This
+ordering fix is not present in D347a/b/c; keep their identities separate.
+Reproduction: `/root/probe/d347-build.sh`, `/root/probe/d347d-prepare.py`, then
+correct the private legacy keyboard mapping to version=2 (the D347d recipe
+mistakenly wrote version=3 with legacy fields, producing no keyboard bindings).
+D347d ended deliberately for that correction with no real input delivered.
+D347e uses hardlinks to the same immutable ELF/disc/emulator to avoid duplicate
+storage. Its initial RAM observer lost a startup race (600ms discovery versus
+~717ms RAM log); Flycast continued normally. `attach-observer.py` attaches the
+existing reader to that live PID without rebooting or writing game state.
+Attachment-relative sample times are not boot-relative. The game has now logged
+real keyboard Up (0008) and source movement from approximately
+(-99690,-454,-1344) to (-98900,-341,-1963). Manual event acceptance remains pending.
+No manual encounter result is claimed yet. Monitor source s03 completion,
+actual delivered keyboard input, enemy activation, memory and the next failure.
+Movie A7 and water bridge2 OFF/ON candidates are packaged in their separate
+worktrees, quiet and awaiting a later exclusive emulator window.
+
 ## Current resumption point - D346 counted task handoff
 
 D346 replaces the timing-dependent native task handoff with counted dispatch

@@ -3,9 +3,17 @@
 #include "native_model.h"
 #include "re4dc_platform.h"
 #include "../../room/pvr_geometry.hpp"
+#include "../../room/native_draw_plan.hpp"
+#ifndef RE4DC_MODEL_DRAW_PLANS
+#define RE4DC_MODEL_DRAW_PLANS 0
+#endif
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <algorithm>
+#ifndef RE4DC_MODEL_ROOM_STRIPS
+#define RE4DC_MODEL_ROOM_STRIPS 0
+#endif
 #ifndef RE4DC_MODEL_POSITION_CACHE
 #define RE4DC_MODEL_POSITION_CACHE 1
 #endif
@@ -61,9 +69,19 @@ struct Builder {
         used=strip_vertices=0; // same owner, header, texture pin and scratch
         return true;
     }
+    const unsigned char* corner_at(const unsigned char* p,unsigned i)const{return p+i*stride;}
+    const re4dc::render::DrawCorner* corner_at(const re4dc::render::DrawCorner* p,unsigned i)const{return p+i;}
     bool vertex(const unsigned char* corner,re4dc::render::RenderVertex& v,float& opacity){
         const unsigned vi=be16(corner),ni=be16(corner+2),ti=be16(corner+stride-2);
         if(vi>=p.position_count || ni>=p.normal_count || !ram(p.uv+ti*4,4))return false;
+        return vertex_indices(vi,ti,(p.flags&0x80000000U)?be16(corner+4):0,v,opacity);
+    }
+    bool vertex(const re4dc::render::DrawCorner* corner,re4dc::render::RenderVertex& v,float& opacity){
+        // Native plan qualification checked structural ranges; current attribute
+        // bindings are checked once at part entry. No GX-stream read here.
+        return vertex_indices(corner->position,corner->uv,corner->color,v,opacity);
+    }
+    bool vertex_indices(unsigned vi,unsigned ti,unsigned ci,re4dc::render::RenderVertex& v,float& opacity){
         v={};++work_stats.position_references;
 #if RE4DC_MODEL_POSITION_CACHE
         auto& cached=positions[vi&63U];
@@ -96,11 +114,12 @@ struct Builder {
         v.light_red=v.light_green=v.light_blue=1;
         // Source channel alpha is independent of base texture alpha. Vertex
         // source uses its own BE corner identity, never the position cache key.
-        const unsigned alpha=(p.alpha_state&256)?p.colors[be16(corner+4)*4+3]:(p.alpha_state&255);
+        const unsigned alpha=(p.alpha_state&256)?p.colors[ci*4+3]:(p.alpha_state&255);
         opacity=alpha/255.0f;
         return true;
     }
-    bool triangle(const unsigned char* a,const unsigned char* b,const unsigned char* c){
+    template<class Corner>
+    bool triangle(const Corner* a,const Corner* b,const Corner* c){
         re4dc::render::RenderVertex in[3];float opacity[3];
         if(!vertex(a,in[0],opacity[0])||!vertex(b,in[1],opacity[1])||!vertex(c,in[2],opacity[2]))return false;
         pvr_vertex_t out[6];++input;
@@ -125,18 +144,91 @@ struct Builder {
                 return append_triangle(triangle); // begin a correctly wound strip
             }
             dst[used-1].flags=PVR_CMD_VERTEX;
-            dst[used++]=triangle[2];++strip_vertices;
+            dst[used]=triangle[2];dst[used++].flags=PVR_CMD_VERTEX_EOL;++strip_vertices;
         }else{
             if(packet.capacity-used<3){
                 if(!flush())return false;
                 return append_triangle(triangle);
             }
-            std::memcpy(dst+used,triangle,3*sizeof(*dst));used+=3;strip_vertices=3;
+            std::memcpy(dst+used,triangle,3*sizeof(*dst));
+            dst[used].flags=dst[used+1].flags=PVR_CMD_VERTEX;
+            dst[used+2].flags=PVR_CMD_VERTEX_EOL;used+=3;strip_vertices=3;
         }
         ++output;
         return true;
     }
+#if RE4DC_MODEL_ROOM_STRIPS
+    // Use the room/character one-pass strip preparation with source-selected
+    // corners. Private tail space in the EXISTING packet buffer holds prepared
+    // vertices; front space holds the worst-case split output. Nothing is
+    // published until the full primitive qualifies, so fallback needs no fence
+    // or additional allocation. CPU cull/alpha/order remain exactly unchanged.
+    template<class Corner>
+    int room_strip(const Corner* corners,unsigned count){
+        if(count<3)return 0;
+        const unsigned worst=3*(count-2);
+        if(count+worst>packet.capacity-used)return 0;
+        auto* prepared=(pvr_vertex_t*)packet.vertices+packet.capacity-count;
+        const bool ready=re4dc::render::prepare_direct_strip(
+            prepared,count,clip.near_distance,clip.far_distance,
+            [&](unsigned local,re4dc::render::DirectStripVertex& out){
+                re4dc::render::RenderVertex v;float opacity;
+                if(!vertex(corner_at(corners,local),v,opacity))return false;
+                const unsigned alpha=unsigned(std::clamp(opacity*255.f,0.f,255.f));
+                out={v.position.depth,v.position.x,v.position.y,v.position.z,
+                     v.u,v.v,(alpha<<24)|0x00ffffffU,v.offset_color};
+                return true;
+            });
+        if(!ready){++work_stats.room_strip_fallbacks;return 0;}
+        ++work_stats.room_prepared_strips;work_stats.room_prepared_corners+=count;
+        // The room's direct path delegates culling to its PVR headers. The
+        // recovered frame currently uses CPU culling; share its exact reject
+        // predicate and preserve ordered surviving strips without changing the
+        // frame/material owner or its hardware cull state.
+        for(unsigned i=2;i<count;++i){
+            ++input;
+            const auto& a=prepared[i-2+(i&1)];
+            const auto& b=prepared[i-1-(i&1)];
+            const auto& c=prepared[i];
+            if(!re4dc::render::triangle_visible_xy(a,b,c,p.cull,clip.width,clip.height))continue;
+            const pvr_vertex_t triangle[3]={a,b,c};
+            if(!append_triangle(triangle))return -1;
+        }
+        return 1;
+    }
+#endif
+    template<class Corner>
+    bool primitive(const Corner* v,unsigned n,re4dc::render::DrawTopology kind){
+        using re4dc::render::DrawTopology;
+#if RE4DC_MODEL_ROOM_STRIPS
+        if(kind==DrawTopology::strip){
+            const int result=room_strip(v,n);
+            if(result<0)return false;
+            if(result>0)return true;
+        }
+#endif
+        if(kind==DrawTopology::quads){for(unsigned i=0;i<n;i+=4)
+            if(!triangle(corner_at(v,i),corner_at(v,i+1),corner_at(v,i+2)) ||
+               !triangle(corner_at(v,i),corner_at(v,i+2),corner_at(v,i+3)))return false;
+        }else if(kind==DrawTopology::triangles){for(unsigned i=0;i<n;i+=3)
+            if(!triangle(corner_at(v,i),corner_at(v,i+1),corner_at(v,i+2)))return false;
+        }else{for(unsigned i=2;i<n;++i){
+            unsigned a=kind==DrawTopology::fan?0:i-2,b=i-1;
+            if(kind==DrawTopology::strip && (i&1)){unsigned t=a;a=b;b=t;}
+            if(!triangle(corner_at(v,a),corner_at(v,b),corner_at(v,i)))return false;
+        }}
+        return true;
+    }
+    bool walk_plan(const re4dc::render::NativeDrawPlan& plan){
+        const auto* corners=plan.corners();
+        for(unsigned i=0;i<plan.primitive_count;++i){
+            const auto& part=plan.primitives()[i];
+            if(!primitive(corners+part.first_corner,part.corner_count,part.topology))return false;
+        }
+        return true;
+    }
     bool walk(bool emit){
+        work_stats.gx_walk_bytes+=p.stream_bytes;
         unsigned offset=0;
         while(offset<p.stream_bytes){
             unsigned op=p.stream[offset++];if(!op)continue;
@@ -146,23 +238,21 @@ struct Builder {
             const auto* v=p.stream+offset;offset+=n*stride;
             if((op==0x80 && n%4) || (op==0x90 && n%3) ||
                (op!=0x80 && op!=0x90 && op!=0x98 && op!=0xa0))return false;
+            if(!emit){
             for(unsigned i=0;i<n;++i){
                 if(be16(v+i*stride)>=p.position_count || be16(v+i*stride+2)>=p.normal_count ||
                    !ram(p.uv+be16(v+i*stride+stride-2)*4,4))return false;
             }
-            if(p.alpha_state&256)for(unsigned i=0;i<n;++i)
-                if(!ram(p.colors+be16(v+i*stride+4)*4,4))return false;
-            if(!emit)continue;
-            if(op==0x80){for(unsigned i=0;i<n;i+=4)
-                if(!triangle(v+i*stride,v+(i+1)*stride,v+(i+2)*stride) ||
-                   !triangle(v+i*stride,v+(i+2)*stride,v+(i+3)*stride))return false;
-            }else if(op==0x90){for(unsigned i=0;i<n;i+=3)
-                if(!triangle(v+i*stride,v+(i+1)*stride,v+(i+2)*stride))return false;
-            }else{for(unsigned i=2;i<n;++i){
-                unsigned a=op==0xa0?0:i-2,b=i-1;
-                if(op==0x98 && (i&1)){unsigned t=a;a=b;b=t;}
-                if(!triangle(v+a*stride,v+b*stride,v+i*stride))return false;
-            }}
+            if(p.alpha_state&256) {
+                for(unsigned i=0;i<n;++i)
+                    if(!ram(p.colors+be16(v+i*stride+4)*4,4))return false;
+            }
+            continue;
+            }
+            const auto kind=op==0x80?re4dc::render::DrawTopology::quads:
+                op==0x90?re4dc::render::DrawTopology::triangles:
+                op==0x98?re4dc::render::DrawTopology::strip:re4dc::render::DrawTopology::fan;
+            if(!primitive(v,n,kind))return false;
         }
         return true;
     }
@@ -181,19 +271,35 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     Builder b{*p,{},projection,{near,far,640,480,project,nullptr},0,0,
               (p->flags&0x80000000U)?8U:6U,std::ldexp(1.0f,-int(p->shift))};
     b.clip.context=&b.projection;
-    if(!b.walk(false)){re4dc_model_result(1,0,0);return;}
+
     // Source data remains live throughout this synchronous call. In streaming
     // mode each bounded chunk is consumed once by the existing native owner;
     // no whole-scene copy and no repeated deformation/preparation pass.
     b.streaming=re4dc_model_packet_streaming()!=0;
     if(!re4dc_model_packet_reserve(p,&b.packet)){re4dc_model_result(2,0,0);return;}
-    bool okay=b.walk(true);
+    const re4dc::render::NativeDrawPlan* plan=nullptr;
+#if RE4DC_MODEL_DRAW_PLANS
+    int invalid=0;
+    plan=re4dc_model_acquire_draw_plan(p,&invalid);
+    struct PlanLease { const re4dc::render::NativeDrawPlan* p; ~PlanLease(){if(p)re4dc_model_release_draw_plan();} } lease{plan};
+    if(invalid){re4dc_model_result(1,0,0);return;}
+#endif
+    if(plan){
+        ++work_stats.prepared_parts;
+        if(!ram(p->uv,(plan->max_uv+1)*4) ||
+           ((p->alpha_state&256) && !ram(p->colors,(plan->max_color+1)*4))){re4dc_model_result(1,0,0);return;}
+    }else {
+        ++work_stats.unprepared_parts;
+        if(!b.walk(false)){re4dc_model_result(1,0,0);return;}
+    }
+    const auto emit=[&](){return plan?b.walk_plan(*plan):b.walk(true);};
+    bool okay=emit();
     if(okay && b.used)okay=b.bind();
     if(!okay && b.restart_uv){
         // First binding precedes every publication. Restart only for a verified
         // alternate UV scale, retaining the already selected native texture.
         b.restart_uv=false;b.used=b.input=b.output=b.strip_vertices=0;
-        okay=b.walk(true);
+        okay=emit();
         if(okay && b.used)okay=b.bind();
     }
     if(!okay){

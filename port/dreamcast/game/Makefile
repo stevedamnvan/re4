@@ -54,7 +54,7 @@ GAME_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS))
 CENSUS_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(CENSUS_SRCS))
 PLATFORM_OBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(PLATFORM_SRCS))
 SDK_OBJS = $(patsubst platform/sdk/gen/%.c,$(OBJDIR)/sdk/%.o,$(SDK_GEN))
-NATIVE_REUSE_OBJS = $(OBJDIR)/native-reuse/pvr_geometry.o $(OBJDIR)/native-reuse/gpu_lifecycle.o $(OBJDIR)/native-reuse/texture_package.o $(OBJDIR)/native-reuse/room_storage.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/model_bridge.o $(OBJDIR)/motion_bridge.o $(OBJDIR)/parts_bridge.o
+NATIVE_REUSE_OBJS = $(OBJDIR)/native-reuse/native_draw_plan.o $(OBJDIR)/native-reuse/pvr_geometry.o $(OBJDIR)/native-reuse/gpu_lifecycle.o $(OBJDIR)/native-reuse/texture_package.o $(OBJDIR)/native-reuse/room_storage.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/model_bridge.o $(OBJDIR)/motion_bridge.o $(OBJDIR)/parts_bridge.o
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1
@@ -199,6 +199,19 @@ $(OBJDIR)/platform/native_ui.o: $(OBJDIR)/pvr-stream.h
 $(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pvr-stream.h
 
 # Exact source-position reuse, scoped to one native part. 0 is the reference path.
+# Shared room/character strip assembly in recovered source models. Selectable
+# until matched target timing and appearance qualification are complete.
+MODEL_ROOM_STRIPS ?= 0
+.PHONY: model-room-strips-force
+$(OBJDIR)/model-room-strips.h: model-room-strips-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_MODEL_ROOM_STRIPS %s\n' '$(MODEL_ROOM_STRIPS)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_model.o: $(OBJDIR)/model-room-strips.h ../room/pvr_geometry.hpp platform/include/native_model.h
+$(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-room-strips.h
+$(OBJDIR)/native-reuse/pvr_geometry.o: ../room/pvr_geometry.hpp
+
 MODEL_POSITION_CACHE ?= 1
 .PHONY: model-position-force
 $(OBJDIR)/model-position.h: model-position-force
@@ -208,3 +221,15 @@ $(OBJDIR)/model-position.h: model-position-force
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_model.o: $(OBJDIR)/model-position.h
 $(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-position.h
+
+# Qualified immutable ModelPart plans. Experimental 16 KiB cache explicitly
+# costs 32 KiB source-arena capacity; keep off pending broader coverage/budget.
+MODEL_DRAW_PLANS ?= 0
+.PHONY: model-draw-plan-force
+$(OBJDIR)/model-draw-plan.h: model-draw-plan-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_MODEL_DRAW_PLANS %s\n' '$(MODEL_DRAW_PLANS)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/mem.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: $(OBJDIR)/model-draw-plan.h
+$(OBJDIR)/platform/mem.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-draw-plan.h

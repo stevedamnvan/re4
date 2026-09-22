@@ -24,22 +24,19 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D349 recovers the exact historical r100 renderer reference at `5f42caa` in an
-isolated worktree, preserving current recovered-game integration. Fresh clean
-Flycast autoplay measurements: **48.880 ms median CPU work for the early slice**,
-**57.559 ms for the whole trace**, **55.158 ms mean page-flip interval (~18.13
-presented FPS)**. All 22 original private inputs are recovered unchanged; manual
-cabin/character/HUD/lighting and actual sound output are captured. The user likes
-the overall appearance but flags historical character facing; retain the newer
-native correction. These results belong to the room reference, not `game/`.
-See [the exact identities, evidence and reuse handoff](docs/R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md).
+D350 reuses the room's native strip preparation in the recovered game, reducing
+observed presented-frame median **1621.893 ->1003.415 ms** without another resident
+buffer. D351 adds a selectable prepared draw-plan adapter, but its current cache
+policy is **not promoted**: approximately 3.3% further gain costs 32 KiB source-heap
+capacity and covers only two regularly reused parts. Required initialization and
+visible diagnostic rendering run; full materials/lighting and encounter play
+remain unfinished. See [implementation, tests and measured limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md).
 
-The immediate integration priority is to reuse the working room renderer and
-resource ownership substantially intact, fed by recovered gameplay/pose/camera.
-D347 manual routing stopped for that correction. The uncommitted D348 shared
-strip extraction is host-tested and built, but has no target timing acceptance.
-The three-room objective and outstanding source event/audio/inventory/transition
-requirements remain in force. Latest accepted integration remains D346 below.
+The historical D349/`5f42caa` reference remains isolated and preserved: 48.880 ms
+early CPU median, 57.559 ms whole trace and 55.158 ms mean presentation interval
+(~18.13 FPS), with matching original assets. These are the old room workload,
+not current recovered-game FPS. Preserve its visual strengths and the newer
+source-facing correction. [Reference evidence](docs/R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md).
 
 D346 replaces the timing-dependent native task handoff with counted dispatch
 and resume signals using the existing semaphores. A faster diagnostic exposed a

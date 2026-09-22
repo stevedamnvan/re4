@@ -166,16 +166,20 @@ Entry* load(const Re4dcUiImage& image,bool pin=true) {
     return slot;
 }
 }
-extern "C" void re4dc_ui_invalidate_sources(){nsource=0;}
+extern "C" void re4dc_ui_invalidate_sources(){nsource=0;re4dc_model_reset_draw_plans();}
 extern "C" int re4dc_ui_bind_core(void* archive,unsigned bytes){
     nsource=0;
     const bool ok=core_identities.adopt(archive,bytes);
+    if(ok)re4dc_model_bind_draw_owner(&core_identities,archive,bytes,0);
+    else re4dc_model_unbind_draw_owner(&core_identities);
     re4dc_log("native core identities: %s count=%u archive=%u metadata_owner=core\n",ok?"ok":"REJECTED",core_identities.count(),bytes);
     return ok;
 }
 extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
     nsource=0;identity_hits=0;
     const bool ok=room_identities.adopt(archive,bytes);
+    if(ok)re4dc_model_bind_draw_owner(&room_identities,archive,bytes,1);
+    else re4dc_model_unbind_draw_owner(&room_identities);
     re4dc_log("native room identities: %s count=%u archive=%u metadata_owner=room\n",ok?"ok":"REJECTED",room_identities.count(),bytes);
     return ok;
 }
@@ -183,39 +187,51 @@ extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
 // identity table; source overwrite invalidates descriptor lookups first.
 extern "C" int re4dc_ui_bind_option(void* archive,unsigned bytes){
     nsource=0;bool ok=option_identities.adopt(archive,bytes);
+    if(ok)re4dc_model_bind_draw_owner(&option_identities,archive,bytes,0);
+    else re4dc_model_unbind_draw_owner(&option_identities);
     re4dc_log("native option identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",option_identities.count(),bytes);return ok;
 }
-extern "C" void re4dc_ui_unbind_option(){option_identities.clear();nsource=0;}
+extern "C" void re4dc_ui_unbind_option(){re4dc_model_unbind_draw_owner(&option_identities);option_identities.clear();nsource=0;}
 // Player and weapon regions persist across room retirement when the source
 // retains them. Their explicit source release/overwrite boundaries clear views.
 extern "C" int re4dc_ui_bind_player(void* archive,unsigned bytes){
     nsource=0;bool ok=player_identities.adopt(archive,bytes);
+    if(ok)re4dc_model_bind_draw_owner(&player_identities,archive,bytes,0);
+    else re4dc_model_unbind_draw_owner(&player_identities);
     re4dc_log("native player identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",player_identities.count(),bytes);return ok;
 }
 extern "C" int re4dc_ui_bind_weapon(void* archive,unsigned bytes){
     nsource=0;bool ok=weapon_identities.adopt(archive,bytes);
+    if(ok)re4dc_model_bind_draw_owner(&weapon_identities,archive,bytes,0);
+    else re4dc_model_unbind_draw_owner(&weapon_identities);
     re4dc_log("native weapon identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",weapon_identities.count(),bytes);return ok;
 }
-extern "C" void re4dc_ui_unbind_player(){player_identities.clear();nsource=0;}
-extern "C" void re4dc_ui_unbind_weapon(){weapon_identities.clear();nsource=0;}
+extern "C" void re4dc_ui_unbind_player(){re4dc_model_unbind_draw_owner(&player_identities);player_identities.clear();nsource=0;}
+extern "C" void re4dc_ui_unbind_weapon(){re4dc_model_unbind_draw_owner(&weapon_identities);weapon_identities.clear();nsource=0;}
 extern "C" int re4dc_ui_bind_enemy(void* archive,unsigned bytes){
     re4dc::texture::SourceIdentityTable table;
     if(!table.adopt(archive,bytes))return 0;
-    if(!table.count())return 1; // ordinary archive; no view needed
+    if(!table.count()) {
+        re4dc_model_bind_draw_owner(archive,archive,bytes,1);
+        return 1; // ordinary archive; no texture view needed
+    }
     EnemyIdentity* slot=nullptr;
     for(auto& e:enemy_identities){if(e.archive==archive)return 0;if(!e.archive && !slot)slot=&e;}
     if(!slot)return 0;
     slot->archive=archive;slot->table=table;nsource=0;
+    re4dc_model_bind_draw_owner(archive,archive,bytes,1);
     re4dc_log("native enemy identities: count=%u archive=%u metadata_owner=enemy upload_staging=0\n",table.count(),bytes);
     return 1;
 }
 extern "C" void re4dc_ui_unbind_enemy(void* archive){
+    re4dc_model_unbind_draw_owner(archive);
     for(auto& e:enemy_identities)if(archive && e.archive==archive){e.table.clear();e.archive=nullptr;}
     // Queued packets own copied native vertices/headers and cache handles; no
     // queued reader borrows archive texels. This does not free live VRAM uploads.
     nsource=0;
 }
 extern "C" void re4dc_ui_retire_room(){
+    re4dc_model_retire_draw_plans();
 #if RE4DC_PVR_STREAM
     // Source room retirement can occur on a task while the main thread owns an
     // unfinished TA list. Keep submitted texture owners until that thread closes
@@ -345,6 +361,7 @@ extern "C" void re4dc_ui_present(){
 }
 
 extern "C" void re4dc_ui_end_frame(int present){
+    re4dc_model_draw_plan_frame(frame);
 #if RE4DC_PVR_STREAM
     if(!frame_ready)return;
     const bool black=re4dc_vi_black()!=0;

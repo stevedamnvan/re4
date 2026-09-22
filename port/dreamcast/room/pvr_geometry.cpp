@@ -112,36 +112,13 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
     for(unsigned fan = 1; fan + 1 < clipped_count; ++fan) {
         const RenderVertex triangle[3] = {clipped[0], clipped[fan],
                                           clipped[fan + 1]};
-        const float signed_area =
-            (triangle[1].position.x - triangle[0].position.x) *
-                (triangle[2].position.y - triangle[0].position.y) -
-            (triangle[1].position.y - triangle[0].position.y) *
-                (triangle[2].position.x - triangle[0].position.x);
         const bool beyond_far =
             triangle[0].position.depth > parameters.far_distance &&
             triangle[1].position.depth > parameters.far_distance &&
             triangle[2].position.depth > parameters.far_distance;
-        const bool left = triangle[0].position.x < 0.0f &&
-                          triangle[1].position.x < 0.0f &&
-                          triangle[2].position.x < 0.0f;
-        const bool right = triangle[0].position.x > parameters.width &&
-                           triangle[1].position.x > parameters.width &&
-                           triangle[2].position.x > parameters.width;
-        const bool above = triangle[0].position.y < 0.0f &&
-                           triangle[1].position.y < 0.0f &&
-                           triangle[2].position.y < 0.0f;
-        const bool below = triangle[0].position.y > parameters.height &&
-                           triangle[1].position.y > parameters.height &&
-                           triangle[2].position.y > parameters.height;
-        const bool culled =
-            cull_mode == 3U ||
-            (cull_mode == 2U && signed_area >= 0.0f) ||
-            (cull_mode == 1U && signed_area <= 0.0f) ||
-            (cull_mode == 0U &&
-             std::fabs(signed_area) < 0.0001f);
-        if(beyond_far || left || right || above || below || culled) {
-            continue;
-        }
+        if(beyond_far || !triangle_visible_xy(
+               triangle[0].position, triangle[1].position, triangle[2].position,
+               cull_mode, parameters.width, parameters.height)) continue;
         pvr_vertex_t* destination = output + triangle_count * 3U;
         for(unsigned corner = 0; corner < 3; ++corner) {
             destination[corner] = {

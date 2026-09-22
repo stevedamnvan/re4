@@ -53,5 +53,24 @@ inline unsigned re4dc_model_cull(unsigned source_mode,bool force_front){
 // Native cache costs 2 KiB of the existing calling stack, no resident allocation.
 struct Re4dcModelWorkStats {
     unsigned part_preparations, position_references, position_transforms, position_hits;
+    unsigned room_prepared_strips, room_prepared_corners, room_strip_fallbacks;
+    unsigned gx_walk_bytes, prepared_parts, unprepared_parts;
 };
 extern "C" const Re4dcModelWorkStats* re4dc_model_work_stats();
+
+namespace re4dc::render { struct NativeDrawPlan; }
+// Qualified archive ranges come from the existing UI/resource owner. A plan
+// contains copied indices only; the current frame still supplies live arrays.
+extern "C" void re4dc_model_bind_draw_owner(const void* owner,void* archive,unsigned bytes,unsigned transient);
+extern "C" void re4dc_model_unbind_draw_owner(const void* owner);
+extern "C" void re4dc_model_reset_draw_plans();
+extern "C" const re4dc::render::NativeDrawPlan* re4dc_model_acquire_draw_plan(const Re4dcModelPart*,int* invalid);
+extern "C" void re4dc_model_release_draw_plan();
+extern "C" void re4dc_model_draw_plan_frame(unsigned frame);
+struct Re4dcDrawPlanStats {
+    unsigned hits,installs,source_bytes,uncovered,capacity_rejects,invalid,
+             used,capacity,peak,resets,owner_misses;
+};
+extern "C" const Re4dcDrawPlanStats* re4dc_model_draw_plan_stats();
+
+extern "C" void re4dc_model_retire_draw_plans();
