@@ -215,6 +215,18 @@ owners[0]=core;assert(re4dc_ui_bind_enemy(owners[0].data(),owners[0].size()));
 assert(enemy_identities[0].table.lookup(owners[0].data()+128,8,8,14,crc,fnv)==1);
 re4dc_ui_unbind_enemy(owners[0].data());
 
+// Actual room retirement fences/closes cached uploads but must retain the
+// fixed player/weapon descriptor views when source reload flags are unchanged.
+assert(re4dc_ui_bind_player(core.data(),core.size()));
+assert(re4dc_ui_bind_weapon(room.data(),room.size()));
+assert(::room_identities.adopt(room.data(),room.size()));
+ready=true;re4dc_ui_retire_room();assert(closed==1 && render_calls==1);
+assert(!::room_identities.count());
+assert(player_identities.lookup(core.data()+128,8,8,14,crc,fnv)==1);
+assert(weapon_identities.lookup(room.data()+128,8,8,14,crc,fnv)==1);
+re4dc_ui_unbind_player();assert(!player_identities.count() && weapon_identities.count()==1);
+re4dc_ui_unbind_weapon();assert(!weapon_identities.count());
+ready=false;render_calls=0;
 for(unsigned byte:{0U,160U,168U,172U,176U,180U,188U,192U,128U,144U,96U,121U}){
  room[byte]^=0x80;assert(!identities.adopt(room.data(),room.size()));assert(!identities.count());room[byte]^=0x80;
 }
@@ -260,10 +272,11 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
 }
 """
             source=(ROOT/"port/dreamcast/game/platform/native_ui.cpp").read_text()
-            first=source.index('extern "C" int re4dc_ui_bind_enemy(')
-            last=source.index('extern "C" void re4dc_ui_retire_room(',first)
+            first=source.index('extern "C" int re4dc_ui_bind_player(')
+            last=source.index('extern "C" void re4dc_ui_init(',first)
             bindings=source[first:last]
             setup='struct EnemyIdentity {void* archive=nullptr;re4dc::texture::SourceIdentityTable table;};\nEnemyIdentity enemy_identities[4];unsigned nsource;void re4dc_log(const char*,...){}\n'
+            setup+='re4dc::texture::SourceIdentityTable player_identities,weapon_identities,room_identities;bool ready;unsigned nquad,model_used,identity_hits,closed;struct Entry{};Entry entries[1];void close_entry(Entry&){assert(render_calls);++closed;}void re4dc_missing(const char*){assert(false); }\n'
             fixture=fixture.replace('int main(',setup+bindings+'int main(',1)
             cpp=root/"fixture.cpp";cpp.write_text(fixture)
             scene=ROOT/"port/dreamcast/room";exe=root/"fixture"
@@ -280,7 +293,7 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
         key,_=UI.image_identity(image);crc,fnv=[int(x,16) for x in key.split("-")]
         fixture='#include "native_ui.h"\n#include <cassert>\n'
         fixture+='struct Key{unsigned crc,fnv;};struct Source{Re4dcUiImage image;Key key;};Source sources[256];unsigned nsource;\n'
-        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
+        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities,player_identities,weapon_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
         fixture+='struct EnemyIdentity {void* archive=nullptr;Identity table;};EnemyIdentity enemy_identities[4];\n'
         fixture+=body
         fixture+=r"""

@@ -1,4 +1,5 @@
 #include "native_motion.h"
+#include "native_io.h"
 // Dolphin OS interface over KallistiOS: threads, thread queues, semaphores,
 // interrupts, time, stopwatches, arena/heaps (heaps are the SDK's own OSAlloc.c
 // compiled in platform/sdk), reset, font, console queries.
@@ -47,7 +48,8 @@ struct OSThread {
     s32 gateCount;            // 0x004  positive: blocked on the gate until resumed
     void* (*func)(void*);     // 0x008
     void* param;              // 0x00C
-    u8 pad[0x2C8 - 0x10];
+    u32 nativeIoDepth;        // 0x010: guarded filesystem scopes
+    u8 pad[0x2C8 - 0x14];
     u16 state;                // 0x2C8
     u16 attr;                 // 0x2CA
     s32 suspend;              // 0x2CC
@@ -296,10 +298,37 @@ OSThread* OSGetCurrentThread(void)
     return threadOf(thd_current);
 }
 
+void* re4dc_io_begin()
+{
+    int old = irq_disable();
+    OSThread* owner = threadOf(thd_current);
+    ++owner->nativeIoDepth;
+    irq_restore(old);
+    return owner;
+}
+
+void re4dc_io_end(void* ptr)
+{
+    int old = irq_disable();
+    OSThread* owner = (OSThread*) ptr;
+    if (owner != threadOf(thd_current) || owner->nativeIoDepth == 0)
+        re4dc_missing("native I/O owner mismatch");
+    --owner->nativeIoDepth;
+    irq_restore(old);
+}
+
+int re4dc_io_busy(const void* ptr)
+{
+    int old = irq_disable();
+    int busy = ((const OSThread*) ptr)->nativeIoDepth != 0;
+    irq_restore(old);
+    return busy;
+}
+
 void OSExitThread(void* val)
 {
     OSThread* t = threadOf(thd_current);
-    if (re4dc_motion_thread_busy(thd_current)) re4dc_missing("thread exit during motion lease");
+    if (t->nativeIoDepth || re4dc_motion_thread_busy(thd_current)) re4dc_missing("thread exit during motion lease");
     t->val = val;
     t->state = OS_THREAD_STATE_MORIBUND;
     thd_exit(val);
@@ -312,7 +341,7 @@ void OSCancelThread(OSThread* thread)
         // A KOS read can yield inside a source evaluation. Let its bounded
         // native resource scope finish before thd_destroy discards its stack.
         // Hold IRQ exclusion across the final zero-busy check and destruction.
-        while (re4dc_motion_thread_busy(thread->kt)) {
+        while (thread->nativeIoDepth || re4dc_motion_thread_busy(thread->kt)) {
             thread->suspend = 0;
             thread->gateCount = 0;
             unpark(thread);

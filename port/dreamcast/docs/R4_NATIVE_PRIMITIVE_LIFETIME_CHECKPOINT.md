@@ -950,3 +950,115 @@ Continue source working-set/prefetch closure and other qualified player/weapon/
 room backing lifetimes alongside the current source-controlled 3D connection.
 Do not count this texture ceiling again, restart extraction, weaken source
 consumers or call the failed allocation an integrated cabin.
+
+
+## D327: player/weapon backing and native read lifetime
+
+Selectable candidate on D326 (`572cfc7`), 2026-09-21. The normal source menu
+remains visible. The required block pool allocates and the full prepared enemy
+body now loads. Source sound-container dispatch and 37 enemy texture identities
+complete. The next explicit failure is hot-key prefetch allocation, before enemy
+initialization/playability. D324 remains the accepted reference; neither the
+incomplete 75-clip profile nor newly externalized actor textures are promoted.
+
+### Connections and ownership
+
+| Reused mechanism | Source boundary | New adapter |
+|---|---|---|
+| `prepare_enemy_motions`, qualified `le_mirror`, `compact_spans`, NTR identities | pl00/wep02 top-level TPLs and source DRS body | Textures-only family selection; preserve non-REL pl00 boundary and all FCV/SEQ/model/slot content. No new decoder. |
+| `SourceIdentityTable`, existing `native_ui` lookup/cache and `Package::open_streamed/upload` | `ReadPlayerData`, `ReadWepData`, source TEXHeader identities | Two borrowed identity views; explicit release hooks. Views persist across room retirement if source player/weapon persists; shared VRAM still follows existing fence/retire/reupload. |
+| Existing fixed arena and DVD part transfer | pl00/player and wep02/weapon owning reservations | Selectable exact reservations and pre-transfer checks against original request owner, including later parts, overflow and source shared-player range. Full defaults retained; alternate costumes/weapons require qualification. |
+| Existing OS thread owner and cancellation drain | DVD filesystem calls and source `iTaskSuspend` | Nested bounded I/O scope in unused OSThread context space; defer source ISR suspension until filesystem locks/callback complete. Drain scopes before cancellation destroys stack. KOS scheduling/interrupts remain enabled. |
+
+No prototype AI, motion selection, camera or source hold override was introduced.
+Source gameplay, source archive descriptors, collision, events and every motion
+remain. Only verified top-level nonpalette/nonmip texture payloads were removed.
+Player EFF families were not automatically qualified. Weapon mip texels 30,720
+remain resident. Static module/BSS policy is unchanged.
+
+### Actual allocation and working-set evidence
+
+| Item | D326 | D327 |
+|---|---:|---:|
+| Source heap arena capacity | 9,475,968 | 9,987,168 |
+| Player reservation / loaded body | 1,146,880 / 1,055,264 | 846,656 / 846,656 |
+| Weapon reservation / loaded body | 458,752 / 254,720 | 247,776 / 247,776 |
+| Free after required 1,126,272-byte block pool | 966,496 | 1,477,696 |
+| Enemy body requested | 1,426,304, failed | 1,426,304, loaded |
+| Free after enemy allocation | not allocated | 41,024 |
+| Free after cache metadata and first hot key | not reached | 16,096 |
+
+**511,200 real source-heap bytes recovered**: 295,648 previously unused fixed
+reservation bytes plus 215,552 net removed player/weapon backing. Player removes
+209,920 texels and retains 1,312 metadata bytes (net208,608); weapon removes7,168
+and retains224 (net6,944). Compact bodies load directly; original and compact
+full archives are never simultaneously resident. Existing bounded64 KiB native
+upload scratch and source DVD scratch remain. No new loading buffer is allocated.
+New two-table metadata costs32 BSS bytes; OSThread layout/size is unchanged.
+
+The enemy body is2,151,424 below the original3,577,728 request. Including selected
+cache capacity1,007,936, metadata2,336 and conservative146 allocation overheads
+14,016 leaves a **provisional net family budget reduction1,127,136**. This is not
+a completed encounter peak. After actual body allocation, the remaining cache
+budget deficit is **983,264**, before more actor/event/audio work and any extra
+clips required by completed source/concurrency closure. Previous983,200 shorthand
+excluded the now-observed64-byte body allocator charge.
+
+Normal-game cache counters, read from the halted target RAM using this ELF's
+symbols: 2 misses,1 successful load,0 evictions/hits;22,400 bytes read and peak
+cached payload;0 pinned bytes (no evaluation reached);2,336 metadata;
+210,892 us worst successful resource wait. The second payload16,608 requests
+16,640 with its32-byte owner header and fails against16,096 free. Source allocator
+adds another64 on successful allocations. This is an explicit game halt; the
+capture harness continued to its90-second deadline. Warm-up was **not** reached.
+
+D325's separate SH-4 fixture still establishes75 loads/952,768 bytes at warm-up,
+100 repetitions/7,500 evaluations with **zero new misses/bytes**, peak cached
+981,440/pinned32,416 and273,519 us worst wait. Do not relabel it live-game or
+physical-disc evidence. Hot keys remain retained and nonvictims; release only
+ends the evaluation pin. Source header/key-table restoration and relocated keys
+remain checked across pressure/eviction/reload. The source prefetch/concurrency
+audit remains incomplete: indirect R1/event selection, Work aliases and complete
+instance/blend/shape/camera overlap must still be closed. Do not shrink the hot
+set or use per-evaluation eviction to pass initialization.
+
+### New stall resolved, validation and identities
+
+`d327-player-weapon` and `d327b-enemy-read` preserve the original stall. Two RAM
+snapshots15 seconds apart show DVD queue flags0x82010123, step1, MRAM copied0,
+first128 KiB piece outstanding. Background task4 is parked at the source suspend
+gate inside KOS `iso_read`; the main thread waits on `fh_mutex` in `iso_open`.
+That owner cannot be suspended until its locks are released. With the bounded
+I/O guard, enemy read completes (`DVD: Read Ok 431`) and sound block8 dispatches.
+This is loading correctness, not an FPS gain or audible-output acceptance.
+
+Checks:12 focused native I/O, cancellation/cache pointer, identity/ownership,
+fixed reservation and compact-archive tests;30 existing room/mirror tests.
+PowerPC preprocessed source tokens remain identical at affected source hooks.
+The actual33 new descriptors pass separate ASan/UBSan shared-native package
+relocation/upload/release/reload checks.32 unique native payloads total659,968
+VRAM bytes if all resident; host sums with aliases are649,216 player and27,136
+weapon. Neither is measured simultaneous target VRAM or visible actor acceptance.
+The same complete shared native cache/budget is used. Existing em12 DRS/ARC outputs
+remain byte-identical to D326; an initial private regression command confused
+archive ordinal with source ARC index and was rejected, then corrected. No such
+incorrect selection was used in the target build.
+
+Final evidence: `C:/Flycast-Evidence/re4-dreamcast/d327c-io-guard`, validated
+`evidence-manifest.json`, exact executable/disc, source and dirty patch, asset and
+fixture identities, corrected source-menu framebuffer, snapshots and counters.
+ELF SHA256 `63b546f8bc51992afc63b6efab66e2a2a7d88ae22b2d3ad0da1f17948efb2501`;
+disc `82a76f627d8c4ccfa2d18898247eccf0144882e95add5ab7e8888147f28e2b1d`.
+Text/data/BSS2,277,712/75,620/672,760; SH GCC15.2.0 and KOS
+`804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`, exact Flycast/config in manifest.
+No timed workload overlapped another emulator or Blender run.
+
+Private preparation `/root/probe/d327-pl00`, `/root/probe/d327-wep02`, unchanged
+`/root/probe/d326-combined`, mirror `/root/probe/d327-mirror`, fixtures
+`/root/probe/d327-fixtures`, final disc `/root/probe/d327c-disc`.
+Build `CORE_RESIDENT_BYTES=1501312 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776`.
+Keep this selectable implementation and the measured negative full-fit result.
+Continue justified source resource lifetimes and complete working-set closure,
+alongside the existing 3D connection. Enemy creation, effects/audio, source hold,
+visible complete models, manual gameplay, transitions/retry and physical hardware
+remain open. A loaded archive is not initialized or playable gameplay.

@@ -1,21 +1,22 @@
 # RE4 Dreamcast: boot-forward playable integration
 
-D326 extends the existing native identity/upload path to verified enemy texture
-backing. The combined selectable body is **1,426,304 bytes**, another **481,152**
-below D325; texture-only selection is 3,096,608 bytes with all motion resident.
-The normal source menu and required 1,126,272-byte block allocation still work.
-Enemy allocation still fails against **956,192 free**: no enemy heap recovery or
-enemy rendering is claimed. Including D325's diagnostic cache capacity and
-conservative metadata/allocator costs leaves a **1,494,400-byte lower-bound gap**,
-not merely the 470,112-byte body deficit. Future actor/event/audio costs are extra.
+D327 recovers **511,200 actual source-heap bytes** by loading qualified compact
+pl00/wep02 texture backing directly into smaller selectable fixed reservations.
+The source menu remains visible and the required block pool still allocates,
+now leaving **1,477,696 bytes**. The **1,426,304-byte enemy body now loads**,
+including the source sound-container dispatch, and its 37 texture identities bind.
+A demonstrated native DVD/ISR filesystem-lock deadlock is fixed by deferring
+background-task suspension during bounded I/O scopes; KOS preemption stays active.
 
-D325 hot keys remain cached after evaluation; the combined archive again passes
-100 warm repetitions with zero extra misses/reads in the host fixture. Its 75-clip
-prefetch set is still incomplete, and the source prefetch/concurrency audit remains
-required. D324 remains the accepted integration reference. Keep the existing 3D
-connection moving alongside allocation-backed lifetime work; do not clear source
-hold or promote this candidate as complete room gameplay. See
-[D326](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d326-enemy-upload-only-texture-backing).
+The next exact failure is **hot motion-key prefetch allocation**: 16,608 payload
+bytes (16,640 requested including owner header) with 16,096 free. One key loaded;
+full warm-up did not complete. Keep hot keys cached and keep the source-derived
+prefetch/concurrency audit: the existing 75-clip profile is still incomplete.
+The selected cache capacity/metadata/allocator budget needs at least **983,264
+additional bytes** after the enemy body, before later actor/event/audio costs.
+D324 remains the accepted integration reference; D325-D327 remain selectable
+candidates. No complete enemy rendering, room gameplay, audio or retry is accepted.
+See [D327](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d327-playerweapon-backing-and-native-read-lifetime).
 
 Updated 2026-09-21. **This is the authoritative execution plan.** It supersedes
 previous instructions to finish or optimize an isolated scene before integrating

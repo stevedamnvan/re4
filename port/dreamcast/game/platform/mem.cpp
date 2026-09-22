@@ -24,8 +24,10 @@ static const unsigned long kSoundSize = 0x80000;    // SND_DATA_TOP 0x80370000 t
 static const unsigned long kCoreSize = RE4DC_CORE_RESIDENT_BYTES;
 static_assert(kCoreSize >= 32 && kCoreSize <= 0x234000 && kCoreSize % 32 == 0);
 static const unsigned long kOptionSize = 0x40000;
-static const unsigned long kPlayerSize = 0x118000;  // 0x807EC000-0x80904000
-static const unsigned long kWeaponSize = 0x70000;
+static const unsigned long kPlayerSize = RE4DC_PLAYER_RESIDENT_BYTES;  // 0x807EC000-0x80904000
+static const unsigned long kWeaponSize = RE4DC_WEAPON_RESIDENT_BYTES;
+static_assert(kPlayerSize >= 32 && kPlayerSize <= 0x118000 && kPlayerSize % 32 == 0);
+static_assert(kWeaponSize >= 32 && kWeaponSize <= 0x70000 && kWeaponSize % 32 == 0);
 static const unsigned long kMinHeap = 0x300000;
 
 static unsigned char g_frameBuffer[2][32] __attribute__((aligned(32)));
@@ -39,6 +41,7 @@ void re4dc_mem_init(void)
         return;
     }
     printf("re4dc_mem: selected core reservation %lu bytes\n", kCoreSize);
+    printf("re4dc_mem: selected player %lu weapon %lu bytes\n", kPlayerSize, kWeaponSize);
     unsigned long fixed = kSoundSize + kCoreSize + kOptionSize + kPlayerSize + kWeaponSize;
     // Take the largest arena the KOS heap gives us, leaving the runtime some room.
     unsigned long want = 13 * 1024 * 1024;

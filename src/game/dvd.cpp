@@ -293,6 +293,9 @@ FileTblEntry FileTbl[] = {
 #include "gx.h"
 #if !defined(__PPC__)
 #include "re4dc_platform.h"
+#if defined(RE4DC_GAME)
+#include "resident_bounds.hpp"
+#endif
 #endif
 
 extern "C" {
@@ -697,14 +700,16 @@ void cDvdQueue::readMain()
                 m_TransAddr = m_AramAddr;
             }
 #if defined(RE4DC_GAME) && !defined(__PPC__)
-            // Reject a full core paired with a smaller selectable reservation
-            // BEFORE its first transfer. CoreDataRead's later size check cannot
-            // protect the adjacent option/player regions from an oversized read.
-            if ((*ph)->type == 0 && m_TransAddr == re4dc_mem.core &&
-                m_LeftSize > re4dc_mem.option - re4dc_mem.core) {
-                OSReport("native core read REJECTED: request=%u capacity=%u before transfer\n",
-                         m_LeftSize, re4dc_mem.option - re4dc_mem.core);
-                re4dc_missing("core asset exceeds selected resident budget");
+            // Validate the whole part before the first read/transfer, using the
+            // original request owner even for later parts. Sound blocks retain
+            // their separate source allocation and dispatch semantics.
+            const char* owner;
+            unsigned long capacity;
+            if ((*ph)->type == 0 && !re4dc_resident_read_fits((u32) pBuff,
+                    m_TransAddr, (*ph)->size, pG->pl_type != 0, &owner, &capacity)) {
+                OSReport("native %s read REJECTED: request=%u capacity=%u before transfer\n",
+                         owner, (*ph)->size, (u32) capacity);
+                re4dc_missing("asset exceeds selected resident budget");
                 return;
             }
 #endif

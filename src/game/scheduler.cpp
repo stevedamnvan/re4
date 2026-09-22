@@ -28,6 +28,7 @@ OSThread* pParentThread;
 static int iTask_exec_flg = 0;
 
 #if !defined(__PPC__)
+#include "native_io.h"
 // KOS file I/O can yield after the frame scheduler changes its global cursor.
 // Self-directed task operations must retain the actual thread owner instead.
 static OSThread* nativeSchedulerThread;
@@ -512,6 +513,11 @@ void iTaskSuspend()
     if (iTask_exec_flg == 1) {
         TASK* t = &Task[TASK_ISR];
         if (t->Thread.state == 2) {
+#if !defined(__PPC__)
+            // Native synchronous DVD I/O may yield while holding KOS locks.
+            // Parking its owner here can deadlock the frame that resumes it.
+            if (re4dc_io_busy(&t->Thread)) return;
+#endif
             t->Status |= TASK_SUSPEND;
             OSSuspendThread(&t->Thread);
         }

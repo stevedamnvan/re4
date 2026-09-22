@@ -7,6 +7,7 @@ output, consumed only through bounded source-motion evaluation leases. No clip
 is removed because it was absent from a replay; original DRS remains untouched.
 Optional upload-only textures use the existing NTR/shared native package path;
 palettes, mip chains and unreviewed embedded EFM textures stay resident.
+pl00/wep02 also support textures-only preparation, retaining every motion.
 """
 from pathlib import Path
 import argparse, hashlib, json, struct, tempfile, zlib
@@ -19,7 +20,9 @@ MAX_CLIP=32768
 
 def prepare(source, destination, hot_slots=(), textures=None, keep_motion_resident=False):
     source,destination=map(Path,(source,destination))
-    if source.name.lower()!='em12.drs':raise ValueError('supported source contract is em12.drs')
+    name=source.name.lower();file='em/'+name
+    if name not in ('em12.drs','pl00.drs','wep02.drs') or (name!='em12.drs' and not keep_motion_resident):
+        raise ValueError('supported contracts: em12 motion/textures; pl00/wep02 textures only')
     if keep_motion_resident and textures is None:raise ValueError('no selected compaction')
     if destination.exists():raise FileExistsError(destination)
     hot_slots=set(hot_slots)
@@ -27,19 +30,20 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
     old=mirror.OFFSET_OBSERVER;old_tpl=mirror.TPL_OBSERVER;start=len(mirror.REPORT)
     mirror.OFFSET_OBSERVER=lambda file,field,base,value:refs.append((field,base,value))
     mirror.TPL_OBSERVER=lambda file,off,data,ctx:palettes.append((off,data,ctx))
-    try:mirror.convert_file('em/em12.drs',converted)
+    try:mirror.convert_file(file,converted)
     finally:mirror.OFFSET_OBSERVER=old;mirror.TPL_OBSERVER=old_tpl
     coverage=mirror.REPORT[start:]
     with tempfile.NamedTemporaryFile(mode='w') as required:
-        required.write('em/em12.drs\n');required.flush()
+        required.write(file+'\n');required.flush()
         bad=mirror.check_required(coverage,required.name)
     if bad:raise ValueError('unqualified enemy: '+', '.join(bad))
     # Retain the already-implemented static REL policy; don't restore PPC code.
-    converted=mirror.compact_static_rel('em/em12.drs',converted,coverage,mirror.static_module_ids())
+    converted=mirror.compact_static_rel(file,converted,coverage,mirror.static_module_ids())
     slot=mirror.native_payload_slot(converted)
     size,base=struct.unpack_from('<I4xI',converted,slot+4)
     body=converted[base:base+size]
     count,rel=struct.unpack_from('<2I',body)
+    boundary=rel or len(body)
     offsets=struct.unpack_from('<%dI'%count,body,16)
     tags=[bytes(body[16+4*count+4*i:20+4*count+4*i]) for i in range(count)]
     first=min(x for x in offsets if x)
@@ -47,23 +51,25 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
     header_growth=(max(0,16+8*(count+extra_slots)-first)+31)&~31
     texture_ranges=[];selected=[];retained=[]
     if textures is not None:
-        # em10_R0_Init registers EFF slot0; Em12Set/WeaponSet and em10ModelInit
-        # pass top-level TPL descriptors to the source texture system. Preserve
-        # palette/mips and the shared CPU-noise ID0xfe exactly as room/core do.
-        if tags[0]!=b'EFF\0':raise ValueError('em12 effect family changed')
-        eff=offsets[0];ids_at=eff+struct.unpack_from('<I',body,eff+4)[0]
-        num_ids=struct.unpack_from('<I',body,ids_at)[0]
-        ids=[struct.unpack_from('<H',body,ids_at+4+i*8)[0] for i in range(num_ids)]
-        top_tpl={'em/em12.drs:0#'+str(i) for i,t in enumerate(tags) if t==b'TPL\0'}
+        # Only top-level player/weapon TPLs are selected. Enemy EFF slot0
+        # retains D326's separate texture-ID/noise audit; no new EFF family is
+        # automatically qualified by this filename extension.
+        top_tpl={file+':0#'+str(i) for i,t in enumerate(tags) if t==b'TPL\0'}
+        ids=[]
+        if name=='em12.drs':
+            if tags[0]!=b'EFF\0':raise ValueError('em12 effect family changed')
+            eff=offsets[0];ids_at=eff+struct.unpack_from('<I',body,eff+4)[0]
+            num_ids=struct.unpack_from('<I',body,ids_at)[0]
+            ids=[struct.unpack_from('<H',body,ids_at+4+i*8)[0] for i in range(num_ids)]
         def allowed(ctx):
             if ctx in top_tpl:return True
-            if ctx.startswith('em/em12.drs:0#0/tpl'):
+            if name=='em12.drs' and ctx.startswith(file+':0#0/tpl'):
                 i=int(ctx.rsplit('tpl',1)[1]);return i<len(ids) and ids[i]!=0xfe
             return False
-        local_palettes=[(o-base,d,c) for o,d,c in palettes if base<=o<base+rel]
+        local_palettes=[(o-base,d,c) for o,d,c in palettes if base<=o<base+boundary]
         texture_ranges,selected,retained=select_upload_only(body,local_palettes,Path(textures),allowed)
         if not texture_ranges:raise ValueError('no qualified enemy textures selected')
-    if rel+64!=len(body):raise ValueError('expected retained 64-byte static REL descriptor')
+    if rel and rel+64!=len(body):raise ValueError('expected retained 64-byte static REL descriptor')
     original_size,original_base=struct.unpack_from('>I4xI',original,slot+4)
     codec=mirror.motion_codec();ranges=[];entries=[];files={}
     for off in ([] if keep_motion_resident else sorted(set(offsets))):
@@ -71,7 +77,7 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
         slots=[i for i,o in enumerate(offsets) if o==off]
         if tags[slots[0]]!=b'FCV\0':continue
         if any(tags[i]!=b'FCV\0' for i in slots):raise ValueError('mixed-tag alias')
-        end=min([o for o in offsets if o>off]+[rel])
+        end=min([o for o in offsets if o>off]+[boundary])
         raw=original[original_base+off:original_base+end]
         parsed=codec.parse(raw)
         if codec.serialise(parsed)!=raw:raise ValueError('source FCV roundtrip differs')
@@ -93,14 +99,14 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
                         'sha256':hashlib.sha256(native).hexdigest(),'classification':'reloadable key data; stable header retained'})
     if not entries and not keep_motion_resident:raise ValueError('no qualified motion payloads')
     ranges=sorted(ranges+texture_ranges)
-    local_refs=[(f-base,b-base,v) for f,b,v in refs if base<=f<base+rel]
+    local_refs=[(f-base,b-base,v) for f,b,v in refs if base<=f<base+boundary]
     # Existing fmt_drs_body preserves this scalar; it is also an archive-relative
     # boundary and must follow the moved static REL, unlike per-FCV key offsets.
-    local_refs.append((4,0,rel))
+    if rel:local_refs.append((4,0,rel))
     if header_growth:ranges.insert(0,(first,first,bytes(header_growth)))
     out,mapped=compact_spans(body,local_refs,ranges)
     # Insert MTC before the static module so readEmData's data/REL split stays true.
-    new_rel=mapped(rel);table=bytearray()
+    new_rel=mapped(boundary);table=bytearray()
     for e in entries:
         e['resident_offset']=mapped(e['source_offset'])
         table+=struct.pack('<5I',e['resident_offset'],e['bytes'],e['crc'],e['fnv'],int(e['hot']))
@@ -116,18 +122,18 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
         header=struct.pack('<8s6I',MAGIC,2,len(entries),STRIDE,zlib.crc32(table)&0xffffffff,final_bytes,MAX_CLIP)
         tables+=header+table+bytes(table_bytes-32-len(table))
     out=out[:new_rel]+tables+out[new_rel:]
-    struct.pack_into('<2I',out,0,count+extra_slots,new_rel+len(tables))
+    struct.pack_into('<2I',out,0,count+extra_slots,new_rel+len(tables) if rel else 0)
     for i,off in enumerate(new_offsets):struct.pack_into('<I',out,16+4*(count+i),off)
     out[16+4*(count+extra_slots):16+8*(count+extra_slots)]=b''.join(tags+new_tags)
     # Every non-FCV archive family and module descriptor retains exact bytes.
     for off in sorted(set(offsets)):
         if not off:continue
-        end=min([o for o in offsets if o>off]+[rel])
+        end=min([o for o in offsets if o>off]+[boundary])
         if (keep_motion_resident or tags[list(offsets).index(off)]!=b'FCV\0') and not any(off<=a<end for a,b,_ in texture_ranges):
             assert out[mapped(off):mapped(end)]==body[off:end]
-    assert out[-64:]==body[-64:]
+    if rel:assert out[-64:]==body[-64:]
     packaged=mirror.replace_native_payload(converted,out)
-    report={'contract':'em12-native-textures-v1' if keep_motion_resident else 'em12-source-motion-cache-v2','source_sha256':hashlib.sha256(original).hexdigest(),
+    report={'contract':source.stem+'-native-textures-v1' if keep_motion_resident else 'em12-source-motion-cache-v2','source_sha256':hashlib.sha256(original).hexdigest(),
             'original_static_body_bytes':size,'resident_body_bytes':len(out),
             'archive_recovery_bytes':size-len(out),'index_bytes':table_bytes,'header_growth_bytes':header_growth,
             'motion_source_bytes':sum(e['bytes'] for e in entries),'motion_header_bytes':sum(e['resident_bytes'] for e in entries),
@@ -140,12 +146,12 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
             'cold_reserve_bytes':2*max((e['bytes'] for e in entries if not e['hot']),default=0),
             'cache_policy':None if keep_motion_resident else 'retain hot set and LRU cold entries until capacity pressure; evaluation release never evicts','entries':entries,'qualification':coverage,
             'retained':'all SEQ events, EFF behavior tables, CPU/palette/mip texels, models/materials/skeletons and exact FCV headers',
-            'lifetime':'keys remain cached; pins protect source MotionSetCore, MotionMoveCore, MotionGetSpeed and MotionGetPosition; header/SEQ pointers remain source-archive-owned',
+            'lifetime':'all motions remain source-owned; native identity views follow archive ownership' if keep_motion_resident else 'keys remain cached; pins protect source MotionSetCore, MotionMoveCore, MotionGetSpeed and MotionGetPosition; header/SEQ pointers remain source-archive-owned',
             'limits':'offline contract only until native binding, source consumer lifetimes, actual heap and visible output are qualified; motion selection also requires complete prefetch/concurrency audit'}
     destination.mkdir();(destination/'mot').mkdir()
     for key,data in files.items():(destination/'mot'/(key+'.fcv')).write_bytes(data)
-    (destination/'em12.drs').write_bytes(packaged)
-    (destination/'em12.arc').write_bytes(out)
+    (destination/name).write_bytes(packaged)
+    (destination/(source.stem+'.arc')).write_bytes(out)
     (destination/'motion-residency-report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
 

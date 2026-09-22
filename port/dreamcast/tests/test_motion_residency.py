@@ -179,7 +179,7 @@ class MotionResidency(unittest.TestCase):
         setup=r"""
 constexpr int STATE_WAIT=3,STATE_READY=1,OS_THREAD_STATE_MORIBUND=8;
 struct NativeThread { int state=STATE_WAIT;void* wait_obj; };
-struct OSThread { NativeThread* kt;int suspend=1,gateCount=1,state=0; };
+struct OSThread { NativeThread* kt;int suspend=1,gateCount=1,state=0;unsigned nativeIoDepth=0; };
 int g_gate;std::atomic<bool> destroyed{};unsigned unparks;
 constexpr int TASK_NONE=0,TASK_EXEC=1,TASK_SLEEP=2,TASK_RUN=3,TASK_SUSPEND=128;
 struct TASK { OSThread Thread;int Status=TASK_RUN,suspend_cnt=0; };
@@ -203,6 +203,12 @@ int main(int argc,char**argv){
  assert(!self_exits && task.Status==TASK_NONE);
  assert(destroyed && lease_checked && unparks && !target.kt && target.state==OS_THREAD_STATE_MORIBUND);
  assert(!target.suspend && !target.gateCount);re4dc_motion_retire_all();assert(!heap_live);
+ // DVD-only ownership must drain too, even with no motion pin or cache lock.
+ target.kt=&native;target.nativeIoDepth=1;task.Status=TASK_RUN;destroyed=false;
+ std::thread dvd_completion([&]{std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  int old=irq_disable();assert(!destroyed);target.nativeIoDepth=0;irq_restore(old);});
+ TaskKill(&task);dvd_completion.join();assert(destroyed && !target.kt && !target.nativeIoDepth);
+
 }
 """
         with tempfile.TemporaryDirectory() as d:
@@ -217,7 +223,7 @@ int main(int argc,char**argv){
         with self.assertRaises(ValueError):compact_spans(original,[(16,0,80)],[(64,96,bytes(16))])
 
     def test_powerpc_evaluation_and_loader_unchanged(self):
-        for path in ['src/game/motion.cpp','src/game/read.cpp','src/game/cam_motion.cpp','src/game/shape.cpp','src/game/scheduler.cpp']:
+        for path in ['src/game/motion.cpp','src/game/read.cpp','src/game/dvd.cpp','src/game/cam_motion.cpp','src/game/shape.cpp','src/game/scheduler.cpp']:
             original=subprocess.check_output(['git','show','0518c93:'+path],cwd=ROOT,text=True)
             current=(ROOT/path).read_text()
             def pp(s):

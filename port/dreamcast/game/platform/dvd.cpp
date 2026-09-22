@@ -9,6 +9,7 @@
 #include <ctype.h>
 
 #include "re4dc_platform.h"
+#include "native_io.h"
 
 typedef signed char s8;
 typedef unsigned char u8;
@@ -75,6 +76,7 @@ static void normalise(const char* in, char* out, size_t n)
 
 static s32 fileSize(const char* rel)
 {
+    Re4dcIoScope io;
     char full[96];
     snprintf(full, sizeof(full), "%s%s", g_root, rel);
     re4dc_set_stage(0x2000);
@@ -142,6 +144,7 @@ BOOL DVDClose(DVDFileInfo* fi)
 
 s32 DVDReadAsyncPrio(DVDFileInfo* fi, void* addr, s32 length, s32 offset, DVDCallback callback, s32 prio)
 {
+    Re4dcIoScope io;  // includes callback completion before cancellation can drain
     (void) prio;
     int entry = (int) fi->startAddr;
     char full[96];

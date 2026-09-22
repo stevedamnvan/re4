@@ -20,7 +20,7 @@ struct Key { unsigned crc,fnv; bool operator==(const Key& b)const{return crc==b.
 struct Entry { re4dc::texture::Package package; Key key{}; unsigned frame=0; bool valid=false; };
 struct Source { Re4dcUiImage image{}; Key key{}; };
 Entry entries[kTextureCount]; Source sources[256]; unsigned nsource;
-re4dc::texture::SourceIdentityTable room_identities,core_identities;unsigned identity_hits;
+re4dc::texture::SourceIdentityTable room_identities,core_identities,player_identities,weapon_identities;unsigned identity_hits;
 // Match the recovered loader's four module owners; texture uploads still share
 // the existing cache and VRAM budget. These views own no texels or allocations.
 struct EnemyIdentity { void* archive=nullptr; re4dc::texture::SourceIdentityTable table; };
@@ -63,6 +63,8 @@ bool image_key(const Re4dcUiImage& image,Key& key) {
     Key external{};
     int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
     if(!native)native=core_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
+    if(!native)native=player_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
+    if(!native)native=weapon_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
     for(auto& e:enemy_identities)if(!native && e.archive)
         native=e.table.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
     if(native<0 || (native && (image.palette || image.palette_bytes))) {
@@ -142,6 +144,18 @@ extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
     re4dc_log("native room identities: %s count=%u archive=%u metadata_owner=room\n",ok?"ok":"REJECTED",room_identities.count(),bytes);
     return ok;
 }
+// Player and weapon regions persist across room retirement when the source
+// retains them. Their explicit source release/overwrite boundaries clear views.
+extern "C" int re4dc_ui_bind_player(void* archive,unsigned bytes){
+    nsource=0;bool ok=player_identities.adopt(archive,bytes);
+    re4dc_log("native player identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",player_identities.count(),bytes);return ok;
+}
+extern "C" int re4dc_ui_bind_weapon(void* archive,unsigned bytes){
+    nsource=0;bool ok=weapon_identities.adopt(archive,bytes);
+    re4dc_log("native weapon identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",weapon_identities.count(),bytes);return ok;
+}
+extern "C" void re4dc_ui_unbind_player(){player_identities.clear();nsource=0;}
+extern "C" void re4dc_ui_unbind_weapon(){weapon_identities.clear();nsource=0;}
 extern "C" int re4dc_ui_bind_enemy(void* archive,unsigned bytes){
     re4dc::texture::SourceIdentityTable table;
     if(!table.adopt(archive,bytes))return 0;

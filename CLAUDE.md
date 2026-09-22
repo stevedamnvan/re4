@@ -13,49 +13,56 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D326 selectable enemy textures + retained key cache
+## Current resumption point - D327 enemy body loads; hot-key prefetch needs memory
 
-D326 normal boot requests a1,426,304-byte em12 body versus D325's1,907,456 and
-D324's3,577,728. First allocation still fails with956,192 free. Required block
-pool1,126,272 succeeds/free966,496; source heap9,475,968 unchanged. Another481,152
-bytes are removed from requested backing, but **actual enemy heap recovery is0**.
-470,112 body gap plus diagnostic cache1,007,936, metadata2,336 and conservative
-allocator costs14,016 leaves at least1,494,400 still needed, before further
-actors/events/audio/loading headroom. Do not call the body reduction a full fit.
+D327 recovers **511,200 actual source-heap bytes** by loading qualified compact
+pl00/wep02 texture backing directly into smaller selectable fixed reservations.
+The source menu remains visible and the required block pool still allocates,
+now leaving **1,477,696 bytes**. The **1,426,304-byte enemy body now loads**,
+including the source sound-container dispatch, and its 37 texture identities bind.
+A demonstrated native DVD/ISR filesystem-lock deadlock is fixed by deferring
+background-task suspension during bounded I/O scopes; KOS preemption stays active.
 
-The existing enemy producer now optionally externalizes37 upload-only descriptors
-(36 images) through the existing NTR identity table/shared native cache/storage.
-Source readEmData binds before native consumers; InitModule unbinds after epilog
-before free; room retirement clears the views under the existing GPU fence.
-No new renderer or texture backend. Palette/mip/CPU-noise/unreviewed embedded EFM
-texels remain. Texture-only selection keeps every FCV and requests3,096,608.
-No default asset promotion. D324 remains the accepted reference.
+The next exact failure is **hot motion-key prefetch allocation**: 16,608 payload
+bytes (16,640 requested including owner header) with 16,096 free. One key loaded;
+full warm-up did not complete. Keep hot keys cached and keep the source-derived
+prefetch/concurrency audit: the existing 75-clip profile is still incomplete.
+The selected cache capacity/metadata/allocator budget needs at least **983,264
+additional bytes** after the enemy body, before later actor/event/audio costs.
+D324 remains the accepted integration reference; D325-D327 remain selectable
+candidates. No complete enemy rendering, room gameplay, audio or retry is accepted.
+See [D327](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d327-playerweapon-backing-and-native-read-lifetime).
 
-D325 retained hot/cold cache, evaluation-local pointers, thread cancellation and
-source audit remain intact. The75-clip hot set is **incomplete**; the combined
-archive passes100 warm host repetitions with0 new misses/bytes, but neither
-complete concurrency/prefetch nor game cancellation/retry is accepted. SH-4
-D325 cache/pose evidence remains `C:/Flycast-Evidence/re4-dreamcast/d325b-motion-cache`:
-981,440 peak key bytes,32,416 peak pinned,2,336 metadata,273,519us worst wait.
-Keep this separate from D326's normal game, which never reaches enemy binding.
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d327c-io-guard`, validated manifest,
+exact ELF/disc/fixtures, corrected source-menu capture, RAM snapshots and cache
+counters. First stalled candidates are preserved at `d327-player-weapon` and
+`d327b-enemy-read`; do not repeat their now-resolved filesystem-lock investigation.
+Actual source heap 9,987,168. Enemy body leaves 41,024; cache metadata consumes
+2,432 including overhead, first key 22,496. Next request fails at 16,096 free.
+Normal-game cache so far: 2 misses, 1 load, 22,400 bytes read/cache peak, 0 pins,
+210,892 us worst successful wait. This halted prefetch is not a warm working set.
+Separate D325 SH-4 warm fixture still proves 100 repetitions/7,500 evaluations
+with zero extra misses/bytes, peak cache 981,440/pins 32,416, worst wait 273,519 us.
 
-D326 evidence: `C:/Flycast-Evidence/re4-dreamcast/d326-enemy-textures`, validated
-manifest, exact executable/disc/fixtures, source menu capture and allocation/RAM
-snapshot. Source frame1233/Rno0=3/System0x800, zero model presentations. Host
-37-identity relocation/upload/retire/reload checks pass; visible enemy and actual
-simultaneous VRAM remain unqualified. All36 images total1,869,824 native VRAM bytes
-if resident; use the existing shared budget, not a second enemy budget.
+Private inputs `/root/probe/d327-pl00`, `/root/probe/d327-wep02`, unchanged
+`/root/probe/d326-combined`; mirror `/root/probe/d327-mirror`, fixtures
+`/root/probe/d327-fixtures`, final disc `/root/probe/d327c-disc`.
+Build `CORE_RESIDENT_BYTES=1501312 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776`.
+Defaults retain full reservations. Source prefetch audit remains
+`/root/probe/d325-prefetch-final.json`; 75 hot clips/952,768 bytes and two-largest
+cold reserve 55,168 are diagnostic, not complete encounter closure. Do not evict
+on evaluation release or reduce this set to force a fit. Continue source repeated-use,
+immediate-response, Work/event aliases and concurrency closure alongside the
+remaining allocation-backed lifetime recovery and existing source 3D connection.
+Required effect/audio/hold/presentation/retry gates remain visible.
 
-Current private prepared inputs `/root/probe/d326-combined` and
-`/root/probe/d326-textures-only`; final-producer byte-equivalent copies at
-`/root/probe/d326-final-combined` and`/root/probe/d326-final-textures-only`.
-Mirror `/root/probe/d326-mirror`, fixtures `/root/probe/d326-fixtures`, disc
-`/root/probe/d326-disc`; build `CORE_RESIDENT_BYTES=1501312`.
-Source prefetch audit `/root/probe/d325-prefetch-final.json` is unchanged.
-Read D325/D326 in `port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md`
-and the existing resource plan. Continue source working-set closure and further
-qualified backing/lifetime recovery with the source 3D connection. Preserve
-required enemy/effect/audio, hold/presentation, loading peaks and retry gates.
+D327 extends the existing producer/NTR identity/shared upload/storage mechanisms;
+no new renderer or cache. Player/weapon identity views persist across room retire
+when their source owner persists, and clear on explicit source release/overwrite.
+All 33 real new texture descriptors pass native host relocation/upload/retire/reload
+checks; this does not claim visible actor or simultaneous target VRAM acceptance.
+PowerPC source tokens unchanged. Keep inherited dirty work; os.cpp has unrelated
+pre-existing changes, and only the new native-I/O guard hunks belong to D327.
 
 The later-FPS Blender skill is installed at
 `C:/Users/lambd/.codex/skills/re4-blender-model-optimization/SKILL.md`; invoke

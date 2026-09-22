@@ -815,6 +815,13 @@ void ReadPlayerData(int type, int costume)
     PlReadModule.size = size;
     PlReadModule.pModule = pModule;
     PlReadModule.bssSize = bssSize;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Qualified compact player is the non-REL pl00 family. Its source models
+    // are created after ReadPlayerData returns; no prototype pose path is used.
+    if (!re4dc_ui_bind_player(data, total)) {
+        re4dc_missing("invalid prepared player texture identities");
+    }
+#endif
 }
 
 // Frees the player module slot.
@@ -824,6 +831,10 @@ void ReleasePlData()
         InitModule(&PlReadModule);
         PlReadModule.pArc = NULL;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // pl00 has no REL/pArc owner, so this must also run when pArc is NULL.
+    re4dc_ui_unbind_player();
+#endif
 }
 
 // Frees the weapon module slot and forgets the loaded weapon (weapon_no_old = 0xFF).
@@ -834,6 +845,9 @@ void ReleaseWepData()
         pG->weapon_no_old = 0xFF;
         oldWepId = 0xFF;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_ui_unbind_weapon();
+#endif
 }
 
 ReadFile wep_data_leon[46] = {
@@ -1049,6 +1063,11 @@ void ReadWepData(u32 no, u32 type)
 #line 1560 "D:/Bio4/Prog/read.cpp"
         HALT();
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (!re4dc_ui_bind_weapon(data, total)) {
+        re4dc_missing("invalid prepared weapon texture identities");
+    }
+#endif
     pG->pWep = (void*) info.addr[0][0];
     pModule = (OSModuleHeader*) (*(u32*) (data + 4) + (u32) data);
     size = (u32) pModule - (u32) data;

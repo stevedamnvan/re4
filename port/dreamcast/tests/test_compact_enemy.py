@@ -60,5 +60,22 @@ class CompactEnemy(unittest.TestCase):
             (tex/(key+'.re4tex')).write_bytes(b'bad')
             with self.assertRaisesRegex(ValueError,'non-reference'):enemy.prepare(source,root/'bad',textures=tex,keep_motion_resident=True)
             self.assertFalse((root/'bad').exists())
+            # Non-REL pl00 keeps its zero REL field and every source ordinal.
+            # Its EFF is deliberately unselected; only the top-level TPL moves.
+            (tex/(key+'.re4tex')).write_bytes(native)
+            end=struct.unpack_from('>I',data,1028)[0]
+            plain=bytearray(data[:1024])+bytearray(data[1024:1024+end])+sound
+            struct.pack_into('>I',plain,1028,0)
+            struct.pack_into('>I',plain,36,end);struct.pack_into('>I',plain,76,1024+end)
+            player=root/'pl00.drs';player.write_bytes(plain)
+            result=enemy.prepare(player,root/'player',textures=tex,keep_motion_resident=True)
+            small=(root/'player/pl00.arc').read_bytes()
+            self.assertEqual(struct.unpack_from('<I',small,4)[0],0)
+            self.assertEqual(len(result['textures']['selected']),1)
+            self.assertEqual(result['contract'],'pl00-native-textures-v1')
+            self.assertEqual(player.read_bytes(),plain)
+            with self.assertRaisesRegex(ValueError,'supported contracts'):
+                enemy.prepare(player,root/'invalid-motion-selection',textures=tex)
+
 
 if __name__=='__main__':unittest.main()
