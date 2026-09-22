@@ -773,8 +773,10 @@ part rankings are retained privately; do not generalize them across executables.
 
 ### What commit history says is still missing
 
-- `21586f8` (R3v) prepared dense remaps for up to1,024 unique slots, with413,696 B
-  in tables/workspace. Current160-wide original source-index spans can fail even
+- `21586f8` (R3v) prepared dense remaps for up to 1,024 unique slots; its
+  recorded 413,696 B was an incremental static-memory change, not the final
+  D349 table footprint. At `5f42caa`, local indices, batch vertices, offsets,
+  counts and slim slots total 303,104 B. Current 160-wide original source-index spans can fail even
   with few distinct indices. Full remapping is a historical memory assumption,
   not a cheap mechanism overlooked in the new code. Classify top streams before
   claiming metadata reorder alone can solve their coverage.
@@ -806,6 +808,16 @@ part rankings are retained privately; do not generalize them across executables.
   changes even if some domains remain identical. This is secondary: R3v itself
   reset per batch and accepted604 extra cross-batch transforms. Do not invent
   global reuse or rerank it above measured uncovered work.
+
+The final D349 local family (303,104 B), primitive bounds (262,144 B) and
+static RGB/owner arrays (630,000 B) are separate allocations totaling 1,195,248 B.
+They are already included in its 5,578,132-B BSS, not extra bytes to add to that
+reported total. This excludes other caches, actors and packages. Current source
+heap headroom and native renderer partitions are different allocator budgets.
+Wholesale reuse requires a priced replacement/ownership adaptation; it cannot
+retain both complete representations and charge only the native one. There is
+no demonstrated prohibition on native render backing replacing source render-only
+payloads once all remaining source readers and state lifetimes are preserved.
 
 Already present: native FTRV/compiler policy, prepared selected-light records,
 one-pass final packet preparation, intact qualified strips, hardware facing/cull,
