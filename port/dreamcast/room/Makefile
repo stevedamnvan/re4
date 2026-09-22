@@ -71,6 +71,10 @@ romdisk.img: KOS_GENROMFS := $(KOS_GENROMFS) -V re4dc-room
 # -fno-predictive-commoning is measured, not inherited: it is worth 0.386 ms
 # here and the pass wins nothing on these loops. See R4F.
 ROOM_OPT ?= -O3 -fno-predictive-commoning
+R100_PRELIT ?= 0
+ifeq ($(R100_PRELIT),1)
+CPPFLAGS += -DRE4DC_R100_PRELIT
+endif
 ROOM_LTO ?= 1
 ROOM_LTO_FLAGS := $(if $(ROOM_LTO),-flto=1 -ffat-lto-objects,)
 CPPFLAGS += -std=c++20 $(ROOM_OPT) $(ROOM_LTO_FLAGS) -Wall -Wextra -Werror -I../include

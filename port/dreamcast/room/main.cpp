@@ -2818,7 +2818,11 @@ constexpr std::size_t kSourceLightCount =
 PreparedSourceLight g_prepared_source_lights[kSourceLightCount]{};
 std::uint32_t g_source_dynamic_light_mask = 0U;
 bool g_room_dynamic_light_fast_path = false;
+#if defined(RE4DC_R100_PRELIT)
+constexpr std::uint32_t kRoomStaticLightingVertexCapacity = 1U;
+#else
 constexpr std::uint32_t kRoomStaticLightingVertexCapacity = 45000U;
+#endif
 float g_room_static_lighting[kRoomStaticLightingVertexCapacity * 3U]{};
 std::uint16_t g_room_static_lighting_owner[kRoomStaticLightingVertexCapacity]{};
 constexpr std::uint16_t kRoomLightingConflicted = 0xfffeU;
@@ -3502,6 +3506,19 @@ std::uint32_t source_actor_light_selection(float x, float y, float z,
 }
 
 bool prepare_room_static_lighting(const re4dc::room::Package& room) {
+#if defined(RE4DC_R100_PRELIT)
+    // The selectable package owns final RGB in the original normal fields.
+    // No runtime room-light bake, allocation or duplicate color representation.
+    if((room.header().flags & re4dc::room::kFlagPrelitVertexColors) == 0U) return false;
+    for(std::uint32_t i=0;i<room.header().vertex_count;++i) {
+        const auto& v=room.vertices()[i];
+        if(!(v.nx>=0 && v.nx<=1 && v.ny>=0 && v.ny<=1 && v.nz>=0 && v.nz<=1)) return false;
+    }
+    return true;
+#else
+    if((room.header().flags & re4dc::room::kFlagPrelitVertexColors) != 0U) return false;
+#endif
+
     if(room.header().vertex_count > kRoomStaticLightingVertexCapacity ||
        room.header().group_count > kRoomLightingConflicted) {
         return false;
@@ -4142,6 +4159,12 @@ inline void light_room_vertex(const re4dc::room::Vertex& input,
                               std::uint32_t light_selection,
                               float& light_red, float& light_green,
                               float& light_blue) {
+#if defined(RE4DC_R100_PRELIT)
+    (void)vertex_index;(void)light_selection;
+    light_red=input.nx;light_green=input.ny;light_blue=input.nz;
+    return; // Existing PVR Gouraud modulation, fog and packet paths consume RGB.
+#endif
+
     light_red = 0.0f;
     light_green = 0.0f;
     light_blue = 0.0f;
@@ -4200,7 +4223,9 @@ void fill_room_entry(const re4dc::room::Vertex* source,
     light_room_vertex(input, vertex_index, light_selection,
                       light_red, light_green, light_blue);
 #if defined(RE4DC_SCENE_R100)
+#if !defined(RE4DC_R100_PRELIT)
     ++stats.room_light_evaluations;
+#endif
 #endif
     entry.generation = g_room_vertex_cache_generation;
     entry.source_index = vertex_index;
@@ -4431,7 +4456,9 @@ void submit_room_strips(const re4dc::room::Package& room,
                 stats.room_cache_hits += processed - strip_misses;
                 stats.transformed_vertices += strip_misses;
 #if defined(RE4DC_SCENE_R100)
+#if !defined(RE4DC_R100_PRELIT)
                 stats.room_light_evaluations += strip_misses;
+#endif
 #endif
                 if(direct_strip) {
 #if defined(RE4DC_SUBMIT_PROFILE)
@@ -7476,6 +7503,15 @@ int main() {
             simulation_wall_time_us = tick_input_time_us;
             ++simulation_tick;
             ++catchup_ticks;
+#if defined(RE4DC_FB_SNAPSHOT)
+            if(g_fb_snapshot_next < kSnapshotTickCount &&
+               simulation_tick - g_fb_snapshot_tick_base == kSnapshotTicks[g_fb_snapshot_next]) {
+                // A diagnostic image must stop at the actual requested tick,
+                // even when this render loop owes another catch-up update.
+                simulation_accumulator_us = 0;
+                break;
+            }
+#endif
         }
         if(exit_requested) {
             if(autoplay.enabled) {
