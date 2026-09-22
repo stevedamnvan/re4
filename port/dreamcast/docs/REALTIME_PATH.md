@@ -1,6 +1,20 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Current D357 priority (2026-09-22): retain the integrated D349 candidate and
+Current D358 priority (2026-09-22): finish the same D349 prepare-once/reuse-many
+integration. Whole-registration local admission is implemented within 8 KiB and
+passes a78-tick full-stack A/B stability gate, but B render p50/p95
+1,972.755/1,974.568ms is unchanged in practical terms. Coverage34.09%
+does not mean avoided work: transforms 133,111 and individual-light evaluations
+384,223 remain near D357. Existing fallback already caches positions/complete
+lighting across strips, while dense domains reset independently. Attribute actual
+hits/losses in the existing captured-source replay before changing those lifetimes;
+report both RGB-pack paths. Preserve the full stack and fixed budgets; no new
+cache, source-heap cut, or per-component target promotion. Broad group bounds are
+low-yield in this measured view; invariant room-light source provenance remains
+an open separate contract. See [D358](R4_NATIVE_PREPARATION_CHECKPOINT.md#d358---global-admission-and-remaining-reuse-gap-2026-09-22).
+
+
+Previous D357 priority (2026-09-22): retain the integrated D349 candidate and
 accepted presentation; complete the missing preparation input/lifetime contracts.
 The source-backed legal span implementation passes a78-tick system A/B stability
 gate, but performance remains unaccepted: B render p50/p95
@@ -26,7 +40,7 @@ for exact history anchors, current seams, measurements and limitations.
 Previous D356 priority (2026-09-22): continue wholesale D349 architecture integration.
 The user accepts v4 B's current appearance as accurate for now. Preserve it and
 stop investigating the A/B visual gap; the open gate is performance.
-The dense generation-slot candidate completed a stable85-tick full-stack A/B,
+The dense generation-slot candidate completed a stable 85-tick full-stack A/B,
 but is not promoted: B render p50/p951948.184/1950.040 ms versus A 1192.463/1195.034 ms.
 Prepared-light sharing works (114 builds/149 hits); dense vertex mapping covers
 only 1.48% of live references. Both metadata partitions are full. The present

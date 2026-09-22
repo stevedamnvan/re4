@@ -751,14 +751,14 @@ Steady B:200,643 source position references,133,147 transforms,155,195 normal
 transforms and387,402 individual-light evaluations. Dense position references
 25,985 (12.95%), normal27,212 (13.56%), shade27,301 (13.61%). Light builds114,
 reuse149; channel states126 each, state reuse137;725 batch activations,755 normal
-hits and17,889 cached color packs. Packet flushes212 and strip fallbacks171 are
+hits and 17,889 cached color packs. Packet flushes 212 and strip fallbacks 171 are
 unchanged from D356v4;470 PVR calls,3,578,720 bytes. Source free66,592 B, native
-slab65,536 B, local metadata8,192 B, texture VRAM3,682,304 B, peak4,192,256 B.
+slab 65,536 B, local metadata8,192 B, texture VRAM 3,682,304 B, peak 4,192,256 B.
 The preparation snapshot's two added counters account for32 B across live/sealed
 statistics; no metadata-budget growth. Light/transform/pack cost remains dominant.
 
 `/root/probe/d357v3-current-fallback-report.json` ranks current whole-part spans.
-Complete current witnesses2382/2385/2386 each have263 sealed parts (789 total).
+Complete current witnesses 2382/2385/2386 each have263 sealed parts (789 total).
 2383/2384 each lack two records and are excluded. Historical D355 had262 parts
 and ordered-reference qualification fails; it is explicitly not current state
 parity. Among complete current witnesses,167 fully general-position parts have
@@ -766,8 +766,8 @@ parity. Among complete current witnesses,167 fully general-position parts have
 380.831/607.262/371.068 ms.30 parts are mixed and66 all-local. These are costs of
 parts classified by position coverage, not isolated fallback-only timers.
 Highest examples include enemy0x8cbebf20 (10,798 general references), player
-0x8cbd1680 (7,217 general +5,250 local), scenery0x8cf8f858/part0x8cc93520
-(6,246 general), and two instances of part0x8c83b280 (6,046 general each).
+0x8cbd1680 (7,217 general +5,250 local), scenery0x8cf8f858/part 0x8cc93520
+(6,246 general), and two instances of part 0x8c83b280 (6,046 general each).
 Addresses are current-run identities, not persistent asset IDs. Full top-model/
 part rankings are retained privately; do not generalize them across executables.
 
@@ -822,3 +822,118 @@ source overlays, SDK/emulator and capture tools are pinned per arm. Recipes
 TMU2 spans include scope/preemption overhead; no estimated overhead is subtracted.
 PVR render and presentation intervals remain separate and are not added to CPU.
 No full gameplay/audio/transition/retry or physical-hardware acceptance is claimed.
+
+## D358 - global admission and remaining reuse gap (2026-09-22)
+
+The simultaneous history review remains the architectural guide; this is the
+same default-off integrated stack, not a separate renderer experiment. The
+complete D358v2 A/B has 78 matched recorded source snapshots/ticks
+2387-2464, zero measured native discards/queue drops,
+allocation/texture failures and warm uploads, and a bounded queue. Instrumented
+render p50/p95: A 1,211.301/1,213.904 ms,
+B 1,972.755/1,974.568 ms. Presentation p50:
+A 1,236.963, B 2,006.830 ms.
+There is **no meaningful performance improvement over D357v3 B**. Keep the full
+candidate intact and default-off; increased dense coverage is not acceptance.
+
+The source OT adapter now finishes admission after its complete registration
+walk. It reuses the existing local-span walker and 8-KiB arena: a bounded
+256-record installation heap ranks gross source reuse times source-instance
+registrations, then compacts into source-backed descriptors in place. The
+existing entry's reserved byte stores saturated demand; no record, metadata,
+workspace or source-heap budget grows. Runtime lookups still use direct source
+index subtraction and generation slots. Stable frames neither reparse nor
+readmit. Demand is an installation snapshot, not camera-adaptive reranking.
+The final 256-descriptor cap can leave space unused: this is not maximal packing.
+
+D358v2 steady metadata: 5,984/8,192 local bytes, total 30,560/32,768, installation
+peak 32,768; source free 66,592; native slab 65,536; texture VRAM 3,682,304,
+peak 4,192,256. Packet flushes 212, strip fallbacks 171 remain unchanged.
+
+| Work per steady B frame | D357v3 | D358v2 |
+|---|---:|---:|
+| Source position references | 200,643 | 200,643 |
+| Dense position references | 25,985 (12.95%) | 68,397 (34.09%) |
+| Actual position transforms | 133,147 | 133,111 |
+| Actual normal transforms | 155,195 | 154,396 |
+| Individual-light evaluations | 387,402 | 384,223 |
+| Dense normal/shade references | 27,212 / 27,301 | 70,071 / 70,071 |
+| Prepared light builds / reuse | 114 / 149 | 114 / 149 |
+| Batch activations | 725 | 991 |
+
+The key remaining contract is **incremental reuse**, not dense routing. Existing
+fallback positions and complete position/normal/color lighting use 64-slot tables
+for the lifetime of a Builder. Those tables already survive strips, flushes and
+UV retries. Dense descriptors replace those lookups and invalidate all three
+channels when their domain changes; the two paths do not share populated slots.
+The admission score counts gross repetition and does not subtract existing
+fallback hits. More selected spans can therefore mostly replace existing hits
+and can also lose cross-domain reuse. Current counts support that concern but
+do not yet attribute the 36 saved transforms to exact hits/losses.
+
+Counter limits: normal_hits counts normal reuse only after a shade miss;
+color_packs counts only dense lazy packing, excluding the general packing branch.
+Their 755->97 and 17,889->40,669 changes do not prove lost total normal reuse or
+increased total packing. Do not optimize those raw counters as totals.
+
+**Next bounded check:** reuse the captured-source replay/fixtures to classify
+references as hit-in-both, dense-only hit, fallback-only hit or miss-in-both,
+separately for positions and complete lit identities. Use actual installed
+admission and preserve descriptor resets, clip fallback/retry and source state;
+count both packing branches. Then correct lifetime/batch admission inside this
+same integrated stack. Do not start a fourth cache, revive R3s hot keyed lookup,
+or require separate target promotion for subfeatures.
+
+The prior bounds hypothesis is deprioritized by the current source snapshot:
+of 105 qualified boundless instances, only 4 (97 references,0.761ms whole-part
+CPU) conservatively reject. Preserve current primitive bounds rather than
+spending their budget on this low-yield settled-view opportunity. Source stream
+classification remains at /root/probe/d358-stream-classification.json/.md.
+Historical invariant room-light reuse is still missing: restore original light
+identity/provenance/change generations before retaining unclamped partial sums.
+This remains separate from the authorized but gated PS2 visual-profile phase.
+
+Initial D358 B is an explicit failed run: +1,944 resident text bytes over D357v3
+exhausted native texture-metadata headroom. Its A was packaged, not run. Reusing
+the recovered game's already-linked qsort for cold descriptor ordering removed
+2,636 bytes of template sorting code; v2 text is 692 bytes below D357v3 B. Source
+heap capacity, compiler policy and hot arithmetic are unchanged. Initial D358
+and completed D357v3 discs are SHA-verified xdelta3 archives with captures/logs
+retained; accepted D356v4 B remains whole. Never benchmark failed startup.
+
+Focused host tests pass: actual owner with 460 competing spans -> 256 exact
+compacted descriptors; late/repeated source demand; unchanged source bytes;
+leased reset/reused owner; no stable-frame redecoding; visitor/bridge ordering;
+actual native-model fixture. Owner and span/admission checks include sanitizers.
+This qualifies structure/lifetime, not gameplay or hardware. B final framebuffer
+was inspected and retains the user-accepted outdoor room/Leon/HUD presentation.
+
+
+The matched window is explicitly 2387-2464, with consecutive native and presented
+records in both arms. A's longer unmatched tail lacks the observed source 2494 /
+native 2495 / presentation 2461 record; retain the whole-arm continuity gate as
+false. The matched-window gates are separately true. A missing observation is
+not evidence of a dropped game frame, and is not silently removed from the raw
+report. The accepted window contains no such gap.
+
+Current detailed audit has complete 263-part witnesses 2382/2384/2386; missing
+records in 2383/2385 are excluded. Private current-work-report.json retains top 10
+model/part CPU rankings and counter limits. Against D357v3, 1,308 common records
+match source-reference counts and both ordered-index hashes with zero mismatches;
+this does not establish full pose/light/source-state parity. Two instances of
+part 0x8c83b260 still cost 53.664/53.152ms whole-part transform/light/packet time,
+each with 5,202 general-position references. Part0x8c8038a0 costs 49.317ms with
+5,682 general references. These are current-run addresses and whole-part spans,
+not asset IDs or isolated fallback-only costs.
+
+Evidence: C:/Flycast-Evidence/re4-dreamcast/d358v2[a|b]-integrated-stack and
+parent d358v2-comparison.json. B ELF
+87ceb9422c1f5afe8c5f00e600ecf2361d6a4a5fe90bed4330f1a06b7a802723;
+A 46930720ccee32338a492462ddbc50fe08e3e2b426fcd88c17cb076da7a52ed1.
+Recipes /root/probe/d358v2-build-arm.sh and d358v2-prepare-arm.py; existing report
+adaptation C:/Game Dev/Emulators/re4-session-scripts/d358v2-report.py. Each arm
+pins executable/disc/assets/fixture/toolchain/emulator/capture and source overlay.
+HEAD 4e45b76 alone does not reproduce these dirty integration executables.
+TMU2 spans include instrumentation/preemption; no estimated overhead is removed.
+Page-flip/GPU intervals are separate. This is settled-view Flycast evidence,
+not full RNG/enemy-state parity, manual encounter/audio/retry or console approval.

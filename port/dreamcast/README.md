@@ -24,30 +24,28 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D357 retains one **unpromoted integrated D349 renderer candidate** behind
-`D349_RENDERER_STACK=1`. Compact legal index spans now use source streams as
-backing, replacing persistent corner remaps. The existing 8 KiB local metadata,
-12 KiB workspace, 64 KiB slab and source heap capacity do not grow.
+D358 retains one **unpromoted integrated D349 renderer candidate** behind
+`D349_RENDERER_STACK=1`. Source-backed span admission now ranks the complete
+registered workload within the existing 8 KiB. Source heap, 12 KiB preparation
+workspace and 64 KiB native slab do not grow.
 
-The completed full-stack A/B has78 identical recorded source snapshots at ticks
-2387-2464, zero measured frame/queue drops or texture/native allocation failures,
-and no post-warm-up uploads. Source free remains66,592 bytes; queue high-water
-25,536 stays below26,624 bytes. Historical DVD ownership fixes remain present.
+The full D358v2 A/B has78 matching recorded source snapshots/ticks
+2387-2464, zero measured frame/queue drops, native allocation/texture
+failures and post-warm-up uploads. Source free remains66,592B and queue high-water
+25,536 is below26,624B. B final presentation remains consistent with the accepted
+candidate; no new gameplay or hardware acceptance is implied.
 
-The performance gate **has not passed**: render p50/p95 A1211.301/1213.904 ms,
-B1971.792/1973.605 ms; presentation p50 A1236.963/B2006.830 ms. A lacks B's
-selected lighting/material coverage. Dense position coverage improves to12.95%,
-but most costly work still falls back. No SH4ZAM library is linked. Instrumented
-settled-view timing is not release FPS or physical-hardware acceptance.
-
-The parallel history audit identifies incomplete input contracts: bounded
-structural admission also gates early bounds/local preparation; admission follows
-part arrival rather than whole-workload benefit; and historical room-lifetime
-invariant lighting is not adapted. D349's large dense remap/bounds/light tables
-cannot be copied into this budget. Qualify the dominant uncovered source streams
-and preserve the full-stack acceptance unit, rather than rebuilding working
-FTRV/strip/cull/packet mechanisms or adding per-corner maps.
-[Current evidence, commits and limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d357---source-backed-spans-and-historical-input-contract-audit-2026-09-22).
+Performance remains **unaccepted**: instrumented render p50/p95
+A1,211.301/1,213.904ms,
+B1,972.755/1,974.568ms; presentation p50
+A1,236.963/B2,006.830ms.
+Dense position coverage rises 12.95%->34.09%, but actual transform/light work
+barely falls. Existing fallback already reuses values, and dense domain resets
+can lose longer-lived hits. Attribute incremental reuse in the existing fixture
+before further admission/lifetime changes. Historical static-light provenance is
+also still missing; FTRV/direct strips/cull/packet mechanisms are already present.
+Do not repeat their implementation or grow per-corner metadata. No SH4ZAM is linked.
+[Current measurements and limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d358---global-admission-and-remaining-reuse-gap-2026-09-22).
 
 The user accepts B's current presentation as accurate for now. Preserve it while
 fixing preparation reuse. The settled opening fixture does not qualify responsive

@@ -73,7 +73,42 @@ The shared PVR owner, storage/texture ownership and completed source skinning
 remain the boundaries. Source lighting state and native pass organization are
 part of this candidate, not deferred post-performance polish.
 
-## D357 in progress - source-backed index spans
+## D358 current - admission improved, actual reuse still incomplete
+
+Full D358v2 A/B passes the measured stability/source-snapshot gates for
+78 matched ticks2387-2464, but B render p50/p95 is
+1,972.755/1,974.568ms: no meaningful improvement over D357v3.
+Global installation-time descriptor admission replaces first-arrival local
+allocation within the same 8 KiB;256 descriptors use 5,984 B. Dense position coverage
+rises 12.95%->34.09%, yet actual transforms 133,147->133,111 and individual-light
+evaluations 387,402->384,223 barely change. Packet flushes 212/fallbacks 171,
+source free 66,592B and VRAM are unchanged. Presentation remains accepted for now.
+
+The next concrete check is hit/loss attribution in the existing captured-source
+replay: existing 64-slot fallback tables already reuse positions and complete
+lighting across strips; short dense-domain generations can replace those hits
+or lose them. The local score counts gross repetition, not additional work
+avoided. Count hit-in-both/dense-only/fallback-only/miss-in-both with actual
+admission; include both RGB-pack branches. normal_hits and color_packs are
+conditional counters, not total work. Correct the same preparation architecture,
+not another keyed cache or per-feature promotion. Full-stack A/B remains the unit.
+
+The historical review and D358 source classification reject broad group-bounds
+admission as current priority (only 0.761 ms of whole-part work conservatively
+rejects in this view). Invariant room lighting still needs source light
+identity/provenance/lifetime; PS2/prelighting substitution remains gated.
+
+Initial D358 B failed native metadata allocation. Cold qsort reuse removed 2,636 B
+of duplicate code; corrected v2 is 692 B smaller than D357v3 and passes. No source
+capacity/compiler changes. Current implementation remains in the preserved dirty
+integration overlay; do not imply clean HEAD reproduces it or stage unrelated
+inherited source changes. Runtime commit cohort was reviewed separately, including
+isolated Makefile/model/trans hunks; clean-checkout link qualification is pending.
+See [D358](port/dreamcast/docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d358---global-admission-and-remaining-reuse-gap-2026-09-22)
+for recipes, exact identities, tests, counters, rejected run and limits. Both v2
+captures have ended; no emulator window remains owned.
+
+## Previous D357 - source-backed index spans
 
 The user's 314 KiB versus 8 KiB decision rejects persistent per-corner remaps.
 Current `DrawLocalPlan` contains only 20-byte legal span descriptors; immutable
@@ -114,8 +149,8 @@ Evidence: `C:/Flycast-Evidence/re4-dreamcast/d357v3[a|b]-integrated-stack`,
 `d9e9b103e34852aa072550433b0ae42ad734bfd39cd50b4ac622794e43d45ddb`, A
 `cfe5673749cf0d58f71e71215c97d681c2df14b983c35790c74e86fd42442d71`.
 Dense position coverage is 25,985/200,643 (12.95%), normal 27,212 (13.56%) and
-shade 27,301 (13.61%). Light builds/hits remain114/149; packet flushes212 and
-strip fallbacks171. Metadata/workspace/source capacity have not grown.
+shade 27,301 (13.61%). Light builds/hits remain114/149; packet flushes 212 and
+strip fallbacks 171. Metadata/workspace/source capacity have not grown.
 Three complete current audit frames (2382/2385/2386,263 parts each) identify167
 fully position-fallback parts with159,163 references and whole-part transform/
 light/packet cost380.83/607.26/371.07 ms. Historical D355 ordinal/hash qualification
