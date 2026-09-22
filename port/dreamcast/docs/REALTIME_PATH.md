@@ -1,5 +1,30 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
+## Current renderer reference and priority - D349, 2026-09-22
+
+The user directed integration of the working room renderer substantially intact
+before further manual route testing. Preserve source gameplay/camera/pose and
+newer character-facing corrections. D347's sampled source render setup takes
+about 1.54 seconds of a 1.60-second CPU loop; the historical optimized room build
+is a separate workload and must not be quoted as current recovered-game FPS.
+
+[D349](R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md) recovers `5f42caa` in an isolated
+worktree with all 22 original asset inputs, pinned KOS and separate production
+`r100-autoplay`/manual `r100` external-file discs. Early-slice CPU p50 is
+48.880 ms; whole-trace CPU p50/p95 is 57.559/57.636 ms. Separately, page-flip
+interval p50/p95 is 50.049/66.728 ms; mean 55.158 ms (~18.13 presented FPS).
+No lifecycle reloads, profile/digest/snapshot overhead or discarded simulation
+time enter that 2,076-frame steady sample. This is Flycast evidence only.
+
+The user accepts the overall visual reference while rejecting its historical
+character-facing defect. Preserve the complete saved cabin/actor/HUD/lighting
+content and verified game-sound output; use newer corrected native orientation.
+The D348 shared-strip extraction remains uncommitted/default-off and unmeasured
+on target. It is not the complete room renderer integration or a performance win.
+The checkpoint records exact builds, scripts, assets, captures and limitations.
+
+## Previous D344 memory checkpoint
+
 D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
 through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap
 free rises **169,600 bytes** at the required block and Ganado body allocations,

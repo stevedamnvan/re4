@@ -195,3 +195,16 @@ above are unaffected -- they never depended on the fifth site.
 
 `C:\Flycast-Evidence\re4-dreamcast\d278-r4-one-representation` — two telemetry
 captures and a frame set, with `d276`'s frames as the comparison.
+
+
+## Historical reference recovered on 2026-09-22
+
+[D349](R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md) preserves fresh clean
+`r100-autoplay` and manual `r100` builds at `5f42caa`, using all 22 inputs
+recovered from the original corrected disc, the pinned KOS/toolchain and the
+historical external-file disc target. The early CPU median is 48.880 ms;
+whole-trace CPU median 57.559 ms and mean page-flip interval 55.158 ms are
+separately reported. No lifecycle loading, snapshot or digest cost is timed.
+The user accepts the overall appearance but flags the historical character-facing
+defect; the newer native correction must be retained. This is a historical
+renderer reference, not recovered-game or complete character-pose acceptance.
