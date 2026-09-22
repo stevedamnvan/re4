@@ -2048,3 +2048,87 @@ the current image as complete scene/character acceptance. Default bounded path
 and accepted references are retained. This is not a frame-time gain, recovered
 event/audio subsystem, restored cabin gameplay or hardware pass. The menu and
 three-room persistent goal remains active.
+
+## D337: bounded chunks for large source parts
+
+Date2026-09-22, base `b5a4cd03dd116d03d4fd9cddbf1dd98ca231d116` (D336b),
+inherited work preserved. Reuses D336's single source-controlled scene owner,
+manual flip, texture pins, retirement/fence and default non-streaming path.
+
+The existing `native_model.cpp::Builder` now commits a full scratch chunk and
+continues the same source part. A chunk ends its strip; the next starts with
+the correct complete triangle, preserving winding, UV/color seams and draw order.
+The native owner reuses the same header/texture/scratch, without another lookup,
+upload, skinning pass or whole-scene CPU copy. Normal geometry is processed once.
+Only the existing exceptional native-UV-size mismatch restarts preparation,
+before any chunk is published. Empty/failed first chunks perform no repeated
+texture I/O. A geometry failure after earlier chunks sets the existing frame
+abort state; later submissions are rejected and Render_swap discards/fences the
+whole image, retaining the prior front buffer. It never presents half a model.
+
+Default PVR_STREAM=0 retains whole-part rollback. Both native builds pass and
+the captured streaming ELF reproduces byte-identically after switching back.
+Eleven focused tests pass: existing600 randomized D334 triangle comparisons,
+120 additional streamed comparisons with3-21-vertex boundaries, clipping/seams,
+alternate UV dimensions, a1,800-triangle part larger than64KiB, first binding
+failure, late nonfinite geometry invalidation, and actual owner discard/fence
+behavior. No recovered gameplay source changes in this slice.
+
+Same135s source menu/New Game fixture, assets and emulator. Ends by harness
+deadline, with source frame1255/30 model presentations in the final snapshot.
+Sampled menu pixels match D336b exactly. Additional trees/scenery appear; cabin,
+Leon/handgun and HUD remain visible. Ground remains absent and head/hair remains
+unaccepted. Different final source frames1255 vs1256 preclude a full-state image
+equivalence claim;88,021 final pixels change. This resolves supported-part
+transport capacity, not complete source material/presentation fidelity.
+
+| Measurement | D336b | D337 |
+|---|---:|---:|
+| Final cumulative whole-part overflows |277|0|
+| Maximum submitted model bytes/frame |1,668,832|2,415,040|
+| Peak scratch chunk bytes |64,480|65,536|
+| Packet scratch allocation |65,536|65,536|
+| Current texture VRAM bytes |3,112,960|3,112,960|
+| Cumulative uploads / missing textures |96 /0|96 /0|
+| Later source heap free |41,472|41,472|
+
+Final D337 cumulative input3,447,460/output1,097,461 triangles,5,378 parts,
+2,740 state rejects:2,709 separate-alpha and31 no-base-image plus size. These
+include an in-progress frame and are not per-frame geometry. No invalid geometry,
+packet capacity, texture, wrap or alternate-scale rejections. One source-controlled
+discard and53 black scenes remain. Per-frame source-material rejection is now
+the next exact native boundary, not another capacity mechanism. `ModelPart`
+alpha flags and `ModelTexInfo` blend flags must not be conflated; use the existing
+materialSetup/alphaSetup and native conversion/resource path.
+
+Text+588; data/BSS unchanged. Native texture budget4MiB/64 handles and staging
+64KiB unchanged. D336's extra1MiB TA reservation persists; Flycast TA-use/peak=0
+remains invalid. Larger command output is not a proved physical TA/OPB fit.
+Last completed PVR interval1,823,323us, registration1,770,205us, render7,503us.
+Registration includes CPU draw work; overlapping intervals are not additive.
+This draws more geometry and is not a frame-time win or stock-hardware budget.
+
+Required block/enemy requests still allocate:2,582,048 and1,466,528 free at the
+same checkpoints, later41,472. Source arena10,127,872 unchanged. Work managers
+retain valid slots/owners and no failures. No new archive recovery. Warm enemy
+net recovery1,510,176; cache952,768 current/peak/read,2,336 metadata,22,400 peak
+pinned,75 misses/loads,6 hits,0 evictions/failures,270,938us worst resource wait.
+All145 headers,75 payloads and1,904 relocated pointers verify. Later/final cache
+counters unchanged with no new motion evaluation: combat response/prefetch and
+concurrency coverage remain open. Event scratch694,560/669,248/309,632 fails and
+ARQ still lacks actual stored bytes. No audio/manual play/transition acceptance.
+
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d337-chunked-parts`, disc
+`/root/probe/d337-disc`; same untouched D330 mirror/core and D327 fixtures.
+KOS804b3195 plus unchanged D336 optional patch, SH GCC15.2, native O1.
+Text/data/BSS2,292,080 /76,836 /673,016. Same D336b build options. Private
+source/tool/asset/config/fixture identities and evidence hashes are preserved.
+
+ELF SHA256 `fe26c605286cf925376dcc1ba250473ab422e669e4dd28d7303337cab0ba21c7`;
+disc SHA256 `f023798b1ab3f0bdd5d1912630ab84824303d913ffd27278b0d33c6f2e17da8a`.
+
+**Keep bounded chunk transport in the selectable streaming integration.** No
+default promotion, source-heap recovery, complete room, FPS or hardware claim.
+Continue exact source materials/head presentation and real event storage. Water
+simplification remains a separate selectable candidate with reviewed appearance;
+neither PS2 equivalence nor savings have been demonstrated. Goal remains active.

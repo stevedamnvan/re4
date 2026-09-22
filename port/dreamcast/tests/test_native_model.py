@@ -18,12 +18,15 @@ class NativeModel(unittest.TestCase):
 #include <vector>
 #include <random>
 extern "C" void re4dc_model_submit_reference(const Re4dcModelPart*);
-unsigned status=99,capacity=100,committed=0,input,output,binds=0;float uscale=1,vscale=1,predicted_u=1,predicted_v=1;bool bind_fails=false;
+unsigned status=99,capacity=100,committed=0,input,output,binds=0;float uscale=1,vscale=1,predicted_u=1,predicted_v=1;bool bind_fails=false,streaming=false,aborted=false;
+std::vector<pvr_vertex_t> all_chunks;
 pvr_vertex_t pending[4098],owned[4098];
 extern "C" int re4dc_model_diagnostic_enabled(){return 1;}
 extern "C" int re4dc_model_packet_reserve(const Re4dcModelPart*,Re4dcModelPacket* p){*p={pending,capacity,predicted_u,predicted_v};return 1;}
 extern "C" int re4dc_model_packet_begin(const Re4dcModelPart*,Re4dcModelPacket* p){++binds;*p={pending,capacity,uscale,vscale};return !bind_fails;}
-extern "C" void re4dc_model_packet_commit(unsigned n){memcpy(owned,pending,n*32);committed=n;}
+extern "C" void re4dc_model_packet_commit(unsigned n){memcpy(owned,pending,n*32);committed=n;if(streaming)all_chunks.insert(all_chunks.end(),pending,pending+n);}
+extern "C" int re4dc_model_packet_streaming(){return streaming;}
+extern "C" void re4dc_model_packet_abort(){aborted=true;all_chunks.clear();}
 extern "C" void re4dc_model_result(unsigned r,unsigned i,unsigned o){status=r;input=i;output=o;}
 int pvr_prim(const void*,std::size_t){assert(false);return -1;}
 std::vector<unsigned char> stream(unsigned op,std::initializer_list<unsigned> ids,bool color=false){
@@ -120,6 +123,41 @@ int main(){
  // A completely rejected part consumes no texture handle, including cull-all.
  p.cull=3;unsigned before_binds=binds;run(longstrip);assert(status==0 && output==0 && binds==before_binds);
  p.cull=0;p.modelview[11]=1000;run(longstrip);assert(status==0 && !output && binds==before_binds);
+
+ // Stream across small artificial boundaries and compare exact expanded
+ // triangles against the existing unbounded oracle, including seams/clipping.
+ p.modelview[11]=-128;p.cull=0;streaming=true;
+ for(unsigned trial=0;trial<120;++trial){
+  for(unsigned i=0;i<66;++i){many[i][0]=int(rng()%81)-40;many[i][1]=int(rng()%61)-30;many[i][2]=trial%3?0:int(rng()%261)-130;}
+  uscale=trial%2?.75f:1.f;vscale=trial%2?.625f:1.f;predicted_u=predicted_v=1;
+  capacity=2048;p.stream=longstrip.data();p.stream_bytes=longstrip.size();committed=0;
+  re4dc_model_submit_reference(&p);auto baseline=expanded();auto refinput=input,refoutput=output;
+  capacity=3+trial%19;all_chunks.clear();aborted=false;auto prior=binds;
+  run(longstrip);assert(status==0 && !aborted && input==refinput && output==refoutput);
+  assert(binds==prior+1);assert(all_chunks.size()<4098);
+  memcpy(owned,all_chunks.data(),all_chunks.size()*32);committed=all_chunks.size();auto emitted=expanded();
+  assert(emitted.size()==baseline.size() && !memcmp(emitted.data(),baseline.data(),baseline.size()*32));
+ }
+ // Over 64KiB of independent geometry uses bounded scratch. No reference and
+ // candidate are retained simultaneously by the real owner (only this fixture).
+ for(auto& v:many)v[2]=0;uscale=vscale=predicted_u=predicted_v=1;
+ auto tri=stream(0x90,{0,1,2});std::vector<unsigned char> large;
+ for(unsigned n=0;n<1800;++n)large.insert(large.end(),tri.begin(),tri.end());
+ // Ensure a nondegenerate visible triangle.
+ many[0][0]=-2;many[0][1]=-2;many[1][0]=2;many[1][1]=-2;many[2][0]=2;many[2][1]=2;
+ capacity=2047;all_chunks.clear();aborted=false;run(large);
+ assert(status==0 && !aborted && input==1800 && output==1800 && all_chunks.size()==5400);
+ // A late nonfinite projection must invalidate previously transferred chunks.
+ // Valid source indices pass preflight; overflow appears only during transform.
+ many[0][0]=many[1][0]=many[2][0]=0;
+ many[0][1]=-2;many[0][2]=0;many[1][1]=2;many[1][2]=0;many[2][1]=0;many[2][2]=2;
+ p.modelview[0]=3e38f;p.modelview[2]=1;many[3][0]=32767;
+ auto invalid_late=stream(0x90,{0,1,3});large.insert(large.end(),invalid_late.begin(),invalid_late.end());
+ all_chunks.clear();aborted=false;run(large);assert(status==3 && aborted && all_chunks.empty());
+ // First-chunk binding failure never publishes or repeatedly retries I/O.
+ p.modelview[0]=1;p.modelview[2]=0;bind_fails=true;all_chunks.clear();aborted=false;
+ run(longstrip);assert(status==2 && all_chunks.empty() && !aborted);
+
 
 
 }

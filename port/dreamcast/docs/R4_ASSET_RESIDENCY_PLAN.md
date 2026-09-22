@@ -1,39 +1,39 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-D336b adds selectable serial submission to the existing native frame owner.
-The same64KiB packet scratch is reused per completed source part; source
-Render_swap still decides whether to present. The source menu, Leon, cabin,
-trees and HUD now appear in one recovered-game executable. **This is diagnostic,
-not restored gameplay:** ground/surfaces are absent and head/hair presentation is
-wrong. Large parts and separate-alpha materials remain rejected; source lighting,
-complete materials and character presentation remain unqualified.
+D337 continues D336's selectable source-controlled PVR submission: large source
+parts now use bounded chunks through the same64KiB scratch. The exact source
+triangle order, clipping and strip attributes are retained; a late invalid chunk
+discards the whole frame. No new scene copy, renderer or gameplay loop.
 
-PVR_STREAM=1 requires the pinned optional KOS patch in an isolated KOS worktree.
-Default0 still builds with the untouched original KOS. Eleven focused checks pass,
-including late hold/black, retirement/fence and unchanged PowerPC preprocessing.
-The135s Flycast run reaches source frame1256 with31 model presentations at the
-final snapshot; it ends by harness deadline. Maximum submitted model bytes/frame
-1,668,832; current textures3,112,960, earlier peak4,192,256,96 uploads,0 missing.
-The64-handle candidate restores the HUD lost by the initial48-handle experiment.
-It costs1,216 data bytes and another1,048,576 reserved VRAM bytes for TA banks.
-Flycast reports invalid zero TA-used/peak counters: physical capacity is NOT
-qualified. Last completed presentation interval1,773,284us is not a matched FPS
-comparison or isolated GPU cost. Keep this integration path opt-in.
+The135s Flycast run reaches source frame1255/30 model presentations. Packet
+overflows fall from277 at D336b's snapshot to0; maximum model commands/frame
+rise1,668,832 ->2,415,040 bytes. More trees/scenery appear, with identical sampled
+menu pixels and working HUD. **Ground remains absent and head/hair presentation
+remains wrong.** Capacity was not the only missing-surface cause. Separate-alpha
+and no-base-image materials still reject; no complete scene/gameplay acceptance.
 
-No new source-heap saving: post-block2,582,048, post-enemy1,466,528, later41,472
-free. Warm enemy-family recovery remains1,510,176 bytes; cache952,768 current/
-peak/read,22,400 peak pinned,75 misses/loads,6 hits,0 evictions/failures,270,939us
-worst wait. All145 headers and1,904 relocated pointers validate; no later motion
-evaluations, so combat/response/concurrency coverage remains open. Event ARAM
-scratch694,560/669,248/309,632 still fails and ARQ has no real byte backing.
-Continue the same native adapter and event transport; no second renderer or
-prototype gameplay. Simpler water remains an authorized selectable candidate,
-not an implemented or verified PS2 effect. D324 remains the accepted integration
-reference; the earlier corrected native scene remains the visual reference.
-See [D336](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d336-source-controlled-serial-submission).
+Eleven focused checks pass, including120 streamed exact-triangle comparisons,
+large-part transport, alternate UV layouts and late-failure frame discard.
+Text+588 bytes, data/BSS unchanged versus D336b. Scratch64KiB, texture64 handles/
+4MiB budget, uploads96, missing0, current texture3,112,960 bytes unchanged.
+Source heap41,472 later free; required block/enemy allocations still succeed.
+Warm enemy recovery1,510,176; cache952,768 current/peak/read,22,400 peak pinned,
+75 misses/loads,6 hits,0 evictions/failures,270,938us worst wait; all145 headers
+and1,904 relocated pointers verify. No later evaluations: combat hot-set and
+prefetch/concurrency qualification remain open.
+
+Keep PVR_STREAM=1 opt-in. D336's additional1MiB reserved TA VRAM and invalid
+Flycast zero TA-used/peak counters remain; physical capacity is unqualified.
+Last presentation interval1,823,323us processes more geometry, not a measured
+speedup. The original-KOS default builds and the candidate ELF restores exactly.
+Event scratch694,560/669,248/309,632 still fails; ARQ has no real backing. Next:
+source materials/head presentation and event storage, using the existing native
+and source paths. Simpler water remains a selectable candidate, with no current
+PS2-equivalence, memory or FPS claim. D324 remains accepted integration reference.
+See [D337](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d337-bounded-chunks-for-large-source-parts).
 
 
-Updated 2026-09-22; accepted integration reference D324; experiment D336b. Historical budgets below
+Updated 2026-09-22; accepted integration reference D324; experiment D337. Historical budgets below
 retain their named checkpoints. This supports PLAYABLE_PATH and REALTIME_PATH;
 it is not a competing prerequisite roadmap.
 

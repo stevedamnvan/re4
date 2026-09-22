@@ -31,6 +31,23 @@ struct Builder {
     Projection projection; re4dc::render::ClipParameters clip;
     unsigned used=0,input=0,stride; float scale;
     unsigned strip_vertices=0,output=0;
+    bool streaming=false,bound=false,submitted=false,restart_uv=false,resource_failed=false;
+    bool bind(){
+        if(bound)return true;
+        const float u=packet.u_scale,v=packet.v_scale;
+        if(!re4dc_model_packet_begin(&p,&packet)){resource_failed=true;return false;}
+        bound=true;
+        // No chunk has been published at this point. Alternate native layouts
+        // must use their true UV scale before clipping, just like the reference.
+        if(u!=packet.u_scale || v!=packet.v_scale){restart_uv=true;return false;}
+        return true;
+    }
+    bool flush(){
+        if(!streaming || !bind())return false;
+        re4dc_model_packet_commit(used);submitted=true;
+        used=strip_vertices=0; // same owner, header, texture pin and scratch
+        return true;
+    }
     bool vertex(const unsigned char* corner,re4dc::render::RenderVertex& v){
         const unsigned vi=be16(corner),ni=be16(corner+2),ti=be16(corner+stride-2);
         if(vi>=p.position_count || ni>=p.normal_count || !ram(p.uv+ti*4,4))return false;
@@ -73,11 +90,17 @@ struct Builder {
         };
         if(strip_vertices>=3 && equal(dst[used-2+parity],triangle[0]) &&
                                 equal(dst[used-1-parity],triangle[1])){
-            if(used==packet.capacity)return false;
+            if(used==packet.capacity){
+                if(!flush())return false;
+                return append_triangle(triangle); // begin a correctly wound strip
+            }
             dst[used-1].flags=PVR_CMD_VERTEX;
             dst[used++]=triangle[2];++strip_vertices;
         }else{
-            if(packet.capacity-used<3)return false;
+            if(packet.capacity-used<3){
+                if(!flush())return false;
+                return append_triangle(triangle);
+            }
             std::memcpy(dst+used,triangle,3*sizeof(*dst));used+=3;strip_vertices=3;
         }
         ++output;
@@ -126,20 +149,23 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
               (p->flags&0x80000000U)?8U:6U,std::ldexp(1.0f,-int(p->shift))};
     b.clip.context=&b.projection;
     if(!b.walk(false)){re4dc_model_result(1,0,0);return;}
-    // Prepare into the existing uncommitted packet range before any upload.
-    // Source data stays live for this entire synchronous draw call.
+    // Source data remains live throughout this synchronous call. In streaming
+    // mode each bounded chunk is consumed once by the existing native owner;
+    // no whole-scene copy and no repeated deformation/preparation pass.
+    b.streaming=re4dc_model_packet_streaming()!=0;
     if(!re4dc_model_packet_reserve(p,&b.packet)){re4dc_model_result(2,0,0);return;}
-    if(!b.walk(true)){re4dc_model_result(3,b.input,0);return;}
-    if(b.used){
-        const float u=b.packet.u_scale,v=b.packet.v_scale;
-        if(!re4dc_model_packet_begin(p,&b.packet)){re4dc_model_result(2,b.input,0);return;}
-        if(u!=b.packet.u_scale || v!=b.packet.v_scale){
-            // The normal offline layout pads to native powers of two. Do not
-            // assume an alternate package follows that policy: use its actual
-            // scale BEFORE clipping, preserving the reference interpolation.
-            b.used=b.input=b.output=b.strip_vertices=0;
-            if(!b.walk(true)){re4dc_model_result(3,b.input,0);return;}
-        }
+    bool okay=b.walk(true);
+    if(okay && b.used)okay=b.bind();
+    if(!okay && b.restart_uv){
+        // First binding precedes every publication. Restart only for a verified
+        // alternate UV scale, retaining the already selected native texture.
+        b.restart_uv=false;b.used=b.input=b.output=b.strip_vertices=0;
+        okay=b.walk(true);
+        if(okay && b.used)okay=b.bind();
+    }
+    if(!okay){
+        if(b.submitted)re4dc_model_packet_abort();
+        re4dc_model_result(b.resource_failed?2:3,b.input,0);return;
     }
     re4dc_model_packet_commit(b.used);re4dc_model_result(0,b.input,b.output);
 }

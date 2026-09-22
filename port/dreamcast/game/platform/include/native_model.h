@@ -25,9 +25,14 @@ void re4dc_draw_model_part(const void* model,const void* info,const void* part,
 // reserves header space, and is committed only after a complete part succeeds.
 // reserve() performs no texture I/O. begin() binds the validated native texture
 // after geometry fits; differing native UV scales require preparation again.
-// A failed part leaves used bytes unchanged. Source pointers never enter it.
+// Default mode rolls back a failed complete part. Streaming mode can reuse this
+// scratch after committing chunks; a later failure must abort the whole frame.
+// Source pointers never enter the native owner.
 struct Re4dcModelPacket { void* vertices; unsigned capacity; float u_scale,v_scale; };
 extern "C" int re4dc_model_packet_reserve(const Re4dcModelPart*,Re4dcModelPacket*);
 extern "C" int re4dc_model_packet_begin(const Re4dcModelPart*,Re4dcModelPacket*);
 extern "C" void re4dc_model_packet_commit(unsigned vertices);
 extern "C" void re4dc_model_result(unsigned reason,unsigned input_triangles,unsigned output_triangles);
+
+extern "C" int re4dc_model_packet_streaming();
+extern "C" void re4dc_model_packet_abort();

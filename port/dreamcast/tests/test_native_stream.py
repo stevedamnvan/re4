@@ -68,6 +68,7 @@ int main(){
   helpers=source[source.index('bool stream_scene,'):source.index('\n#endif',source.index('bool stream_scene,'))]
   retire=source[source.index('extern "C" void re4dc_ui_retire_room()'):source.index('extern "C" void re4dc_ui_init()')]
   end=source[source.index('extern "C" void re4dc_ui_end_frame('):source.index('extern "C" int re4dc_model_diagnostic_enabled()')]
+  abort=source[source.index('extern "C" void re4dc_model_packet_abort()'):]
   code=r'''
 #include <cassert>
 #include <stdexcept>
@@ -95,7 +96,7 @@ struct Table{void clear(){}} room_identities;
 struct EnemyIdentity{Table table;void* archive=(void*)1;} enemy_identities[2];
 bool ready=true,frame_ready=true;unsigned nquad,model_used,nsource,identity_hits;
 int re4dc_vi_black(){return black;}
-'''+helpers+retire+r'''
+'''+helpers+retire+abort+r'''
 extern "C" void re4dc_ui_present(){++presents;stream_close(true);}
 '''+end+r'''
 int main(){
@@ -115,6 +116,10 @@ int main(){
  assert(finishes==old_finishes+2 && flips==2 && stream_black_frames==1);
  // Black + hold must retain the previous front, without forcing a black flip.
  stream_send(&packet,32);re4dc_ui_end_frame(0);assert(flips==2);black=false;
+ // Late failure in a chunked model discards the whole frame, retaining cache.
+ stream_send(&packet,32);model_used=9;model_handle=&entries[0];re4dc_model_packet_abort();
+ assert(stream_aborted && !model_used && !model_handle);re4dc_ui_end_frame(1);
+ assert(flips==2 && !opened && !done && closes==2);stream_aborted=false;
  // Retirement when no scene is open uses the existing immediate fence.
  re4dc_ui_retire_room();assert(closes==4 && !stream_retire);
  stream_send(&packet,32);fail_fence=true;bool failed=false;

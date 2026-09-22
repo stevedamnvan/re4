@@ -439,3 +439,12 @@ extern "C" void re4dc_model_result(unsigned reason,unsigned input,unsigned outpu
     if(reason==0){++model_parts;if(!output)++model_empty_parts;}else if(reason==1)++model_invalid;else if(reason==2)++model_resource;else ++model_overflow;
     model_input+=input;model_output+=output;
 }
+
+extern "C" int re4dc_model_packet_streaming(){return RE4DC_PVR_STREAM;}
+extern "C" void re4dc_model_packet_abort(){
+#if RE4DC_PVR_STREAM
+    // Previous chunks may already be in TA. Never present an incomplete model:
+    // reject further submissions and let the same source owner discard/fence it.
+    stream_aborted=true;model_used=0;model_handle=nullptr;
+#endif
+}

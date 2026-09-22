@@ -13,59 +13,61 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D336b serial source rendering; visual and ARAM dependencies remain
+## Current resumption point - D337 chunked native parts; materials and ARAM remain
 
-D336b adds selectable serial submission to the existing native frame owner.
-The same64KiB packet scratch is reused per completed source part; source
-Render_swap still decides whether to present. The source menu, Leon, cabin,
-trees and HUD now appear in one recovered-game executable. **This is diagnostic,
-not restored gameplay:** ground/surfaces are absent and head/hair presentation is
-wrong. Large parts and separate-alpha materials remain rejected; source lighting,
-complete materials and character presentation remain unqualified.
+D337 continues D336's selectable source-controlled PVR submission: large source
+parts now use bounded chunks through the same64KiB scratch. The exact source
+triangle order, clipping and strip attributes are retained; a late invalid chunk
+discards the whole frame. No new scene copy, renderer or gameplay loop.
 
-PVR_STREAM=1 requires the pinned optional KOS patch in an isolated KOS worktree.
-Default0 still builds with the untouched original KOS. Eleven focused checks pass,
-including late hold/black, retirement/fence and unchanged PowerPC preprocessing.
-The135s Flycast run reaches source frame1256 with31 model presentations at the
-final snapshot; it ends by harness deadline. Maximum submitted model bytes/frame
-1,668,832; current textures3,112,960, earlier peak4,192,256,96 uploads,0 missing.
-The64-handle candidate restores the HUD lost by the initial48-handle experiment.
-It costs1,216 data bytes and another1,048,576 reserved VRAM bytes for TA banks.
-Flycast reports invalid zero TA-used/peak counters: physical capacity is NOT
-qualified. Last completed presentation interval1,773,284us is not a matched FPS
-comparison or isolated GPU cost. Keep this integration path opt-in.
+The135s Flycast run reaches source frame1255/30 model presentations. Packet
+overflows fall from277 at D336b's snapshot to0; maximum model commands/frame
+rise1,668,832 ->2,415,040 bytes. More trees/scenery appear, with identical sampled
+menu pixels and working HUD. **Ground remains absent and head/hair presentation
+remains wrong.** Capacity was not the only missing-surface cause. Separate-alpha
+and no-base-image materials still reject; no complete scene/gameplay acceptance.
 
-No new source-heap saving: post-block2,582,048, post-enemy1,466,528, later41,472
-free. Warm enemy-family recovery remains1,510,176 bytes; cache952,768 current/
-peak/read,22,400 peak pinned,75 misses/loads,6 hits,0 evictions/failures,270,939us
-worst wait. All145 headers and1,904 relocated pointers validate; no later motion
-evaluations, so combat/response/concurrency coverage remains open. Event ARAM
-scratch694,560/669,248/309,632 still fails and ARQ has no real byte backing.
-Continue the same native adapter and event transport; no second renderer or
-prototype gameplay. Simpler water remains an authorized selectable candidate,
-not an implemented or verified PS2 effect. D324 remains the accepted integration
-reference; the earlier corrected native scene remains the visual reference.
-See [D336](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d336-source-controlled-serial-submission).
+Eleven focused checks pass, including120 streamed exact-triangle comparisons,
+large-part transport, alternate UV layouts and late-failure frame discard.
+Text+588 bytes, data/BSS unchanged versus D336b. Scratch64KiB, texture64 handles/
+4MiB budget, uploads96, missing0, current texture3,112,960 bytes unchanged.
+Source heap41,472 later free; required block/enemy allocations still succeed.
+Warm enemy recovery1,510,176; cache952,768 current/peak/read,22,400 peak pinned,
+75 misses/loads,6 hits,0 evictions/failures,270,938us worst wait; all145 headers
+and1,904 relocated pointers verify. No later evaluations: combat hot-set and
+prefetch/concurrency qualification remain open.
 
-D336b evidence: `C:/Flycast-Evidence/re4-dreamcast/d336b-source-stream`;
-disc `/root/probe/d336b-disc`; unchanged D330 mirror/core and D327 fixtures.
-Build retains all three demand flags and adds `PVR_STREAM=1`:
-`RE4DC_KOS_BASE=/root/work/kos-re4dc-d336 source port/dreamcast/kos-env.sh`
-(export RE4DC_KOS_BASE before sourcing in a persistent shell).
+Keep PVR_STREAM=1 opt-in. D336's additional1MiB reserved TA VRAM and invalid
+Flycast zero TA-used/peak counters remain; physical capacity is unqualified.
+Last presentation interval1,823,323us processes more geometry, not a measured
+speedup. The original-KOS default builds and the candidate ELF restores exactly.
+Event scratch694,560/669,248/309,632 still fails; ARQ has no real backing. Next:
+source materials/head presentation and event storage, using the existing native
+and source paths. Simpler water remains a selectable candidate, with no current
+PS2-equivalence, memory or FPS claim. D324 remains accepted integration reference.
+See [D337](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d337-bounded-chunks-for-large-source-parts).
+
+D337 evidence: `C:/Flycast-Evidence/re4-dreamcast/d337-chunked-parts`;
+disc `/root/probe/d337-disc`; unchanged D330 mirror/core and D327 fixtures.
+Build retains all three demand flags and `PVR_STREAM=1` with
+`export RE4DC_KOS_BASE=/root/work/kos-re4dc-d336` before sourcing kos-env.sh.
 See `port/dreamcast/patches/README.md` for isolated pinned-KOS setup. Text/data/BSS
-2,291,492 /76,836 /673,016; source arena10,127,872. The default original-KOS build
-was verified and the streaming ELF restored byte-identically. The original KOS
-checkout stays clean. Existing private build/evidence/source snapshots are pinned.
+2,292,080 /76,836 /673,016; source arena10,127,872. Default original-KOS build
+passes; streaming ELF restored byte-identically. Original KOS remains clean.
 
-Continue `native_model.cpp`/`native_ui.cpp`: remove the demonstrated whole-part
-64KiB rejection through bounded native submission, preserving complete-frame
-failure handling, texture pinning, clip/strip attributes and source order. Do
-not assume submitted-command bytes equal physical TA storage or ignore its
-unqualified capacity. Restore source separate-alpha/no-base-image material
-semantics and investigate head/hair against source data/pose/cull boundaries.
-This exposed defect is not an accepted baseline. Do not copy prototype AI or
-start a second renderer. Existing late hold/black/retire solution and negative
-D33648-handle HUD-loss evidence are retained; do not reopen without reproduction.
+The64KiB whole-part rejection is now fixed; do not implement another chunk path.
+Continue source material selection: `trans.cpp::materialSetup/alphaSetup`,
+`game/model_bridge.cpp::re4dc_model_material` and the existing native texture
+owner. `ModelPart.flags&4` separate alpha and `ModelTexInfo.flags&4` blending are
+different contracts. Final rejection bits2709 separate-alpha and31 no-base-image
+(also invalid size); zero geometry overflow or texture loading failures. Trace
+actual source material inputs; reuse existing offline alpha preparation where
+equivalent, without flattening unsupported behavior. Ground remains absent even
+with complete supported-part transport. Investigate head/hair against source
+data/pose/cull/material state; do not cosmetically rotate the head or preserve an
+unaccepted prototype defect. Event transport below remains independently required.
+Physical TA/OPB capacity is unqualified; commands now peak2,415,040 bytes/frame.
+Do not infer internal TA use from command size or emulator zero counters.
 
 D335c remains the default bounded regression (`d335c-admission`); its sparse
 branches/HUD are not a complete scene reference. D334 background-depth and D333
