@@ -6,6 +6,9 @@
 #include "atari.h"
 #include "light.h"
 #include "esp.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_effect_source.h"
+#endif
 #include "espgen.h"
 #include "math_sub.h"
 #include "db_log.h"
@@ -31,7 +34,13 @@ int EspgenDataSet(EspSeqData* head, int no, EspInfo* info, u32* seed, cModel* mo
     int ret = 1;
 
     list = no * sizeof(EspGenWork) + 0x30;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    EspGenWork scratch;
+    EspGenWork* reference = re4dc_effect_ref(head, no);
+    rec = re4dc_effect_read(reference, scratch);
+#else
     rec = (EspGenWork*) ((u32) head + list);
+#endif
     if (info->Core_flg & 0x1000) {
         u32 no = rec->Parent_no;
         list = (u32) EspEvModList;
@@ -48,6 +57,9 @@ int EspgenDataSet(EspSeqData* head, int no, EspInfo* info, u32* seed, cModel* mo
         if (flag == 0) {
             pos = NULL;
         }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        rec = reference; // EspSeqSet expands locally; never let a retained pointer refer to scratch.
+#endif
         if (EspSeqSet(rec, info, seed, model, mtx, 0, 0.0f, &esp, p8, pos) == 0) {
             ret = 0;
         }
@@ -101,7 +113,12 @@ void espgen10_Update(EspgenWork* w)
 {
     Espgen10Work* p = (Espgen10Work*) w->work;
     EspSeqData* head = p->head;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    EspGenWork scratch;
+    EspGenWork* rec = re4dc_effect_read(re4dc_effect_ref(head, p->no), scratch);
+#else
     EspGenWork* rec = &head->rec[p->no];
+#endif
     cModel* model = p->pMod;
 
     if (model != NULL) {
@@ -165,11 +182,16 @@ void espgen10_Update(EspgenWork* w)
             return;
         }
         p->no++;
+#if !defined(RE4DC_GAME) || defined(__PPC__)
         rec++;
+#endif
         if (p->no >= head->num) {
             PushEspgen(w);
             break;
         }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        rec = re4dc_effect_read(re4dc_effect_ref(head, p->no), scratch);
+#endif
     }
     p->Time_cnt++;
 }

@@ -6,6 +6,9 @@
 #include "light.h"
 #include "global.h"
 #include "esp.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_effect_source.h"
+#endif
 #include "espgen.h"
 #include "math_sub.h"
 #include "rnd.h"
@@ -264,7 +267,15 @@ int Espgen00_SetFreeWork(EspgenWork* w, EspGenWork* rec, EspSeqData* head, cMode
 {
     Espgen00Work* p = (Espgen00Work*) w->work;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // The controller retains the archive-owned reference across frames. Decode
+    // only for these field reads; later emissions go through EspSeqSet again.
+    EspGenWork scratch;
     p->rec = rec;
+    rec = re4dc_effect_read(rec, scratch);
+#else
+    p->rec = rec;
+#endif
     p->pMod = model;
     if (model != NULL) {
         p->Guid_pMod = model->serial;

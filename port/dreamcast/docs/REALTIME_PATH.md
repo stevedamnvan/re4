@@ -1,24 +1,28 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D327 recovers **511,200 actual source-heap bytes** by loading qualified compact
-pl00/wep02 texture backing directly into smaller selectable fixed reservations.
-The source menu remains visible and the required block pool still allocates,
-now leaving **1,477,696 bytes**. The **1,426,304-byte enemy body now loads**,
-including the source sound-container dispatch, and its 37 texture identities bind.
-A demonstrated native DVD/ISR filesystem-lock deadlock is fixed by deferring
-background-task suspension during bounded I/O scopes; KOS preemption stays active.
+D328 recovers another **321,152 actual source-heap bytes** with selectable,
+lossless resident enemy effect records. All 161 sequences / 1,854 records remain;
+1,846 records use zero-word elision, eight retain their original representation.
+Source headers/IDs, timing/RNG and retained repeating-generator references survive.
+The enemy body loads directly at **1,105,152 bytes**, leaving **362,176 free**.
+The source menu, sound-container dispatch, 37 texture identities and required
+1,126,272-byte block pool remain intact; no hold/gameplay bypass was added.
 
-The next exact failure is **hot motion-key prefetch allocation**: 16,608 payload
-bytes (16,640 requested including owner header) with 16,096 free. One key loaded;
-full warm-up did not complete. Keep hot keys cached and keep the source-derived
-prefetch/concurrency audit: the existing 75-clip profile is still incomplete.
-The selected cache capacity/metadata/allocator budget needs at least **983,264
-additional bytes** after the enemy body, before later actor/event/audio costs.
-D324 remains the accepted integration reference; D325-D327 remain selectable
-candidates. No complete enemy rendering, room gameplay, audio or retry is accepted.
-See [D327](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d327-playerweapon-backing-and-native-read-lifetime).
+The next failure is still required hot-key prefetch: **29 keys / 356,416 bytes**
+load, then a 9,664-byte payload fails with 544 bytes free. The selected cache,
+metadata and conservative allocator budget still needs **662,112 more bytes**,
+before later actor/event/audio costs or additional source-required hot clips.
+The 75-clip source prefetch/concurrency audit remains incomplete; keep it visible
+and do not shrink the set or evict on evaluation release to force a pass.
+The refreshed SH-4 fixture verifies 7,500 warm evaluations with **zero additional
+misses or reads**, plus relocated-key/retained-pointer/pose checks under pressure.
+D324 remains the accepted integration reference; D325-D328 are selectable
+residency candidates. Full enemy initialization, visible effects/complete 3D,
+manual room gameplay, audio, retry and physical hardware remain open.
+See [D328](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d328-resident-effect-records-and-retained-generator-references).
 
-Updated 2026-09-21; accepted integration D324; selectable residency experiment D327.
+
+Updated 2026-09-21; accepted integration D324; selectable residency experiment D328.
 
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file

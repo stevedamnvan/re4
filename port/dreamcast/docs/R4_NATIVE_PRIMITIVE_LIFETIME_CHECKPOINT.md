@@ -1062,3 +1062,145 @@ Continue justified source resource lifetimes and complete working-set closure,
 alongside the existing 3D connection. Enemy creation, effects/audio, source hold,
 visible complete models, manual gameplay, transitions/retry and physical hardware
 remain open. A loaded archive is not initialized or playable gameplay.
+
+
+## D328: resident effect records and retained generator references
+
+Decision: keep a **selectable** lossless layout, not complete encounter acceptance.
+The existing source loader consumes the smaller em12 body in the recovered-game
+executable. Corrected source title/menu, required block pool and source sound
+container dispatch still work. No enemies/events/hold flags were disabled.
+D327 remains a reproducible before reference; D324 is the accepted integration
+reference. The original GameCube behavior remains authoritative.
+
+### Source contract and reused connection
+
+| Existing mechanism | Source producer/consumer | Narrow addition |
+|---|---|---|
+| `le_mirror::fmt_sequence`, qualified DRS preparation, `compact_spans`, `replace_native_payload` | em12 EFF slot0 EST tables, original48-byte heads and relative offsets | Sequence observer and selectable zero-word record representation; append borrowed ESQ identity index before existing NTR/MTC. |
+| Existing `readEmData` / `InitModule` archive ownership | Source effect tables and their controllers | Validate/bind ESQ before consumers, unbind after REL epilog and before source archive free. No new heap/cache/transport owner. |
+| Original `EspgenDataSet`, `espgen10_Update`, `EspgenSeqSet`, `SetEstTbl`, `EspEstSetSelect`, `EspSeqSet` | Logical record index, Set_time, parent, parameters, RNG and dispatch | Resolve index to raw or opaque resident reference; reconstruct native words locally only when consumed. No scheduling/event/RNG changes. |
+| Original `Espgen00_SetFreeWork` / repeating `espgen00_Update` | Retained record pointer used on later emission frames | Preserve the archive reference in `p->rec`; constructor reads local scratch, later `EspSeqSet` resolves the retained reference. Never store scratch. |
+| Existing motion residency SH-4 fixture / shared storage | Same selected keys, source motion/IK, pressure/pointer checks | Optional effect checks from source-derived byte hashes; unchanged warm-set and pressure tests. |
+
+All161 sequence heads, IDs/order,1,854 effect records and source flags remain.
+Record count/offset table selects12-byte zero-word mask plus exact nonzero32-bit
+words, or ordinary300-byte records. Negative zero, NaN payloads, integer lanes,
+colors/padding and every other bit survive; this is not float quantization.
+Only observed copy-consuming effect IDs and generator00 qualify. Sprite0x0e
+retains `gen`; generator02 retains `rec`; unreviewed types stay ordinary.
+All eight actual excluded records are retained raw. Generator00's reference
+may survive arbitrarily many frames while the original archive remains alive.
+No effect record is evicted or fetched from disc during evaluation/emission.
+
+The source audit distinguishes original lifetime boundaries: registration keeps
+EST heads/tables; delayed sequence player10 keeps its head; repeating00 keeps its
+record; source owner/module teardown ends those lifetimes. em10's0x88 path reads
+head count then uses the adapted `EspEstSetSelect`. em36 mutates owner0x2d records
+and is outside this em12-only candidate. Debug editor bulk record read/write and
+other owners are not qualified. The unchanged original representation remains
+available. Full in-game cleanup/retry is still an acceptance gate; host relocation
+checks are not a claim of a played transition.
+
+### Actual budget and cost
+
+| Measurement | D327 | D328 |
+|---|---:|---:|
+| Source heap arena |9,987,168|9,987,168|
+| Required block pool / free afterwards |1,126,272 /1,477,696|same|
+| Enemy body loaded |1,426,304|1,105,152|
+| Free immediately after enemy allocation |41,024|362,176|
+| Successful hot payloads before next OOM |1 /22,400|29 /356,416|
+| Free at next failed key request |16,096|544|
+| Remaining selected cache-budget deficit |983,264|662,112|
+
+EST sequence backing566,304 becomes243,168 bytes plus1,984 index bytes: **321,152
+net actual source-heap recovery**, including alignment and metadata. New native
+binding/statistics cost96 BSS bytes and code3,628 bytes; no source-heap metadata
+allocation. Each local scratch is300 bytes; up to four nested source calls add
+1,200 bytes of scratch, excluding their other stack frames. Existing corrected
+task stacks remain. Texture packages/VRAM, collision, models and all key files
+are unchanged. Compact type0 reads directly into its smaller final allocation;
+there is no full original/decoded overlap. Existing bounded64 KiB native storage
+scratch and source DVD/sound staging are retained, not newly counted as savings.
+
+Total body reduction against3,577,728 is2,472,576. Subtract selected cache capacity
+1,007,936, metadata2,336 and conservative allocator overhead14,016: **provisional
+net enemy-family budget reduction1,448,288**. This is not a measured full encounter
+peak. The current selected profile still needs662,112 more bytes after body load,
+before future actor/event/audio or additional required motions. Do not count
+already recovered room/core/primitive/player/weapon backing again.
+
+Actual game counters:30 misses,29 loads,0 evictions/hits,356,416 bytes read and
+peak cached payload,0 pins,2,336 metadata,210,286 us worst successful resource
+wait. The next9,664-byte key requests9,696 including owner header and fails with
+544 free (successful source allocations add64 further bytes). This is an explicit
+`motion key allocation` game halt; the capture harness then reaches its90s limit.
+The game has not completed cache warm-up or enemy initialization.
+
+### Verification and current prefetch/concurrency limit
+
+Native host ASan/UBSan checks compare **all1,854 actual records** with the original
+source-converted sequences. The actual recovered generator00 constructor is
+compiled in the fixture:1,362 generator records preserve RNG count/initialized
+state, retain the correct reference after return, and reproduce later emissions'
+record bytes100 times. Relocation/rebind preserves every record; tagged references
+are rejected after unbind. Unsupported records stay raw. Malformed spans/counts,
+indices/masks and duplicate binding are rejected. Six source PPC preprocessed
+units remain unchanged. Existing cache cancellation/pointer and archive/format
+checks pass; this is not a replacement for in-game effect appearance acceptance.
+
+Refreshed SH-4 fixture in Flycast:
+
+- 75 initial hot misses /952,768 bytes;100 repetitions /7,500 evaluations then
+ **zero additional misses or bytes read**. Hot keys remain nonvictims after pin release.
+- Separate pressure phase:185 cumulative misses/loads,34 evictions,2,743,392 bytes
+ read; peak cached981,440, peak pinned32,416, metadata2,336, worst wait273,518 us.
+ Every relocated key and retained source table pointer is checked across reload.
+- Four original motion/IK poses,34 parts/26 joints: errors0.00000381 root,
+ 0.00000003 angle,0.00036621 world, within existing bounds.
+- All 1,854 effect records x100 produce original byte hashes. No effect heap
+ allocations or post-load I/O. Total checked walk12,006,029 us includes fixture
+ hashing and lookup; worst measured record decode2,553 us includes preemption.
+ O2 fixture timing is not the O1 game's effect/frame budget or hardware timing.
+
+The source-derived prefetch/concurrency audit remains beside both runs.75 hot
+clips/952,768 plus55,168 cold reserve is a **diagnostic incomplete** profile, not
+an inference from one replay or only simultaneously executing functions. Indirect
+R1/event selections, Work aliases and complete instance/blend/shape/camera overlap
+still require closure. Do not shrink this set, auto-evict on release, or promote
+this candidate to claim complete encounter memory fit.
+
+### Reproduction and evidence
+
+Private producer output `/root/probe/d328-effects`; mirror `/root/probe/d328-mirror`;
+unchanged fixtures `/root/probe/d327-fixtures`; game disc `/root/probe/d328-disc`.
+Use existing `prepare_enemy_motions.py --compact-effects --textures <existing-tex>`
+with the existing `--hot-audit` and explicit diagnostic-incomplete flag. All145 key
+files/hot labels and37 texture identities match D327. Full reference/previous
+compact representations remain selectable. No asset defaults are promoted.
+
+Build flags remain `CORE_RESIDENT_BYTES=1501312 PLAYER_RESIDENT_BYTES=846656
+WEAPON_RESIDENT_BYTES=247776`. Native fixture `/root/probe/d328-cache-sh4` uses
+existing `Makefile.residency`, `/root/probe/d325-real`, source model440/motion1 and
+`/root/probe/d328-cache-data`, including source-derived `effects-checks.bin`.
+The fixture's log-only mem.cpp compilation now supplies the newly required
+player/weapon reservation macros; it does not claim source-heap fit.
+
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d328-resident-effects` and
+`d328b-residency-fixture`: validated manifests, exact executables/discs/assets,
+source/dirty snapshots, compiler/KOS/Flycast/config/capture identities, checks and
+counters. Corrected title framebuffer was inspected; no blue capture accepted.
+Game ELF SHA256 `1c478a2be42a73ded78ec657bcb69254c7b86cb5492de25701591a45403326d1`;
+disc `0855447c8ce3a69b3d66b948766e0fce6c8501d1c98f773f830b009924899090`.
+SH GCC15.2.0, KOS`804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`;
+text/data/BSS2,281,340/75,620/672,856. No emulator or Blender run overlapped.
+The first private comparison used pre-compaction offsets against a post-texture
+reference; it failed before acceptance and was corrected to match EST identity.
+No source/candidate record bytes were changed to make the comparison pass.
+
+Keep this measured candidate and continue remaining allocation-backed recovery
+and complete source working-set closure alongside the existing 3D adapter.
+Source hold, complete actor/effect rendering, required audio/events, manual combat,
+transitions/retry and physical hardware remain open. A resource fixture or a
+loaded archive does not establish those outcomes.

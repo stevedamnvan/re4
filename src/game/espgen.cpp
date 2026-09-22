@@ -9,6 +9,9 @@
 #include "light.h"
 #include "global.h"
 #include "esp.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_effect_source.h"
+#endif
 #include "espgen.h"
 #include "main_mem.h"
 #include "eprintf.h"
@@ -575,7 +578,13 @@ int EspgenSetFreeWork(EspgenWork* w, EspGenWork* rec, EspSeqData* head, cModel* 
 int EspgenSeqSet(EspSeqData* head, int no, EspInfo* info, cModel* model, u16 parts, Mtx* mtx, Vec* pos, Vec* rot,
                  EspSeqOpt* pSct, int flag)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    EspGenWork scratch;
+    EspGenWork* reference = re4dc_effect_ref(head, no);
+    EspGenWork* rec = re4dc_effect_read(reference, scratch);
+#else
     EspGenWork* rec = &head->rec[no];
+#endif
     EspgenWork* w;
     u32 max = GetEspgenIdMax();
 
@@ -590,6 +599,9 @@ int EspgenSeqSet(EspSeqData* head, int no, EspInfo* info, cModel* model, u16 par
     if (PullEspEspgen(&w, info->Core_flg, info->Core_kind, info->b.x7, info->Core_pEm, info->owner, 0)) {
         w->id = rec->Espgen_id;
         w->Type = rec->Espgen_type;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        rec = reference; // Only generator 00 is packed; its constructor preserves this reference.
+#endif
         if (!EspgenSetFreeWork(w, rec, head, model, parts, mtx, pos, rot, pSct, flag)) {
             PushEspgen(w);
             return 0;

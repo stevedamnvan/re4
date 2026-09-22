@@ -13,56 +13,64 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D327 enemy body loads; hot-key prefetch needs memory
+## Current resumption point - D328 resident effects; hot set still does not fit
 
-D327 recovers **511,200 actual source-heap bytes** by loading qualified compact
-pl00/wep02 texture backing directly into smaller selectable fixed reservations.
-The source menu remains visible and the required block pool still allocates,
-now leaving **1,477,696 bytes**. The **1,426,304-byte enemy body now loads**,
-including the source sound-container dispatch, and its 37 texture identities bind.
-A demonstrated native DVD/ISR filesystem-lock deadlock is fixed by deferring
-background-task suspension during bounded I/O scopes; KOS preemption stays active.
+D328 recovers another **321,152 actual source-heap bytes** with selectable,
+lossless resident enemy effect records. All 161 sequences / 1,854 records remain;
+1,846 records use zero-word elision, eight retain their original representation.
+Source headers/IDs, timing/RNG and retained repeating-generator references survive.
+The enemy body loads directly at **1,105,152 bytes**, leaving **362,176 free**.
+The source menu, sound-container dispatch, 37 texture identities and required
+1,126,272-byte block pool remain intact; no hold/gameplay bypass was added.
 
-The next exact failure is **hot motion-key prefetch allocation**: 16,608 payload
-bytes (16,640 requested including owner header) with 16,096 free. One key loaded;
-full warm-up did not complete. Keep hot keys cached and keep the source-derived
-prefetch/concurrency audit: the existing 75-clip profile is still incomplete.
-The selected cache capacity/metadata/allocator budget needs at least **983,264
-additional bytes** after the enemy body, before later actor/event/audio costs.
-D324 remains the accepted integration reference; D325-D327 remain selectable
-candidates. No complete enemy rendering, room gameplay, audio or retry is accepted.
-See [D327](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d327-playerweapon-backing-and-native-read-lifetime).
+The next failure is still required hot-key prefetch: **29 keys / 356,416 bytes**
+load, then a 9,664-byte payload fails with 544 bytes free. The selected cache,
+metadata and conservative allocator budget still needs **662,112 more bytes**,
+before later actor/event/audio costs or additional source-required hot clips.
+The 75-clip source prefetch/concurrency audit remains incomplete; keep it visible
+and do not shrink the set or evict on evaluation release to force a pass.
+The refreshed SH-4 fixture verifies 7,500 warm evaluations with **zero additional
+misses or reads**, plus relocated-key/retained-pointer/pose checks under pressure.
+D324 remains the accepted integration reference; D325-D328 are selectable
+residency candidates. Full enemy initialization, visible effects/complete 3D,
+manual room gameplay, audio, retry and physical hardware remain open.
+See [D328](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d328-resident-effect-records-and-retained-generator-references).
 
-Evidence: `C:/Flycast-Evidence/re4-dreamcast/d327c-io-guard`, validated manifest,
-exact ELF/disc/fixtures, corrected source-menu capture, RAM snapshots and cache
-counters. First stalled candidates are preserved at `d327-player-weapon` and
-`d327b-enemy-read`; do not repeat their now-resolved filesystem-lock investigation.
-Actual source heap 9,987,168. Enemy body leaves 41,024; cache metadata consumes
-2,432 including overhead, first key 22,496. Next request fails at 16,096 free.
-Normal-game cache so far: 2 misses, 1 load, 22,400 bytes read/cache peak, 0 pins,
-210,892 us worst successful wait. This halted prefetch is not a warm working set.
-Separate D325 SH-4 warm fixture still proves 100 repetitions/7,500 evaluations
-with zero extra misses/bytes, peak cache 981,440/pins 32,416, worst wait 273,519 us.
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d328-resident-effects` (normal-game
+loading, corrected menu capture, exact ELF/disc/assets, RAM, source heap/counters)
+and `d328b-residency-fixture` (separate SH-4 effect/motion resource qualification).
+Game cache:30 misses,29 successful loads,0 evictions/pins,356,416 cached/read bytes,
+210,286 us worst successful wait. Warm-up did not complete in the game. The fixture
+reaches warm/pressure tests: peak cached981,440, peak pinned32,416, cumulative
+pressure185 misses/2,743,392 read bytes, worst wait273,518 us.100 repetitions of
+all1,854 effect records are bit-exact with no post-load I/O. O2 fixture timings
+are not the O1 live-game frame budget, and neither is physical hardware evidence.
 
-Private inputs `/root/probe/d327-pl00`, `/root/probe/d327-wep02`, unchanged
-`/root/probe/d326-combined`; mirror `/root/probe/d327-mirror`, fixtures
-`/root/probe/d327-fixtures`, final disc `/root/probe/d327c-disc`.
+Private inputs `/root/probe/d328-effects`, existing `/root/probe/d327-pl00` and
+`d327-wep02`; mirror `/root/probe/d328-mirror`, unchanged fixtures
+`/root/probe/d327-fixtures`, game disc `/root/probe/d328-disc`.
 Build `CORE_RESIDENT_BYTES=1501312 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776`.
-Defaults retain full reservations. Source prefetch audit remains
-`/root/probe/d325-prefetch-final.json`; 75 hot clips/952,768 bytes and two-largest
-cold reserve 55,168 are diagnostic, not complete encounter closure. Do not evict
-on evaluation release or reduce this set to force a fit. Continue source repeated-use,
-immediate-response, Work/event aliases and concurrency closure alongside the
-remaining allocation-backed lifetime recovery and existing source 3D connection.
-Required effect/audio/hold/presentation/retry gates remain visible.
+For effects use existing `prepare_enemy_motions.py --compact-effects`, retaining
+its texture selection and diagnostic hot-audit flags. Original producer defaults
+and D327 output remain selectable. Effects use the existing qualified converter,
+archive offset compactor and DVD loader; the native adapter borrows one ESQ index.
+No additional full archive, decoded bank, I/O cache or renderer was introduced.
 
-D327 extends the existing producer/NTR identity/shared upload/storage mechanisms;
-no new renderer or cache. Player/weapon identity views persist across room retire
-when their source owner persists, and clear on explicit source release/overwrite.
-All 33 real new texture descriptors pass native host relocation/upload/retire/reload
-checks; this does not claim visible actor or simultaneous target VRAM acceptance.
-PowerPC source tokens unchanged. Keep inherited dirty work; os.cpp has unrelated
-pre-existing changes, and only the new native-I/O guard hunks belong to D327.
+Source key audit `/root/probe/d325-prefetch-final.json` remains required:75 hot
+clips/952,768 bytes plus two-largest cold reserve55,168 are diagnostic. Close
+repeated-use/immediate-response, indirect R1/event/Work aliases and full instance,
+blend/shape/camera concurrency alongside the remaining resource recovery and
+source3D connection. Do not replace this with one replay's simultaneous calls.
+Required enemy/effect/audio/hold/presentation/retry gates remain visible.
+
+D327's 511,200-byte player/weapon recovery and bounded native DVD/ISR I/O fix
+remain in force; do not reopen the resolved lock stall without a new reproduction.
+Effect references retain the original source archive lifetime: Espgen00 stores
+an opaque archive reference, and EspSeqSet reconstructs it when emitted later.
+Unqualified generators, pointer-retaining sprite0x0e, other owners and debug
+editor writes remain ordinary; this is not a generic effect-file replacement.
+Do not expand families without their consumer/mutation audit. Preserve inherited
+dirty files and private generated data. The source PPC path is unchanged.
 
 The later-FPS Blender skill is installed at
 `C:/Users/lambd/.codex/skills/re4-blender-model-optimization/SKILL.md`; invoke

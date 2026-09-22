@@ -12,26 +12,29 @@ pl00/wep02 also support textures-only preparation, retaining every motion.
 from pathlib import Path
 import argparse, hashlib, json, struct, tempfile, zlib
 import le_mirror as mirror
+import compact_effect_records as effects
 from prepare_native_ui import compact_spans, select_upload_only, native_identity_index
 
 MAGIC=b'R4MOTBL\0'
 STRIDE=20
 MAX_CLIP=32768
 
-def prepare(source, destination, hot_slots=(), textures=None, keep_motion_resident=False):
+def prepare(source, destination, hot_slots=(), textures=None, keep_motion_resident=False, compact_effects=False):
     source,destination=map(Path,(source,destination))
     name=source.name.lower();file='em/'+name
     if name not in ('em12.drs','pl00.drs','wep02.drs') or (name!='em12.drs' and not keep_motion_resident):
         raise ValueError('supported contracts: em12 motion/textures; pl00/wep02 textures only')
-    if keep_motion_resident and textures is None:raise ValueError('no selected compaction')
+    if compact_effects and name!='em12.drs':raise ValueError('only em12 effect consumers qualified')
+    if keep_motion_resident and textures is None and not compact_effects:raise ValueError('no selected compaction')
     if destination.exists():raise FileExistsError(destination)
     hot_slots=set(hot_slots)
-    original=source.read_bytes();converted=bytearray(original);refs=[];palettes=[]
-    old=mirror.OFFSET_OBSERVER;old_tpl=mirror.TPL_OBSERVER;start=len(mirror.REPORT)
+    original=source.read_bytes();converted=bytearray(original);refs=[];palettes=[];sequences=[]
+    old=mirror.OFFSET_OBSERVER;old_tpl=mirror.TPL_OBSERVER;old_seq=mirror.SEQUENCE_OBSERVER;start=len(mirror.REPORT)
     mirror.OFFSET_OBSERVER=lambda file,field,base,value:refs.append((field,base,value))
     mirror.TPL_OBSERVER=lambda file,off,data,ctx:palettes.append((off,data,ctx))
+    mirror.SEQUENCE_OBSERVER=lambda file,off,data,ctx:sequences.append((off,data,ctx))
     try:mirror.convert_file(file,converted)
-    finally:mirror.OFFSET_OBSERVER=old;mirror.TPL_OBSERVER=old_tpl
+    finally:mirror.OFFSET_OBSERVER=old;mirror.TPL_OBSERVER=old_tpl;mirror.SEQUENCE_OBSERVER=old_seq
     coverage=mirror.REPORT[start:]
     with tempfile.NamedTemporaryFile(mode='w') as required:
         required.write(file+'\n');required.flush()
@@ -47,7 +50,10 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
     offsets=struct.unpack_from('<%dI'%count,body,16)
     tags=[bytes(body[16+4*count+4*i:20+4*count+4*i]) for i in range(count)]
     first=min(x for x in offsets if x)
-    extra_slots=int(not keep_motion_resident)+int(textures is not None)
+    effect_ranges,effect_entries=effects.prepare_sequences(
+        [(o-base,d,c) for o,d,c in sequences if base<=o<base+boundary],file+':0#0') if compact_effects else ([],[])
+    if compact_effects and not effect_entries:raise ValueError('no eligible effect sequences')
+    extra_slots=int(not keep_motion_resident)+int(textures is not None)+int(bool(effect_entries))
     header_growth=(max(0,16+8*(count+extra_slots)-first)+31)&~31
     texture_ranges=[];selected=[];retained=[]
     if textures is not None:
@@ -98,7 +104,7 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
                         'resident_bytes':resident,'hot':bool(hot_slots.intersection(i+4 for i in slots)),'source_arc_indices':[i+4 for i in slots],'key':key,'crc':crc,'fnv':fnv,
                         'sha256':hashlib.sha256(native).hexdigest(),'classification':'reloadable key data; stable header retained'})
     if not entries and not keep_motion_resident:raise ValueError('no qualified motion payloads')
-    ranges=sorted(ranges+texture_ranges)
+    ranges=sorted(ranges+texture_ranges+effect_ranges)
     local_refs=[(f-base,b-base,v) for f,b,v in refs if base<=f<base+boundary]
     # Existing fmt_drs_body preserves this scalar; it is also an archive-relative
     # boundary and must follow the moved static REL, unlike per-FCV key offsets.
@@ -112,10 +118,14 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
         table+=struct.pack('<5I',e['resident_offset'],e['bytes'],e['crc'],e['fnv'],int(e['hot']))
     table_bytes=((32+len(table)+31)&~31) if entries else 0
     texture_index_bytes=((32+12*len(selected)+31)&~31) if selected else 0
-    final_bytes=len(out)+table_bytes+texture_index_bytes
+    effect_index_bytes=((32+12*len(effect_entries)+31)&~31) if effect_entries else 0
+    final_bytes=len(out)+table_bytes+texture_index_bytes+effect_index_bytes
     tables=bytearray();new_tags=[];new_offsets=[]
+    if effect_entries:
+        new_tags.append(b'ESQ\0');new_offsets.append(new_rel)
+        tables+=effects.identity_index(effect_entries,mapped,final_bytes)
     if selected:
-        new_tags.append(b'NTR\0');new_offsets.append(new_rel)
+        new_tags.append(b'NTR\0');new_offsets.append(new_rel+len(tables))
         tables+=native_identity_index(selected,mapped,len(body),final_bytes)
     if entries:
         new_tags.append(b'MTC\0');new_offsets.append(new_rel+len(tables))
@@ -129,7 +139,7 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
     for off in sorted(set(offsets)):
         if not off:continue
         end=min([o for o in offsets if o>off]+[boundary])
-        if (keep_motion_resident or tags[list(offsets).index(off)]!=b'FCV\0') and not any(off<=a<end for a,b,_ in texture_ranges):
+        if (keep_motion_resident or tags[list(offsets).index(off)]!=b'FCV\0') and not any(off<=a<end for a,b,_ in texture_ranges+effect_ranges):
             assert out[mapped(off):mapped(end)]==body[off:end]
     if rel:assert out[-64:]==body[-64:]
     packaged=mirror.replace_native_payload(converted,out)
@@ -138,6 +148,9 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
             'archive_recovery_bytes':size-len(out),'index_bytes':table_bytes,'header_growth_bytes':header_growth,
             'motion_source_bytes':sum(e['bytes'] for e in entries),'motion_header_bytes':sum(e['resident_bytes'] for e in entries),
             'motions_resident':keep_motion_resident,
+            'effects':{'entries':effect_entries,'index_bytes':effect_index_bytes,
+                'recovery_bytes':sum(b-a-len(v) for a,b,v in effect_ranges)-effect_index_bytes,
+                'policy':'all records resident; exact native word reconstruction, stable retained generator references'},
             'textures':{'selected':selected,'retained':retained,'identity_table_bytes':texture_index_bytes,
                 'removed_payload_bytes':sum(b-a for a,b,_ in texture_ranges),
                 'replacement_record_bytes':32*len(texture_ranges)},
@@ -161,12 +174,13 @@ if __name__=='__main__':
     p.add_argument('--diagnostic-incomplete-prefetch',action='store_true',help='Allow a clearly labelled source-audit diagnostic, never production qualification')
     p.add_argument('--textures',type=Path,help='Existing exact native texture packages; externalize reviewed upload-only enemy texels')
     p.add_argument('--keep-motion-resident',action='store_true',help='Texture-only selection retains every FCV payload; no motion cache')
+    p.add_argument('--compact-effects',action='store_true',help='Selectable lossless resident em12 EST records; original heads and all effect behavior retained')
     a=p.parse_args()
     if not a.keep_motion_resident and not a.hot_audit:p.error('--hot-audit is required for motion residency')
     audit=json.loads(a.hot_audit.read_text()) if a.hot_audit else {}
     if not a.keep_motion_resident and not audit.get('source_complete') and not a.diagnostic_incomplete_prefetch:
         p.error('prefetch/concurrency audit is incomplete; explicit diagnostic selection required')
-    r=prepare(a.source,a.output,audit.get('union',{}).get('source_arc_indices',()),a.textures,a.keep_motion_resident)
+    r=prepare(a.source,a.output,audit.get('union',{}).get('source_arc_indices',()),a.textures,a.keep_motion_resident,a.compact_effects)
     report_path=a.output/'motion-residency-report.json'
     r['prefetch_audit']=audit
     r['runtime_qualified']=False

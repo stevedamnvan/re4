@@ -10,6 +10,9 @@
 #include "global.h"
 #include "math_sub.h"
 #include "esp.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_effect_source.h"
+#endif
 #include "espgen.h"
 #include "obj.h"
 #include "scroll.h"
@@ -1136,7 +1139,13 @@ int EspEstSetSelect(int owner, int id, int no, cEsp** out, int bNoSuspend)
         return 0;
     }
     u32 seed = 0x12345678;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    EspGenWork scratch;
+    EspGenWork* reference = re4dc_effect_ref(head, no);
+    rec = re4dc_effect_read(reference, scratch);
+#else
     rec = &head->rec[no];
+#endif
     type = rec->Kind;
     if (type != 0) {
         if (type == 1) {
@@ -1151,6 +1160,9 @@ int EspEstSetSelect(int owner, int id, int no, cEsp** out, int bNoSuspend)
     if (bNoSuspend == 1) {
         info.Core_flg |= 1;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    rec = reference;
+#endif
     return EspSeqSet(rec, &info, &seed, 0, &m, 0, 0.0f, out, 0, 0) == 1;
 }
 
@@ -1165,6 +1177,10 @@ int EspEstSetSelect(int owner, int id, int no, cEsp** out, int bNoSuspend)
 int EspSeqSet(EspGenWork* rec, EspInfo* info, u32* seed, cModel* model, Mtx* mtx, int flg, f32 f, cEsp** out,
               EspSeqOpt* pSct, Vec* pos)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    EspGenWork scratch;
+    rec = re4dc_effect_read(rec, scratch);
+#endif
     static int bl[6][4] = {
         {1, 4, 5, 0}, {1, 4, 1, 0}, {1, 1, 1, 0}, {1, 2, 1, 0}, {1, 2, 0, 0}, {1, 4, 3, 0},
     };

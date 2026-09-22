@@ -1,32 +1,36 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-D327 recovers **511,200 actual source-heap bytes** by loading qualified compact
-pl00/wep02 texture backing directly into smaller selectable fixed reservations.
-The source menu remains visible and the required block pool still allocates,
-now leaving **1,477,696 bytes**. The **1,426,304-byte enemy body now loads**,
-including the source sound-container dispatch, and its 37 texture identities bind.
-A demonstrated native DVD/ISR filesystem-lock deadlock is fixed by deferring
-background-task suspension during bounded I/O scopes; KOS preemption stays active.
+D328 recovers another **321,152 actual source-heap bytes** with selectable,
+lossless resident enemy effect records. All 161 sequences / 1,854 records remain;
+1,846 records use zero-word elision, eight retain their original representation.
+Source headers/IDs, timing/RNG and retained repeating-generator references survive.
+The enemy body loads directly at **1,105,152 bytes**, leaving **362,176 free**.
+The source menu, sound-container dispatch, 37 texture identities and required
+1,126,272-byte block pool remain intact; no hold/gameplay bypass was added.
 
-The next exact failure is **hot motion-key prefetch allocation**: 16,608 payload
-bytes (16,640 requested including owner header) with 16,096 free. One key loaded;
-full warm-up did not complete. Keep hot keys cached and keep the source-derived
-prefetch/concurrency audit: the existing 75-clip profile is still incomplete.
-The selected cache capacity/metadata/allocator budget needs at least **983,264
-additional bytes** after the enemy body, before later actor/event/audio costs.
-D324 remains the accepted integration reference; D325-D327 remain selectable
-candidates. No complete enemy rendering, room gameplay, audio or retry is accepted.
-See [D327](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d327-playerweapon-backing-and-native-read-lifetime).
+The next failure is still required hot-key prefetch: **29 keys / 356,416 bytes**
+load, then a 9,664-byte payload fails with 544 bytes free. The selected cache,
+metadata and conservative allocator budget still needs **662,112 more bytes**,
+before later actor/event/audio costs or additional source-required hot clips.
+The 75-clip source prefetch/concurrency audit remains incomplete; keep it visible
+and do not shrink the set or evict on evaluation release to force a pass.
+The refreshed SH-4 fixture verifies 7,500 warm evaluations with **zero additional
+misses or reads**, plus relocated-key/retained-pointer/pose checks under pressure.
+D324 remains the accepted integration reference; D325-D328 are selectable
+residency candidates. Full enemy initialization, visible effects/complete 3D,
+manual room gameplay, audio, retry and physical hardware remain open.
+See [D328](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d328-resident-effect-records-and-retained-generator-references).
 
-Updated 2026-09-21; accepted integration reference D324; experiment D327. Historical budgets below
+
+Updated 2026-09-21; accepted integration reference D324; experiment D328. Historical budgets below
 retain their named checkpoints. This supports PLAYABLE_PATH and REALTIME_PATH;
 it is not a competing prerequisite roadmap.
 
 ### Where the remaining memory can come from
 
-D327 loads the enemy body, leaving 41,024 bytes before cache preparation.
+D328 loads the enemy body, leaving 362,176 bytes before cache preparation.
 The 1,007,936-byte diagnostic capacity plus 2,336 metadata and conservative
-14,016 allocator bytes leaves a 983,264-byte deficit. That includes the observed
+14,016 allocator bytes leaves a 662,112-byte deficit. That includes the observed
 body allocation overhead; future actor/event/audio, retry and additional required
 hot/concurrent clips need more. There is no verified complete-fit budget yet.
 Do not count already recovered room/core/static-REL/primitive/player/weapon bytes
@@ -36,6 +40,7 @@ again or shrink the immediate-response set to make a diagnostic pass.
 |---|---:|---|
 | em12 FCV bank (153 source entries) | 1,823,552 | D325 externalizes145 entries /1,702,176 unique transport bytes, retaining headers/events. Main body drops1,670,272, but provisional hot+reserve costs1,007,936 plus metadata/allocator costs: roughly645,984 net at conservative capacity bound.75-clip profile incomplete; full-bank prefetch costs more than reference. Close source repeated-use/response/concurrency set before promotion; no tiny cache assumption. |
 | em12 selected nonpalette/nonmip texture backing | 482,816 | D326 removes these payloads directly, retaining1,184 token bytes and480 index bytes. Combined body request drops481,152; texture-only drops481,120 including extra header growth. Embedded EFM6,144 bytes stay resident.36 native packages total1,869,824 VRAM payload bytes if all resident; no simultaneous-world fit or visual acceptance claimed. This saving is already included above. |
+| em12 EST records and sequence alignment | 566,304 original | D328 replaces these with 243,168 resident packed/raw bytes and a 1,984-byte borrowed index: net321,152 actual source-heap recovery. All records remain. New binding/statics cost96 BSS bytes; one300-byte local decode scratch, up to four nested. No effect I/O/cache; in-game effect appearance/lifecycle remains unqualified. This saving is already included above. |
 | Remaining r100 base-level source texels | 968,736 | Existing D313 inventory1,830,048 minus D320 removed861,312; not a fresh inventory or all safe-to-remove bytes. Primarily pending mip/palette/unreviewed families. Preserve actual mip/filter/alpha/CPU semantics and native compact VRAM representation; shared cache has finite capacity. |
 | pl00/wep02 fixed-reservation slack | 295,648 | Recovered in D327 for this selectable source fixture. Fixed-region pre-transfer guard rejects oversized alternate assets and later parts. Other costumes/weapons are not qualified by this budget. |
 | pl00/wep02 source base textures | 247,808 original | D327 externalizes 209,920 + 7,168 texel bytes, retaining identity metadata: net backing reduction 215,552. Weapon mip texels 30,720 remain. Together with fixed slack this yields 511,200 actual heap bytes, already counted above. Native shared-VRAM and visible actor qualification remain required. |

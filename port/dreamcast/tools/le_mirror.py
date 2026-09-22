@@ -62,6 +62,7 @@ NESTED = 4
 TPL_OBSERVER = None
 # Optional prepared-resource relocation observer: field, relative base, value.
 OFFSET_OBSERVER = None
+SEQUENCE_OBSERVER = None  # qualified EST/SST records, before optional native compaction
 
 
 class Swapper:
@@ -865,6 +866,8 @@ def fmt_sequence(sw, off, size, ctx):
         sw.f32s(p + 216, 9)
         sw.u16s(p + 272, 4)
         sw.f32s(p + 280, 3)
+    if SEQUENCE_OBSERVER is not None:
+        SEQUENCE_OBSERVER(sw.label, off, bytes(sw.data[off:off + size]), ctx)
     return raw
 
 

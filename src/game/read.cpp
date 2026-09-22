@@ -1,5 +1,6 @@
 #if defined(RE4DC_GAME) && !defined(__PPC__)
 #include "native_motion.h"
+#include "native_effect.h"
 #endif
 #if defined(RE4DC_GAME) && !defined(__PPC__)
 #include "native_ui.h"
@@ -334,6 +335,7 @@ void InitModule(ReadModule* m)
         DLL_Unlink(m->pModule);
     }
 #if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_effect_unbind(m->pArc);
     re4dc_ui_unbind_enemy(m->pArc);
 #endif
     if (m->pArc != NULL && (m->flag & 4)) {
@@ -540,6 +542,10 @@ int readEmData(ReadModule* m, int id, void* addr, u32 size)
 #if defined(RE4DC_GAME) && !defined(__PPC__)
     if (!re4dc_ui_bind_enemy(pArc, len)) {
         re4dc_missing("invalid prepared enemy texture identities");
+        return 0;
+    }
+    if (!re4dc_effect_bind(pArc, len)) {
+        re4dc_missing("invalid prepared enemy effect records");
         return 0;
     }
     if (!re4dc_motion_bind(pArc, len)) {

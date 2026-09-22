@@ -8,6 +8,9 @@
 #include "light.h"
 #include "global.h"
 #include "esp.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_effect_source.h"
+#endif
 #include "espgen.h"
 #include "math_sub.h"
 #include "main_sub.h"
@@ -216,7 +219,11 @@ cEsp* SetEstTbl(EspgenWork* w, EspSeqData* head, int no)
     Mtx m;
     cEsp* esp;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    rec = re4dc_effect_ref(head, no);
+#else
     rec = &rec[no];
+#endif
     PSMTXIdentity(m);
     EspSeqSet(rec, &w->info, &p->Rand_seed, p->pMod, &m, 0, 0.0f, &esp, NULL, NULL);
     return esp;

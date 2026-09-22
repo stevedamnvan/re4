@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "native_motion.h"
+#include "native_effect.h"
 #include "re4dc_platform.h"
 #include "re4_host_stub.h"
 #include "real_motion_checks.hpp"
@@ -43,6 +44,35 @@ void after_evaluation(void* object) {
     model->Motion=saved;
     for(auto i:cold)evaluate(i); // deliberate pressure, NOT the warm working-set test
 }
+// Optional compact effects use this same resource fixture, not a second game.
+// Expected FNVs are emitted from the unchanged source sequences, not candidate
+// records. Target decode timing is diagnostic and does not include effect draw.
+void check_effects(re4dc::storage::Arena& arena,unsigned bytes) {
+    unsigned index=0,n=word(archive);
+    for(unsigned i=0;i<n;++i)if(!std::memcmp(archive+16+4*n+4*i,"ESQ",4))index=word(archive+16+4*i);
+    if(!index)return;
+    require(re4dc_effect_bind(archive,bytes),"fixture effect bind");
+    const auto mark=arena.mark();
+    auto expected=re4dc::storage::read_file(arena,"/cd/effects-checks.bin");
+    require(!expected.error && expected.size>=4,"fixture effect expectations");
+    unsigned count=word(expected.data);require(expected.size==4+12*count && count==word(archive+index+12),"fixture effect count");
+    unsigned reads=0;const auto begin=timer_us_gettime64();
+    for(unsigned repeat=0;repeat<100;++repeat)for(unsigned i=0;i<count;++i) {
+        const auto* e=expected.data+4+12*i;auto* head=archive+word(e);unsigned n=word(e+4),hash=2166136261U;
+        for(unsigned b=0;b<48;++b)hash=(hash^head[b])*16777619U;
+        for(unsigned j=0;j<n;++j) {
+            alignas(4) unsigned char scratch[300];
+            void* retained=re4dc_effect_record_ref(head,j);
+            auto* record=static_cast<unsigned char*>(re4dc_effect_record_read(retained,scratch));
+            for(unsigned b=0;b<300;++b)hash=(hash^record[b])*16777619U;
+            ++reads;
+        }
+        require(hash==word(e+8),"fixture effect source byte mismatch");
+    }
+    const auto elapsed=timer_us_gettime64()-begin;Re4dcEffectStats stats{};re4dc_effect_get_stats(&stats);
+    re4dc_log("effect-fixture PASS: records=%u repeats=100 total_us=%llu decode_worst_us=%llu allocations=0 io_bytes_after_load=0\n",reads,elapsed,stats.worst_decode_us);
+    re4dc_effect_unbind(archive);arena.rewind(mark);
+}
 void report(const char* phase) {
     Re4dcMotionStats s{};re4dc_motion_get_stats(&s);
     re4dc_log("motion-fixture %s: hits=%u misses=%u loads=%u evictions=%u bytes=%llu worst_us=%llu\n",
@@ -68,6 +98,7 @@ int main() {
     require(!loaded.error,"fixture archive read");archive=const_cast<unsigned char*>(loaded.data);
     const unsigned n=word(archive),offset=word(archive+16+4*(n-1));
     records=archive+offset+32;count=word(archive+offset+12);
+    check_effects(arena,loaded.size);
     require(re4dc_motion_bind(archive,loaded.size),"fixture bind");report("prefetch");
     unsigned found=0;
     for(unsigned i=0;i<count;++i)if(!word(records+20*i+16)) {
