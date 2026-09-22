@@ -29,6 +29,11 @@ void DCFlushRange(void* addr, u32 nBytes);
 void TaskSleep(int frames);   // game/scheduler.cpp
 void* GetDataExt(void* arc, const char* tag, int no);   // game/read.cpp
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+extern "C" void re4dc_model_bind_draw_owner(const void*,void*,unsigned,unsigned);
+extern "C" void re4dc_model_unbind_draw_owner(const void*);
+#endif
+
 cBlock Block;
 
 // Bit `no` of a block set (bit 31 - n of the word).
@@ -567,6 +572,9 @@ int cBlockUnit::checkBlockLoadToMram()
         Block.stopFlagSet = 1;
         break;
     case 2:
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        re4dc_model_bind_draw_owner(this,pData->m_addr,pData->m_size,1);
+#endif
         BlockCreate(no, (cSmd*) GetDataExt(pData->m_addr, "SMD", 0));
         setTrans(1);
         state = BLOCK_CREATE;
@@ -592,6 +600,9 @@ int cBlockUnit::checkBlockLoadToAramSet()
     case 0:
         ret = 1;
     case 2:
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        re4dc_model_unbind_draw_owner(this);
+#endif
         pData->setCommand(CMND_ARAM_LOAD, 0, arg);
     case 6:
         state = BLOCK_ARAM_LOAD;
@@ -634,6 +645,9 @@ int cBlockUnit::checkBlockDelete()
     case 0:
     case 2:
     case 4:
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        re4dc_model_unbind_draw_owner(this);
+#endif
         pData->setClear();
         state = BLOCK_NO_DATA;
     case 3:
@@ -663,12 +677,18 @@ void cBlockUnit::moveBlockData(void* dst)
 {
     int ofs;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_model_unbind_draw_owner(this);
+#endif
     memcpy(dst, pData->m_addr, pData->m_size);
     ofs = (int) dst - (int) pData->m_addr;
     pData->m_addr = dst;
     DCFlushRange(dst, pData->m_size);
     recalcModelAddr(ofs);
     ((cSmd*) GetDataExt(dst, "SMD", 0))->slide(ofs);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_model_bind_draw_owner(this,pData->m_addr,pData->m_size,1);
+#endif
 }
 
 // The unit of block `no`; NULL out of range.

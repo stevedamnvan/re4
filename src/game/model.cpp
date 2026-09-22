@@ -16,6 +16,9 @@
 #include "scheduler.h"
 #include "math_sub.h"
 #include "tpl.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+extern "C" void re4dc_model_assets_changed();
+#endif
 
 // Model / parts / model info (cModel, cParts, cModelInfo) and their pools (PartsMgr, ModInfoMgr).
 
@@ -1425,6 +1428,9 @@ cModelInfo* cModInfoMgr::create(void* bin, void* tpl)
             info->be_flag |= 2;
         }
         getBoundingBox(info->pData, &info->bound);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        re4dc_model_assets_changed();
+#endif
     }
     return info;
 }

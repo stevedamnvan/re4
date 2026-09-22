@@ -24,6 +24,61 @@ def image_identity(image):
     return '%08x-%08x'%(zlib.crc32(payload)&0xffffffff,fnv),payload
 
 
+
+def material_pair_identity(color_key, mask_key):
+    import re
+    if not all(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{8}', k) for k in (color_key, mask_key)):
+        raise ValueError('invalid source texture identity')
+    words=[int(v,16) for k in (color_key,mask_key) for v in k.split('-')]
+    payload=b'R4MPv001'+struct.pack('<4I',*words)
+    fnv=2166136261
+    for b in payload:fnv=((fnv^b)*16777619)&0xffffffff
+    return '%08x-%08x'%(zlib.crc32(payload)&0xffffffff,fnv)
+
+
+def prepare_model_pairs(source, files, pairs, dest):
+    """Explicit source-selected pairs; private inputs/output, no asset inventory.
+    Equal dimensions and shared UVs are required by the matching native adapter.
+    The caller supplies existing qualified resource files and reviewed pair IDs.
+    """
+    needed={p[k] for p in pairs for k in ('color','mask')}
+    images={};origins={};fingerprints={}
+    def observe(file, offset, data, context):
+        if len(data)>=12 and struct.unpack_from('>II',data)==(TPL_MAGIC,0):return
+        for i,image in enumerate(parse_tpl(data)):
+            key,payload=image_identity(image)
+            if key not in needed:continue
+            digest=hashlib.sha256(payload).hexdigest()
+            if key in fingerprints and fingerprints[key]!=digest:raise ValueError('texture identity collision')
+            fingerprints[key]=digest;images[key]=image
+            origins.setdefault(key,[]).append(dict(file=file,context=context,tpl_offset=offset,image=i,sha256=digest))
+    previous=mirror.TPL_OBSERVER
+    mirror.TPL_OBSERVER=observe
+    try:
+        for file in files:
+            path=source/file
+            if file.endswith('.das') and file.startswith('st'):
+                mirror.prepare_room_archive(file,path.read_bytes())
+            else:mirror.convert_file(file,bytearray(path.read_bytes()))
+    finally:mirror.TPL_OBSERVER=previous
+    missing=needed-images.keys()
+    if missing:raise ValueError('missing requested source images: '+','.join(sorted(missing)))
+    dest.mkdir(parents=True,exist_ok=False);report=[]
+    for pair in pairs:
+        color,mask=images[pair['color']],images[pair['mask']]
+        if (color.width,color.height)!=(mask.width,mask.height):raise ValueError('different mask dimensions')
+        key=material_pair_identity(pair['color'],pair['mask'])
+        blob,meta=build_package([color,mask],[MaterialBinding('source-pair',0,1)],
+            twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True,source_mask_alpha=True)
+        file=dest/(key+'.re4tex')
+        if file.exists() and file.read_bytes()!=blob:raise ValueError('material pair identity collision')
+        file.write_bytes(blob)
+        report.append(dict(color=pair['color'],mask=pair['mask'],key=key,bytes=len(blob),
+            sha256=hashlib.sha256(blob).hexdigest(),native=meta,
+            sources={k:origins[pair[k]] for k in ('color','mask')}))
+    (dest/'material-pairs.json').write_text(json.dumps(report,indent=2)+'\n')
+    return report
+
 def prepare(source, paths, dest):
     # Refuse a stale/mixed destination; a failed build is never promoted over
     # a previous qualified set. The caller packages only after exit status 0.

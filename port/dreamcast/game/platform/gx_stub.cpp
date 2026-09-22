@@ -3,15 +3,22 @@
 // Remaining GX primitives, 3D materials and effects are still unbound; accepting
 // a GX call here is not evidence that its output has been rendered.
 #include <string.h>
+#include <cstdint>
+#include <cmath>
+#include "../../room/source_lighting.hpp"
+#ifndef RE4DC_D349_RENDERER_STACK
+#define RE4DC_D349_RENDERER_STACK 0
+#endif
 
 #include "re4dc_platform.h"
 #include "native_ui.h"
+extern "C" void re4dc_model_finish_source_draws();
 
 typedef signed char s8;
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef signed long s32;
-typedef unsigned long u32;
+typedef std::uint32_t u32;
 typedef float f32;
 
 struct GXColor { u8 r, g, b, a; };
@@ -36,7 +43,20 @@ static u32 g_stat_begin, g_stat_verts;
 // Only the material alpha needed by the source model adapter. Not a TEV VM.
 static unsigned g_model_alpha=255, g_model_alpha_source;
 
+#if RE4DC_D349_RENDERER_STACK
+static re4dc::render::SourceLighting g_lighting;
+static void light_floats(GXLightObj* l,unsigned offset,float a,float b,float c){
+    const float values[]={a,b,c};memcpy(l->w+offset,values,sizeof(values));
+}
+#endif
 extern "C" {
+void re4dc_gx_model_lighting(re4dc::render::SourceLighting* out){
+#if RE4DC_D349_RENDERER_STACK
+    *out=g_lighting;
+#else
+    *out={};
+#endif
+}
 
 void* GXInit(void* base, u32 size) { (void) size; re4dc_ui_init(); re4dc_log("GXInit: native ID UI; 3D remains unbound\n"); return base; }
 void* GXSetCurrentGXThread(void) { return 0; }
@@ -70,7 +90,14 @@ void GXSetPixelFmt(int pix, int z) { (void) pix; (void) z; }
 void GXSetDither(u8 d) { (void) d; }
 void GXDrawDone(void) {}
 void GXPixModeSync(void) {}
-void GXSetDrawSync(u16 token) { (void) token; }
+void GXSetDrawSync(u16 token) {
+#if RE4DC_D349_RENDERER_STACK
+    // Render() emits this before returning to SetPrimBuffPtr / next Trans().
+    // Consume every borrowed pose now, never at the later Render_swap.
+    if(token==0xADEB)re4dc_model_finish_source_draws();
+#endif
+    (void)token;
+}
 void* GXSetDrawSyncCallback(void* cb) { (void) cb; return 0; }
 void GXPeekZ(u16 x, u16 y, u32* z) { (void) x; (void) y; *z = 0xFFFFFF; }
 
@@ -123,7 +150,12 @@ void GXProject(f32 x, f32 y, f32 z, const f32 mtx[3][4], const f32* pm, const f3
 }
 
 void GXLoadPosMtxImm(const f32 mtx[3][4], u32 id) { (void) mtx; (void) id; }
-void GXLoadNrmMtxImm(const f32 mtx[3][4], u32 id) { (void) mtx; (void) id; }
+void GXLoadNrmMtxImm(const f32 mtx[3][4], u32 id) {
+#if RE4DC_D349_RENDERER_STACK
+    if(id==0)memcpy(g_lighting.normal_matrix,mtx,sizeof(g_lighting.normal_matrix));
+#endif
+    (void)mtx;(void)id;
+}
 void GXLoadTexMtxImm(const f32 mtx[][4], u32 id, int type) { (void) mtx; (void) id; (void) type; }
 void GXSetCurrentMtx(u32 id) { (void) id; }
 
@@ -131,11 +163,23 @@ void GXSetNumChans(u8 n) { (void) n; }
 void GXSetChanCtrl(int chan, u8 enable, int amb, int mat, u32 mask, int diff, int attn) {
     // GX_ALPHA0 / GX_COLOR0A0. RGB or channel one changes must not alter it.
     if(chan==2 || chan==4) g_model_alpha_source=enable || (mat!=0 && mat!=1)?2U:unsigned(mat);
+#if RE4DC_D349_RENDERER_STACK
+    if(chan==0 || chan==4){g_lighting.enable=enable;g_lighting.ambient_vertex=amb;
+        g_lighting.material_vertex=mat;g_lighting.mask=mask;g_lighting.diffuse=diff;g_lighting.attenuation=attn;}
+#endif
     (void) amb; (void) mask; (void) diff; (void) attn;
 }
-void GXSetChanAmbColor(int chan, GXColor c) { (void) chan; (void) c; }
+void GXSetChanAmbColor(int chan, GXColor c) {
+#if RE4DC_D349_RENDERER_STACK
+    if(chan==0 || chan==4)memcpy(g_lighting.ambient,&c,4);
+#endif
+    (void)chan;(void)c;
+}
 void GXSetChanMatColor(int chan, GXColor c) {
     if(chan==2 || chan==4)g_model_alpha=c.a;
+#if RE4DC_D349_RENDERER_STACK
+    if(chan==0 || chan==4)memcpy(g_lighting.material,&c,4);
+#endif
 }
 unsigned re4dc_gx_model_alpha() { return g_model_alpha | (g_model_alpha_source<<8); }
 void GXSetNumTexGens(u8 n) { (void) n; }
@@ -146,7 +190,13 @@ void GXSetTevOrder(int stage, int coord, int map, int color) { (void) stage; (vo
 void GXSetTevOp(int id, int mode) { (void) id; (void) mode; }
 void GXSetTevColorIn(int s, int a, int b, int c, int d) { (void) s; (void) a; (void) b; (void) c; (void) d; }
 void GXSetTevAlphaIn(int s, int a, int b, int c, int d) { (void) s; (void) a; (void) b; (void) c; (void) d; }
-void GXSetTevColorOp(int s, int op, int bias, int scale, u8 clamp, int out) { (void) s; (void) op; (void) bias; (void) scale; (void) clamp; (void) out; }
+void GXSetTevColorOp(int s, int op, int bias, int scale, u8 clamp, int out) {
+#if RE4DC_D349_RENDERER_STACK
+    const float scales[]={1,2,4,0.5f};
+    if(out==0 && scale>=0 && scale<4)g_lighting.tev_scale=scales[scale];
+#endif
+    (void)s;(void)op;(void)bias;(void)clamp;
+}
 void GXSetTevAlphaOp(int s, int op, int bias, int scale, u8 clamp, int out) { (void) s; (void) op; (void) bias; (void) scale; (void) clamp; (void) out; }
 void GXSetTevColor(int id, GXColor c) { (void) id; (void) c; }
 void GXSetTevColorS10(int id, GXColorS10 c) { (void) id; (void) c; }
@@ -196,6 +246,45 @@ u32 GXGetTexBufferSize(u16 w, u16 h, u32 fmt, u8 mip, u8 maxlod)
     return ((u32) w * h * bpp + 7) / 8;
 }
 
+#if RE4DC_D349_RENDERER_STACK
+void GXInitLightAttn(GXLightObj* l,f32 a0,f32 a1,f32 a2,f32 k0,f32 k1,f32 k2){
+    light_floats(l,4,a0,a1,a2);light_floats(l,7,k0,k1,k2);
+}
+void GXInitLightAttnK(GXLightObj* l,f32 k0,f32 k1,f32 k2){light_floats(l,7,k0,k1,k2);}
+void GXInitLightSpot(GXLightObj* l,f32 cutoff,int fn){
+    if(cutoff<=0 || cutoff>90)fn=0;
+    const float cr=std::cos(3.1415927f*cutoff/180.f);
+    float a0=1,a1=0,a2=0,d;
+    switch(fn){
+    case 1:a0=-1000*cr;a1=1000;break;
+    case 2:a1=1/(1-cr);a0=-cr*a1;break;
+    case 3:a2=1/(1-cr);a0=0;a1=-cr*a2;break;
+    case 4:d=1/((1-cr)*(1-cr));a0=cr*(cr-2)*d;a1=2*d;a2=-d;break;
+    case 5:d=1/((1-cr)*(1-cr));a2=-4*d;a0=a2*cr;a1=4*(1+cr)*d;break;
+    case 6:d=1/((1-cr)*(1-cr));a0=1-2*cr*cr*d;a1=4*cr*d;a2=-2*d;break;
+    }
+    light_floats(l,4,a0,a1,a2);
+}
+void GXInitLightDistAttn(GXLightObj* l,f32 d,f32 b,int fn){
+    if(d<0 || b<=0 || b>=1)fn=0;
+    float k1=0,k2=0;
+    switch(fn){case 1:k1=(1-b)/(b*d);break;
+    case 2:k1=0.5f*(1-b)/(b*d);k2=0.5f*(1-b)/(b*d*d);break;
+    case 3:k2=(1-b)/(b*d*d);break;}
+    light_floats(l,7,1,k1,k2);
+}
+void GXInitLightPos(GXLightObj* l,f32 x,f32 y,f32 z){light_floats(l,10,x,y,z);}
+void GXInitLightDir(GXLightObj* l,f32 x,f32 y,f32 z){light_floats(l,13,-x,-y,-z);}
+void GXInitLightColor(GXLightObj* l,GXColor c){l->w[3]=(u32(c.r)<<24)|(u32(c.g)<<16)|(u32(c.b)<<8)|c.a;}
+void GXLoadLightObjImm(GXLightObj* l,u32 id){
+    if(!id || (id&(id-1)) || id>128)return;
+    unsigned slot=0;while((1U<<slot)!=id)++slot;
+    auto& out=g_lighting.lights[slot];
+    memcpy(out.a,l->w+4,12);memcpy(out.k,l->w+7,12);
+    memcpy(out.position,l->w+10,12);memcpy(out.direction,l->w+13,12);
+    for(unsigned i=0;i<4;++i)out.color[i]=l->w[3]>>(24-i*8);
+}
+#else
 void GXInitLightAttn(GXLightObj* l, f32 a0, f32 a1, f32 a2, f32 k0, f32 k1, f32 k2) { (void) l; (void) a0; (void) a1; (void) a2; (void) k0; (void) k1; (void) k2; }
 void GXInitLightAttnK(GXLightObj* l, f32 k0, f32 k1, f32 k2) { (void) l; (void) k0; (void) k1; (void) k2; }
 void GXInitLightSpot(GXLightObj* l, f32 cutoff, int fn) { (void) l; (void) cutoff; (void) fn; }
@@ -204,6 +293,8 @@ void GXInitLightPos(GXLightObj* l, f32 x, f32 y, f32 z) { (void) l; (void) x; (v
 void GXInitLightDir(GXLightObj* l, f32 x, f32 y, f32 z) { (void) l; (void) x; (void) y; (void) z; }
 void GXInitLightColor(GXLightObj* l, GXColor c) { (void) l; (void) c; }
 void GXLoadLightObjImm(GXLightObj* l, u32 id) { (void) l; (void) id; }
+
+#endif
 
 void GXDrawTorus(f32 rc, u8 numc, u8 numt) { (void) rc; (void) numc; (void) numt; }
 

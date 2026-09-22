@@ -128,6 +128,10 @@ class NativeUi(unittest.TestCase):
 #include <fstream>
 #include <vector>
 #include <iterator>
+extern "C" void re4dc_model_bind_draw_owner(const void*,void*,unsigned,unsigned){}
+extern "C" void re4dc_model_unbind_draw_owner(const void*){}
+extern "C" void re4dc_prepare_model_assets(){}
+extern "C" void re4dc_model_retire_draw_plans(){}
 unsigned allocs=0,last_alloc=0,raw_bytes=0,raw_calls=0,linear_calls=0;int ta=0,render=0,render_calls=0;
 void* pvr_mem_malloc(std::size_t n){++allocs;last_alloc=n;return malloc((n+31)&~std::size_t(31));}
 void pvr_mem_free(void* p){assert(allocs);--allocs;free(p);}
@@ -144,6 +148,23 @@ std::uint64_t timer_us_gettime64(){return 0;}
 int pvr_wait_ready(){return ta;}
 int pvr_wait_render_done(){++render_calls;return render;}
 int main(int argc,char**argv){
+ // The game's smaller bounce keeps the original final allocation and <64K
+ // unaligned transport policy, including files larger than one bounce.
+ for(unsigned size: {1U,2048U,16383U,16384U,16385U,32769U,65535U,65536U,98305U}){
+   std::vector<unsigned char> original(size),owned(size+32);
+   for(unsigned n=0;n<size;++n)original[n]=(n*13+n/97)&255;
+   const std::string path=std::string(argv[1])+".read";
+   {std::ofstream out(path,std::ios::binary);out.write((const char*)original.data(),size);}
+   re4dc::storage::Arena arena;arena.init(owned.data(),owned.size());
+   read_cap=37;max_read=0;
+   auto result=re4dc::storage::read_file(arena,path.c_str());
+   assert(result.data && result.size==size && !memcmp(result.data,original.data(),size));
+   assert(max_read <= (size<65536 ? 16384U : 65536U));
+   assert(!open_files);
+   arena.reset();fail_reads=true;result=re4dc::storage::read_file(arena,path.c_str());
+   assert(!result.data && arena.used()==0 && !open_files);fail_reads=false;
+   unlink(path.c_str());
+ }
 std::ifstream f(argv[1],std::ios::binary);
 std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(f)),{});
 re4dc::texture::Package p;
@@ -280,7 +301,7 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
             fixture=fixture.replace('int main(',setup+bindings+'int main(',1)
             cpp=root/"fixture.cpp";cpp.write_text(fixture)
             scene=ROOT/"port/dreamcast/room";exe=root/"fixture"
-            subprocess.run(["g++","-std=c++17","-fsanitize=address,undefined","-fno-omit-frame-pointer","-I"+str(root),"-I"+str(scene),str(cpp),
+            subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-fsanitize=address,undefined","-fno-omit-frame-pointer","-I"+str(root),"-I"+str(scene),str(cpp),
                             str(scene/"texture_package.cpp"),str(scene/"gpu_lifecycle.cpp"),str(scene/"room_storage.cpp"),"-o",str(exe)],check=True)
             subprocess.run([str(exe)]+[str(root/name) for name in ("asset","vq","unknown","oversized","palette","identities","stream","bad_crc","small_vq")],check=True)
 
@@ -292,6 +313,7 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
         commit=source[source.index('extern "C" void re4dc_model_packet_commit('):source.index('extern "C" void re4dc_model_result(')]
         fixture=r"""
 #include "native_ui.h"
+#include "native_render_profile.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -345,7 +367,7 @@ int main(){
 """
         with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d);cpp=p/"pin.cpp";cpp.write_text(fixture);exe=p/"pin"
-            subprocess.run(["g++","-std=c++17","-fsanitize=address,undefined","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)
+            subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-fsanitize=address,undefined","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)
             subprocess.run([str(exe)],check=True)
 
     @unittest.skipUnless(shutil.which("g++"), "host compiler required")
@@ -356,7 +378,7 @@ int main(){
         image=TPL.TplImage(8,4,9,bytes(range(32)),0,bytes(range(16)))
         key,_=UI.image_identity(image);crc,fnv=[int(x,16) for x in key.split("-")]
         fixture='#include "native_ui.h"\n#include <cassert>\n'
-        fixture+='struct Key{unsigned crc,fnv;};struct Source{Re4dcUiImage image;Key key;};Source sources[256];unsigned nsource;\n'
+        fixture+='struct Key{unsigned crc,fnv;};struct Source{Re4dcUiImage image;Key key;};constexpr unsigned kSourceCount=128;Source sources[kSourceCount];unsigned nsource;\n'
         fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities,option_identities,player_identities,weapon_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
         fixture+='struct EnemyIdentity {void* archive=nullptr;Identity table;};EnemyIdentity enemy_identities[4];\n'
         fixture+=body
@@ -378,6 +400,9 @@ option_identities.state=0;nsource=0;
 enemy_identities[2].archive=(void*)2;enemy_identities[2].table.state=-1;
 assert(!image_key(image,key) && !nsource); // invalid payload cannot fall back to texel hashing
 enemy_identities[2].table.state=1;assert(image_key(image,key) && nsource==1);
+// Cache pressure may reduce hits, never replace descriptor-owner qualification.
+for(unsigned i=0;i<kSourceCount+8;++i){image.pixels=(void*)(unsigned long)(0x1000+i);assert(image_key(image,key));}
+assert(nsource==kSourceCount);
 }
 """
         with tempfile.TemporaryDirectory() as d:

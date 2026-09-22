@@ -16,6 +16,11 @@ namespace {
 // same hardware and services audio between chunks; that pacing belongs to the
 // asynchronous work, but the bound is worth keeping from the start.
 constexpr std::size_t kReadChunkBytes = 64U * 1024U;
+#ifndef RE4DC_STORAGE_BOUNCE_BYTES
+#define RE4DC_STORAGE_BOUNCE_BYTES 65536
+#endif
+constexpr std::size_t kBounceBytes=RE4DC_STORAGE_BOUNCE_BYTES;
+static_assert(kBounceBytes>=2048 && kBounceBytes<=kReadChunkBytes && kBounceBytes%2048==0);
 
 // A CD sector. Requests stay a whole number of these while there is more than
 // one left, so the ragged end of a file is always its own request.
@@ -23,7 +28,7 @@ constexpr std::size_t kSectorBytes = 2048U;
 
 // Deliberately not 32-byte aligned: that is what steers KOS away from its
 // streaming path. Holds at most one bounded chunk or one small package.
-alignas(32) std::uint8_t g_small_file_bounce[kReadChunkBytes + 32U];
+alignas(32) std::uint8_t g_small_file_bounce[kBounceBytes + 32U];
 bool bounce_busy = false;
 // Reserve before fs_open: that call may yield too. All users share this
 // existing bounce buffer; a competing reader gets the explicit retry result.
@@ -89,7 +94,7 @@ bool read_chunks(file_t file, std::size_t bytes, ChunkConsumer consume, void* co
     bounce_busy = true;
     bool ok = true;
     while(bytes && ok) {
-        const std::size_t chunk = bytes < kReadChunkBytes ? bytes : kReadChunkBytes;
+        const std::size_t chunk = bytes < kBounceBytes ? bytes : kBounceBytes;
         std::size_t done = 0;
         while(done < chunk) {
             const ssize_t got = fs_read(file, small_file_buffer() + done, chunk - done);
@@ -141,7 +146,6 @@ ReadResult read_file(Arena& arena, const char* path) {
     // cache and copied, because the streaming path does not return for it.
     const bool via_bounce = size < kReadChunkBytes;
     if(via_bounce) bounce_busy = true;
-    std::uint8_t* const target = via_bounce ? small_file_buffer() : buffer;
 
     std::size_t done = 0;
     while(done < size) {
@@ -151,8 +155,12 @@ ReadResult read_file(Arena& arena, const char* path) {
         if(want > kSectorBytes && (want % kSectorBytes) != 0) {
             want -= want % kSectorBytes;
         }
-        const ssize_t got = fs_read(handle, target + done, want);
-        if(got < 0) {
+        // Keep the original <64 KiB non-streaming policy. A smaller shared
+        // bounce is copied incrementally into the same final owning allocation.
+        // Large-file direct reads retain the existing 64 KiB policy.
+        if(via_bounce && want>kBounceBytes)want=kBounceBytes;
+        const ssize_t got = fs_read(handle,via_bounce?small_file_buffer():buffer+done,want);
+        if(got < 0 || static_cast<std::size_t>(got)>want) {
             if(via_bounce) bounce_busy = false;
             fs_close(handle);
             arena.rewind(mark);
@@ -168,11 +176,11 @@ ReadResult read_file(Arena& arena, const char* path) {
             result.error = "unexpected end of file";
             return result;
         }
+        if(via_bounce)std::memcpy(buffer+done,small_file_buffer(),static_cast<std::size_t>(got));
         done += static_cast<std::size_t>(got);
     }
     fs_close(handle);
     if(via_bounce) {
-        std::memcpy(buffer, target, size);
         bounce_busy = false;
     }
 

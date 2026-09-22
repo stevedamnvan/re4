@@ -490,6 +490,7 @@ def build_package(
     images: list[TplImage], bindings: list[MaterialBinding],
     max_dimension: int | None = None, twiddle: bool = False,
     pad_to_power_of_two: bool = False, source_intensity_alpha: bool = False,
+    source_mask_alpha: bool = False,
 ) -> tuple[bytes, dict[str, object]]:
     decoded: dict[int, list[tuple[int, int, int, int]]] = {}
     packed: dict[tuple[int, int | None], tuple[int, int, int, int, int, int]] = {}
@@ -523,7 +524,7 @@ def build_package(
                 if (alpha_source.width, alpha_source.height) != (source.width, source.height):
                     raise ValueError(f"material {binding.name!r} alpha dimensions differ")
                 pixels = [
-                    (color[0], color[1], color[2], alpha[0])
+                    (color[0], color[1], color[2], alpha[3] if source_mask_alpha else alpha[0])
                     for color, alpha in zip(pixels, alpha_pixels)
                 ]
                 has_alpha = True

@@ -54,7 +54,7 @@ GAME_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS))
 CENSUS_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(CENSUS_SRCS))
 PLATFORM_OBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(PLATFORM_SRCS))
 SDK_OBJS = $(patsubst platform/sdk/gen/%.c,$(OBJDIR)/sdk/%.o,$(SDK_GEN))
-NATIVE_REUSE_OBJS = $(OBJDIR)/native-reuse/native_draw_plan.o $(OBJDIR)/native-reuse/pvr_geometry.o $(OBJDIR)/native-reuse/gpu_lifecycle.o $(OBJDIR)/native-reuse/texture_package.o $(OBJDIR)/native-reuse/room_storage.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/model_bridge.o $(OBJDIR)/motion_bridge.o $(OBJDIR)/parts_bridge.o
+NATIVE_REUSE_OBJS = $(OBJDIR)/native-reuse/source_lighting.o $(OBJDIR)/native-reuse/native_draw_plan.o $(OBJDIR)/native-reuse/pvr_geometry.o $(OBJDIR)/native-reuse/gpu_lifecycle.o $(OBJDIR)/native-reuse/texture_package.o $(OBJDIR)/native-reuse/room_storage.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/model_bridge.o $(OBJDIR)/model_asset_bridge.o $(OBJDIR)/motion_bridge.o $(OBJDIR)/parts_bridge.o
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1
@@ -144,6 +144,10 @@ $(OBJDIR)/model_bridge.o: model_bridge.cpp
 	@mkdir -p $(dir $@)
 	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@
 
+$(OBJDIR)/model_asset_bridge.o: model_asset_bridge.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@
+
 # Select the full source reference by default. A compact core candidate must
 # match its report; the source DVD queue rejects oversized input before copying.
 CORE_RESIDENT_BYTES ?= 0x234000
@@ -198,9 +202,61 @@ $(OBJDIR)/pvr-stream.h: pvr-stream-force
 $(OBJDIR)/platform/native_ui.o: $(OBJDIR)/pvr-stream.h
 $(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pvr-stream.h
 
+# Both renderer arms retain the full source arena. Reuse a smaller native I/O
+# bounce (same reader, short-read/CRC/unaligned-small-file contracts), reclaiming
+# 48 KiB of redundant staging rather than funding metadata from gameplay RAM.
+$(OBJDIR)/native-reuse/room_storage.o: PLATFORM_CPPFLAGS += -DRE4DC_STORAGE_BOUNCE_BYTES=16384
+
 # Exact source-position reuse, scoped to one native part. 0 is the reference path.
 # Shared room/character strip assembly in recovered source models. Selectable
 # until matched target timing and appearance qualification are complete.
+D349_RENDERER_STACK ?= 0
+ifeq ($(D349_RENDERER_STACK),1)
+override MODEL_ROOM_STRIPS = 1
+override MODEL_DRAW_PLANS = 1
+override MODEL_POSITION_CACHE = 1
+ifneq ($(PVR_STREAM),1)
+$(error D349_RENDERER_STACK requires the existing PVR_STREAM=1 frame owner)
+endif
+endif
+.PHONY: d349-stack-force
+$(OBJDIR)/d349-stack.h: d349-stack-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_D349_RENDERER_STACK %s\n' '$(D349_RENDERER_STACK)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+D349_NATIVE_OBJS = $(OBJDIR)/native-reuse/source_lighting.o $(OBJDIR)/native-reuse/pvr_geometry.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/gx_stub.o
+$(D349_NATIVE_OBJS): $(OBJDIR)/d349-stack.h
+$(D349_NATIVE_OBJS): PLATFORM_CPPFLAGS += -include $(OBJDIR)/d349-stack.h
+$(OBJDIR)/src/game/trans.o: $(OBJDIR)/d349-stack.h
+$(OBJDIR)/src/game/trans.o: GAME_CPPFLAGS += -include $(OBJDIR)/d349-stack.h
+$(OBJDIR)/model_bridge.o $(OBJDIR)/model_asset_bridge.o: $(OBJDIR)/d349-stack.h
+$(OBJDIR)/model_bridge.o $(OBJDIR)/model_asset_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/d349-stack.h
+# Bounded diagnostic attribution; both A/B arms use the same enabled policy.
+NATIVE_RENDER_PROFILE ?= 0
+.PHONY: native-profile-force
+$(OBJDIR)/native-profile.h: native-profile-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_NATIVE_RENDER_PROFILE %s\n' '$(NATIVE_RENDER_PROFILE)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+# Default-off, bounded source-view/reuse audit through the existing RAM log.
+NATIVE_REUSE_AUDIT ?= 0
+.PHONY: native-reuse-audit-force
+$(OBJDIR)/native-reuse-audit.h: native-reuse-audit-force
+	@printf '#define RE4DC_NATIVE_REUSE_AUDIT %s\n' '$(NATIVE_REUSE_AUDIT)' > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_model.o: $(OBJDIR)/native-reuse-audit.h platform/include/native_reuse_audit.hpp
+$(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-reuse-audit.h
+
+$(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o $(OBJDIR)/native-reuse/pvr_geometry.o: $(OBJDIR)/native-profile.h platform/include/native_render_profile.hpp
+$(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o $(OBJDIR)/native-reuse/pvr_geometry.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-profile.h
+# Historical native-only kernel policy; source gameplay retains its current flags.
+ifeq ($(D349_RENDERER_STACK),1)
+$(OBJDIR)/platform/native_model.o $(OBJDIR)/native-reuse/source_lighting.o $(OBJDIR)/native-reuse/pvr_geometry.o: PLATFORM_CPPFLAGS += -O3 -fno-predictive-commoning
+endif
+
 MODEL_ROOM_STRIPS ?= 0
 .PHONY: model-room-strips-force
 $(OBJDIR)/model-room-strips.h: model-room-strips-force
@@ -222,8 +278,8 @@ $(OBJDIR)/model-position.h: model-position-force
 $(OBJDIR)/platform/native_model.o: $(OBJDIR)/model-position.h
 $(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-position.h
 
-# Qualified immutable ModelPart plans. Experimental 16 KiB cache explicitly
-# costs 32 KiB source-arena capacity; keep off pending broader coverage/budget.
+# Compact structural plans share the existing native packet slab. No source
+# heap reservation and no copied display-list corners.
 MODEL_DRAW_PLANS ?= 0
 .PHONY: model-draw-plan-force
 $(OBJDIR)/model-draw-plan.h: model-draw-plan-force
@@ -231,5 +287,5 @@ $(OBJDIR)/model-draw-plan.h: model-draw-plan-force
 	@printf '#define RE4DC_MODEL_DRAW_PLANS %s\n' '$(MODEL_DRAW_PLANS)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
-$(OBJDIR)/platform/mem.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: $(OBJDIR)/model-draw-plan.h
-$(OBJDIR)/platform/mem.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-draw-plan.h
+$(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: $(OBJDIR)/model-draw-plan.h
+$(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-draw-plan.h

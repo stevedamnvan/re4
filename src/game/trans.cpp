@@ -727,7 +727,14 @@ int commonScreenMat(cModel* m)
 // (be_flag bit1) and skins the vertices (paired-single). 0 on an invalid pointer / full buffer.
 int commonScreenMatSub(cModel* m, cModelInfo* info)
 {
+#if defined(__sh__)
+    unsigned dc_stamp=re4dc_model_source_stamp();
+#endif
     calcWeightMat(m);
+#if defined(__sh__)
+    re4dc_model_source_span(0,dc_stamp);
+#endif
+
     for (; info != 0; info = info->pList) {
         ModelData* d = info->pData;
         ModelTexInfo* t = MODEL_TEX(info);
@@ -799,15 +806,24 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
             return 0;
         }
         info->pNrmBuf[pG->vtx_buf_no] = buf;
+#if defined(__sh__)
+        dc_stamp=re4dc_model_source_stamp();
+#endif
         if (d->weight_ext_num > 0xFF) {
             MakeWeightPaletteExt((WeightExt*) d->pWeight, d->weight_ext_num);
         } else {
             MakeWeightPalette((Weight*) d->pWeight, d->weight_palette_num);
         }
+#if defined(__sh__)
+        re4dc_model_source_span(1,dc_stamp);
+#endif
         setupGQR6(((d->shift << 24) | (d->shift << 8)) | 0x00070007);
         src = d->vtxOrig;
         if (info->be_flag & 2) {
             int i;
+#if defined(__sh__)
+            dc_stamp=re4dc_model_source_stamp();
+#endif
             src = info->pPosBuf[pG->vtx_buf_no];
             for (i = 0; i < 5; i++) {
                 if (i == 0) {
@@ -818,16 +834,40 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
                 }
             }
         }
+#if defined(__sh__)
+        if(info->be_flag & 2)re4dc_model_source_span(2,dc_stamp);
+#endif
         nVtx = d->nVtx;
         if (PTR_INVALID(info->pPosBuf[pG->vtx_buf_no]) || PTR_INVALID(src)) {
             pLog->err(0, 0, "ComnScreenMatSub() PTR ERR");
             return 0;
         }
+        // Native model/shadow/mirror adapters consume these arrays on SH-4;
+        // only newly packed PVR commands are transferred to TA. Keep all other
+        // cache/DMA boundaries, including the separate primStart flush, intact.
+#if defined(__sh__)
+        dc_stamp=re4dc_model_source_stamp();
+#endif
         CalcSk1_x(info->pPosBuf[pG->vtx_buf_no], src, nVtx);
+#if defined(__sh__)
+        re4dc_model_source_span(3,dc_stamp);
+        dc_stamp=re4dc_model_source_stamp();
+#endif
+#if !defined(__sh__) || !RE4DC_D349_RENDERER_STACK
         DCStoreRangeNoSync(info->pPosBuf[pG->vtx_buf_no], d->nVtx * 6);
+#if defined(__sh__)
+        re4dc_model_source_span(5,dc_stamp);
+#endif
+#else
+        re4dc_model_skipped_writeback(d->nVtx*6);
+#endif
         setupGQR6(0x32073207);
         nsrc = d->nrmOrig;
         n = d->nNrm;
+#if defined(__sh__)
+        dc_stamp=re4dc_model_source_stamp();
+#endif
+
         if (d->flags & 0x20000000) {
             void* dst = info->pNrmBuf[pG->vtx_buf_no];
             setupGQR6(0x20062006);
@@ -835,7 +875,18 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
         } else {
             CalcSk1_x(info->pNrmBuf[pG->vtx_buf_no], nsrc, n);
         }
+#if defined(__sh__)
+        re4dc_model_source_span(4,dc_stamp);
+        dc_stamp=re4dc_model_source_stamp();
+#endif
+#if !defined(__sh__) || !RE4DC_D349_RENDERER_STACK
         DCStoreRangeNoSync(info->pNrmBuf[pG->vtx_buf_no], d->nNrm * 6);
+#if defined(__sh__)
+        re4dc_model_source_span(5,dc_stamp);
+#endif
+#else
+        re4dc_model_skipped_writeback(d->nNrm*6);
+#endif
     }
     return 1;
 }
@@ -2456,6 +2507,11 @@ static void alphaSetup(cModel* m, ModelPart* part, cModelInfo* info, int thermo)
     }
     map = getTexMap();
     org_LoadTexObj(part->alphaTex, map);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_model_alpha_material(part->alphaTex <= 0xF7 ? &GXWORK()->texObj[part->alphaTex] : 0,
+                              ref == 0xFF ? part->alphaRef : ref,
+                              !(info->flagsDC & 8) && !thermo);
+#endif
     st = TEV_STAGE_ID();
     if ((info->flagsDC & 8) || thermo) {
         coord = getTexCoord();

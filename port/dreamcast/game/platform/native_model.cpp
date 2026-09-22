@@ -1,9 +1,17 @@
 // Narrow ModelData indexed-stream adapter, not a GX display-list interpreter.
 // Only an explicitly enabled base-texture diagnostic currently uses this path.
 #include "native_model.h"
+#include "native_render_profile.hpp"
+#include "native_reuse_audit.hpp"
+#if RE4DC_NATIVE_RENDER_PROFILE && defined(__sh__)
+re4dc::profile::State re4dc::profile::state;
+#endif
 #include "re4dc_platform.h"
 #include "../../room/pvr_geometry.hpp"
 #include "../../room/native_draw_plan.hpp"
+#ifndef RE4DC_D349_RENDERER_STACK
+#define RE4DC_D349_RENDERER_STACK 0
+#endif
 #ifndef RE4DC_MODEL_DRAW_PLANS
 #define RE4DC_MODEL_DRAW_PLANS 0
 #endif
@@ -11,6 +19,11 @@
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
+#include <new>
+#if RE4DC_D349_RENDERER_STACK && defined(__sh__)
+#include <dc/matrix.h>
+#include <dc/matrix3d.h>
+#endif
 #ifndef RE4DC_MODEL_ROOM_STRIPS
 #define RE4DC_MODEL_ROOM_STRIPS 0
 #endif
@@ -19,6 +32,132 @@
 #endif
 namespace {
 Re4dcModelWorkStats work_stats{};
+#if RE4DC_D349_RENDERER_STACK
+// Conservative subset of the historical static-light reuse: exact dependency
+// snapshots, no frozen camera-relative lights or premature partial clamp. Two
+// stable admissions avoid an LRU thrashing across all scenery every frame.
+struct StaticLightContext {
+    const void* part=nullptr;const void* positions=nullptr;const void* normals=nullptr;
+    float modelview[12];re4dc::render::SourceLighting lighting;
+    unsigned generation=0;
+};
+struct StaticLightValue { unsigned generation=0,position=0,normal=0,color=0;float rgb[3]; };
+struct StaticLighting {
+    StaticLightContext contexts[2];StaticLightValue values[192];unsigned generation=0;
+};
+static_assert(sizeof(StaticLighting)<=8192);
+StaticLighting* static_lighting=nullptr;
+StaticLightContext* prepare_room_static_lighting(const Re4dcModelPart& p){
+    if(!p.static_geometry || !p.lighting)return nullptr;
+    if(!static_lighting){unsigned bytes;void* data=re4dc_model_static_lighting_storage(&bytes);
+        if(!data || bytes<sizeof(StaticLighting))return nullptr;
+        static_lighting=new(data) StaticLighting{};}
+    StaticLightContext* slot=nullptr;
+    for(auto& context:static_lighting->contexts){
+        if(context.part==p.part){slot=&context;break;}
+        if(!context.part && !slot)slot=&context;
+    }
+    if(!slot)return nullptr;
+    if(slot->part!=p.part || slot->positions!=p.positions || slot->normals!=p.normals ||
+       std::memcmp(slot->modelview,p.modelview,sizeof(p.modelview)) ||
+       std::memcmp(&slot->lighting,p.lighting,sizeof(slot->lighting))){
+        slot->part=p.part;slot->positions=p.positions;slot->normals=p.normals;
+        std::memcpy(slot->modelview,p.modelview,sizeof(p.modelview));slot->lighting=*p.lighting;
+        slot->generation=++static_lighting->generation;++work_stats.static_light_invalidations;
+    }
+    return slot;
+}
+StaticLightValue* light_room_vertex(StaticLightContext* context,unsigned vi,unsigned ni,unsigned color){
+    if(!context)return nullptr;
+    return &static_lighting->values[(vi*7+ni*17+color+context->generation)%192];
+}
+#endif
+
+#if RE4DC_D349_RENDERER_STACK
+// D349 prepare-once/consume-many slots, adapted to live source identities.
+// Replaces the part-local tables with one bounded model/batch spanning compatible
+// parts and passes. No corner copy, persistent pose, heap charge or fixed lights.
+Re4dcPreparationStats preparation_stats{};
+struct PositionSlot { unsigned serial=0;re4dc::render::ProjectedVertex value; };
+struct NormalSlot { unsigned serial=0;float value[3]; };
+struct ShadeSlot { unsigned serial=0;float rgb[3];unsigned packed; };
+struct PositionState {
+    const void* model=nullptr;const void* info=nullptr;const unsigned char* array=nullptr;
+    unsigned count=0,stride=0,shift=0;float modelview[12]{},projection[7]{},viewport[6]{};
+    bool matches(const Re4dcModelPart& p)const {
+        return model==p.model && info==p.info && array==p.positions && count==p.position_count &&
+          stride==p.position_stride && shift==p.shift && !std::memcmp(modelview,p.modelview,sizeof(modelview)) &&
+          !std::memcmp(projection,p.projection,sizeof(projection)) && !std::memcmp(viewport,p.viewport,sizeof(viewport));
+    }
+    void assign(const Re4dcModelPart& p){model=p.model;info=p.info;array=p.positions;count=p.position_count;stride=p.position_stride;shift=p.shift;
+        std::memcpy(modelview,p.modelview,sizeof(modelview));std::memcpy(projection,p.projection,sizeof(projection));std::memcpy(viewport,p.viewport,sizeof(viewport));}
+};
+struct NormalState {
+    const void* model=nullptr;const void* info=nullptr;const unsigned char* array=nullptr;
+    unsigned count=0,stride=0,shift=0;float matrix[12]{};
+    bool matches(const Re4dcModelPart& p)const {return model==p.model && info==p.info && array==p.normals && count==p.normal_count &&
+        stride==p.normal_stride && shift==p.normal_shift && !std::memcmp(matrix,p.lighting->normal_matrix,sizeof(matrix));}
+    void assign(const Re4dcModelPart& p){model=p.model;info=p.info;array=p.normals;count=p.normal_count;stride=p.normal_stride;shift=p.normal_shift;std::memcpy(matrix,p.lighting->normal_matrix,sizeof(matrix));}
+};
+struct PreparedModelBatch {
+    PositionSlot positions[re4dc::render::kLocalSlots];
+    NormalSlot normals[re4dc::render::kLocalSlots];ShadeSlot shades[re4dc::render::kLocalSlots];
+    unsigned serial=0,position_generation=0,normal_generation=0,shade_generation=0;
+    const re4dc::render::LocalBatch* domain=nullptr;
+    unsigned next(){
+        if(++serial==0){ // once per 2^32 state changes, never per-frame retirement
+            for(auto& s:positions)s.serial=0;for(auto& s:normals)s.serial=0;for(auto& s:shades)s.serial=0;
+            // A wrap may occur between activate()'s three assignments. Keep
+            // every active generation nonzero so cleared slots cannot hit.
+            serial=4;position_generation=1;normal_generation=2;shade_generation=3;domain=nullptr;
+        }
+        return serial;
+    }
+    void activate(const re4dc::render::LocalBatch* selected){
+        if(domain==selected)return;
+        domain=selected;position_generation=next();normal_generation=next();shade_generation=next();
+        ++preparation_stats.position_batches;++preparation_stats.normal_batches;++preparation_stats.shade_batches;
+    }
+    PositionState position;NormalState normal;re4dc::render::PreparedSourceLights lights{};
+    static constexpr unsigned channel_bytes=sizeof(re4dc::render::SourceLighting)-offsetof(re4dc::render::SourceLighting,ambient);
+    unsigned char channels[channel_bytes]{};const void* colors=nullptr;
+    bool position_valid=false,normal_valid=false,lights_valid=false,channels_valid=false;
+    void invalidate(){position_valid=normal_valid=lights_valid=channels_valid=false;domain=nullptr;}
+    void prepare(const Re4dcModelPart& p){
+        ++preparation_stats.parts;bool shade_changed=false;
+        if(!position_valid || !position.matches(p)){
+            position.assign(p);position_valid=true;position_generation=next();shade_changed=true;++preparation_stats.position_states;
+        }else ++preparation_stats.position_state_hits;
+        if(p.lighting){const auto& source=*p.lighting;
+            if(!normal_valid || !normal.matches(p)){
+                normal.assign(p);normal_valid=true;normal_generation=next();shade_changed=true;++preparation_stats.normal_states;
+            }else ++preparation_stats.normal_state_hits;
+            unsigned count=0;bool same=lights_valid;
+            if(source.enable)for(unsigned i=0;i<8;++i)if(source.mask&(1U<<i)){
+                if(count>=lights.count || std::memcmp(&lights.lights[count],&source.lights[i],sizeof(re4dc::render::SourceLight)))same=false;
+                ++count;}
+            same=same && lights.count==count;
+            if(!same){lights=re4dc::render::prepare_actor_lights(source);lights_valid=true;shade_changed=true;++preparation_stats.light_builds;}
+            else ++preparation_stats.light_build_hits;
+            const void* selected_colors=(source.ambient_vertex||source.material_vertex)?p.colors:nullptr;
+            if(!channels_valid || colors!=selected_colors || std::memcmp(channels,source.ambient,channel_bytes)){
+                std::memcpy(channels,source.ambient,channel_bytes);colors=selected_colors;channels_valid=true;shade_changed=true;}
+        }else {normal_valid=channels_valid=false;shade_changed=true;}
+        // Mutable source RGB has no publication serial yet. Conservatively invalidate
+        // it once at the submission boundary, never compare color keys per vertex.
+        if(p.lighting && (p.lighting->ambient_vertex || p.lighting->material_vertex))shade_changed=true;
+        if(shade_changed)shade_generation=next();
+    }
+};
+static_assert(sizeof(PreparedModelBatch)<=12288,"Batch must fit existing packet scratch");
+PreparedModelBatch* prepared_batch=nullptr;
+PreparedModelBatch* acquire_batch(const Re4dcModelPart& p){
+    if(!prepared_batch){unsigned bytes=0;void* memory=re4dc_model_preparation_storage(&bytes);
+        if(!memory || bytes<sizeof(PreparedModelBatch))return nullptr;
+        prepared_batch=new(memory) PreparedModelBatch{};}
+    prepared_batch->prepare(p);return prepared_batch;
+}
+#endif
 unsigned be16(const unsigned char* p){return (unsigned(p[0])<<8)|p[1];}
 short s16(const unsigned char* p){short v;std::memcpy(&v,p,2);return v;}
 unsigned u16(const unsigned char* p){unsigned short v;std::memcpy(&v,p,2);return v;}
@@ -42,7 +181,44 @@ struct Builder {
     const Re4dcModelPart& p; Re4dcModelPacket packet{};
     Projection projection; re4dc::render::ClipParameters clip;
     unsigned used=0,input=0,stride; float scale;
-    unsigned strip_vertices=0,output=0;
+    unsigned strip_vertices=0,output=0,local_position_base=4095;
+    unsigned pending_intact=0,pending_reconstructed=0;
+    void committed_strips(){
+        RE4DC_PROFILE_COUNT(IntactStrips,pending_intact);RE4DC_PROFILE_COUNT(ReconstructedStrips,pending_reconstructed);
+        pending_intact=pending_reconstructed=0;
+    }
+    const re4dc::render::DrawPlanBounds* bounds=nullptr;
+#if RE4DC_D349_RENDERER_STACK
+    re4dc::render::PreparedSourceLights lights{};
+    StaticLightContext* static_context=nullptr;
+    PreparedModelBatch* batch=nullptr;ShadeSlot* prepared_shade=nullptr;
+    const re4dc::render::DrawLocalPlan* locals=nullptr;
+    const re4dc::render::LocalBatch* local_batch=nullptr;
+    unsigned local_position=0,local_normal=0;
+    bool shade_by_normal=false;
+    bool dense_pos=false,dense_normal=false,dense_shade=false;
+    void select_local(const re4dc::render::LocalBatch* selected){
+        local_batch=selected;
+        dense_pos=batch && selected && selected->position_count && selected->position_count<=re4dc::render::kLocalSlots;
+        dense_normal=batch && selected && selected->normal_count && selected->normal_count<=re4dc::render::kLocalSlots;
+        shade_by_normal=selected && selected->shade_mode==re4dc::render::LocalShadeMode::by_normal;
+        dense_shade=selected && ((shade_by_normal && dense_normal) ||
+            (selected->shade_mode==re4dc::render::LocalShadeMode::by_position && dense_pos));
+        if(batch && selected)batch->activate(selected);
+    }
+    struct CachedLight { unsigned position=~0U,normal=0,color=0;float rgb[3]; } shades[64]{};
+#endif
+#if RE4DC_D349_RENDERER_STACK && defined(__sh__)
+    alignas(32) matrix_t position_matrix{};
+    bool matrix_dirty=true;
+    void load_position_matrix(){
+        if(!matrix_dirty)return;
+        for(unsigned row=0;row<3;++row)for(unsigned col=0;col<4;++col)
+            position_matrix[col][row]=p.modelview[4*row+col];
+        position_matrix[0][3]=position_matrix[1][3]=position_matrix[2][3]=0;position_matrix[3][3]=1;
+        mat_load(&position_matrix);matrix_dirty=false;
+    }
+#endif
     bool streaming=false,bound=false,submitted=false,restart_uv=false,resource_failed=false;
 #if RE4DC_MODEL_POSITION_CACHE
     // Part-local, source-indexed reuse. Never weld equal coordinates or retain
@@ -57,6 +233,9 @@ struct Builder {
         if(bound)return true;
         const float u=packet.u_scale,v=packet.v_scale;
         if(!re4dc_model_packet_begin(&p,&packet)){resource_failed=true;return false;}
+#if RE4DC_D349_RENDERER_STACK && defined(__sh__)
+        matrix_dirty=true; // texture/storage binding may yield to another task
+#endif
         bound=true;
         // No chunk has been published at this point. Alternate native layouts
         // must use their true UV scale before clipping, just like the reference.
@@ -65,37 +244,71 @@ struct Builder {
     }
     bool flush(){
         if(!streaming || !bind())return false;
-        re4dc_model_packet_commit(used);submitted=true;
+#if RE4DC_D349_RENDERER_STACK
+        ++preparation_stats.packet_flushes;
+#endif
+        re4dc_model_packet_commit(used);re4dc::reuse_audit::commit(used);committed_strips();submitted=true;
+#if RE4DC_D349_RENDERER_STACK && defined(__sh__)
+        matrix_dirty=true;
+#endif
         used=strip_vertices=0; // same owner, header, texture pin and scratch
         return true;
     }
     const unsigned char* corner_at(const unsigned char* p,unsigned i)const{return p+i*stride;}
-    const re4dc::render::DrawCorner* corner_at(const re4dc::render::DrawCorner* p,unsigned i)const{return p+i;}
     bool vertex(const unsigned char* corner,re4dc::render::RenderVertex& v,float& opacity){
         const unsigned vi=be16(corner),ni=be16(corner+2),ti=be16(corner+stride-2);
         if(vi>=p.position_count || ni>=p.normal_count || !ram(p.uv+ti*4,4))return false;
-        return vertex_indices(vi,ti,(p.flags&0x80000000U)?be16(corner+4):0,v,opacity);
+        return vertex_indices(vi,ni,ti,(p.flags&0x80000000U)?be16(corner+4):0,v,opacity);
     }
-    bool vertex(const re4dc::render::DrawCorner* corner,re4dc::render::RenderVertex& v,float& opacity){
-        // Native plan qualification checked structural ranges; current attribute
-        // bindings are checked once at part entry. No GX-stream read here.
-        return vertex_indices(corner->position,corner->uv,corner->color,v,opacity);
-    }
-    bool vertex_indices(unsigned vi,unsigned ti,unsigned ci,re4dc::render::RenderVertex& v,float& opacity){
+    bool vertex_indices(unsigned vi,unsigned ni,unsigned ti,unsigned ci,re4dc::render::RenderVertex& v,float& opacity){
+        RE4DC_PROFILE_SCOPE(TransformProject);
+        re4dc::reuse_audit::reference(vi,ni,ti,ci);
         v={};++work_stats.position_references;
+#if RE4DC_D349_RENDERER_STACK
+        // Installation inspected every immutable source corner in this span.
+        // walk_plan selects only its legal units (whole strips/fans), including
+        // global ordinals skipped by culling, so direct subtraction stays in
+        // the boundary-qualified range without repeating its checks here.
+        if(dense_pos)local_position=vi-local_batch->position_base;
+        if(dense_normal)local_normal=ni-local_batch->normal_base;
+        prepared_shade=nullptr;
+        if(p.lighting){
+            preparation_stats.normal_dense_references+=dense_normal;
+            preparation_stats.shade_dense_references+=dense_shade;
+        }
+#endif
 #if RE4DC_MODEL_POSITION_CACHE
-        auto& cached=positions[vi&63U];
-        if(cached.key==vi+1U){
-            v.position=cached.value;++work_stats.position_hits;
-        }else
+        unsigned slot=vi&63U;
+#if RE4DC_D349_RENDERER_STACK
+        if(dense_pos)++work_stats.local_position_references;
+        else {++work_stats.general_position_references;
+            if(local_position_base!=4095 && vi>=local_position_base && vi-local_position_base<64)slot=vi-local_position_base;
+        }
+#endif
+        auto& cached=positions[slot];
+#if RE4DC_D349_RENDERER_STACK
+        PositionSlot* shared_position=nullptr;bool shared_hit=false;
+        if(dense_pos){shared_position=&batch->positions[local_position];shared_hit=shared_position->serial==batch->position_generation;}
+        if(dense_pos?shared_hit:cached.key==vi+1U){v.position=dense_pos?shared_position->value:cached.value;++work_stats.position_hits;}else
+#else
+        if(cached.key==vi+1U){v.position=cached.value;++work_stats.position_hits;}else
+#endif
 #endif
         {
             const unsigned char* pos=p.positions+vi*p.position_stride;
             const float a=s16(pos)*scale,b=s16(pos+2)*scale,c=s16(pos+4)*scale;
+#if RE4DC_D349_RENDERER_STACK && defined(__sh__)
+            load_position_matrix();float x=a,y=b,z=c,w=1;
+            // This boundary needs camera-space XYZ, before the source projection.
+            // KOS mat_trans_single replaces Z with reciprocal W; the historical
+            // room uses that only AFTER its combined projection matrix.
+            mat_trans_nodiv(x,y,z,w);
+#else
             const float* m=p.modelview;
             float x=m[0]*a+m[1]*b+m[2]*c+m[3];
             float y=m[4]*a+m[5]*b+m[6]*c+m[7];
             float z=m[8]*a+m[9]*b+m[10]*c+m[11];
+#endif
             ++work_stats.position_transforms;
             if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z))return false;
             v.position.world_x=x;v.position.world_y=y;v.position.world_z=z;v.position.depth=-z;
@@ -103,15 +316,67 @@ struct Builder {
             if(z!=0)project(x,y,z,&projection);
             v.position.x=x;v.position.y=y;v.position.z=z;
 #if RE4DC_MODEL_POSITION_CACHE
-            cached.value=v.position;cached.key=vi+1U;
+#if RE4DC_D349_RENDERER_STACK
+            if(dense_pos){shared_position->value=v.position;shared_position->serial=batch->position_generation;}else
+#endif
+            {cached.value=v.position;cached.key=vi+1U;}
 #endif
         }
+        profile_scope.move(re4dc::profile::PacketPack);
         const auto* uv=p.uv+ti*4;
         float u=(p.flags&0x80000000U)?s16(uv)/256.f:u16(uv)/32768.f;
         float w=(p.flags&0x80000000U)?s16(uv+2)/256.f:u16(uv+2)/32768.f;
         v.u=(u+p.uv_offset[0])*packet.u_scale;v.v=(w+p.uv_offset[1])*packet.v_scale;
-        // Deliberately unlit diagnostic. Source light/material parity is not accepted.
         v.light_red=v.light_green=v.light_blue=1;
+#if RE4DC_D349_RENDERER_STACK
+        if(p.lighting){
+            RE4DC_PROFILE_SCOPE(Lighting);
+            auto& legacy_shade=shades[(vi*7+ni*17+ci)&63U];
+            ShadeSlot* shared_shade=nullptr;bool shared_hit=false;
+            if(dense_shade){shared_shade=&batch->shades[shade_by_normal?local_normal:local_position];shared_hit=shared_shade->serial==batch->shade_generation;}
+            float* rgb=dense_shade?shared_shade->rgb:legacy_shade.rgb;
+            if(dense_shade?!shared_hit:(legacy_shade.position!=vi || legacy_shade.normal!=ni || legacy_shade.color!=ci)){
+                bool normal_hit=false;NormalSlot* shared_normal=nullptr;
+                if(dense_normal){shared_normal=&batch->normals[local_normal];normal_hit=shared_normal->serial==batch->normal_generation;}
+                float nx,ny,nz;
+                if(normal_hit){nx=shared_normal->value[0];ny=shared_normal->value[1];nz=shared_normal->value[2];++preparation_stats.normal_hits;}
+                else {
+                const auto* normal=p.normals+ni*p.normal_stride;
+                const float factor=std::ldexp(1.f,-int(p.normal_shift));
+                float n[3];for(unsigned i=0;i<3;++i)
+                    n[i]=(p.normal_shift==6?float(static_cast<signed char>(normal[i])):float(s16(normal+i*2)))*factor;
+                const auto* m=p.lighting->normal_matrix;
+                nx=m[0]*n[0]+m[1]*n[1]+m[2]*n[2];
+                ny=m[4]*n[0]+m[5]*n[1]+m[6]*n[2];
+                nz=m[8]*n[0]+m[9]*n[1]+m[10]*n[2];
+                ++work_stats.normal_transforms;
+                if(dense_normal){shared_normal->serial=batch->normal_generation;shared_normal->value[0]=nx;shared_normal->value[1]=ny;shared_normal->value[2]=nz;}
+                }
+                const unsigned char white[]={255,255,255,255};
+                const auto* color=(p.lighting->ambient_vertex || p.lighting->material_vertex)?p.colors+ci*4:white;
+                unsigned color_value;std::memcpy(&color_value,color,4);
+                auto* value=light_room_vertex(static_context,vi,ni,color_value);
+                if(value && value->generation==static_context->generation && value->position==vi &&
+                   value->normal==ni && value->color==color_value){
+                    std::memcpy(rgb,value->rgb,3*sizeof(float));++work_stats.static_light_hits;
+                }else {
+                re4dc::reuse_audit::light();
+                re4dc::render::evaluate_prepared_source_lighting(
+                    v.position.world_x,v.position.world_y,v.position.world_z,nx,ny,nz,
+                    *p.lighting,batch?batch->lights:lights,color,rgb);
+
+                work_stats.light_evaluations+=(batch?batch->lights:lights).count;
+                    if(value){value->generation=static_context->generation;value->position=vi;value->normal=ni;
+                        value->color=color_value;std::memcpy(value->rgb,rgb,3*sizeof(float));++work_stats.static_light_misses;}
+                }
+                if(dense_shade){shared_shade->serial=batch->shade_generation;
+                    shared_shade->packed=0; // bit 24 marks a prepared RGB value
+                }else {legacy_shade.position=vi;legacy_shade.normal=ni;legacy_shade.color=ci;}
+            }else ++work_stats.light_hits;
+            v.light_red=rgb[0];v.light_green=rgb[1];v.light_blue=rgb[2];
+            prepared_shade=shared_shade;
+        }
+#endif
         // Source channel alpha is independent of base texture alpha. Vertex
         // source uses its own BE corner identity, never the position cache key.
         const unsigned alpha=(p.alpha_state&256)?p.colors[ci*4+3]:(p.alpha_state&255);
@@ -120,14 +385,19 @@ struct Builder {
     }
     template<class Corner>
     bool triangle(const Corner* a,const Corner* b,const Corner* c){
+        RE4DC_PROFILE_SCOPE(ClipFallback);
         re4dc::render::RenderVertex in[3];float opacity[3];
         if(!vertex(a,in[0],opacity[0])||!vertex(b,in[1],opacity[1])||!vertex(c,in[2],opacity[2]))return false;
         pvr_vertex_t out[6];++input;
+        const auto crossing=[&](const re4dc::render::RenderVertex& v){return v.position.depth<clip.near_distance || v.position.depth>clip.far_distance;};
+        if(crossing(in[0]) || crossing(in[1]) || crossing(in[2]))++work_stats.clipped_triangles;
         unsigned count=re4dc::render::clip_projected_triangle(in,out,p.cull,clip,nullptr,opacity);
+        if(!count)++work_stats.culled_triangles;
         for(unsigned i=0;i<count;++i)if(!append_triangle(out+i*3))return false;
         return true;
     }
     bool append_triangle(const pvr_vertex_t* triangle){
+        RE4DC_PROFILE_SCOPE(PacketPack);
         auto* dst=(pvr_vertex_t*)packet.vertices;
         // PVR alternates strip winding. Match the exact two preceding vertices
         // (including UV/color seams), then retain just the new third vertex.
@@ -165,41 +435,77 @@ struct Builder {
     // or additional allocation. CPU cull/alpha/order remain exactly unchanged.
     template<class Corner>
     int room_strip(const Corner* corners,unsigned count){
+        RE4DC_PROFILE_SCOPE(PacketPack);
         if(count<3)return 0;
+#if RE4DC_D349_RENDERER_STACK
+        // Historical direct path: qualify in the final private packet range,
+        // then publish the original strip. PVR headers own facing/culling.
+        if(count>packet.capacity)return 0;
+        if(count>packet.capacity-used){if(!streaming || !flush())return -1;}
+        auto* prepared=(pvr_vertex_t*)packet.vertices+used;
+#else
         const unsigned worst=3*(count-2);
         if(count+worst>packet.capacity-used)return 0;
         auto* prepared=(pvr_vertex_t*)packet.vertices+packet.capacity-count;
+#endif
+        unsigned outside=15;
         const bool ready=re4dc::render::prepare_direct_strip(
             prepared,count,clip.near_distance,clip.far_distance,
             [&](unsigned local,re4dc::render::DirectStripVertex& out){
                 re4dc::render::RenderVertex v;float opacity;
                 if(!vertex(corner_at(corners,local),v,opacity))return false;
+                outside&=(v.position.x<0?1U:0U)|(v.position.x>clip.width?2U:0U)|
+                         (v.position.y<0?4U:0U)|(v.position.y>clip.height?8U:0U);
+                re4dc::reuse_audit::pack();
                 const unsigned alpha=unsigned(std::clamp(opacity*255.f,0.f,255.f));
+                const auto channel=[](float x){return unsigned(std::clamp(x*255.f,0.f,255.f));};
+                unsigned rgb;
+#if RE4DC_D349_RENDERER_STACK
+                if(prepared_shade && p.lighting){
+                    if(!(prepared_shade->packed&0x1000000U)){
+                        prepared_shade->packed=0x1000000U|(channel(v.light_red)<<16)|(channel(v.light_green)<<8)|channel(v.light_blue);
+                        ++preparation_stats.color_packs;
+                    }
+                    rgb=prepared_shade->packed&0xffffffU;
+                }else
+#endif
+                rgb=(channel(v.light_red)<<16)|(channel(v.light_green)<<8)|channel(v.light_blue);
                 out={v.position.depth,v.position.x,v.position.y,v.position.z,
-                     v.u,v.v,(alpha<<24)|0x00ffffffU,v.offset_color};
+                     v.u,v.v,(alpha<<24)|rgb,v.offset_color};
                 return true;
             });
-        if(!ready){++work_stats.room_strip_fallbacks;return 0;}
+        if(!ready){++work_stats.room_strip_fallbacks;RE4DC_PROFILE_COUNT(StripClipFallbacks,1);return 0;}
         ++work_stats.room_prepared_strips;work_stats.room_prepared_corners+=count;
+#if RE4DC_D349_RENDERER_STACK
+        input+=count-2;
+        if(outside){++work_stats.culled_primitives;work_stats.culled_triangles+=count-2;return 1;}
+        used+=count;output+=count-2;strip_vertices=0;++pending_intact;
+#else
         // The room's direct path delegates culling to its PVR headers. The
         // recovered frame currently uses CPU culling; share its exact reject
         // predicate and preserve ordered surviving strips without changing the
         // frame/material owner or its hardware cull state.
+        const unsigned output_before=output;
         for(unsigned i=2;i<count;++i){
             ++input;
             const auto& a=prepared[i-2+(i&1)];
             const auto& b=prepared[i-1-(i&1)];
             const auto& c=prepared[i];
-            if(!re4dc::render::triangle_visible_xy(a,b,c,p.cull,clip.width,clip.height))continue;
+            if(!re4dc::render::triangle_visible_xy(a,b,c,p.cull,clip.width,clip.height)){++work_stats.culled_triangles;continue;}
             const pvr_vertex_t triangle[3]={a,b,c};
             if(!append_triangle(triangle))return -1;
         }
+        if(output>output_before)++pending_reconstructed;
+#endif
         return 1;
     }
 #endif
     template<class Corner>
     bool primitive(const Corner* v,unsigned n,re4dc::render::DrawTopology kind){
         using re4dc::render::DrawTopology;
+#if RE4DC_D349_RENDERER_STACK && defined(__sh__)
+        matrix_dirty=true; // load once for the compatible primitive run
+#endif
 #if RE4DC_MODEL_ROOM_STRIPS
         if(kind==DrawTopology::strip){
             const int result=room_strip(v,n);
@@ -220,14 +526,47 @@ struct Builder {
         return true;
     }
     bool walk_plan(const re4dc::render::NativeDrawPlan& plan){
-        const auto* corners=plan.corners();
+        RE4DC_PROFILE_SCOPE(Topology);
+        unsigned ordinal=0;
+#if RE4DC_D349_RENDERER_STACK
+        unsigned batch_index=0;
+#endif
         for(unsigned i=0;i<plan.primitive_count;++i){
-            const auto& part=plan.primitives()[i];
-            if(!primitive(corners+part.first_corner,part.corner_count,part.topology))return false;
+            const auto& part=plan.primitives()[i];local_position_base=part.local_base;
+#if RE4DC_D349_RENDERER_STACK
+            if(bounds && i<bounds->primitive_count && !re4dc::render::primitive_visible(bounds->primitives()[i],
+                p.modelview,p.projection,p.viewport,clip.near_distance,clip.far_distance,0)){
+                ++work_stats.culled_primitives;ordinal+=part.repeats()*part.corner_count;continue;
+            }
+#endif
+            for(unsigned repeat=0;repeat<part.repeats();++repeat){
+                const auto* corners=p.stream+part.corner_offset(repeat,stride);
+#if RE4DC_D349_RENDERER_STACK
+                unsigned at=0;
+                while(at<part.corner_count){
+                    const re4dc::render::LocalBatch* selected=nullptr;unsigned limit=ordinal+part.corner_count;
+                    if(locals){
+                        while(batch_index<locals->batches && locals->entries()[batch_index].first_corner+locals->entries()[batch_index].corner_count<=ordinal+at)++batch_index;
+                        if(batch_index<locals->batches){const auto& candidate=locals->entries()[batch_index];
+                            if(ordinal+at>=candidate.first_corner){selected=&candidate;limit=std::min<unsigned>(limit,candidate.first_corner+candidate.corner_count);}
+                            else limit=std::min<unsigned>(limit,candidate.first_corner);
+                        }
+                    }
+                    select_local(selected);
+                    const unsigned count=limit-ordinal-at;
+                    if(!count || !primitive(corners+at*stride,count,part.topology))return false;
+                    at+=count;
+                }
+#else
+                if(!primitive(corners,part.corner_count,part.topology))return false;
+#endif
+                ordinal+=part.corner_count;
+            }
         }
         return true;
     }
     bool walk(bool emit){
+        RE4DC_PROFILE_SCOPE(Topology);
         work_stats.gx_walk_bytes+=p.stream_bytes;
         unsigned offset=0;
         while(offset<p.stream_bytes){
@@ -243,7 +582,7 @@ struct Builder {
                 if(be16(v+i*stride)>=p.position_count || be16(v+i*stride+2)>=p.normal_count ||
                    !ram(p.uv+be16(v+i*stride+stride-2)*4,4))return false;
             }
-            if(p.alpha_state&256) {
+            if((p.alpha_state&256) || (p.lighting && (p.lighting->ambient_vertex || p.lighting->material_vertex))) {
                 for(unsigned i=0;i<n;++i)
                     if(!ram(p.colors+be16(v+i*stride+4)*4,4))return false;
             }
@@ -259,6 +598,7 @@ struct Builder {
 };
 }
 extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
+    RE4DC_PROFILE_SCOPE(ModelSetup);
     if(!re4dc_model_diagnostic_enabled())return;
     if(!p || p->alpha_state>511 || ((p->alpha_state&256) && (!(p->flags&0x80000000U) || !p->colors)) || p->shift>30 || (p->position_stride!=6 && p->position_stride!=8) ||
        !p->position_count || !p->normal_count || p->stream_bytes>1024*1024 ||
@@ -267,10 +607,21 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     Projection projection{p->projection,p->viewport};
     const float near=p->projection[6]/(p->projection[5]-1),far=p->projection[6]/p->projection[5];
     if(!std::isfinite(near)||!std::isfinite(far)||near<=0||far<=near){re4dc_model_result(1,0,0);return;}
+    if(p->cull==3){re4dc_model_result(0,0,0);return;}
     ++work_stats.part_preparations;
     Builder b{*p,{},projection,{near,far,640,480,project,nullptr},0,0,
               (p->flags&0x80000000U)?8U:6U,std::ldexp(1.0f,-int(p->shift))};
     b.clip.context=&b.projection;
+#if RE4DC_D349_RENDERER_STACK
+    if(p->lighting){
+        if((p->normal_shift!=6 && p->normal_shift!=14) ||
+           !ram(p->normals,p->normal_count*p->normal_stride) ||
+           (p->lighting->enable && p->lighting->attenuation!=1 && p->lighting->attenuation!=2) ||
+           ((p->lighting->ambient_vertex || p->lighting->material_vertex) && (!(p->flags&0x80000000U) || !p->colors))){
+            ++work_stats.lighting_rejects;re4dc_model_result(1,0,0);return;
+        }
+    }
+#endif
 
     // Source data remains live throughout this synchronous call. In streaming
     // mode each bounded chunk is consumed once by the existing native owner;
@@ -285,20 +636,35 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     if(invalid){re4dc_model_result(1,0,0);return;}
 #endif
     if(plan){
+#if RE4DC_D349_RENDERER_STACK
+        b.bounds=re4dc_model_acquired_bounds();b.locals=re4dc_model_acquired_locals();
+        if(b.bounds && !re4dc::render::group_visible(b.bounds->group,p->modelview,p->projection,p->viewport,near,far,0)){
+            ++work_stats.culled_groups;re4dc_model_result(0,0,0);return;
+        }
+#endif
         ++work_stats.prepared_parts;
         if(!ram(p->uv,(plan->max_uv+1)*4) ||
-           ((p->alpha_state&256) && !ram(p->colors,(plan->max_color+1)*4))){re4dc_model_result(1,0,0);return;}
+           (((p->alpha_state&256) || (p->lighting && (p->lighting->ambient_vertex || p->lighting->material_vertex))) && !ram(p->colors,(plan->max_color+1)*4))){re4dc_model_result(1,0,0);return;}
     }else {
         ++work_stats.unprepared_parts;
         if(!b.walk(false)){re4dc_model_result(1,0,0);return;}
     }
+#if RE4DC_D349_RENDERER_STACK
+    if(re4dc_model_defer_part(p))return;
+    b.batch=acquire_batch(*p);
+    if(!b.batch && p->lighting)b.lights=re4dc::render::prepare_actor_lights(*p->lighting);
+    b.static_context=b.batch?nullptr:prepare_room_static_lighting(*p);
+#endif
+#if RE4DC_NATIVE_REUSE_AUDIT && RE4DC_D349_RENDERER_STACK
+    re4dc::reuse_audit::Scope reuse_audit(*p,plan,b.bounds,b.packet,p->lighting?(b.batch?b.batch->lights.count:b.lights.count):0);
+#endif
     const auto emit=[&](){return plan?b.walk_plan(*plan):b.walk(true);};
     bool okay=emit();
     if(okay && b.used)okay=b.bind();
     if(!okay && b.restart_uv){
         // First binding precedes every publication. Restart only for a verified
         // alternate UV scale, retaining the already selected native texture.
-        b.restart_uv=false;b.used=b.input=b.output=b.strip_vertices=0;
+        b.restart_uv=false;b.used=b.input=b.output=b.strip_vertices=0;b.pending_intact=b.pending_reconstructed=0;
         okay=emit();
         if(okay && b.used)okay=b.bind();
     }
@@ -306,7 +672,39 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
         if(b.submitted)re4dc_model_packet_abort();
         re4dc_model_result(b.resource_failed?2:3,b.input,0);return;
     }
-    re4dc_model_packet_commit(b.used);re4dc_model_result(0,b.input,b.output);
+    re4dc_model_packet_commit(b.used);re4dc::reuse_audit::commit(b.used);b.committed_strips();re4dc_model_result(0,b.input,b.output);
 }
 
 extern "C" const Re4dcModelWorkStats* re4dc_model_work_stats(){return &work_stats;}
+
+extern "C" void re4dc_model_preparation_frame(){
+#if RE4DC_D349_RENDERER_STACK
+    if(prepared_batch)prepared_batch->invalidate();
+#endif
+}
+extern "C" const Re4dcPreparationStats* re4dc_model_preparation_stats(){
+#if RE4DC_D349_RENDERER_STACK
+    return &preparation_stats;
+#else
+    static Re4dcPreparationStats none{};return &none;
+#endif
+}
+extern "C" void re4dc_model_invalidate_static_lighting(){
+#if RE4DC_D349_RENDERER_STACK
+    if(static_lighting)new(static_lighting) StaticLighting{};
+    if(prepared_batch)prepared_batch->invalidate();
+#endif
+}
+
+#if defined(__sh__)
+#include <arch/timer.h>
+extern "C" unsigned re4dc_model_source_stamp(){return unsigned(timer_us_gettime64());}
+extern "C" void re4dc_model_source_span(unsigned stage,unsigned start){
+    if(stage<6)work_stats.source_prepare_us[stage]+=re4dc_model_source_stamp()-start;
+}
+extern "C" void re4dc_model_skipped_writeback(unsigned bytes){work_stats.pose_writeback_bytes_skipped+=bytes;}
+#endif
+
+#if defined(RE4DC_TEST_GENERATIONS) && RE4DC_D349_RENDERER_STACK
+extern "C" void re4dc_model_test_serial(unsigned value){if(prepared_batch)prepared_batch->serial=value;}
+#endif

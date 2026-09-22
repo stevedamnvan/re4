@@ -1,3 +1,4 @@
+#include "../game/platform/include/native_render_profile.hpp"
 #include "pvr_geometry.hpp"
 #include <algorithm>
 #include <cmath>
@@ -149,3 +150,34 @@ void submit_pvr(const void* data, std::size_t byte_count) {
     pvr_prim(data, byte_count);
 }
 } // namespace re4dc::render
+
+namespace re4dc::render {
+bool group_visible(const DrawBounds& bounds,const float m[12],const float p[7],const float vp[6],
+                   float near_distance,float far_distance,float bias){
+    RE4DC_PROFILE_SCOPE(Visibility);
+    float center[3],extent[3],view[3],radius[3];
+    for(unsigned a=0;a<3;++a){center[a]=(bounds.minimum[a]+bounds.maximum[a])*0.5f;
+        extent[a]=(bounds.maximum[a]-bounds.minimum[a])*0.5f;}
+    for(unsigned row=0;row<3;++row){const auto* v=m+4*row;
+        view[row]=v[0]*center[0]+v[1]*center[1]+v[2]*center[2]+v[3];
+        radius[row]=std::fabs(v[0])*extent[0]+std::fabs(v[1])*extent[1]+std::fabs(v[2])*extent[2];}
+    if(-view[2]+radius[2]<near_distance || -view[2]-radius[2]>far_distance)return false;
+    // Test whole intervals against clip planes; do not merely test projected
+    // corners. This remains conservative for walls crossing the camera plane.
+    const auto outside=[&](float a,float b,float c,float d){
+        return a*view[0]+b*view[1]+c*view[2]+d+
+            std::fabs(a)*radius[0]+std::fabs(b)*radius[1]+std::fabs(c)*radius[2]<-0.0001f;};
+    const float ox=2*vp[0]/vp[2],oy=2*vp[1]/vp[3];
+    return !outside(p[1],0,p[2]-1-ox,bias*(1+ox)) &&
+           !outside(-p[1],0,-p[2]-1+ox,bias*(1-ox)) &&
+           !outside(0,-p[3],-p[4]-1-oy,bias*(1+oy)) &&
+           !outside(0,p[3],p[4]-1+oy,bias*(1-oy));
+}
+bool primitive_visible(const PrimitiveSphere& sphere,const float m[12],const float p[7],const float vp[6],
+    float near_distance,float far_distance,float bias){
+    RE4DC_PROFILE_SCOPE(Visibility);
+    DrawBounds bounds;for(unsigned i=0;i<3;++i){bounds.minimum[i]=sphere.center[i]-sphere.radius;
+        bounds.maximum[i]=sphere.center[i]+sphere.radius;}
+    return group_visible(bounds,m,p,vp,near_distance,far_distance,bias);
+}
+}

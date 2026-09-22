@@ -45,12 +45,19 @@ static s8 axis(int v)  // maple -128..127 -> GameCube -128..127 (already the sam
 struct PadScriptEntry { u32 frame; u16 buttons; u16 hold; };
 static PadScriptEntry g_script[64];
 static int g_scriptCount = -1;  // -1: not loaded yet
+int re4dc_diag;
 
 extern "C" u32 re4dc_vi_retrace_count(void);
 
 static void loadScript(void)
 {
     g_scriptCount = 0;
+    file_t d = fs_open("/cd/dc/diag.txt", O_RDONLY);
+    if (d >= 0) {
+        fs_close(d);
+        re4dc_diag = 1;
+        re4dc_log("fixture: /cd/dc/diag.txt present, periodic diagnostics on" "\n");
+    }
     file_t f = fs_open("/cd/dc/padscript.txt", O_RDONLY);
     if (f < 0) return;
     static char text[2048];

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cmath>
 #include <dc/pvr.h>
+#include "native_draw_plan.hpp"
 namespace re4dc::render {
 struct ProjectedVertex {
     float x;
@@ -81,6 +82,12 @@ struct ClipStats {
 // Cull values preserve the existing scene representation: none/front/back/all.
 std::uint32_t clip_projected_triangle(const RenderVertex*, pvr_vertex_t*,
     std::uint8_t cull_mode, const ClipParameters&, ClipStats* = nullptr, const float* alpha = nullptr);
+// Historical group/primitive support-radius rejection with explicit projection
+// bias. Recovered GX projection uses zero; the room's KOS matrix uses +1.
+bool group_visible(const DrawBounds&,const float modelview[12],const float projection[7],
+    const float viewport[6],float near_distance,float far_distance,float depth_bias=0);
+bool primitive_visible(const PrimitiveSphere&,const float modelview[12],const float projection[7],
+    const float viewport[6],float near_distance,float far_distance,float depth_bias=0);
 std::uint32_t shade_color(float red, float green, float blue);
 void begin_pvr_packet(pvr_vertex_t*, std::uint32_t&, const pvr_poly_hdr_t&);
 void submit_pvr(const void*, std::size_t);

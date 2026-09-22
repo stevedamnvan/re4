@@ -17,6 +17,7 @@ static int g_black = 1;
 
 extern "C" void re4dc_audio_frame(void);
 extern "C" void re4dc_threads_dump(void);
+extern int re4dc_diag;
 
 extern "C" volatile unsigned long re4dc_stage;
 
@@ -66,7 +67,7 @@ static void vblankHandler(uint32_t code, void* data)
     re4dc_stage = 0x1000;
     g_retraceCount++;
     if ((g_retraceCount % 600) == 0) re4dc_log("vblank %lu\n", (unsigned long) g_retraceCount);
-    if ((g_retraceCount % 600) == 0) re4dc_threads_dump();
+    if (re4dc_diag && (g_retraceCount % 600) == 0) re4dc_threads_dump();
     (void) re4dc_audio_frame;  // the audio frame runs from the frame loop (pad.cpp), not the ISR
     if (g_postRetrace) {
         re4dc_stage = 0x1001;

@@ -51,3 +51,19 @@ extern "C" void re4dc_draw_id_quad(const IdUnit* u) {
     q.blend=u->blend_type; q.masked=u->tex_flag & 1;
     re4dc_ui_submit(&q);
 }
+
+#include "global.h"
+#include "player.h"
+#include "native_render_profile.hpp"
+#include <string.h>
+extern "C" void re4dc_profile_source(re4dc::profile::Source* out){
+    *out={};if(!pG)return;
+    out->tick=pG->Frame_cnt;out->system=pG->System_flg;out->stop=pG->Stop_flg;
+    out->room=(unsigned(pG->stage_no)<<8)|pG->room_no;
+    memcpy(out->room_flags,pG->Room_flg,sizeof(out->room_flags));memcpy(out->status,pG->Status_flg,sizeof(out->status));
+    memcpy(out->camera,&pG->Cam.param,sizeof(out->camera));
+    if(pPL){memcpy(out->player,&pPL->pos,12);memcpy(out->player+3,&pPL->ang,12);
+        out->motion_frame=pPL->Motion.Mot_frame;out->motion_state=pPL->Motion.Mot_state;}
+}
+
+extern "C" unsigned re4dc_fixture_source_frame(){ return pG ? pG->Frame_cnt : 0; }

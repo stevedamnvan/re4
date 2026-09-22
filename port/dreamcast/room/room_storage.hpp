@@ -66,7 +66,8 @@ struct ReadResult {
 // where it started, so a caller can retry without leaking capacity.
 ReadResult read_file(Arena& arena, const char* path);
 
-// Synchronous, bounded transport over the same existing 64 KiB bounce buffer.
+// Synchronous, bounded transport over the existing shared bounce buffer.
+// The recovered game uses 16 KiB; the room target retains its 64 KiB default.
 // The callback must consume bytes before returning; it cannot retain the buffer
 // or re-enter either reader. File position advances; caller owns the handle.
 using ChunkConsumer = bool (*)(const std::uint8_t*, std::size_t, void*);

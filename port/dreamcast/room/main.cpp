@@ -1,3 +1,4 @@
+#include "source_lighting.hpp"
 #include <kos.h>
 #include <arch/arch.h>
 #include <arch/stack.h>
@@ -3158,28 +3159,8 @@ struct SelectedSourceLights {
 // loop reads a small fixed layout instead of indexing two tables through the
 // selection list. The arithmetic below is the selected-light evaluator's,
 // operation for operation and in the same order, so results are bit-identical.
-struct PreparedActorLight {
-    float x;
-    float y;
-    float z;
-    float red;
-    float green;
-    float blue;
-    float intensity;
-    float radius;
-    float quadratic_attenuation;
-    float direction_x;
-    float direction_y;
-    float direction_z;
-    float spot_cutoff;
-    float spot_scale;
-    std::uint32_t type;
-};
-
-struct PreparedActorLights {
-    PreparedActorLight lights[8]{};
-    std::uint32_t count = 0U;
-};
+using re4dc::render::PreparedActorLight;
+using re4dc::render::PreparedActorLights;
 
 [[maybe_unused]] PreparedActorLights prepare_actor_lights(
     const SelectedSourceLights& selection) {
@@ -3215,66 +3196,10 @@ struct PreparedActorLights {
 }
 
 [[maybe_unused]] void evaluate_prepared_actor_lighting(
-    float px, float py, float pz, float nx, float ny, float nz,
-    const PreparedActorLights& lights,
-    float& out_red, float& out_green, float& out_blue) {
-    normalize_vector(nx, ny, nz);
-    float red = kSourceActorAmbientRed;
-    float green = kSourceActorAmbientGreen;
-    float blue = kSourceActorAmbientBlue;
-    const PreparedActorLight* light = lights.lights;
-    const PreparedActorLight* const end = light + lights.count;
-    for(; light != end; ++light) {
-        float lx = 0.0f;
-        float ly = 0.0f;
-        float lz = 0.0f;
-        float attenuation = light->intensity;
-        if(light->type == 5U) {
-            lx = light->x;
-            ly = light->y;
-            lz = light->z;
-        } else {
-            lx = light->x - px;
-            ly = light->y - py;
-            lz = light->z - pz;
-            const float distance = std::sqrt(lx * lx + ly * ly + lz * lz);
-            if(distance <= 0.000001f) {
-                continue;
-            }
-            lx /= distance;
-            ly /= distance;
-            lz /= distance;
-            if(light->type == 1U) {
-                attenuation = light->radius > 0.0f
-                                  ? light->intensity * std::max(
-                                        0.0f, 1.0f - distance / light->radius)
-                                  : light->intensity;
-            } else {
-                attenuation = light->intensity /
-                              std::max(1.0f, 1.0f +
-                                                light->quadratic_attenuation *
-                                                    distance * distance);
-            }
-            if(light->type == 3U) {
-                const float cone_cosine =
-                    light->direction_x * -lx +
-                    light->direction_y * -ly +
-                    light->direction_z * -lz;
-                if(cone_cosine <= light->spot_cutoff) {
-                    continue;
-                }
-                attenuation *= (cone_cosine - light->spot_cutoff) *
-                               light->spot_scale;
-            }
-        }
-        const float diffuse = std::max(0.0f, nx * lx + ny * ly + nz * lz);
-        red += light->red * attenuation * diffuse;
-        green += light->green * attenuation * diffuse;
-        blue += light->blue * attenuation * diffuse;
-    }
-    out_red = std::clamp(red, 0.0f, 1.0f);
-    out_green = std::clamp(green, 0.0f, 1.0f);
-    out_blue = std::clamp(blue, 0.0f, 1.0f);
+    float px,float py,float pz,float nx,float ny,float nz,const PreparedActorLights& lights,
+    float& red,float& green,float& blue){
+    const float ambient[]={kSourceActorAmbientRed,kSourceActorAmbientGreen,kSourceActorAmbientBlue};
+    re4dc::render::evaluate_prepared_actor_lighting(px,py,pz,nx,ny,nz,lights,ambient,red,green,blue);
 }
 
 // Reference evaluator, retained for the SUBMIT_PROFILE dual-path check of

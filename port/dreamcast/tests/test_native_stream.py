@@ -10,8 +10,8 @@ KOS=Path(os.environ.get('RE4DC_KOS_REFERENCE','/root/work/kos'))
 
 def compile_run(code):
  with tempfile.TemporaryDirectory() as d:
-  p=Path(d);(p/'check.cpp').write_text(code)
-  subprocess.run(['g++','-std=c++20','-fsanitize=address,undefined','-fno-omit-frame-pointer',str(p/'check.cpp'),'-o',str(p/'check')],check=True)
+  p=Path(d);(p/'check.cpp').write_text('#include \"native_render_profile.hpp\"\n'+code)
+  subprocess.run(['g++','-std=c++20','-fsanitize=address,undefined','-fno-omit-frame-pointer','-I'+str(ROOT/'port/dreamcast/game/platform/include'),str(p/'check.cpp'),'-o',str(p/'check')],check=True)
   subprocess.run([str(p/'check')],check=True)
 
 @unittest.skipUnless(shutil.which('g++'),'host compiler required')
@@ -65,16 +65,25 @@ int main(){
 
  def test_stream_ownership_hold_black_and_retire(self):
   source=(ROOT/'port/dreamcast/game/platform/native_ui.cpp').read_text()
-  helpers=source[source.index('bool stream_scene,'):source.index('\n#endif',source.index('bool stream_scene,'))]
+  helpers='#if RE4DC_PVR_STREAM\n'+source[source.index('bool stream_scene,'):source.index('unsigned image_size(')]
   retire=source[source.index('extern "C" void re4dc_ui_retire_room()'):source.index('extern "C" void re4dc_ui_init()')]
   end=source[source.index('extern "C" void re4dc_ui_end_frame('):source.index('extern "C" int re4dc_model_diagnostic_enabled()')]
-  abort=source[source.index('extern "C" void re4dc_model_packet_abort()'):]
+  end=end.replace('    const auto render_end=timer_us_gettime64();','')
+  end=end[:end.index('    for(const auto& e:entries)if(e.valid)')]+'}\n'
+  start=source.index('extern "C" void re4dc_model_packet_abort()')
+  abort=source[start:source.index('\n}',start)+3]
   code=r'''
 #include <cassert>
 #include <stdexcept>
 #define RE4DC_PVR_STREAM 1
 #define PVR_LIST_TR_POLY 2
+#define PVR_LIST_OP_POLY 0
+#define PVR_LIST_PT_POLY 4
+using pvr_list_t=int;
+extern "C" void re4dc_prepare_model_assets(){}
+extern "C" void re4dc_model_retire_draw_plans(){}
 #define PVR_TA_INPUT 0x1000
+unsigned frame_pvr_calls=0,frame_pvr_bytes=0;
 unsigned current=0,locks=0,owner=99,submitted=0,finishes=0,flips=0,closes=0,fences=0,presents=0;
 bool opened=false,done=false,fail_fence=false,black=false;
 void sq_lock(void*){assert(!locks || owner==current);owner=current;++locks;}
@@ -94,7 +103,8 @@ struct Entry{bool live=true;};Entry entries[2];Entry* model_handle=nullptr;
 void close_entry(Entry& e){assert(!opened && !done && !locks);if(e.live){e.live=false;++closes;}}
 struct Table{void clear(){}} room_identities;
 struct EnemyIdentity{Table table;void* archive=(void*)1;} enemy_identities[2];
-bool ready=true,frame_ready=true;unsigned nquad,model_used,nsource,identity_hits;
+bool ready=true,frame_ready=true;unsigned nquad,model_used,nsource,identity_hits,frame;
+void re4dc_model_draw_plan_frame(unsigned){}
 int re4dc_vi_black(){return black;}
 '''+helpers+retire+abort+r'''
 extern "C" void re4dc_ui_present(){++presents;stream_close(true);}
@@ -128,6 +138,90 @@ int main(){
 }
 '''
   compile_run(code)
+
+
+ def test_integrated_deferred_source_views(self):
+  source=(ROOT/'port/dreamcast/game/platform/native_ui.cpp').read_text()
+  structs=source[source.index('using SourceLighting='):source.index('\n#endif',source.index('using SourceLighting='))]
+  bodies=source[source.index('extern "C" int re4dc_model_defer_part('):source.index('extern "C" void* re4dc_model_static_lighting_storage(')]
+  compile_run(r'''
+#include "native_model.h"
+#include <cassert>
+#include <new>
+#include <algorithm>
+#include <vector>
+#include <cstring>
+#include <cstddef>
+#define RE4DC_D349_RENDERER_STACK 1
+using pvr_list_t=int;
+constexpr int PVR_LIST_OP_POLY=0,PVR_LIST_PT_POLY=4,PVR_LIST_TR_POLY=2;
+alignas(32) unsigned char frame_storage[256*sizeof(Re4dcUiQuad)];
+unsigned nquad=0,frame_queue_peak=0,frame_queue_drops=0;
+constexpr unsigned kModelDeferredSpillBytes=8192;
+alignas(32) unsigned char spill[8192];
+extern "C" void* re4dc_model_deferred_storage(unsigned* bytes){*bytes=sizeof(spill);return spill;}
+bool frame_ready=true,stream_aborted=false;
+std::vector<unsigned> draws,passes;bool retire_in_draw=false;
+void stream_select(pvr_list_t p){assert(p==PVR_LIST_OP_POLY || p==PVR_LIST_TR_POLY);passes.push_back(p);}
+void re4dc_model_result(unsigned,unsigned,unsigned){}
+extern "C" void re4dc_model_invalidate_static_lighting(){}
+'''+structs+r'''
+extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
+ assert(draining_parts);
+ draws.push_back(p->image.width);
+ assert(p->lighting && p->lighting->material[0]==p->image.width);
+ assert(p->lighting->lights[7].color[0]==73);
+ assert(!re4dc_model_defer_part(p));
+ if(retire_in_draw)re4dc_model_invalidate_pending();
+}
+'''+bodies+r'''
+int main(){
+ Re4dcModelPart p{};re4dc::render::SourceLighting lighting{};p.lighting=&lighting;
+ p.depth_mode=0;p.alpha_state=255;p.blend=0;
+ assert(!re4dc_model_defer_part(&p)); // opaque stays synchronous
+ p.alpha_state=128;
+ lighting.enable=1;lighting.mask=128;lighting.lights[7].color[0]=73;
+ for(unsigned n=1;n<=3;++n){
+   p.image.width=n;lighting.material[0]=n;
+   assert(re4dc_model_defer_part(&p));
+ }
+ lighting.material[0]=99; // source mutable state is not retained by pointer
+ assert(draws.empty() && deferred_count==3);
+ re4dc_model_finish_source_draws();
+ assert((draws==std::vector<unsigned>{1,2,3}));
+ assert((passes==std::vector<unsigned>{PVR_LIST_TR_POLY}));
+ assert(!deferred_first && source_draws_finished && !draining_parts);
+ // No draw from after Render may survive into reused source primitive storage.
+ assert(!re4dc_model_defer_part(&p));
+ source_draws_finished=false;re4dc_model_finish_source_draws();
+ assert(source_draws_finished); // empty barrier still ends borrowing
+ // Owner generation retirement during an I/O yield cancels remaining views.
+ source_draws_finished=false;retire_in_draw=true;
+ p.image.width=9;lighting.material[0]=9;assert(re4dc_model_defer_part(&p));
+ assert(re4dc_model_defer_part(&p));unsigned before=draws.size();
+ re4dc_model_finish_source_draws();
+ assert(stream_aborted && draws.size()==before+1 && !deferred_first);
+ // Many parts share source frame state without retaining caller storage.
+ stream_aborted=false;source_draws_finished=false;retire_in_draw=false;reset_deferred();
+ const auto draw_start=draws.size();
+ for(unsigned n=1;n<=240;++n){p.image.width=9;lighting.material[0]=9;p.uv_offset[0]=float(n);assert(re4dc_model_defer_part(&p));}
+ assert(!stream_aborted && deferred_count==240);
+ re4dc_model_finish_source_draws();assert(draws.size()==draw_start+240);
+ for(unsigned n=1;n<=240;++n)assert(draws[draw_start+n-1]==9);
+ // Different actor/object normal transforms still share immutable selected
+ // light records. Restored per-model transforms and source values stay exact.
+ stream_aborted=false;source_draws_finished=false;reset_deferred();
+ for(unsigned n=0;n<120;++n){lighting.normal_matrix[0]=float(n);p.image.width=9;lighting.material[0]=9;assert(re4dc_model_defer_part(&p));}
+ assert(!stream_aborted && deferred_count==120);
+ re4dc_model_finish_source_draws();
+ // Bounded queue never overwrites existing UI data or becomes a partial frame.
+ stream_aborted=false;source_draws_finished=false;retire_in_draw=false;
+ nquad=255;frame_storage[0]=73;
+ for(unsigned n=0;n<1000 && !stream_aborted;++n){p.uv_offset[0]=float(n);assert(re4dc_model_defer_part(&p));}
+ assert(stream_aborted && deferred_drops==1 && frame_storage[0]==73);
+ re4dc_model_invalidate_pending();assert(!deferred_first);
+}
+''')
 
  def test_source_swap_keeps_ppc_and_delivers_hold(self):
   source=(ROOT/'src/game/main_sub.cpp').read_text()

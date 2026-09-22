@@ -119,6 +119,26 @@ class ConvertTplTests(unittest.TestCase):
         self.assertTrue(metadata["materials"][0]["binary_alpha"])
         self.assertEqual(metadata["texture_bytes"], 128)
 
+    def test_source_mask_uses_alpha_not_intensity_and_preserves_legacy(self):
+        color=TPL.TplImage(8,8,TPL.GX_TF_CMPR,struct.pack(">HH4B",0xf800,0x07e0,0,0,0,0)*4)
+        mask=TPL.TplImage(8,8,TPL.GX_TF_IA8,bytes([0x80,0x40])*64)
+        binding=[TPL.MaterialBinding("source",0,1)]
+        def pixel(blob):
+            h=TPL.HEADER.unpack_from(blob)
+            t=TPL.TEXTURE.unpack_from(blob,h[5])
+            return struct.unpack_from("<H",blob,t[4])[0]
+        legacy,_=TPL.build_package([color,mask],binding)
+        source,_=TPL.build_package([color,mask],binding,source_mask_alpha=True)
+        self.assertEqual(pixel(legacy)>>12,4)
+        self.assertEqual(pixel(source)>>12,8)
+        self.assertEqual(pixel(legacy)&0xfff,pixel(source)&0xfff)
+        i4=TPL.TplImage(8,8,TPL.GX_TF_I4,bytes([0xF8])*32)
+        color=TPL.TplImage(8,8,TPL.GX_TF_CMPR,struct.pack(">HH4B",0xf800,0x07e0,0,0,0,0)*4)
+        blob,meta=TPL.build_package([color,i4],binding,source_intensity_alpha=True,source_mask_alpha=True)
+        self.assertFalse(meta['materials'][0]['binary_alpha'])
+        h=TPL.HEADER.unpack_from(blob);t=TPL.TEXTURE.unpack_from(blob,h[5])
+        self.assertEqual([v[0]>>12 for v in struct.iter_unpack("<H",blob[t[4]:t[4]+t[5]])][:2],[15,8])
+
     def test_argb4444_preserves_alpha_gradient(self):
         self.assertEqual(TPL._pack_4444((0x12, 0x34, 0x56, 0x78)), 0x7135)
 

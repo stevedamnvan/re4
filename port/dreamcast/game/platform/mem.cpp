@@ -47,13 +47,6 @@ void re4dc_mem_init(void)
     unsigned long fixed = kSoundSize + kCoreSize + kOptionSize + kPlayerSize + kWeaponSize;
     // Take the largest arena the KOS heap gives us, leaving the runtime some room.
     unsigned long want = 13 * 1024 * 1024;
-#if RE4DC_MODEL_DRAW_PLANS
-    // Explicit candidate trade: 16 KiB of prepared records and 16 KiB native
-    // allocation margin. Shrink the actual source arena; never claim these
-    // cached copies are source-archive recovery. Selector-off stays unchanged.
-    want -= 32768;
-    printf("re4dc_mem: draw-plan candidate native reserve=32768 cache=16384\n");
-#endif
     void* p = NULL;
     while (want >= fixed + kMinHeap) {
         p = memalign(32, want);

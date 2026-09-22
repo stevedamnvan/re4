@@ -78,7 +78,14 @@ inline void finish(Snapshot& out,unsigned frame,const Source& source){
 #else
 struct Scope { explicit Scope(unsigned){}void move(unsigned){} };
 inline void count(unsigned,unsigned){}inline void high(unsigned,unsigned){}
-inline void begin(){}inline void finish(Snapshot&,unsigned,const Source&){}
+inline void begin(){}
+// Retain the existing frame/source association in normal builds without any
+// per-vertex clock reads or profiling counters. Timings remain explicitly invalid.
+inline void finish(Snapshot& out,unsigned frame,const Source& source){
+    out.sequence=out.sequence+1;asm volatile("" ::: "memory");
+    out.frame=frame;out.source=source;out.clock_valid=0;out.clock_reads=0;
+    asm volatile("" ::: "memory");out.sequence=out.sequence+1;
+}
 #endif
 }
 #define RE4DC_PROFILE_SCOPE(stage) re4dc::profile::Scope profile_scope(re4dc::profile::stage)
