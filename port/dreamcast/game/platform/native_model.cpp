@@ -61,7 +61,7 @@ struct Builder {
         used=strip_vertices=0; // same owner, header, texture pin and scratch
         return true;
     }
-    bool vertex(const unsigned char* corner,re4dc::render::RenderVertex& v){
+    bool vertex(const unsigned char* corner,re4dc::render::RenderVertex& v,float& opacity){
         const unsigned vi=be16(corner),ni=be16(corner+2),ti=be16(corner+stride-2);
         if(vi>=p.position_count || ni>=p.normal_count || !ram(p.uv+ti*4,4))return false;
         v={};++work_stats.position_references;
@@ -94,13 +94,17 @@ struct Builder {
         v.u=(u+p.uv_offset[0])*packet.u_scale;v.v=(w+p.uv_offset[1])*packet.v_scale;
         // Deliberately unlit diagnostic. Source light/material parity is not accepted.
         v.light_red=v.light_green=v.light_blue=1;
+        // Source channel alpha is independent of base texture alpha. Vertex
+        // source uses its own BE corner identity, never the position cache key.
+        const unsigned alpha=(p.alpha_state&256)?p.colors[be16(corner+4)*4+3]:(p.alpha_state&255);
+        opacity=alpha/255.0f;
         return true;
     }
     bool triangle(const unsigned char* a,const unsigned char* b,const unsigned char* c){
-        re4dc::render::RenderVertex in[3];
-        if(!vertex(a,in[0])||!vertex(b,in[1])||!vertex(c,in[2]))return false;
+        re4dc::render::RenderVertex in[3];float opacity[3];
+        if(!vertex(a,in[0],opacity[0])||!vertex(b,in[1],opacity[1])||!vertex(c,in[2],opacity[2]))return false;
         pvr_vertex_t out[6];++input;
-        unsigned count=re4dc::render::clip_projected_triangle(in,out,p.cull,clip);
+        unsigned count=re4dc::render::clip_projected_triangle(in,out,p.cull,clip,nullptr,opacity);
         for(unsigned i=0;i<count;++i)if(!append_triangle(out+i*3))return false;
         return true;
     }
@@ -146,6 +150,8 @@ struct Builder {
                 if(be16(v+i*stride)>=p.position_count || be16(v+i*stride+2)>=p.normal_count ||
                    !ram(p.uv+be16(v+i*stride+stride-2)*4,4))return false;
             }
+            if(p.alpha_state&256)for(unsigned i=0;i<n;++i)
+                if(!ram(p.colors+be16(v+i*stride+4)*4,4))return false;
             if(!emit)continue;
             if(op==0x80){for(unsigned i=0;i<n;i+=4)
                 if(!triangle(v+i*stride,v+(i+1)*stride,v+(i+2)*stride) ||
@@ -164,7 +170,7 @@ struct Builder {
 }
 extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     if(!re4dc_model_diagnostic_enabled())return;
-    if(!p || p->shift>30 || (p->position_stride!=6 && p->position_stride!=8) ||
+    if(!p || p->alpha_state>511 || ((p->alpha_state&256) && (!(p->flags&0x80000000U) || !p->colors)) || p->shift>30 || (p->position_stride!=6 && p->position_stride!=8) ||
        !p->position_count || !p->normal_count || p->stream_bytes>1024*1024 ||
        !ram(p->positions,p->position_count*p->position_stride) || !ram(p->stream,p->stream_bytes) ||
        p->projection[0]!=0 || p->viewport[2]<=0 || p->viewport[3]<=0){re4dc_model_result(1,0,0);return;}

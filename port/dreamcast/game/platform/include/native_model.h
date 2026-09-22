@@ -10,10 +10,14 @@ struct Re4dcModelPart {
     unsigned shift, flags, cull, blend, depth_mode, material_flags;
     float modelview[12], projection[7], viewport[6];
     Re4dcUiImage image;
+    // Channel zero alpha: low byte material, bit 8 vertex source; other bits reject.
+    // RGB remains the explicitly unlit diagnostic until native lighting connects.
+    const unsigned char* colors=nullptr; unsigned alpha_state=255;
     float uv_offset[2]; unsigned wrap_s,wrap_t;
 };
 extern "C" {
 int re4dc_model_diagnostic_enabled();
+unsigned re4dc_gx_model_alpha();
 void re4dc_model_submit(const Re4dcModelPart*);
 // Source-only bridge entry points; opaque types keep SDK/KOS headers separate.
 void re4dc_model_material(const void* texture_object,float u,float v,unsigned flags);

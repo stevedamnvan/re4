@@ -37,7 +37,7 @@ struct ClipStats {
 };
 // Cull values preserve the existing scene representation: none/front/back/all.
 std::uint32_t clip_projected_triangle(const RenderVertex*, pvr_vertex_t*,
-    std::uint8_t cull_mode, const ClipParameters&, ClipStats* = nullptr);
+    std::uint8_t cull_mode, const ClipParameters&, ClipStats* = nullptr, const float* alpha = nullptr);
 std::uint32_t shade_color(float red, float green, float blue);
 void begin_pvr_packet(pvr_vertex_t*, std::uint32_t&, const pvr_poly_hdr_t&);
 void submit_pvr(const void*, std::size_t);

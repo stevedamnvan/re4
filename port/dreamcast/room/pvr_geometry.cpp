@@ -52,8 +52,9 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
                                        pvr_vertex_t* output,
                                        std::uint8_t cull_mode,
                                        const ClipParameters& parameters,
-                                       ClipStats* stats) {
+                                       ClipStats* stats, const float* alpha) {
     RenderVertex clipped[4]{};
+    float clipped_alpha[4]{}; // optional source alpha, no growth of room vertex caches
     unsigned clipped_count = 0;
     unsigned inside_count = 0;
     for(unsigned corner = 0; corner < 3; ++corner) {
@@ -68,6 +69,7 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
         clipped[1] = source[1];
         clipped[2] = source[2];
         clipped_count = 3U;
+        if(alpha)for(unsigned i=0;i<3;++i)clipped_alpha[i]=alpha[i];
     } else if(inside_count == 0U) {
         if(stats != nullptr) {
             ++stats->rejects;
@@ -78,23 +80,27 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
             ++stats->crossings;
         }
         RenderVertex previous = source[2];
+        float previous_alpha=alpha?alpha[2]:1.0f;
         bool previous_inside =
             previous.position.depth >= parameters.near_distance;
         for(unsigned corner = 0; corner < 3; ++corner) {
             const RenderVertex current = source[corner];
+            const float current_alpha=alpha?alpha[corner]:1.0f;
             const bool current_inside =
                 current.position.depth >= parameters.near_distance;
             if(current_inside != previous_inside) {
                 const float t =
                     (parameters.near_distance - previous.position.depth) /
                     (current.position.depth - previous.position.depth);
+                if(alpha)clipped_alpha[clipped_count]=previous_alpha+(current_alpha-previous_alpha)*t;
                 clipped[clipped_count++] =
                     interpolate_vertex(previous, current, t, parameters);
             }
             if(current_inside) {
+                if(alpha)clipped_alpha[clipped_count]=current_alpha;
                 clipped[clipped_count++] = current;
             }
-            previous = current;
+            previous = current;previous_alpha=current_alpha;
             previous_inside = current_inside;
         }
     }
@@ -150,6 +156,11 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
                                     triangle[corner].light_blue),
                 .oargb = triangle[corner].offset_color,
             };
+            if(alpha){
+                const unsigned index=corner==0?0:fan+corner-1;
+                const auto a=static_cast<std::uint32_t>(std::clamp(clipped_alpha[index]*255.0f,0.0f,255.0f));
+                destination[corner].argb=(destination[corner].argb&0x00ffffffU)|(a<<24U);
+            }
         }
         ++triangle_count;
     }

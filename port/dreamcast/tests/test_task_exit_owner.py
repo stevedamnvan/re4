@@ -19,7 +19,9 @@ class TaskExitOwnershipTests(unittest.TestCase):
         sleep_start = source.index("void TaskSleep(int frames)")
         dispatch_start = source.index("void TaskSchedulerMain(TASK* t)")
         dispatch_end = source.index("// Debug: prints how much", dispatch_start)
-        body = (source[helper_start:helper_end] + source[dispatch_start:dispatch_end] + source[sleep_start:end]).replace('#include "native_io.h"', '')
+        hook_start = source.index("void* TaskExec_hook(void* value)")
+        hook_end = source.index("// Starts `func(arg)`",hook_start)
+        body = (source[helper_start:helper_end] + source[hook_start:hook_end] + source[dispatch_start:dispatch_end] + source[sleep_start:end]).replace('#include "native_io.h"', '')
         fixture = r'''
 #include <cassert>
 #include <cstddef>
@@ -35,11 +37,11 @@ struct Global { unsigned Status_flg[2]; } global;
 Global* pG=&global;
 OSThread* pParentThread;
 OSThread outsider, parent, *actual;
-int Sema, resumes, signals, exits, panics, sleeps, suspends;
+int Sema, resumes, signals, exits, panics, sleeps, suspends, nested_resumes, nested_suspends;
 bool switch_parent_on_wake;void change_dispatch_on_sleep();
-void* TaskExec_hook(void*) { return nullptr; }
+void* TaskExec_hook(void*);
 void GXSetCurrentGXThread() {}
-void OSSuspendThread(OSThread* p) { assert(p == &parent); ++suspends; }
+void OSSuspendThread(OSThread* p) { if(p==&Task[1].Thread)++nested_suspends;else {assert(p == &parent); ++suspends;} }
 void OSSleepThread(int* q) { assert(q == &Task[actual->id].Queue); pCTask = reinterpret_cast<TASK*>(-1); ++sleeps; if(switch_parent_on_wake)change_dispatch_on_sleep(); }
 void OSWakeupThread(int*) {}
 void OSWaitSemaphore(int*) {}
@@ -47,7 +49,7 @@ void OSCreateThread(OSThread*,void*(*)(void*),void*,void*,int,int,int) {}
 void StackOverflowCheck(TASK*) {}
 OSThread* OSGetCurrentThread() { return actual; }
 OSThread* ParentThread() { return &parent; }
-void OSResumeThread(OSThread* p) { if(p==&parent)++resumes;else assert(p==&Task[15].Thread || p==&Task[1].Thread); }
+void OSResumeThread(OSThread* p) { if(p==&parent)++resumes;else if(p==&Task[1].Thread)++nested_resumes;else assert(p==&Task[15].Thread); }
 void OSSignalSemaphore(int*) { ++signals; }
 void OSExitThread(void* p) { assert(p == actual); ++exits; }
 void OSPanic(const char*, int, const char*) { ++panics; }
@@ -89,19 +91,20 @@ int main() {
     assert(Task[1].Status == TASK_EXEC && Task[1].arg == 42);
     assert(exits == 3 && resumes == 3 && signals == 3);
     // Actual source dispatcher: root task binds main, but cSceSys's nested
-    // dispatch intentionally has no parent. Repeated sleeps must not change
+    // dispatch binds its actual caller. Repeated sleeps must not change
     // the main suspend balance, even if an interrupt changes the global cursor.
     Task[1].Priority=15;Task[1].Status=TASK_SLEEP;Task[1].SleepCtr=1;
     pCTask=&Task[1];pParentThread=&parent;TaskSchedulerMain(&Task[1]);
     assert(nativeTaskParents[1]==&parent);
     Task[15].Priority=14;Task[15].Status=TASK_EXEC;
     pCTask=&Task[15];pParentThread=nullptr;TaskSchedulerMain(&Task[15]);
-    assert(nativeTaskParents[15]==nullptr&&nativeTaskParents[1]==&parent);
+    assert(nativeTaskParents[15]==&Task[1].Thread&&nativeTaskParents[1]==&parent);
     actual=&Task[15].Thread;int prior_resumes=resumes,prior_suspends=suspends;
     for(int i=0;i<100;++i){
         TaskSleep(1);assert(resumes==prior_resumes&&suspends==prior_suspends);
-        pCTask=&Task[15];TaskSchedulerMain(&Task[15]);
+        actual=&Task[1].Thread;pCTask=&Task[15];TaskSchedulerMain(&Task[15]);actual=&Task[15].Thread;
     }
+    assert(nested_resumes==100 && nested_suspends==100);
     // A later source dispatch can change parent; use its current binding.
     pParentThread=&parent;pCTask=&Task[15];Task[15].Status=TASK_SLEEP;Task[15].SleepCtr=1;
     TaskSchedulerMain(&Task[15]);TaskSleep(1);
@@ -112,6 +115,13 @@ int main() {
     TaskSleep(1);assert(resumes==prior_resumes+1&&suspends==prior_suspends);
     switch_parent_on_wake=false;prior_resumes=resumes;TaskExit();
     assert(exits==4&&resumes==prior_resumes&&Task[15].Status==TASK_NONE);
+    // Natural scenario completion releases the nested caller, retaining RUN
+    // until cSceSys observes it and unlinks the now-completed source function.
+    actual=&Task[15].Thread;nativeTaskParents[15]=&Task[1].Thread;
+    Task[15].Priority=14;Task[15].Status=TASK_RUN;
+    Task[15].pFunc=[](int arg){assert(arg==17);pCTask=reinterpret_cast<TASK*>(-1);};
+    int nr=nested_resumes,ns=nested_suspends;TaskExec_hook((void*)17);
+    assert(nested_resumes==nr+1 && nested_suspends==ns+1 && Task[15].Status==TASK_RUN);
     // A foreign thread cannot silently retire any game task.
     actual = &outsider;
     TaskExit();
@@ -122,7 +132,7 @@ int main() {
             src = pathlib.Path(tmp) / "owner.cpp"
             exe = pathlib.Path(tmp) / "owner"
             src.write_text(fixture + body + checks)
-            subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra",
+            subprocess.run(["g++", "-std=c++17", "-fpermissive", "-Wall", "-Wextra",
                             str(src), "-o", str(exe)], check=True,
                            capture_output=True, text=True)
             subprocess.run([str(exe)], check=True)

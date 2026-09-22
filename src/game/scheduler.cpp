@@ -32,7 +32,9 @@ static int iTask_exec_flg = 0;
 // KOS file I/O can yield after the frame scheduler changes its global cursor.
 // Self-directed task operations must retain the actual thread owner instead.
 // Parent choice belongs to each source dispatch. Nested scenario scheduling
-// deliberately uses NULL; it must not suspend/resume the outer main thread.
+// uses NULL on GameCube, where priority keeps the caller blocked. KOS can
+// schedule that caller during native I/O, so retain the actual nested caller
+// as its handoff owner instead of accidentally resuming the outer main thread.
 static OSThread* nativeTaskParents[TASK_NUM];
 static TASK* NativeExecutingTask()
 {
@@ -145,9 +147,15 @@ void TaskScheduler()
 void TaskSchedulerMain(TASK* t)
 {
 #if !defined(__PPC__)
-    // Preserve source cSceSys::scheduler's null-parent dispatch while retaining
-    // thread-owned task identity across KOS I/O and interrupt-task yields.
-    nativeTaskParents[t - Task] = pParentThread;
+    // A scenario dispatch has a null source parent and relies on GC priority
+    // to run until the child sleeps/exits. KOS I/O may schedule its caller while
+    // status is still TASK_RUN; cSceSys would then unlink that living task.
+    // Reuse the existing explicit handoff, owned by this nested caller, never
+    // by a stale outer-main pointer. ISR tasks remain independently scheduled.
+    OSThread* parent = pParentThread;
+    if (parent == NULL && t != &Task[TASK_ISR]) parent = OSGetCurrentThread();
+    if (parent == &t->Thread) OSPanic(__FILE__, __LINE__, "Task dispatch to itself");
+    nativeTaskParents[t - Task] = parent;
 #endif
     if ((pG->Status_flg[1] & 0x10000000) && !(t->flag & 2)) {
         return;
@@ -252,6 +260,12 @@ void* TaskExec_hook(void* value)
     CTASK->pFunc((int) value);
 #else
     t->pFunc((int) value);
+    // Scenario functions may return normally. Keep TASK_RUN for the source
+    // cSceSys completion/unlink check, but release the actual nested caller
+    // just as TaskSleep/TaskExit do; otherwise the finished child strands it.
+    parent = NativeTaskParent(t);
+    if (parent != NULL) OSResumeThread(parent);
+    if (t->Priority > 0xF) OSSignalSemaphore(&Sema);
 #endif
     return NULL;
 }

@@ -616,3 +616,101 @@ rejections above. Preserve working menu, complete allocated actors and hot keys.
 Do not call this the cabin restored, full encounter fit or a first-room skill
 qualification. Water simplification remains a separate selectable candidate;
 no water code/asset change or PS2-equivalence claim was made.
+
+## D345 source alpha and nested handoff
+
+2026-09-22; parent e0dc0da78e6039465ba4815410a50977eda96fcb plus 63 preserved
+inherited tracked changes. Keep the bounded alpha connection and native scheduler
+correction. Do not accept complete materials, lighting, encounter or performance.
+
+| Existing mechanism reused | Recovered source input/consumer | New adapter |
+| --- | --- | --- |
+| model_bridge, native_model and shared clip_projected_triangle | source channel/material/fade state and independent ModelData color corner | capture channel-zero alpha source/value; carry optional alpha through clipping |
+| native_ui packet header and existing texture cache | regular materialSetup passes channel alpha, rather than base texture alpha | PVR IgnoreTexA with MODULATEALPHA; retain UI's separate texture-alpha policy |
+| NativeTaskParent, TaskExec_hook, TaskSleep/TaskExit | cSceSys nested scheduling, r100_StartEvent sleep/normal return | bind actual nested caller and resume it on normal return |
+
+The base material combines texture/channel RGB but passes channel alpha through.
+Source alphaSetup separately adds the mask. Therefore base texture alpha is not
+an acceptable substitute. Register alpha comes from source GX channel state;
+vertex alpha uses its own big-endian color index (not the position-cache index).
+Lighting-dependent alpha is rejected. Near-plane intersections interpolate alpha.
+The shared 52-byte RenderVertex and room caches do not grow; old callers retain
+opaque packet output. This is a small source/native connection, not a GX VM.
+
+Mask flag0x04 and no-image material checks remain. A D344 snapshot audit finds
+146 live mask parts, authored alphaRef0, but this does not certify runtime
+model overrides. Sampled existing mask packages contain intermediate alpha;
+a binary cutout would not preserve them. Lighting/RGB remains unlit diagnostic.
+No new texture conversion, compression, water change or asset substitution.
+
+The first alpha build (d345a-source-alpha) reproduced a scheduling defect:
+Task14 was sleeping at the first r100_StartEvent SceSleep but already unlinked
+from the scenario ordering table. The source nested scheduler sets a null parent
+and relies on GameCube priority; KOS I/O can let that caller run while the child
+still reports TASK_RUN, which the caller interprets as completion. D345b binds
+the actual nested caller but exposed the complementary normal-return path:
+the finished child left its caller parked. D345c releases that caller on return,
+leaving TASK_RUN for the source's normal completion/unlink check. ISR ownership
+stays independent. No hold/stop flags are bypassed. Failed A/B runs are retained,
+not presentation references; both end black at their 240-second harness deadline.
+
+Selected D345c also ends at the 240-second harness deadline. Captures at title,
+100 seconds and final show source menu, Leon, room and HUD at640x480; source
+frame1325 is sampled with System0x800/Stop0, Leon approximately(-95794,-127,-2452).
+Opening Task14 is finished, follow-up scenario tasks15-17 sleep normally.
+Ninety-eight diagnostic model frames have been presented at the final sample.
+This verifies recovery of the normal source handoff, not full/manual play.
+
+| Measurement | D345c |
+| --- | ---: |
+| Free after required block pool / em12 body | 2,921,856 / 1,806,336 bytes |
+| Final source heap free / largest | 66,592 / 66,592 bytes |
+| Source allocation failures | 0 |
+| Crow chains verified | 5 instances, 24 parts each |
+| Native texture cache used / peak | 3,293,184 / 4,192,256 bytes |
+| Material-alpha / vertex-alpha draw preparations | 15,985 / 854 |
+| Observed faded register-alpha draws | 0 (target fade unqualified) |
+| Texture / capacity / invalid / overflow rejections | 0 / 0 / 0 / 0 |
+| Remaining material-state rejections | 9,120 cumulative |
+
+Actual PVR header has IgnoreTexA1 and environment3 (MODULATEALPHA), retaining
+source vertex alpha. No new resource owner or upload staging allocation. ELF
+text/data/BSS2,310,792 /77,016 /673,112; versus D344 +1,136 /+4 /+32. Source heap
+capacity remains8,840,576. D345 saves zero additional source heap; no timing win
+is claimed. Sparse sampled internal presentation intervals are recorded in
+presentation-samples.jsonl and d345-result.json, but different states, non-atomic
+sampling and incomplete frame coverage make this an integration run, not a
+paired frame-distribution or responsiveness benchmark.
+
+Hot motion remains952,768 resident/peak/read,22,400 peak pinned,2,336 metadata;
+75 loads/misses,6 hits,0 evictions/failures, worst wait270,939us. All145 persistent
+headers and1,904 relocated key pointers validate; later/final counters match.
+Evaluation completion still does not evict hot keys. No eviction/reload occurs
+in this run; earlier host/SH4 fixtures cover that boundary. Immediate-response,
+source prefetch/concurrency and unvisited combat/event working sets stay open.
+
+Thirteen focused tests pass: actual GX alpha selection/channel isolation, all256
+register alpha values, independent color indices, clipped alpha, malformed
+attributes, both position-cache modes,600 randomized model strip cases,
+10,000 opaque reference clip cases, native UI/stream lifecycle, actual task
+sleep/exit/natural return and stale scheduler cursor. Geometry tests use
+ASan/UBSan. Scheduler PPC preprocessed tokens and all inherited edits are
+unchanged. No fresh ProDG comparison, physical run or audible-output acceptance.
+
+Exact selected ELF SHA256:
+`9ffca465bdd5dbeee34da6e5ceb19c2f0a65dc095f74d0d464e77f40008c48f0`.
+Disc SHA256 `7d1a257c85dc1a5775d3d6ea2aeca2455825d05ec4c99d5b30bd43c94dedac89`.
+Evidence C:/Flycast-Evidence/re4-dreamcast/d345c-alpha-handoff; failed directories
+d345a-source-alpha and d345b-alpha-handoff remain separate. Mirror
+/root/probe/d343-mirror and fixtures /root/probe/d344b-fixtures unchanged.
+Patched KOS/manual flip,SH GCC15.2,O1,Flycast and corrected readback retained;
+exact identities and source/build patch accompany each sealed capture. No
+concurrent emulator or Blender rendering; no emulator left running.
+
+Next exact consumers remain separate source alpha masks/no-image material,
+source lighting, and qualified EVD activation/mutable destination lifetime.
+The existing66,592-byte headroom is not a full event budget. Preserve required
+actors, hot motion, title and normal progression. Audio, inventory, combat,
+transitions/retry, full frame budget, physical acceptance and first-room skill
+qualification remain open. Simpler water stays selectable, unimplemented and
+unmeasured; no PS2 equivalence has been established.

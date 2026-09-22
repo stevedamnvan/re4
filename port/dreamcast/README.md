@@ -24,29 +24,23 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
-through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap
-free rises **169,600 bytes** at the required block and Ganado body allocations,
-to 2,921,856 / 1,806,336 bytes. After initialization, 20 backed slots (19 live)
-use 72,384 bytes including metadata, versus 213,184 for the original array.
+D345 connects source-selected material/vertex alpha to the existing native model
+path and fixes a native nested-task handoff exposed by the changed render timing.
+The selected 240-second run preserves visible title/menu, HUD and source-controlled
+640x480 diagnostic room movement. The opening scenario finishes normally; no
+source allocation failures occur. This is not complete material/lighting,
+encounter, audio, manual-play or performance acceptance.
 
-The bounded run now has **no source allocation failures**, and all five required
-crows have validated 24-part chains. Final free/largest source heap is 66,592
-bytes. Existing conversion prepares the missing crow packages; the observed
-128x128 body texture uploads into 32,768 VRAM bytes. Neither archive sizes nor
-motion residency change. This establishes initialization progress, not complete
-encounter fit, visual equivalence, working audio or manual play.
+D344's memory result remains intact: free heap after required block/em12
+allocations is 2,921,856 / 1,806,336 bytes, final free/largest is 66,592, and all
+five crows retain valid 24-part chains. D345 recovers **zero additional heap**.
+Hot motion remains cached (952,768 bytes; no later reloads). Source mask materials
+(flag 0x04), a no-image part, lighting and event activation/mutable snapshots
+remain exact integration boundaries; retain their explicit checks. Simpler water
+is an unimplemented selectable quality candidate, not a current saving or a
+verified PS2 match.
 
-Keep the selectable candidate; the default remains contiguous backing. Continue
-source event activation and native presentation: the diagnostic renderer still
-rejects material flag 0x04 and a source part with no image. Do not clear those
-checks without implementing their source semantics. Hot motion remains cached;
-mutable event snapshots, lighting, audio/inventory, combat, transitions/retry
-and physical-hardware acceptance remain open. Simpler water is still an
-unimplemented visual candidate, with no claimed saving or verified PS2 match.
-
-See [D344](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d344-stable-enemy-work-pages).
-
+See [D345](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d345-source-alpha-and-nested-handoff) and the retained [D344 memory checkpoint](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d344-stable-enemy-work-pages).
 
 ### Retained integration checkpoints
 

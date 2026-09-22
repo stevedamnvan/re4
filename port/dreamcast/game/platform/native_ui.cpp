@@ -37,6 +37,7 @@ int model_diagnostic=-1;
 unsigned model_parts,model_invalid,model_resource,model_overflow,model_input,model_output,model_peak,model_presented;
 unsigned model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds;
 unsigned model_state_bits[8];
+unsigned model_alpha_material,model_alpha_vertex,model_alpha_faded;
 #if RE4DC_PVR_STREAM
 // One serial PVR owner, no extra framebuffer or whole-scene packet copy.
 // KOS's opt-in manual flip preserves the source's late presentation decision.
@@ -339,6 +340,7 @@ extern "C" void re4dc_ui_present(){
         re4dc_log("native model DIAGNOSTIC: frame=%u packets=%u parts=%u invalid=%u resource=%u overflow=%u input=%u emitted=%u peak=%u heap=%d black=%d\n",frame,model_used*32,model_parts,model_invalid,model_resource,model_overflow,model_input,model_output,model_peak,re4dc_ui_heap_free(),re4dc_vi_black());
     if(frame%120==0 && model_diagnostic==1)
         re4dc_log("native model rejection: capacity=%u state=%u texture=%u wrap=%u empty=%u scale_rebuild=%u\n",model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds);
+    if(frame%120==0 && model_diagnostic==1)re4dc_log("native model alpha: material=%u vertex=%u faded=%u masks=unsupported\n",model_alpha_material,model_alpha_vertex,model_alpha_faded);
     if(frame%120==0) re4dc_log("native UI: frame=%u quads=%u drawn=%u missing=%u unsupported=%u drops=%u vram=%u peak=%u staging=%u loads=%u freed=%u culled=%u fb=%08x,%08x black=%d\n",frame,nquad,drawn,missing,unsupported,dropped,used,peak,staging_peak,loads,reclaimed,culled,(unsigned)pvr_get_front_buffer(),(unsigned)pvr_get_back_buffer(),re4dc_vi_black());
 }
 
@@ -418,7 +420,11 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
     c.depth.write=p->depth_mode==0?PVR_DEPTHWRITE_ENABLE:PVR_DEPTHWRITE_DISABLE;
     const pvr_blend_mode_t src[]={PVR_BLEND_SRCALPHA,PVR_BLEND_SRCALPHA,PVR_BLEND_ONE,PVR_BLEND_DESTCOLOR,PVR_BLEND_ONE};
     const pvr_blend_mode_t dst[]={PVR_BLEND_INVSRCALPHA,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ZERO};
+    // Source materialSetup passes channel alpha through; only alphaSetup adds
+    // the separate mask (still explicitly rejected above). UI keeps its own
+    // texture-alpha policy. Never make base CMPR/intensity alpha the model mask.
     c.blend.src=src[p->blend];c.blend.dst=dst[p->blend];c.txr.env=PVR_TXRENV_MODULATEALPHA;
+    c.txr.alpha=PVR_TXRALPHA_DISABLE; // PVR IgnoreTexA: multiply by 1, retain vertex alpha
     c.txr.uv_clamp=(pvr_uv_clamp_t)((p->wrap_s?0:PVR_UVCLAMP_U)|(p->wrap_t?0:PVR_UVCLAMP_V));
     pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);std::uint32_t count;
     re4dc::render::begin_pvr_packet(model_packets+model_used,count,header);
@@ -426,6 +432,8 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
     out->vertices=model_packets+model_pending;out->capacity=kModelPacketBytes/32-model_pending;
     if(out->u_scale!=float(p->image.width)/t.width || out->v_scale!=float(p->image.height)/t.height)++model_scale_rebuilds;
     out->u_scale=float(p->image.width)/t.width;out->v_scale=float(p->image.height)/t.height;
+    if(p->alpha_state&256)++model_alpha_vertex;else ++model_alpha_material;
+    if(!(p->alpha_state&256) && (p->alpha_state&255)<255)++model_alpha_faded;
     if(model_parts<6)re4dc_log("native model DIAGNOSTIC source=%08x info=%08x part=%08x positions=%u stride=%u stream=%u flags=%08x material=%02x cull=%u\n",(unsigned)p->model,(unsigned)p->info,(unsigned)p->part,p->position_count,p->position_stride,p->stream_bytes,p->flags,p->material_flags,p->cull);
     return 1;
 }

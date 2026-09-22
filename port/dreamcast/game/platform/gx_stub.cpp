@@ -33,6 +33,8 @@ volatile WGPipe GXWGFifo[1] __attribute__((aligned(32)));
 static f32 g_projection[7];
 static f32 g_viewport[6] = {0, 0, 640, 480, 0, 1};
 static u32 g_stat_begin, g_stat_verts;
+// Only the material alpha needed by the source model adapter. Not a TEV VM.
+static unsigned g_model_alpha=255, g_model_alpha_source;
 
 extern "C" {
 
@@ -126,9 +128,16 @@ void GXLoadTexMtxImm(const f32 mtx[][4], u32 id, int type) { (void) mtx; (void) 
 void GXSetCurrentMtx(u32 id) { (void) id; }
 
 void GXSetNumChans(u8 n) { (void) n; }
-void GXSetChanCtrl(int chan, u8 enable, int amb, int mat, u32 mask, int diff, int attn) { (void) chan; (void) enable; (void) amb; (void) mat; (void) mask; (void) diff; (void) attn; }
+void GXSetChanCtrl(int chan, u8 enable, int amb, int mat, u32 mask, int diff, int attn) {
+    // GX_ALPHA0 / GX_COLOR0A0. RGB or channel one changes must not alter it.
+    if(chan==2 || chan==4) g_model_alpha_source=enable || (mat!=0 && mat!=1)?2U:unsigned(mat);
+    (void) amb; (void) mask; (void) diff; (void) attn;
+}
 void GXSetChanAmbColor(int chan, GXColor c) { (void) chan; (void) c; }
-void GXSetChanMatColor(int chan, GXColor c) { (void) chan; (void) c; }
+void GXSetChanMatColor(int chan, GXColor c) {
+    if(chan==2 || chan==4)g_model_alpha=c.a;
+}
+unsigned re4dc_gx_model_alpha() { return g_model_alpha | (g_model_alpha_source<<8); }
 void GXSetNumTexGens(u8 n) { (void) n; }
 void GXSetTexCoordGen2(int dst, int func, int src, u32 mtx, u8 norm, u32 pt) { (void) dst; (void) func; (void) src; (void) mtx; (void) norm; (void) pt; }
 void GXEnableTexOffsets(int coord, u8 line, u8 point) { (void) coord; (void) line; (void) point; }

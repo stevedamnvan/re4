@@ -13,7 +13,60 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D344 stable enemy work pages
+## Current resumption point - D345 source alpha and nested handoff
+
+D345 connects source-selected material/vertex alpha to the existing native model
+path and fixes a native nested-task handoff exposed by the changed render timing.
+The selected 240-second run preserves visible title/menu, HUD and source-controlled
+640x480 diagnostic room movement. The opening scenario finishes normally; no
+source allocation failures occur. This is not complete material/lighting,
+encounter, audio, manual-play or performance acceptance.
+
+D344's memory result remains intact: free heap after required block/em12
+allocations is 2,921,856 / 1,806,336 bytes, final free/largest is 66,592, and all
+five crows retain valid 24-part chains. D345 recovers **zero additional heap**.
+Hot motion remains cached (952,768 bytes; no later reloads). Source mask materials
+(flag 0x04), a no-image part, lighting and event activation/mutable snapshots
+remain exact integration boundaries; retain their explicit checks. Simpler water
+is an unimplemented selectable quality candidate, not a current saving or a
+verified PS2 match.
+
+See [D345](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md#d345-source-alpha-and-nested-handoff).
+Selected evidence: `C:/Flycast-Evidence/re4-dreamcast/d345c-alpha-handoff`.
+ELF SHA256 `9ffca465bdd5dbeee34da6e5ceb19c2f0a65dc095f74d0d464e77f40008c48f0`.
+Text/data/BSS 2,310,792 / 77,016 / 673,112 (+1,136 / +4 / +32 versus D344).
+Reuse D344's build options, `/root/work/kos-re4dc-d336`, `/root/probe/d343-mirror`
+and `/root/probe/d344b-fixtures` unchanged. Reproduction scripts are
+`/root/probe/d345-build.sh`, `d345c-prepare.py`, `d345-analyze.py` and
+`d345-test.py`; create fresh output directories. Parent commit is
+`e0dc0da78e6039465ba4815410a50977eda96fcb`; all 63 inherited tracked edits remain
+byte-preserved. Exact build patch, assets, tools and capture identities accompany
+the evidence. The harness ends at 240 seconds; no emulator remains running.
+
+D345a exposed a live scenario unlinked during native I/O; D345b fixed that
+handoff but stranded the caller when the scenario returned normally. Both are
+failed black-output candidates, retained for diagnosis. D345c reuses the existing
+thread-owned handoff for the actual nested caller, including normal return,
+TaskSleep and TaskExit. No source flags or scenario completion were forced.
+PowerPC scheduler tokens are unchanged; no new ProDG comparison. Thirteen
+focused tests pass, including sanitizer geometry and scheduler ownership checks.
+
+Source alpha is captured after source material/fade selection, preserving the
+independent color-corner index through near clipping. Native base texture alpha
+is ignored as the source regular material requires; separate soft mask semantics
+are still unimplemented. The shared RenderVertex remains 52 bytes and the
+existing room clip path remains packet-identical for tested opaque cases.
+Target observations exercise register and vertex alpha; no faded register draw
+was observed, so runtime fade acceptance remains pending despite host coverage.
+
+Next: connect the separate source alpha mask through the existing texture and
+material path, preserving intermediate alpha and source threshold/blend behavior;
+continue EVD activation/destination lifetime in parallel priority as demonstrated
+source consumers require it. Neither missing masks nor immutable event
+preparation is complete scene/event acceptance. Lighting, audio/inventory,
+combat, transitions/retry, frame budget and hardware checks remain open.
+
+## Previous D344 checkpoint - stable enemy work pages
 
 D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
 through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap

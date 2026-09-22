@@ -124,6 +124,31 @@ int main(){
  p.cull=3;unsigned before_binds=binds;run(longstrip);assert(status==0 && output==0 && binds==before_binds);
  p.cull=0;p.modelview[11]=1000;run(longstrip);assert(status==0 && !output && binds==before_binds);
 
+ // Real material alpha, independent of texture data. Opaque legacy packets
+ // still compare against the old oracle above; every uniform alpha survives.
+ p.positions=(unsigned char*)skin;p.position_count=4;p.position_stride=6;
+ p.modelview[11]=-10;p.cull=0;uscale=vscale=predicted_u=predicted_v=1;
+ p.flags=0;p.uv=(unsigned char*)uv;capacity=2048;
+ for(unsigned alpha=0;alpha<256;++alpha){
+  p.alpha_state=alpha;run(q);assert(status==0 && committed==6);
+  for(unsigned n=0;n<committed;++n)assert((owned[n].argb>>24)==alpha);
+ }
+ // Independent color identities, rather than position/normal/UV IDs.
+ unsigned char colors[3][4]={{17,29,53,0},{61,79,101,64},{103,127,149,255}};
+ p.flags=0x80000000;p.uv=(unsigned char*)signeduv;p.colors=(unsigned char*)colors;p.alpha_state=256|13;
+ for(unsigned i=0;i<3;++i)colored[3+i*8+5]=2-i;
+ run(colored);assert(status==0 && committed==3);
+ assert((owned[0].argb>>24)==255 && (owned[1].argb>>24)==64 && (owned[2].argb>>24)==0);
+ // Near-plane clipping interpolates alpha. It must not restore 255 or retain
+ // an endpoint's alpha across newly inserted vertices.
+ p.modelview[11]=-2;skin[0][2]=2;run(colored);assert(status==0 && committed==6);
+ unsigned fractional=0;
+ for(unsigned i=0;i<committed;++i){auto a=owned[i].argb>>24;if(a>=126 && a<=160)++fractional;}
+ assert(fractional>=2);skin[0][2]=0;p.modelview[11]=-10;
+ p.alpha_state=512;run(colored);assert(status==1 && !committed);
+ p.alpha_state=256;p.colors=nullptr;run(colored);assert(status==1 && !committed);
+ p.alpha_state=255;p.flags=0;p.uv=(unsigned char*)manyuv;
+
  // Source SDK cull boundary, independently checked in clip space. The SDK
  // flips FRONT/BACK hardware fields and stores a negative viewport Y scale.
  // For all-positive W, GX FRONT rejects non-positive projected XY determinant;
