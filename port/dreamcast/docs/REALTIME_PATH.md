@@ -1,34 +1,34 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D341 corrects the opening enemy-list conversion in the existing mirror tool.
-The old native list interpreted the house entry as room0x001/HP59395 instead of
-room0x100/HP1000. All255 original records compare field-for-field after conversion;
-target snapshots verify the corrected house entry. Required byte fields, indices,
-record count and reserved bytes remain intact. Thirty-four focused tests pass.
+D342 binds the required crow module through the existing static registry and
+preserves its source-manager archive pointer using the Em12 constructor fix.
+Rejected native DLL links now stop through `re4dc_missing`; the PowerPC path is
+unchanged. Crow construction reaches real model allocation, which still fails.
 
-This exposes required content previously suppressed by the bad room checks:
-the authored crow archive now requests239,904 bytes, and its REL module7 is not
-in the image. The first cold boot allocates that body, leaving147,168 free at
-that point, but subsequent model-info requests4704 fail with4064 free. Required
-block pool/em12 early points remain2,582,048/1,466,528 free. This is **zero new
-heap recovery**, not a fit for the corrected encounter. After a guest reboot,
-crow retries fail with75,936 free; do not combine those separate boot states.
+Selectable `--compact-room-est` reuses the existing resident effect codec and
+qualified room builder: r100's loaded body falls from3,812,576 to3,754,592 bytes.
+The target has **57,984 more heap bytes** at both the required block-pool and
+em12 allocation points (now2,640,032 /1,524,512 free). Existing static REL
+compaction removes another15,968 bytes from the crow body (239,904 ->223,936).
+These are real smaller final allocations, with original sound transport retained.
 
-The longer old-data approach also reaches missing r100s03/r100s20 requests.
-Both files now pass the existing EVD converter/certificate producer (156 complete
-records), but the corrected-list run stops earlier at crow initialization. Their
-target preload/installation is not newly accepted. No event, combat, visual,
-performance, audio, manual-play or hardware acceptance is claimed by D341.
+The full corrected room still does not fit: a512-byte part request fails with256
+free, then all five crows fail their11,360-byte part requests; later collision,
+object and path scratch allocations fail. Retry logs are not extra allocations.
+The title/menu and diagnostic source-controlled scene remain visible; this is
+not complete characters, a playable encounter, accepted lighting or an FPS result.
 
-Continue with the existing static module generator/registry for em23 (module7)
-and the additional source working set. The module failure logs HALT and then
-continues/reboots: the PPC invalid-address halt is not a reliable native stop.
-Close that failure path before accepting new module consumers. Keep the corrected
-list; do not regain the old image by suppressing required crows. EVENT_FILES
-activation/mutable snapshots, source lighting/materials and all existing backlogs
-remain. Simpler water is selectable and unimplemented; PS2 equivalence is unverified.
+Keep this bounded compaction and continue the initialization working-set audit.
+Option upload-only textures price at109,728 net archive bytes, but their fixed
+owner/card-swap lifetime is not yet adapted; reservation slack alone is only2496.
+Room SST packing prices at21,952 gross and remains unimplemented. Neither is
+counted as recovered heap. Preserve hot motion keys and the immediate-response/
+prefetch audit. Event activation/mutable snapshots, source presentation/audio,
+inventory, three-room progression and physical-hardware gates remain open.
+Simpler water remains selectable and unimplemented; PS2 equivalence is unverified.
 
-See [D341](R4_EVENT_ENEMY_CHECKPOINT.md#d341-opening-enemy-list-and-event-inputs).
+See [D342](R4_EVENT_ENEMY_CHECKPOINT.md#d342-crow-module-and-resident-room-effects).
+
 
 ### Previous D340 checkpoint
 

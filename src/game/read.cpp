@@ -263,6 +263,10 @@ void ReadAreaData()
         PSet(pG->pRoom, (void*) roomInfo.addr[0][0]);
         out_data_size = roomInfo.size[0][0];
 
+        if (!re4dc_effect_bind_room(pG->pRoom, out_data_size)) {
+            re4dc_missing("invalid prepared native room effects");
+            return;
+        }
         if (!re4dc_ui_bind_room(pG->pRoom, out_data_size)) {
             re4dc_missing("invalid prepared native room identities");
             return;

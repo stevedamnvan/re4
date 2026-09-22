@@ -306,3 +306,102 @@ Then resume source-controller movement to qualified event preload/activation.
 d341a-cabin-approach disc SHA256 `ad70958b9cc0db8979a78307e9be665107f25556163ad39308bf1ffd2c818c00`.
 
 d341c-enemy-list disc SHA256 `37853c6293767e56b811c74be3ef7ad89fff4175b2d1dfd4a38a66597d768aa4`.
+
+## D342 crow module and resident room effects
+
+2026-09-22; baseline4279bc57672de89ab46033e7dec6d122c5b05f5a plus preserved
+inherited integration work. Both runs retain corrected D341 ESL and event inputs.
+
+Connections delivered:
+
+| Existing mechanism | Source producer/consumer | Small new connection |
+| --- | --- | --- |
+| gen_modules.py / module registry / compact_static_rel | em23 REL ID7, Em23Init, cEmMgr::construct | register compiled crow; default-initialize as Em12 does so subArc survives; retain PPC construction |
+| re4dc_missing | DLL_Link/Unlink after rejected OSLink/Unlink | native fail-stop instead of ineffective invalid bus write |
+| compact_effect_records / compact_spans / qualified .dar builder | room EFF and five nested ETM EFF owners, EspDataLoad, EspGetEstAddr, existing Espgen10/01/00 adapters | opt-in room EST selection; observe ETM member-relative end offsets |
+| native_effect bind/read/unbind | ReadAreaData before effects initialize; gameRoomMemInit before heap replacement | one borrowed room slot independent of core and four enemy slots |
+
+The room keeps every48-byte sequence head and all345 records.320 eligible
+records pack losslessly;25 retaining/unreviewed records remain raw.37 sequences
+use480 bytes of index metadata; net archive saving57,984 bytes. Nested ETM
+member lengths must change with their contents for GetEtcAddr traversal. All15
+named members remain;10 unaffected members compare byte-identically. No texture,
+geometry, camera, collision, source effect timing, RNG or gameplay data removed.
+SST/path/model data stay raw. No new I/O or cache for these resident records.
+
+The original room body4669568 -> D320 texture-compacted3812576 -> D3423754592.
+The existing DVD queue reads the selected smaller type0 directly into its final
+allocation; no full original room copy or full decoded effect bank is allocated.
+Added binding16 bytes plus existing caller-owned300-byte decode scratch; ELF
+BSS grows32 bytes due layout/alignment. No additional VRAM. Source MRAM/ARAM
+sound blocks are retained as transport, not proof of audio/storage implementation.
+Crow static code removal239904 ->223936 saves15968 in its actual loaded body.
+Crow sound2016 MRAM /166759 ARAM bytes remain separately required.
+
+Measured Flycast allocation points:
+
+| Point | D342a module-only | D342b compact room/crow + constructor fix |
+| --- | ---: | ---: |
+| r100 final body |3812576 |3754592 |
+| free after required1126272 block pool |2582048 |2640032 |
+| free after required1105152 em12 body |1466528 |1524512 |
+| crow body request |239904 |223936 |
+| free immediately after crow body |147168 |210848 |
+
+Early block/em12 deltas match57984 exactly. The crow-point free difference is
+63680, not73952: interleaved object allocations differ there. Do not add
+overlapping/concurrent snapshots or call it a matched total-heap delta. Combined
+final archive bytes removed73952; later source allocations consume the recovery.
+
+D342a binds crow and runs its prolog, but modern value-initialization clears
+subArc, producing five NULL/model failures. D342b preserves the pointer and
+reaches the real11360-byte part request for each crow. Earlier scene part
+allocation512 fails with256 free; source block object creation is incomplete.
+All five crow initializations then fail, followed by required collision/object
+and32-byte path scratch failures. OS heap snapshot retains64 bytes, while source
+allocatable free is0; different accounting. These are failed requests/retries,
+not allocated additional bytes. No full-room or complete-character acceptance.
+
+Title/main menu and640x480 source-controlled diagnostic scene remain visible.
+Scripted UP+B moves Leon to approximately(-92626,-18,-4534), source frame1385
+at the final snapshot. Material/lighting deficiencies remain. No paired FPS
+claim with different failed workload/state, manual play, audio, event activation,
+retry/transition or physical-hardware acceptance. Runs stop at180/240s harness
+deadlines; no guest reboot observed. Exact capture identities retained.
+
+Validation:78 focused tests (compact_room, effect_residency, enemy_construction,
+native_dll_failure, native_module_binding, le_mirror, room_endian). Actual native
+effect adapter reconstructs all345 private records and216 delayed generator
+references under ASan/UBSan. Synthetic tests exercise full owner-slot coexistence,
+stale room-reference rejection, retirement/rebinding and nested-member traversal.
+Actual SH-4 compilation verifies cEm/cEm23/subArc/work layout. PowerPC token
+streams for changed recovered paths remain unchanged; no new ProDG object run.
+Target binds37 room sequences; aggregate effect stats341 sequences/2990 records,
+0 packed reads /745 raw reads /0 failures. This trace does not exercise decoding
+the newly packed room records; that remains covered by the private host fixture.
+
+Motion caches are unchanged:952768 resident/peak/read;22400 peak pinned;
+2336 metadata;75 misses/loads,6 hits,0 evictions/failures; worst wait270941us.
+Loading-later and final counters match.145 source headers and1904 relocated keys
+validate. Keep the source-derived prefetch/concurrency audit open; failed actors
+and unvisited reactions do not qualify the full immediate-response working set.
+
+Keep the module/failure/constructor corrections and selectable resident packing.
+Continue required initialization-memory recovery before event activation. Priced
+but not implemented: option nonpalette upload-only texture compaction109728 net
+archive bytes (110048 gross minus320 metadata), only2496 option reservation slack;
+room SST packing21952 gross. Option card-swap/owner semantics require an audit.
+Neither pricing result is heap recovery. s03/event mutable-snapshot/final-buffer
+capacity remains open. Do not reclaim hot motion data after every evaluation or
+remove required crows/blocks. Simpler water is unimplemented and cannot be counted
+against this memory deficit; PS2 visual equivalence remains unverified.
+
+Evidence: C:/Flycast-Evidence/re4-dreamcast/d342a-crow-module and
+d342b-room-effects; private candidate inputs /root/probe/d342-mirror and
+/root/probe/d342-room. Build flags/toolchain remain recorded D340/D341 choices.
+D342b ELF text/data/BSS2305564/77012/673080, +10364/+176/+32 versus D340c;
+five pre-existing missing stubs remain. Original KOS and accepted assets untouched.
+
+d342a-crow-module ELF SHA256 `ebf366884633572052d9defab02bf0656f84984e9416dd78416dddf276e97a58`; disc SHA256 `c96b6951397ff65a73d89dd1907fb6d64864630457782271444cd549f76e48a0`.
+
+d342b-room-effects ELF SHA256 `61485913ebbf3ca3e6a2a4a6e48d91bd418d658b9185136f81bfa08dad3944d6`; disc SHA256 `d818b0688f209a738e49f035ffcdff4a6aeb021d5bbd58834082d9fc2566f831`.

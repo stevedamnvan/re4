@@ -8,7 +8,7 @@
 #include <cstdint>
 namespace {
 struct Binding { unsigned char* archive; unsigned bytes; const unsigned char* entries; unsigned count; };
-Binding bindings[5]{}; // four module owners plus the persistent core
+Binding bindings[6]{}; // four module owners, persistent core, current room
 Re4dcEffectStats stats{};
 unsigned word(const unsigned char* p) { unsigned v;std::memcpy(&v,p,4);return v; }
 unsigned half(const unsigned char* p) { unsigned short v;std::memcpy(&v,p,2);return v; }
@@ -39,7 +39,7 @@ unsigned sequence(const Binding& b,unsigned off) {
     return lo?lo-1:b.count;
 }
 }
-static int bind_archive(void* archive,unsigned bytes,bool core) {
+static int bind_archive(void* archive,unsigned bytes,unsigned owner) {
     auto* a=static_cast<unsigned char*>(archive);if(!a || bytes<16)return 0;
     const unsigned n=word(a),rel=word(a+4);if(n>(bytes-16)/8)return 0;
     const unsigned char* table=nullptr;unsigned table_off=0;
@@ -50,8 +50,8 @@ static int bind_archive(void* archive,unsigned bytes,bool core) {
         table=a+table_off;
     }
     if(!table)return 1;
-    const unsigned end=core?bytes:rel;
-    if((core?rel!=0:(rel>bytes || bytes-rel!=64)) || (table_off&31) || table_off<16+8*n || table_off>=end ||
+    const unsigned end=owner>=4?bytes:rel;
+    if((owner>=4?rel!=0:(rel>bytes || bytes-rel!=64)) || (table_off&31) || table_off<16+8*n || table_off>=end ||
        end-table_off<32 || std::memcmp(table,"R4ESQTBL",8) || word(table+8)!=1 ||
        word(table+16)!=12 || word(table+24)!=bytes || word(table+28))return 0;
     const unsigned count=word(table+12);
@@ -84,14 +84,15 @@ static int bind_archive(void* archive,unsigned bytes,bool core) {
     }
     Binding* free=nullptr;
     for(auto& b:bindings)if(b.archive==a)return 0;
-    for(unsigned i=core?4:0;i<(core?5:4);++i)if(!bindings[i].archive && !free)free=&bindings[i];
+    for(unsigned i=owner;i<(owner>=4?owner+1:4);++i)if(!bindings[i].archive && !free)free=&bindings[i];
     if(!free)return 0;
     *free={a,bytes,table+32,count};stats.sequences+=count;stats.records+=records;
     re4dc_log("effect bind: archive=%u sequences=%u records=%u metadata=borrowed scratch=300 no-io\n",bytes,count,records);
     return 1;
 }
-extern "C" int re4dc_effect_bind(void* a,unsigned n) { return bind_archive(a,n,false); }
-extern "C" int re4dc_effect_bind_core(void* a,unsigned n) { return bind_archive(a,n,true); }
+extern "C" int re4dc_effect_bind(void* a,unsigned n) { return bind_archive(a,n,0); }
+extern "C" int re4dc_effect_bind_core(void* a,unsigned n) { return bind_archive(a,n,4); }
+extern "C" int re4dc_effect_bind_room(void* a,unsigned n) { return bind_archive(a,n,5); }
 extern "C" void re4dc_effect_unbind(void* archive) {
     // Retain the original source archive lifetime and teardown suspension.
     // The REL epilog runs first; no decoded allocation or global scratch.
@@ -99,6 +100,10 @@ extern "C" void re4dc_effect_unbind(void* archive) {
         stats.sequences-=b.count;for(unsigned i=0;i<b.count;++i)stats.records-=word(entry(b,i)+8);
         b={};return;
     }
+}
+extern "C" void re4dc_effect_retire_room() {
+    // The source has suspended room updates before replacing the room heap.
+    re4dc_effect_unbind(bindings[5].archive);
 }
 extern "C" void* re4dc_effect_record_ref(void* head,unsigned index) {
     auto* h=static_cast<unsigned char*>(head);if(!h || index>=half(h))fail("effect record index");

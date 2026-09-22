@@ -84,6 +84,18 @@ int main(int argc,char**argv){
  for(unsigned i=0;i<(word(a.data()+4)?3U:4U);++i){other.push_back(module);assert(bind(other.back()));}
  if(word(a.data()+4))assert(bind(core));
  auto excess=module;assert(!bind(excess));auto extra_core=core;assert(!bind(extra_core));
+ // Room lifetime is independent of all four modules and the persistent core.
+ auto room=core,extra_room=core;
+ assert(!re4dc_effect_bind_room(module.data(),module.size()));
+ assert(re4dc_effect_bind_room(room.data(),room.size()));
+ assert(!re4dc_effect_bind_room(extra_room.data(),extra_room.size()));
+ auto* room_head=reinterpret_cast<EspSeqData*>(room.data()+word(heads.data()));
+ void* room_ref=re4dc_effect_ref(room_head,0);unsigned room_scratch[75];
+ assert(!memcmp(re4dc_effect_record_read(room_ref,room_scratch),ref.data()+48,300));
+ re4dc_effect_retire_room();re4dc_effect_retire_room();
+ bool stale=false;try{re4dc_effect_record_read(room_ref,room_scratch);}catch(const std::runtime_error&){stale=true;}assert(stale);
+ assert(!bind(excess));assert(!bind(extra_core)); // other lifetimes untouched
+ assert(re4dc_effect_bind_room(extra_room.data(),extra_room.size()));re4dc_effect_retire_room();
  for(auto& m:other)re4dc_effect_unbind(m.data());if(word(a.data()+4))re4dc_effect_unbind(core.data());
  unsigned checked=0,retained=0,raw=0;std::vector<void*> saved;
  for(unsigned group=0;group<heads.size()/12;++group){

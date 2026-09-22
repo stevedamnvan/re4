@@ -13,7 +13,69 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D341 corrected list exposes required crow dependency
+## Current resumption point - D342 native crow and room effect compaction
+
+D342 binds the required crow module through the existing static registry and
+preserves its source-manager archive pointer using the Em12 constructor fix.
+Rejected native DLL links now stop through `re4dc_missing`; the PowerPC path is
+unchanged. Crow construction reaches real model allocation, which still fails.
+
+Selectable `--compact-room-est` reuses the existing resident effect codec and
+qualified room builder: r100's loaded body falls from3,812,576 to3,754,592 bytes.
+The target has **57,984 more heap bytes** at both the required block-pool and
+em12 allocation points (now2,640,032 /1,524,512 free). Existing static REL
+compaction removes another15,968 bytes from the crow body (239,904 ->223,936).
+These are real smaller final allocations, with original sound transport retained.
+
+The full corrected room still does not fit: a512-byte part request fails with256
+free, then all five crows fail their11,360-byte part requests; later collision,
+object and path scratch allocations fail. Retry logs are not extra allocations.
+The title/menu and diagnostic source-controlled scene remain visible; this is
+not complete characters, a playable encounter, accepted lighting or an FPS result.
+
+Keep this bounded compaction and continue the initialization working-set audit.
+Option upload-only textures price at109,728 net archive bytes, but their fixed
+owner/card-swap lifetime is not yet adapted; reservation slack alone is only2496.
+Room SST packing prices at21,952 gross and remains unimplemented. Neither is
+counted as recovered heap. Preserve hot motion keys and the immediate-response/
+prefetch audit. Event activation/mutable snapshots, source presentation/audio,
+inventory, three-room progression and physical-hardware gates remain open.
+Simpler water remains selectable and unimplemented; PS2 equivalence is unverified.
+
+Current selected ELF SHA256 `61485913ebbf3ca3e6a2a4a6e48d91bd418d658b9185136f81bfa08dad3944d6`.
+Build options remain D340/D341 (`EVENT_FILES=1`, all three demand pools,
+PVR_STREAM and MODEL_POSITION_CACHE enabled; core/player/weapon reservations
+1360608/846656/247776). Patched KOS `/root/work/kos-re4dc-d336` remains required.
+ELF text/data/BSS2,305,564 /77,012 /673,080; five pre-existing missing stubs.
+78 focused tests pass, plus actual SH-4 crow-layout compilation and bit-exact
+checks of345 room effect records/216 delayed references with ASan/UBSan.
+No new ProDG object comparison; touched shared-source PPC tokens are unchanged.
+
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d342b-room-effects` is the kept
+integration candidate, still blocked at required memory. `d342a-crow-module`
+preserves the initial module-only failure (null crow archive then exhaustion).
+The180/240-second runs ended at harness deadlines; no guest reboot observed.
+No active emulator remains. Private mirror `/root/probe/d342-mirror`, room
+producer output `/root/probe/d342-room`, disc `/root/probe/d342b-room-effects-disc`,
+fixtures `/root/probe/d341a-fixtures`. Original references remain untouched.
+Private reproducibility: `/root/probe/d342-validate.py`, `d342b-prepare.py`,
+`d342-analyze.py`, `d342-stats.py`; do not overwrite their existing outputs.
+
+Room packing is opt-in through existing `prepare_native_ui.py --compact-room
+/root/re4data/st1/r100.das --compact-room-est --textures /root/probe/d327-fixtures/tex
+--output <fresh-private-directory>`. Crow uses existing `compact_static_rel`
+after whole-file qualification with the now-registered module7. No new encoder,
+loader, renderer or cache. The added16-byte room effect binding borrows metadata;
+source room-heap replacement retires it. Target binds all37 packed sequences,
+but this trace performs no packed record reads; delayed decoding is host-tested.
+
+Hot motion remains952,768 resident/peak/read,22,400 peak pinned,2336 metadata,
+75 misses/loads,6 hits,0 evictions/failures; worst observed wait270,941us.
+All145 headers/1904 key pointers validate in the final snapshot. Counts stay
+unchanged after warm-up; missing crow/gameplay work limits coverage. Do not
+interpret this as complete repeated-response/concurrency or event qualification.
+
+## Previous D341 checkpoint - corrected list exposes required crow dependency
 
 D341 corrects the opening enemy-list conversion in the existing mirror tool.
 The old native list interpreted the house entry as room0x001/HP59395 instead of

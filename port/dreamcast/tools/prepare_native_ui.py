@@ -217,7 +217,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     return out,report
 
 
-def compact_room(source_file, textures, destination):
+def compact_room(source_file, textures, destination, compact_effects=False):
     """Prepare one smaller qualified .dar through the existing room builder.
 
     Uses the converter's recorded relative offsets, not a second archive parser
@@ -229,16 +229,17 @@ def compact_room(source_file, textures, destination):
     if destination.exists():
         raise FileExistsError(destination)
     rel='st1/r100.das';arc='st1/r100.arc'
-    source=source_file.read_bytes();references=[];palettes=[]
-    previous_tpl,previous_offsets=mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER
+    source=source_file.read_bytes();references=[];palettes=[];sequences=[]
+    previous_tpl,previous_offsets,previous_seq=mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER,mirror.SEQUENCE_OBSERVER
     start=len(mirror.REPORT)
     mirror.TPL_OBSERVER=lambda file,off,data,ctx: palettes.append((off,data,ctx))
     mirror.OFFSET_OBSERVER=lambda file,field,base,value: references.append((field,base,value)) if file==arc else None
+    mirror.SEQUENCE_OBSERVER=lambda file,off,data,ctx: sequences.append((off,data,ctx)) if file==arc else None
     try:
         _,decoded=mirror.prepare_room_archive(rel,source)
         container=bytearray(source);mirror.convert_file(rel,container)
     finally:
-        mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER=previous_tpl,previous_offsets
+        mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER,mirror.SEQUENCE_OBSERVER=previous_tpl,previous_offsets,previous_seq
     coverage=mirror.REPORT[start:]
     # This is the existing whole-archive + sound qualification gate, before any
     # candidate transformation. It cannot be replaced by sidecar existence.
@@ -258,9 +259,31 @@ def compact_room(source_file, textures, destination):
             # Espgen42/45 consume 0xFE as CPU noise. Never externalize it.
             return ident<len(ids) and ids[ident]!=0xfe
         return ctx in (arc+'#5/TPL0',arc+'#10/item') or any(ctx==arc+'#'+str(i) for i in model_slots)
-    out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed)
+    effect_ranges=[];effect_entries=[];skipped=[]
+    if compact_effects:
+        import compact_effect_records as effects
+        # These EFF owners all register through EspDataLoad. EST access uses the
+        # existing opaque-reference adapter; SST/path/model data remain raw.
+        families=[arc+'#8']+[arc+'#11/'+name+'.eff' for name in ('et00','et01','et02','et0d','obm2b')]
+        if tags[11]!=b'ETM\0' or struct.unpack_from('<I',decoded,4)[0]:
+            raise ValueError('r100 effect ownership layout differs from reviewed contract')
+        for family in families:
+            qualified=[]
+            for off,data,ctx in sequences:
+                if ctx!=family+'/est':continue
+                used=48+300*struct.unpack_from('<H',data)[0]
+                if used>len(data):raise ValueError('truncated room sequence')
+                if any(data[used:]):
+                    skipped.append({'source_offset':off,'source_bytes':len(data),'reason':'unexplained trailer retained unchanged'})
+                else:qualified.append((off,data,ctx))
+            er,ee=effects.prepare_sequences(qualified,family)
+            effect_ranges+=er;effect_entries+=ee
+        effect_ranges.sort();effect_entries.sort(key=lambda e:e['source_offset'])
+        if not effect_entries:raise ValueError('no qualified room sequences')
+    out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed,effect_ranges,effect_entries)
+    if compact_effects:stats['effects']['skipped']=skipped
     _,packaged=mirror.prepare_native_room(rel,container,out,coverage)
-    report={'contract':'r100-upload-only-v1','source_file':str(source_file),
+    report={'contract':'r100-resident-effects-v1' if compact_effects else 'r100-upload-only-v1','source_file':str(source_file),
             'source_sha256':hashlib.sha256(source).hexdigest(),
             **stats,
             'qualification':coverage,'loading':'source DVD queue reads compact type-0 directly; original sound container retained',
@@ -374,13 +397,15 @@ if __name__=='__main__':
         choice.add_argument('--compact-core',type=Path)
         parser.add_argument('--core-effects',action='store_true',help='also externalize qualified core EFF #1 upload-only images')
         parser.add_argument('--compact-core-est',action='store_true',help='lossless resident packing for qualified core EST #1/#16')
+        parser.add_argument('--compact-room-est',action='store_true',help='lossless resident packing for qualified r100 EST owners')
         parser.add_argument('--textures',type=Path,required=True)
         parser.add_argument('--output',type=Path,required=True)
         args=parser.parse_args()
         fn,source=(compact_room,args.compact_room) if args.compact_room else (compact_core,args.compact_core)
         if args.core_effects and not args.compact_core:parser.error('--core-effects requires --compact-core')
         if args.compact_core_est and not args.compact_core:parser.error('--compact-core-est requires --compact-core')
-        report=compact_core(source,args.textures,args.output,args.core_effects,args.compact_core_est) if args.compact_core else compact_room(source,args.textures,args.output)
+        if args.compact_room_est and not args.compact_room:parser.error('--compact-room-est requires --compact-room')
+        report=compact_core(source,args.textures,args.output,args.core_effects,args.compact_core_est) if args.compact_core else compact_room(source,args.textures,args.output,args.compact_room_est)
         print('compact archive:',report['original_archive_bytes'],'->',report['resident_archive_bytes'],
               'recovery',report['archive_recovery_bytes'],'identities',len(report['selected']))
     else:

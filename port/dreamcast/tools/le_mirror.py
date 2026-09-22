@@ -484,7 +484,9 @@ def fmt_etm(sw, off, size, ctx):
     raw = []
     for i in range(count):
         sw._check(cursor, 64)
-        length = sw.u32(cursor)
+        # GetEtcAddr advances by this member-relative end offset. Compaction
+        # inside a member must rebase its size as well as its payload offsets.
+        length = sw.offset32(cursor, cursor)
         if length < 64:
             raise ValueError('etc member length does not include its header')
         sw._check(cursor, length)

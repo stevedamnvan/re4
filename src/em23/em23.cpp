@@ -85,7 +85,13 @@ extern "C" void _unresolved()
 // EmInitFunc of the module: constructs the cEm23 class in the manager's work.
 void Em23Init(cEm* em)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // As in Em12Init, retain the archive installed by cEmMgr::construct.
+    // Modern value-initialization would zero it before the base constructor.
+    new (em) cEm23;
+#else
     new (em) cEm23();
+#endif
 }
 
 // Per-frame damage check (cEm23::move): an explosion / fire volume kills the crow (flag bit2, Dm_Air);

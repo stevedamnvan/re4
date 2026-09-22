@@ -42,6 +42,54 @@ def fixture():
 
 
 class CompactRoom(unittest.TestCase):
+    def test_room_est_rebases_nested_member_lengths_and_keeps_other_members(self):
+        import compact_effect_records as codec
+        original,container,image=fixture()
+        ofs=struct.unpack_from('>51I',original,16)
+        bodies=[original[a:b] for a,b in zip(ofs,ofs[1:]+(len(original),))]
+        eff=bytearray(bodies[8]);ids=len(eff);struct.pack_into('>I',eff,8,ids)
+        eff+=struct.pack('>IHHI',1,7,0,0)+bytes(20)
+        table=len(eff);struct.pack_into('>I',eff,32,table)
+        record=bytearray(300);record[1]=11
+        raw=bytearray(record);raw[1]=14 # retaining reader must stay raw
+        seq=bytearray(struct.pack('>H',2)+bytes(46)+record+raw);seq+=bytes((-len(seq))%32)
+        eff+=struct.pack('>2I',1,32)+bytes(24)+seq
+        bodies[8]=eff
+        nested=bytearray(struct.pack('>I',2)+bytes(28))
+        for name in ('et00.eff','et03.eff'):
+            nested+=struct.pack('>I',64+len(eff))+bytes(28)+name.encode()+bytes(32-len(name))+eff
+        bodies[11]=nested
+        rebuilt=bytearray(original[:448]);rebuilt[220+11*4:224+11*4]=b'ETM\0'
+        for i,body in enumerate(bodies):
+            struct.pack_into('>I',rebuilt,16+4*i,len(rebuilt));rebuilt+=body
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d);source=p/'r100.das';source.write_bytes(container);tex=p/'tex';tex.mkdir()
+            key,_=ui.image_identity(image)
+            package,_=tpl.build_package([image],[tpl.MaterialBinding('source',0,None)],twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
+            (tex/(key+'.re4tex')).write_bytes(package)
+            with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:rebuilt)}):
+                baseline=ui.compact_room(source,tex,p/'baseline')
+                report=ui.compact_room(source,tex,p/'candidate',compact_effects=True)
+            self.assertEqual(len(report['effects']['entries']),2)
+            self.assertEqual(baseline['resident_archive_bytes']-report['resident_archive_bytes'],report['effects']['recovery_bytes'])
+            small=(p/'candidate/r100.arc').read_bytes();before=(p/'baseline/r100.arc').read_bytes()
+            def members(data):
+                at=struct.unpack_from('<I',data,16+11*4)[0];n=struct.unpack_from('<I',data,at)[0];at+=32;out=[]
+                for _ in range(n):
+                    size=struct.unpack_from('<I',data,at)[0];self.assertGreaterEqual(size,64)
+                    out.append((data[at+32:at+64].split(b'\0')[0],data[at+64:at+size]));at+=size
+                self.assertEqual(at,struct.unpack_from('<I',data,16+12*4)[0])
+                return out
+            new_members,old_members=members(small),members(before)
+            self.assertEqual(new_members[1],old_members[1]) # unselected sibling survives GetEtcAddr traversal
+            self.assertEqual(new_members[0][0],b'et00.eff')
+            for entry in report['effects']['entries']:
+                self.assertEqual(entry['packed_records'],1);self.assertEqual(entry['raw_records'],1)
+                h=entry['resident_offset'];r0,r1=struct.unpack_from('<2I',small,h+48)
+                self.assertEqual(codec.unpack_record(small[h+(r0&~1):h+r1]),record)
+                self.assertEqual(small[h+r1:h+r1+300],raw)
+            self.assertEqual(ui.mirror.SEQUENCE_OBSERVER,None)
+
     def test_offset_identity_and_retained_cpu_mip_data(self):
         original,container,image=fixture()
         with tempfile.TemporaryDirectory() as d:
