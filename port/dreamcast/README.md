@@ -36,34 +36,37 @@ textures. The actual core reservation is now **1,501,312 bytes**, down from
 473,696 since D322. Core paths now convert through their source layout; palette,
 mip, CPU-noise and unreviewed backing remain. The full reference is selectable.
 
-D335c keeps the existing source model/frame connection and compacts consecutive
-clipped triangles into native strips only when every shared attribute matches.
-Complete-part packet admission now precedes texture loading; committed draws pin
-the cached upload. No new renderer, asset reduction or capacity increase.
-At logged native frame1320: 18 HUD quads, zero missing textures, 53 cumulative
-uploads versus D334's108; current texture VRAM1,011,712 versus2,967,552 bytes.
-Both runs still peak4,192,256 during earlier UI loading. The final candidate queue
-represents1,004 triangles in65,280 vertex bytes, versus96,384 as separate triangles.
-This is packet efficiency, not source-heap recovery or a demonstrated FPS gain.
+D336b adds selectable serial submission to the existing native frame owner.
+The same64KiB packet scratch is reused per completed source part; source
+Render_swap still decides whether to present. The source menu, Leon, cabin,
+trees and HUD now appear in one recovered-game executable. **This is diagnostic,
+not restored gameplay:** ground/surfaces are absent and head/hair presentation is
+wrong. Large parts and separate-alpha materials remain rejected; source lighting,
+complete materials and character presentation remain unqualified.
 
-Menu pixels match D334. Final captures retain sparse branches and HUD; most world
-and actors are still absent. The64KiB diagnostic cap admits a different subset,
-and final source states differ; no whole-scene visual-equivalence claim. Eight
-focused tests pass, including exact expanded-triangle comparisons, UV/layout
-fallback, rollback and texture ownership. The135s Flycast capture reaches source
-frame1351/115 model presentations. Earlier eager-binding/HUD-loss and tentative-
-binding/upload-churn candidates are recorded as rejected.
+PVR_STREAM=1 requires the pinned optional KOS patch in an isolated KOS worktree.
+Default0 still builds with the untouched original KOS. Eleven focused checks pass,
+including late hold/black, retirement/fence and unchanged PowerPC preprocessing.
+The135s Flycast run reaches source frame1256 with31 model presentations at the
+final snapshot; it ends by harness deadline. Maximum submitted model bytes/frame
+1,668,832; current textures3,112,960, earlier peak4,192,256,96 uploads,0 missing.
+The64-handle candidate restores the HUD lost by the initial48-handle experiment.
+It costs1,216 data bytes and another1,048,576 reserved VRAM bytes for TA banks.
+Flycast reports invalid zero TA-used/peak counters: physical capacity is NOT
+qualified. Last completed presentation interval1,773,284us is not a matched FPS
+comparison or isolated GPU cost. Keep this integration path opt-in.
 
-Source heap remains41,472 free; required block and enemy body allocations pass.
-Warm enemy-family recovery remains1,510,176 bytes; cache952,768 current/peak/read,
-22,400 peak pinned,75 misses/loads,6 hits,0 evictions/failures,270,936us worst wait.
-All145 headers and1,904 key pointers validate; no later animation evaluations,
-so repeated-combat/response/concurrency coverage remains open. D324 remains the
-accepted integration reference. Event ARAM scratch694,560/669,248/309,632 still
-fails and native ARQ does not store bytes. Full scene/materials, event transport,
-audio and playable progression remain required. Simpler water is an authorized
-selectable candidate, not an implemented or verified PS2 effect.
-See [D335](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d335-native-strips-and-complete-part-texture-admission).
+No new source-heap saving: post-block2,582,048, post-enemy1,466,528, later41,472
+free. Warm enemy-family recovery remains1,510,176 bytes; cache952,768 current/
+peak/read,22,400 peak pinned,75 misses/loads,6 hits,0 evictions/failures,270,939us
+worst wait. All145 headers and1,904 relocated pointers validate; no later motion
+evaluations, so combat/response/concurrency coverage remains open. Event ARAM
+scratch694,560/669,248/309,632 still fails and ARQ has no real byte backing.
+Continue the same native adapter and event transport; no second renderer or
+prototype gameplay. Simpler water remains an authorized selectable candidate,
+not an implemented or verified PS2 effect. D324 remains the accepted integration
+reference; the earlier corrected native scene remains the visual reference.
+See [D336](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d336-source-controlled-serial-submission).
 
 
 ARAM/event/audio, inventory, full manual controls, transitions/retry and physical

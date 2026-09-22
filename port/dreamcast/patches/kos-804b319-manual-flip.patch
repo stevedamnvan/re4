@@ -1,0 +1,87 @@
+diff --git a/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c b/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c
+index d3d1e37..c16af35 100644
+--- a/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c
++++ b/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c
+@@ -16,6 +16,44 @@
+ 
+ #include <stdio.h>
+ 
++/* Optional explicit presentation for a single scene owner. The default API
++   keeps automatic vblank flips. In manual mode a completed back buffer stays
++   hidden until its owner resolves it, after TA/render fences have completed. */
++static bool pvr_manual_flip;
++static bool pvr_flip_allowed;
++
++int pvr_set_manual_flip(bool enabled) {
++    irq_disable_scoped();
++    if(!pvr_state.valid || pvr_state.ta_busy || pvr_state.render_busy ||
++       pvr_state.render_completed)
++        return -1;
++    pvr_manual_flip = enabled;
++    pvr_flip_allowed = false;
++    return 0;
++}
++
++int pvr_resolve_frame(bool present) {
++    int result = 0;
++    irq_disable_scoped();
++    if(!pvr_manual_flip || !pvr_state.valid || pvr_state.ta_busy ||
++       pvr_state.render_busy || !pvr_state.render_completed)
++        return -1;
++    if(present) {
++        pvr_flip_allowed = true;
++        result = genwait_wait((void *)&pvr_state.render_completed,
++                              "PVR manual present", 100);
++        if(result < 0 && pvr_state.render_completed) {
++            pvr_flip_allowed = false; /* timed out: remain hidden, allow retry */
++            return -1;
++        }
++    }
++    else {
++        /* Retain the displayed buffer; the same back buffer can be reused. */
++        pvr_state.render_completed = 0;
++    }
++    return 0;
++}
++
+ /*
+    PVR interrupt handler; the way things are setup, we're gonna get
+    one of these for each full vertical refresh and at the completion
+@@ -117,7 +155,7 @@ void pvr_vblank_handler(uint32_t code, void *data) {
+ 
+     // If the render-done interrupt has fired then we are ready to flip to the
+     // new frame buffer.
+-    if(pvr_state.render_completed) {
++    if(pvr_state.render_completed && (!pvr_manual_flip || pvr_flip_allowed)) {
+         // Handle PVR stats
+         pvr_sync_stats(PVR_SYNC_PAGEFLIP);
+ 
+@@ -128,6 +166,8 @@ void pvr_vblank_handler(uint32_t code, void *data) {
+ 
+         // Clear the render completed flag.
+         pvr_state.render_completed = 0;
++        pvr_flip_allowed = false;
++        genwait_wake_all((void *)&pvr_state.render_completed);
+     }
+ 
+     // We may have a pending render, that couldn't be done as the previous
+diff --git a/kernel/arch/dreamcast/include/dc/pvr.h b/kernel/arch/dreamcast/include/dc/pvr.h
+index 9ac9ed1..af3c5ff 100644
+--- a/kernel/arch/dreamcast/include/dc/pvr.h
++++ b/kernel/arch/dreamcast/include/dc/pvr.h
+@@ -1074,6 +1074,15 @@ int pvr_list_flush(pvr_list_t list);
+ */
+ int pvr_scene_finish(void);
+ 
++/** Optional explicit presentation, for one serialized scene owner.
++    Enable only when idle. Defaults to automatic flipping. */
++int pvr_set_manual_flip(bool enabled);
++/** Resolve a completed normal framebuffer after TA/render fences. true waits
++    for the vblank flip; false discards it without changing the displayed buffer.
++    Return 0 on success, -1 for invalid state or timeout. No queued next scene. */
++int pvr_resolve_frame(bool present);
++
++
+ /** \brief   Block the caller until the PVR system is ready for another frame to
+              be submitted.
+     \ingroup pvr_scene_mgmt

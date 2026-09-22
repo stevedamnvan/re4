@@ -14,6 +14,8 @@ extern "C" {
 void re4dc_ui_init();
 void re4dc_ui_begin();
 void re4dc_ui_present();
+// Always called at source Render_swap, including a held picture.
+void re4dc_ui_end_frame(int present);
 void re4dc_ui_submit(const Re4dcUiQuad*);
 void re4dc_ui_invalidate_sources();
 int re4dc_ui_bind_core(void*,unsigned);

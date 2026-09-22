@@ -248,10 +248,10 @@ void Render_done()
 // Presents the current XFB (unless System_flg 0x400 holds the picture) and flips buffers.
 void Render_swap()
 {
-    if (!(pG->System_flg & 0x400)) {
-#if !defined(__PPC__)
-        re4dc_ui_present();
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_ui_end_frame(!(pG->System_flg & 0x400));
 #endif
+    if (!(pG->System_flg & 0x400)) {
         VISetNextFrameBuffer(pCurrent_buff);
         if (pCurrent_buff == pFrame_buff[0]) {
             pCurrent_buff = pFrame_buff[1];

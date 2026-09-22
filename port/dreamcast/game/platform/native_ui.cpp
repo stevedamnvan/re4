@@ -1,6 +1,7 @@
 // Narrow ID-quad backend. Reuses the scene Package and owned storage reader.
 // Candidate scope: common unmasked UI; unsupported effects are counted/rejected.
 #include <kos.h>
+#include <dc/sq.h>
 #include <fcntl.h>
 #include <cstdio>
 #include <cstring>
@@ -15,7 +16,7 @@
 #include "../../room/pvr_geometry.hpp"
 
 namespace {
-constexpr unsigned kQuadCount=256, kTextureCount=48, kVramBudget=4*1024*1024;
+constexpr unsigned kQuadCount=256, kTextureCount=RE4DC_PVR_STREAM?64:48, kVramBudget=4*1024*1024;
 struct Key { unsigned crc,fnv; bool operator==(const Key& b)const{return crc==b.crc && fnv==b.fnv;} };
 struct Entry { re4dc::texture::Package package; Key key{}; unsigned frame=0; bool valid=false; };
 struct Source { Re4dcUiImage image{}; Key key{}; };
@@ -35,6 +36,37 @@ pvr_vertex_t* model_packets; unsigned model_used,model_pending; Entry* model_han
 int model_diagnostic=-1;
 unsigned model_parts,model_invalid,model_resource,model_overflow,model_input,model_output,model_peak,model_presented;
 unsigned model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds;
+unsigned model_state_bits[8];
+#if RE4DC_PVR_STREAM
+// One serial PVR owner, no extra framebuffer or whole-scene packet copy.
+// KOS's opt-in manual flip preserves the source's late presentation decision.
+bool stream_scene,stream_aborted,stream_retire;
+unsigned stream_model_bytes,stream_peak_bytes,stream_discards,stream_black_frames;
+void stream_open() {
+    pvr_scene_begin();
+    if(pvr_list_begin(PVR_LIST_TR_POLY)<0)re4dc_missing("native stream list begin failed");
+    // Do not retain the main thread's SQ mutex across source task dispatch or
+    // file/audio services. Each synchronous packet transfer reacquires it.
+    sq_unlock();stream_scene=true;
+}
+void stream_send(const void* data,unsigned bytes) {
+    if(!stream_scene)stream_open();
+    sq_lock((void*)PVR_TA_INPUT);
+    re4dc::render::submit_pvr(data,bytes);
+    sq_unlock();
+}
+void stream_close(bool present) {
+    if(!stream_scene)stream_open();
+    sq_lock((void*)PVR_TA_INPUT);
+    if(pvr_list_finish()<0 || pvr_scene_finish()<0)re4dc_missing("native stream finish failed");
+    stream_scene=false;
+    if(re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready)
+        re4dc_missing("native stream completion fence failed");
+    if(pvr_resolve_frame(present)<0)re4dc_missing("native source presentation resolve failed");
+    if(!present)++stream_discards;
+}
+#endif
+
 
 
 unsigned image_size(const Re4dcUiImage& i) {
@@ -175,6 +207,14 @@ extern "C" void re4dc_ui_unbind_enemy(void* archive){
     nsource=0;
 }
 extern "C" void re4dc_ui_retire_room(){
+#if RE4DC_PVR_STREAM
+    // Source room retirement can occur on a task while the main thread owns an
+    // unfinished TA list. Keep submitted texture owners until that thread closes
+    // and fences the discarded scene at Render_swap; no source CPU pointer is
+    // retained by PVR. Waiting here would deadlock the caller against main.
+    if(stream_scene){stream_aborted=true;stream_retire=true;}
+    else
+#endif
     if(ready && re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready)
         re4dc_missing("native room retire fence failed");
     // No queued draw may outlive its source room. Shared cached uploads may be
@@ -182,16 +222,29 @@ extern "C" void re4dc_ui_retire_room(){
     // Core descriptors belong to the persistent core region and survive this reset.
     nquad=0;model_used=0;model_handle=nullptr;nsource=0;room_identities.clear();identity_hits=0;
     for(auto& e:enemy_identities){e.table.clear();e.archive=nullptr;}
+#if RE4DC_PVR_STREAM
+    if(!stream_retire)
+#endif
     for(auto& entry:entries)close_entry(entry);
 }
 
 extern "C" void re4dc_ui_init(){
     if(ready)return;
     pvr_init_params_t params=pvr_default_params;
+#if RE4DC_PVR_STREAM
+    // Serialized ownership uses one TA bank. This pinned KOS still reserves
+    // both banks, so doubling their size costs another 1MiB of actual VRAM.
+    // Flycast's zero TA-used register does not qualify physical TA capacity.
+    params.vertex_buf_size=1024*1024;params.vbuf_doublebuf_disabled=1;
+#endif
     params.autosort_disabled=1; // source OT is the UI blending order
     ready=pvr_init(&params)==0;
     re4dc_log("native UI: PVR init %s; source ID adapter, 640x480\n",ready?"ok":"FAILED");
     if(ready){
+#if RE4DC_PVR_STREAM
+        if(pvr_set_manual_flip(true)<0)re4dc_missing("native manual presentation init failed");
+        re4dc_log("native source stream: enabled, scratch=65536 TA=1048576 single-bank; late hold/retire/black preserved\n");
+#endif
         pvr_set_bg_color(0,0,0);
         // Source camera-space units can exceed 10,000. KOS's default 0.0001
         // inverse background depth hides those valid source polygons. Leave
@@ -201,6 +254,10 @@ extern "C" void re4dc_ui_init(){
     }
 }
 extern "C" void re4dc_ui_begin(){
+#if RE4DC_PVR_STREAM
+    if(stream_scene || stream_retire)re4dc_missing("native previous frame unresolved");
+    stream_aborted=false;stream_model_bytes=0;
+#endif
     if(model_diagnostic==1 && frame%120==0)
         re4dc_log("native model DIAGNOSTIC boundary: frame=%u previous_bytes=%u committed_parts=%u invalid=%u resource=%u overflow=%u presented=%u\n",frame,model_used*32,model_parts,model_invalid,model_resource,model_overflow,model_presented);
     nquad=0;model_used=0;++frame;
@@ -208,6 +265,9 @@ extern "C" void re4dc_ui_begin(){
 }
 extern "C" void re4dc_ui_submit(const Re4dcUiQuad* q){
     if(!frame_ready)return;
+#if RE4DC_PVR_STREAM
+    if(stream_aborted)return;
+#endif
     // Source IdCommonTrans alpha-compare is GREATER 1 after modulation.
     // Zero material alpha cannot produce a surviving fragment for any blend.
     if((q->color>>24)==0){++culled;return;}
@@ -223,11 +283,15 @@ extern "C" void re4dc_ui_submit(const Re4dcUiQuad* q){
 }
 extern "C" void re4dc_ui_present(){
     if(!frame_ready)return;
+#if RE4DC_PVR_STREAM
+    if(!stream_scene)stream_open();
+#else
     pvr_scene_begin();pvr_list_begin(PVR_LIST_TR_POLY);
     if(model_used && !re4dc_vi_black()){
         re4dc::render::submit_pvr(model_packets,model_used*sizeof(pvr_vertex_t));
         if(model_presented++<3)re4dc_log("native model DIAGNOSTIC presented: frame=%u bytes=%u\n",frame,model_used*32);
     }
+#endif
     for(unsigned i=0;i<nquad && !re4dc_vi_black();++i){
         if(!handles[i])continue;
         const auto& q=quads[i];const auto& t=handles[i]->package.textures()[0];
@@ -245,14 +309,46 @@ extern "C" void re4dc_ui_present(){
         for(unsigned n=0;n<4;++n){unsigned j=order[n];v[n].flags=n==3?PVR_CMD_VERTEX_EOL:PVR_CMD_VERTEX;
             v[n].x=q.xy[2*j];v[n].y=q.xy[2*j+1];v[n].z=1.0f;
             v[n].u=q.uv[2*j]*q.image.width/t.width;v[n].v=q.uv[2*j+1]*q.image.height/t.height;v[n].argb=q.color;}
-        re4dc::render::submit_pvr(commands,sizeof(commands));++drawn;
+#if RE4DC_PVR_STREAM
+        stream_send(commands,sizeof(commands));
+#else
+        re4dc::render::submit_pvr(commands,sizeof(commands));
+#endif
+        ++drawn;
     }
+#if RE4DC_PVR_STREAM
+    stream_close(true);
+    if(stream_model_bytes && model_presented++<3)
+        re4dc_log("native model DIAGNOSTIC presented: frame=%u bytes=%u\n",frame,stream_model_bytes);
+    if(frame%120==0 || (stream_model_bytes && model_presented<=3)){
+        pvr_stats_t stats;pvr_get_stats(&stats);
+        re4dc_log("native stream: frame=%u model_bytes=%u peak=%u discarded=%u black_frames=%u vram_free=%u textures=%u used=%u loads=%u missing=%u ta_used=%u ta_peak=%u present_us=%llu registration_us=%llu render_us=%llu\n",frame,stream_model_bytes,stream_peak_bytes,stream_discards,stream_black_frames,(unsigned)pvr_mem_available(),kTextureCount,used,loads,missing,(unsigned)stats.vtx_buffer_used,(unsigned)stats.vtx_buffer_used_max,(unsigned long long)(stats.frame_last_time/1000),(unsigned long long)(stats.reg_last_time/1000),(unsigned long long)(stats.rnd_last_time/1000));
+    }
+#else
     pvr_list_finish();pvr_scene_finish();
+#endif
     if(frame%120==0 && model_diagnostic==1)
         re4dc_log("native model DIAGNOSTIC: frame=%u packets=%u parts=%u invalid=%u resource=%u overflow=%u input=%u emitted=%u peak=%u heap=%d black=%d\n",frame,model_used*32,model_parts,model_invalid,model_resource,model_overflow,model_input,model_output,model_peak,re4dc_ui_heap_free(),re4dc_vi_black());
     if(frame%120==0 && model_diagnostic==1)
         re4dc_log("native model rejection: capacity=%u state=%u texture=%u wrap=%u empty=%u scale_rebuild=%u\n",model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds);
     if(frame%120==0) re4dc_log("native UI: frame=%u quads=%u drawn=%u missing=%u unsupported=%u drops=%u vram=%u peak=%u staging=%u loads=%u freed=%u culled=%u fb=%08x,%08x black=%d\n",frame,nquad,drawn,missing,unsupported,dropped,used,peak,staging_peak,loads,reclaimed,culled,(unsigned)pvr_get_front_buffer(),(unsigned)pvr_get_back_buffer(),re4dc_vi_black());
+}
+
+extern "C" void re4dc_ui_end_frame(int present){
+#if RE4DC_PVR_STREAM
+    if(!frame_ready)return;
+    const bool black=re4dc_vi_black()!=0;
+    if(present && !stream_aborted && !black)re4dc_ui_present();
+    else {
+        if(stream_scene)stream_close(false);
+        // A late VI-black request must show a genuinely empty framebuffer;
+        // previously submitted world packets cannot simply be ignored now.
+        if(present && black){stream_open();stream_close(true);++stream_black_frames;}
+    }
+    if(stream_retire){for(auto& entry:entries)close_entry(entry);stream_retire=false;}
+#else
+    if(present)re4dc_ui_present();
+#endif
 }
 
 extern "C" int re4dc_model_diagnostic_enabled(){
@@ -264,9 +360,25 @@ extern "C" int re4dc_model_diagnostic_enabled(){
     return model_diagnostic;
 }
 extern "C" int re4dc_model_packet_reserve(const Re4dcModelPart* p,Re4dcModelPacket* out){
-    if(!frame_ready || !re4dc_model_diagnostic_enabled() || p->blend>4 || p->depth_mode>2 ||
-       p->wrap_s>1 || p->wrap_t>1 || (p->material_flags&4) || (p->image.format>=8 && p->image.format!=14) || !p->image.pixels || !p->image.width || !p->image.height ||
-       p->image.width>1024 || p->image.height>1024){++model_state_rejects;return 0;}
+    unsigned reason=0;
+    if(!frame_ready || !re4dc_model_diagnostic_enabled())reason|=1;
+#if RE4DC_PVR_STREAM
+    if(stream_aborted)reason|=1;
+#endif
+    if(p->blend>4)reason|=2;
+    if(p->depth_mode>2)reason|=4;
+    if(p->wrap_s>1 || p->wrap_t>1)reason|=8;
+    if(p->material_flags&4)reason|=16;
+    if(p->image.format>=8 && p->image.format!=14)reason|=32;
+    if(!p->image.pixels)reason|=64;
+    if(!p->image.width || !p->image.height || p->image.width>1024 || p->image.height>1024)reason|=128;
+    if(reason){
+        ++model_state_rejects;
+        for(unsigned bit=0;bit<8;++bit)if(reason&(1U<<bit)){
+            if(model_state_bits[bit]++<2)re4dc_log("native model state reject: reason=%02x model=%08x info=%08x part=%08x material=%02x blend=%u depth=%u wrap=%u,%u image=%08x %ux%u fmt=%u vertices=%u stream=%u\n",reason,(unsigned)p->model,(unsigned)p->info,(unsigned)p->part,p->material_flags,p->blend,p->depth_mode,p->wrap_s,p->wrap_t,(unsigned)p->image.pixels,p->image.width,p->image.height,p->image.format,p->position_count,p->stream_bytes);
+        }
+        return 0;
+    }
     if(!model_packets){
         // KOS-owned bounded scratch outlives source room-heap resets. Using the
         // current source heap here would leave a dangling queue after room retire.
@@ -312,7 +424,16 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
 extern "C" void re4dc_model_packet_commit(unsigned count){
     // A loaded but wholly clipped/rolled-back part owns no submitted packets.
     // Keep its upload cached; pin only when this part actually commits a draw.
-    if(count){model_handle->frame=frame;model_used=model_pending+count;if(model_used*32>model_peak)model_peak=model_used*32;}
+    if(count){
+        model_handle->frame=frame;model_used=model_pending+count;
+        if(model_used*32>model_peak)model_peak=model_used*32;
+#if RE4DC_PVR_STREAM
+        stream_send(model_packets,model_used*32);
+        stream_model_bytes+=model_used*32;
+        if(stream_model_bytes>stream_peak_bytes)stream_peak_bytes=stream_model_bytes;
+        model_used=0; // PVR owns copied packets; reuse the same bounded scratch.
+#endif
+    }
 }
 extern "C" void re4dc_model_result(unsigned reason,unsigned input,unsigned output){
     if(reason==0){++model_parts;if(!output)++model_empty_parts;}else if(reason==1)++model_invalid;else if(reason==2)++model_resource;else ++model_overflow;

@@ -1918,3 +1918,133 @@ Private result/comparison/source/assets/tool identities and evidence hashes reta
 **Keep D335c as a bounded native integration improvement.** D324 remains accepted
 integration reference; no complete room/characters, manual combat, audio, FPS or
 physical-hardware acceptance. Menu-plus-three-room goal remains active.
+
+## D336: source-controlled serial submission
+
+Date: 2026-09-22. Base D335c (`d09e99508de79f4d2af10777fd2f2351621f9e8e`),
+with inherited dirty work preserved. This is an opt-in native integration
+experiment. It connects more recovered source draws; it does not complete r100.
+
+### Existing connection and small platform extension
+
+`re4dc_draw_model_part` still supplies source identity, pose, camera, material and
+indices to `native_model.cpp`. Existing `clip_projected_triangle`, exact strip
+packing, `begin_pvr_packet`, `submit_pvr`, texture Package/storage/identity cache
+and `gpu::quiesce` remain the implementation. No prototype update loop or second
+renderer is introduced. Complete-part admission and upload checks still happen
+before committing a part. The existing64KiB copied-packet buffer is now reused
+after each part is synchronously transferred to TA, rather than limiting an
+entire source frame to64KiB. The per-part limit remains a demonstrated rejection.
+
+Source Render consumes the previous ordering table, then reuses primitive data
+and dispatches tasks before Render_swap makes its hold decision. Deferring raw
+source pointers or allowing KOS to auto-flip early would violate that lifetime.
+PVR_STREAM=1 therefore uses one existing PVR scene owner plus an optional patch
+to pinned KOS804b3195: hold the completed back buffer until explicitly presented
+at vblank, or discard without changing the displayed buffer. Normal KOS automatic
+presentation stays the default. No extra framebuffer or guessed RTT alias.
+
+`Render_swap -> re4dc_ui_end_frame(present)` executes even on source hold. Late
+VI-black discards the already submitted world and presents an empty scene only
+when source presentation is permitted. Room retirement during an open scene
+invalidates source views immediately but retains native uploads until the main
+owner closes/discards/fences; it cannot wait on a TA list owned by the suspended
+main task. SQ ownership is acquired only for actual submission/list operations,
+not held across task dispatch or I/O. Source CPU archives have no deferred PVR
+reader: native commands and texels have already been copied. Static automatic
+mode and the original KOS checkout remain usable and unchanged.
+
+KOS references: [scene management](https://kos-docs.dreamcast.wiki/group__pvr__scene__mgmt.html)
+and [texture/framebuffer address semantics](https://kos-docs.dreamcast.wiki/group__pvr__txr__mgmt.html).
+The implementation authority is the pinned local source, not moving web docs.
+Patch, build procedure and KOS notices are in `port/dreamcast/patches/`.
+
+### Checks and emulator result
+
+Eleven focused tests pass. New checks compile the actual patched KOS functions
+and actual native lifetime helpers with controlled state: automatic mode,
+100 held/discarded/presented cycles, invalid/busy states, resolve timeout/retry,
+SQ release between calls, late black, deferred/repeated retirement and fence
+failure. Source Render_swap tests verify hold behavior and byte-identical PPC
+preprocessing. These fixtures do not establish physical PVR interrupt timing.
+The default original-KOS target builds; its library is rejected by the actual
+streaming link guard, preventing missing-symbol stubs. The opt-in candidate
+rebuild reproduces the captured ELF exactly. Five prior missing stubs remain.
+
+Same135-second menu/New Game fixture and unchanged assets. Source menu is visible;
+final source frame1256,31 completed model presentations. Source-controlled Leon,
+cabin and trees now appear; the64-handle revision restores the HUD. The initial
+48-handle D336 run lost HUD textures (248 misses) and is retained as rejected
+evidence. Revised D336b has96 uploads,0 missing,3,112,960 current texture bytes,
+4,192,256 earlier peak and1,626,088 logged free VRAM. Source states/capture times
+differ from D335c; do not claim pixel or whole-scene equivalence from them.
+
+**Visual rejection remains:** missing ground/other surfaces, exposed incorrect
+head/face and incomplete hair. The camera/pose are source-driven, but that alone
+does not certify their rendering. Final counters:277 whole-part overflows,
+2,833 state rejects (2,801 separate-alpha,32 no-base-image/size; flags overlap),
+0 invalid/capacity/texture/wrap/scale rejects. Parts with separate alpha are
+explicitly unsupported, not silently flattened. No complete character, correct
+lighting/TEV/fog/water, audible output, manual combat or room acceptance.
+
+Maximum model commands in a completed frame1,668,832 bytes; peak individual part
+64,480. Cumulative emitted triangles777,739/processed input3,428,167 includes
+part of the in-progress frame. These are not per-frame hardware polygon counts.
+Last completed PVR presentation interval1,773,284us, registration1,701,748us,
+reported render7,501us. Registration includes CPU source work; intervals overlap
+and must not be added. Flycast render duration is not stock-console GPU timing.
+Different admitted content makes D335c's586,359us interval an invalid speedup
+comparison. Full timing distributions, input responsiveness and target acceptance
+remain open. One discarded scene and53 black scenes are recorded; the capture
+does not identify the exact discard branch. Branch semantics are fixture-tested.
+
+### Actual memory and target limitation
+
+The pinned KOS allocates BOTH vertex banks even in single-bank mode. Raising each
+from512KiB to1MiB costs1,048,576 extra VRAM: texture_base2,599,168 ->3,647,744.
+This is not a free bank replacement. Flycast reports TA-used/peak=0 despite
+visible output, so those counters are invalid. Neither1MiB TA capacity nor OPB
+space is qualified on stock hardware. Submitted bytes and internal TA storage
+are different; do not assume a fit from this emulator run. Keep opt-in until
+budget/visual qualification; no default asset or renderer promotion.
+
+64 vs48 texture handles cost1,216 data bytes; text+2,940 and BSS+64 versus D335c.
+Packet scratch64KiB, texture byte budget4MiB, upload staging64KiB. Source arena
+10,127,872 remains unchanged; post-block2,582,048 free, post-enemy1,466,528,
+later41,472. No new archive/source-heap recovery. Parts276,992/model-info73,504/
+objects212,704 retain verified pointers and no allocation failures.
+
+Enemy-family net warm recovery remains1,510,176. Cache952,768 current/peak/read,
+22,400 peak pinned,2,336 metadata,75 misses/loads,6 hits,0 evictions/failures,
+270,939us worst wait;145 source headers,75 payloads and1,904 key pointers verify.
+Later and final counters stay unchanged without additional motion evaluations;
+this is not repeated combat working-set qualification. Keep the D328b warm/evict
+fixtures and source prefetch/concurrency audit alongside implementation.
+
+Event scratch694,560/669,248/309,632 still fails with41,472 free, and native ARQ
+has no real backing. Continue bounded event storage/swap and native full-part/
+material/character fixes without suppressing source requirements. Simpler water
+is a selectable candidate authorized by the user, with no current PS2 comparison
+or implemented substitute. It cannot be credited for memory or FPS today.
+
+### Exact identity and disposition
+
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d336b-source-stream`; negative initial
+`d336-source-stream`; discs `/root/probe/d336b-disc` and `/root/probe/d336-disc`.
+Unmodified D330 mirror/core and D327 fixtures. SH GCC15.2, native O1, KOS pinned
+804b3195ebd1a06a27cc2b3a5eacf7a2429040a3 plus the isolated manual-flip patch.
+Text/data/BSS2,291,492 /76,836 /673,016. Build adds PVR_STREAM=1 to the existing
+CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776
+PARTS_DEMAND=1 MODELINFO_DEMAND=1 OBJECT_DEMAND=1 options. See evidence manifests
+for the exact tool, configuration, fixture, private asset and dirty-source hashes.
+
+ELF SHA256 `ace4aa79b4bd5bec3514e2998841bb844f4d4c0c17b42bbe3e62dd5d9209620b`;
+disc SHA256 `5e1fa88f05321aca3e50970b7ab46a550c8aeeb7c4e004734a2e88bdc18e0ce0`;
+patched KOS library SHA256 `f5b2f71970dabd1d51199bc77e11102fb63c80765ef7ccac334db9208139b9ca`;
+patch SHA256 `c8bd2883f9422e78da250e1b26a5bbc97c3f363cd98a6be242bd9cecf239f4df`.
+
+**Keep the source-controlled submission mechanism as opt-in integration.** Reject
+the current image as complete scene/character acceptance. Default bounded path
+and accepted references are retained. This is not a frame-time gain, recovered
+event/audio subsystem, restored cabin gameplay or hardware pass. The menu and
+three-room persistent goal remains active.

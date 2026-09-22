@@ -100,7 +100,8 @@ $(MODULES_MK): Makefile tools/gen_modules.py $(ROOT)/config/G4BE08/modules.py $(
 	python3 tools/gen_modules.py $(ROOT)/config/G4BE08/modules $(ROOT) $(OBJDIR) $@ $(MODULES)
 include $(MODULES_MK)
 
-$(TARGET): $(OBJS) tools/link.sh tools/gen_aliases.py tools/gen_missing.py platform/aliases-manual.ld
+$(TARGET): $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a $(OBJS) tools/link.sh tools/gen_aliases.py tools/gen_missing.py platform/aliases-manual.ld
+	@if [ "$(PVR_STREAM)" = 1 ]; then test "$$($(KOS_CC_BASE)/bin/$(KOS_CC_PREFIX)-nm -g --defined-only $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a | grep -Ec ' T _pvr_(set_manual_flip|resolve_frame)$$')" -eq 2 || { echo 'PVR_STREAM requires the pinned manual-flip KOS patch' >&2; exit 1; }; fi
 	bash tools/link.sh $(TARGET) "$(GAME_OPT)" $(OBJS)
 
 # Undefined-symbol inventory over every gameplay unit, REL modules included.
@@ -160,3 +161,15 @@ $(OBJDIR)/parts-budget.h: parts-budget-force
 $(OBJDIR)/parts_bridge.o: parts_bridge.cpp $(OBJDIR)/parts-budget.h
 	@mkdir -p $(dir $@)
 	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -include $(OBJDIR)/parts-budget.h -MMD -MP -c $< -o $@
+
+# Selectable serial native submission. The original KOS/reference stays usable.
+# Only the existing frame owner needs this macro; source end-frame is neutral.
+PVR_STREAM ?= 0
+.PHONY: pvr-stream-force
+$(OBJDIR)/pvr-stream.h: pvr-stream-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_PVR_STREAM %s\n' '$(PVR_STREAM)' > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_ui.o: $(OBJDIR)/pvr-stream.h
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pvr-stream.h
