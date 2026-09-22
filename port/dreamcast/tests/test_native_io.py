@@ -20,6 +20,7 @@ struct TASK {OSThread Thread;unsigned Status=3;};
 constexpr int TASK_ISR=4,TASK_SUSPEND=128;
 TASK Task[5];int iTask_exec_flg=1;void* thd_current=&Task[4].Thread;
 int irq_disable(){return 0;}void irq_restore(int){}
+void thd_sleep(int){}
 OSThread* threadOf(void* p){return static_cast<OSThread*>(p);}
 void re4dc_missing(const char* s){throw std::runtime_error(s);}
 unsigned suspended,fs_calls;bool fail_open,fail_read,lock_held;
@@ -57,4 +58,74 @@ int main(){
             cpp=p/'check.cpp';cpp.write_text(setup+hooks+suspend+fs+'\n'+(ROOT/'port/dreamcast/game/platform/dvd.cpp').read_text()+main)
             exe=p/'check';subprocess.run(['g++','-std=c++17','-I'+str(p),'-I'+str(ROOT/'port/dreamcast/game/platform/include'),str(cpp),'-o',str(exe)],check=True)
             subprocess.run([str(exe)],check=True)
+    def test_source_queue_step_reentry_control_and_guard(self):
+        source=(ROOT/'src/game/dvd.cpp').read_text()
+        step=source[source.index('int cDvdQueue::Read()'):source.index('// Fills the slot')]
+        platform=(ROOT/'port/dreamcast/game/platform/dvd.cpp').read_text()
+        guard=platform[platform.index('namespace { void* dvd_step_owner; }'):platform.index('typedef signed char s8;')]
+        os=(ROOT/'port/dreamcast/game/platform/os.cpp').read_text()
+        hooks=os[os.index('void* re4dc_io_begin()'):os.index('void OSExitThread(void* val)')]
+        setup=r"""
+#include <cassert>
+#include <stdexcept>
+#include "native_io.h"
+struct OSThread {unsigned nativeIoDepth=0;};
+OSThread workers[2];void* thd_current=&workers[0];unsigned waits=0;
+OSThread* threadOf(void* p){return (OSThread*)p;}
+int irq_disable(){return 0;}void irq_restore(int){}
+void thd_sleep(int){++waits;}
+void re4dc_missing(const char* s){throw std::runtime_error(s);}
+struct Global {unsigned System_flg=0;} global,*pG=&global;
+struct cDvdQueue {
+ unsigned m_Rno0=1,step=1,flags=1,reads=0;bool pcMode=false;
+ void readInit(){} void readCancelWait(){} void readExit(){}
+ int chk(unsigned mask){return (flags&mask)!=0;}
+ void readMain();int Read();
+};
+bool in_read=false;
+"""
+        run=r"""
+void cDvdQueue::readMain(){
+ switch(step){
+ case 1:
+  ++reads;
+  if(!in_read){
+   in_read=true;
+#ifdef RE4DC_GAME
+   assert(re4dc_io_busy(thd_current));
+#endif
+   // The actual KOS read can yield before the source's step++ below.
+   // The foreground block-read path also pumps this same background queue.
+   thd_current=&workers[1];assert(Read()==1);assert(Read()==1);
+   thd_current=&workers[0];in_read=false;
+  }
+  ++step;break;
+ case 2:++step;break;
+ case 3:step=0;flags=0;break;
+ }
+}
+int main(){
+ cDvdQueue q;assert(q.Read()==1);
+#ifdef RE4DC_GAME
+ assert(q.step==2 && q.reads==1 && waits==2);
+ assert(!workers[0].nativeIoDepth && !workers[1].nativeIoDepth);
+ assert(q.Read()==1 && q.step==3);assert(q.Read()==0 && q.step==0);
+ // Reuse after completion must acquire normally, including a different worker.
+ thd_current=&workers[1];q.step=2;q.flags=1;assert(q.Read()==1);
+ assert(q.step==3 && !workers[1].nativeIoDepth && !dvd_step_owner);
+#else
+ // Demonstrates the precise invalid step seen in target em12 snapshots.
+ assert(q.step==4 && q.reads==2);
+#endif
+ assert(pG->System_flg==0);
+}
+"""
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d);cpp=p/'check.cpp';cpp.write_text(setup+hooks+guard+step+run)
+            for enabled in (False,True):
+                exe=p/('guard' if enabled else 'control')
+                subprocess.run(['g++','-std=c++17','-fsanitize=address,undefined',
+                  '-I'+str(ROOT/'port/dreamcast/game/platform/include'),
+                  *(['-DRE4DC_GAME=1'] if enabled else []),str(cpp),'-o',str(exe)],check=True)
+                subprocess.run([str(exe)],check=True)
 if __name__=='__main__':unittest.main()

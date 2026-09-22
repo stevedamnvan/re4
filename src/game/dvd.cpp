@@ -18,6 +18,9 @@
 #include "dvd.h"
 #if defined(RE4DC_GAME)
 #include "native_event_file.h"
+#if !defined(__PPC__)
+#include "native_io.h"
+#endif
 #endif
 
 // The file table is defined before the other headers are included: its strings precede the
@@ -897,6 +900,10 @@ void cDvdQueue::readExit()
 // One step of the queue's routine (Rno0 table); 1 while the read is still in progress.
 int cDvdQueue::Read()
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    void* native_step = re4dc_dvd_step_begin();
+    if (!native_step) return 1;
+#endif
     static void (cDvdQueue::*func_tbl[])() = {
         &cDvdQueue::readInit, &cDvdQueue::readMain, &cDvdQueue::readCancelWait, &cDvdQueue::readExit
     };
@@ -922,6 +929,9 @@ int cDvdQueue::Read()
     } else if (!chk(1)) {
         ret = 0;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_dvd_step_end(native_step);
+#endif
     return ret;
 }
 

@@ -1,8 +1,8 @@
 // DVD interface over the KOS file system: the game's disc tree lives under
 // /cd/ with the GameCube paths (lower-cased); entry numbers index a table of
 // paths the game asked for; reads are performed synchronously and complete
-// through the SDK callback, which keeps the game's queue semantics (dvd.cpp
-// cDvdQueue) intact. A read thread comes later with the streaming work.
+// through the SDK callback. The source queue-step guard below keeps competing
+// source pumps from re-entering its synchronous read before step bookkeeping.
 #include <kos.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +10,22 @@
 
 #include "re4dc_platform.h"
 #include "native_io.h"
+
+namespace { void* dvd_step_owner; }
+extern "C" void* re4dc_dvd_step_begin(){
+    const int irq=irq_disable();
+    if(dvd_step_owner){irq_restore(irq);thd_sleep(1);return nullptr;}
+    // Existing native-I/O depth prevents task cancellation/parking while the
+    // step owns shared source DVD buffers. No IRQ is held across filesystem I/O.
+    dvd_step_owner=re4dc_io_begin();
+    void* token=dvd_step_owner;irq_restore(irq);return token;
+}
+extern "C" void re4dc_dvd_step_end(void* token){
+    const int irq=irq_disable();
+    if(!token || dvd_step_owner!=token)re4dc_missing("DVD source-step owner mismatch");
+    dvd_step_owner=nullptr;
+    re4dc_io_end(token);irq_restore(irq);
+}
 
 typedef signed char s8;
 typedef unsigned char u8;

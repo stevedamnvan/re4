@@ -15,3 +15,9 @@ public:
     Re4dcIoScope(const Re4dcIoScope&)=delete;
     Re4dcIoScope& operator=(const Re4dcIoScope&)=delete;
 };
+
+// Serialize one recovered DVD queue step across native reads that can yield.
+// A declined acquisition is still pending; callers yield and retry, never skip
+// the step. Ownership extends through source post-callback bookkeeping.
+extern "C" void* re4dc_dvd_step_begin();
+extern "C" void re4dc_dvd_step_end(void*);
