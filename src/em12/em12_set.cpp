@@ -44,7 +44,14 @@ extern "C" void _unresolved()
 // builds the enemy through Em10SetFunc).
 void Em12Init(cEm* em)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Modern value-initialization zeroes the whole derived object before its
+    // base constructor, erasing the subArc installed by cEmMgr::construct.
+    // The recovered GCC 2.95 path only constructs the base and vtable here.
+    new (em) cEm10;
+#else
     new (em) cEm10();
+#endif
 }
 
 // Em10SetFunc of this module: the village Ganados (class 0): model types 0 (default), 1, 3 and 4 (chainsaw), voice sets 0..3 like em10. Fills the work's motion table mot[0..40] (body / head / hand

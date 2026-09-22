@@ -182,24 +182,39 @@ def native_identity_index(selected, mapped, original_bytes, resident_bytes):
     return header+table+bytes(table_size-32-len(table))
 
 
-def _compact_upload_only(decoded, references, palettes, textures, allowed):
+def _compact_upload_only(decoded, references, palettes, textures, allowed, effect_ranges=(), effect_entries=()):
     """Shared source-layout transform, using the existing converter's offsets."""
+    import compact_effect_records as effects
     n=struct.unpack_from('<I',decoded)[0]
     offsets=struct.unpack_from('<%dI'%n,decoded,16)
     tags=[bytes(decoded[16+4*n+4*i:20+4*n+4*i]) for i in range(n)]
-    if min(x for x in offsets if x)<16+8*(n+1):
+    extra=1+bool(effect_entries)
+    if min(x for x in offsets if x)<16+8*(n+extra):
         raise ValueError('archive lacks spare native-identity header slot')
     ranges,selected,retained=select_upload_only(decoded,palettes,textures,allowed)
     if not ranges:raise ValueError('no qualified upload-only payloads')
-    out,mapped=compact_spans(decoded,references,ranges)
-    table_offset=len(out);table_size=(32+12*len(selected)+31)&~31
-    out+=native_identity_index(selected,mapped,len(decoded),len(out)+table_size)
-    struct.pack_into('<I',out,0,n+1)
-    struct.pack_into('<I',out,16+4*n,table_offset)
-    for i,tag in enumerate(tags+[b'NTR\0']):out[16+4*(n+1)+4*i:20+4*(n+1)+4*i]=tag
-    return out, {'original_archive_bytes':len(decoded),'resident_archive_bytes':len(out),
+    out,mapped=compact_spans(decoded,references,sorted(ranges+list(effect_ranges)))
+    table_size=(32+12*len(selected)+31)&~31
+    effect_size=((32+12*len(effect_entries)+31)&~31) if effect_entries else 0
+    final_bytes=len(out)+table_size+effect_size
+    new_offsets=[];new_tags=[]
+    if effect_entries:
+        new_offsets.append(len(out));new_tags.append(b'ESQ\0')
+        out+=effects.identity_index(effect_entries,mapped,final_bytes)
+    new_offsets.append(len(out));new_tags.append(b'NTR\0')
+    out+=native_identity_index(selected,mapped,len(decoded),final_bytes)
+    struct.pack_into('<I',out,0,n+extra)
+    for i,off in enumerate(new_offsets):struct.pack_into('<I',out,16+4*(n+i),off)
+    out[16+4*(n+extra):16+8*(n+extra)]=b''.join(tags+new_tags)
+    report={'original_archive_bytes':len(decoded),'resident_archive_bytes':len(out),
         'archive_recovery_bytes':len(decoded)-len(out),'identity_table_bytes':table_size,
         'replacement_record_bytes':32*len(ranges),'selected':selected,'retained':retained}
+    if effect_entries:
+        for e in effect_entries:e['resident_offset']=mapped(e['source_offset'])
+        report['effects']={'entries':effect_entries,'index_bytes':effect_size,
+            'recovery_bytes':sum(b-a-len(v) for a,b,v in effect_ranges)-effect_size,
+            'policy':'resident exact records; unsupported records/trailers retained; no I/O'}
+    return out,report
 
 
 def compact_room(source_file, textures, destination):
@@ -257,9 +272,11 @@ def compact_room(source_file, textures, destination):
     return report
 
 
-def compact_core(source_file, textures, destination, include_effects=False):
+def compact_core(source_file, textures, destination, include_effects=False, compact_effects=False):
     """Externalize core HUD #25 and optionally the qualified effect #1 table.
 
+    Optional EST packing reuses the resident codec for audited core owners 0/D1.
+    Nonzero sequence trailers stay raw; original heads and all records survive.
     Other families retain exact converted bytes and qualification status.
     The optional effect family requires its Path/PathVtx conversion as well;
     it never qualifies VIB/SAT. CPU noise, palettes and mip chains stay resident.
@@ -269,17 +286,18 @@ def compact_core(source_file, textures, destination, include_effects=False):
     if destination.exists():raise FileExistsError(destination)
     rel='etc/core.das';slots=(1,25) if include_effects else (25,)
     families=[rel+':0#'+str(i) for i in slots]
-    source=source_file.read_bytes();container=bytearray(source);references=[];palettes=[]
-    old_tpl,old_offsets=mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER
+    source=source_file.read_bytes();container=bytearray(source);references=[];palettes=[];sequences=[]
+    old_tpl,old_offsets,old_seq=mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER,mirror.SEQUENCE_OBSERVER
     start=len(mirror.REPORT)
     mirror.TPL_OBSERVER=lambda file,off,data,ctx: palettes.append((off,data,ctx))
     mirror.OFFSET_OBSERVER=lambda file,field,base,value: references.append((field,base,value))
+    mirror.SEQUENCE_OBSERVER=lambda file,off,data,ctx:sequences.append((off,data,ctx))
     try:mirror.convert_file(rel,container)
-    finally:mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER=old_tpl,old_offsets
+    finally:mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER,mirror.SEQUENCE_OBSERVER=old_tpl,old_offsets,old_seq
     coverage=mirror.REPORT[start:]
     import tempfile
     with tempfile.NamedTemporaryFile(mode='w') as required:
-        required.write('\n'.join(families)+'\n');required.flush()
+        required.write('\n'.join(families+([rel+':0#1',rel+':0#16'] if compact_effects else []))+'\n');required.flush()
         bad=mirror.check_required(coverage,required.name)
     # Sound semantics stay on the original DVD queue, with the converted nested
     # container retained verbatim. Require its existing conversion to succeed.
@@ -291,7 +309,8 @@ def compact_core(source_file, textures, destination, include_effects=False):
     decoded=container[base:base+size]
     n=struct.unpack_from('<I',decoded)[0]
     offsets=struct.unpack_from('<%dI'%n,decoded,16)
-    if n!=36 or any(decoded[16+4*n+i*4:20+4*n+i*4]!=b'EFF\0' for i in slots):
+    checked_slots=set(slots).union((1,16) if compact_effects else ())
+    if n!=36 or any(decoded[16+4*n+i*4:20+4*n+i*4]!=b'EFF\0' for i in checked_slots):
         raise ValueError('core layout differs from reviewed contract')
     ids_by_family={}
     for slot,family in zip(slots,families):
@@ -306,22 +325,40 @@ def compact_core(source_file, textures, destination, include_effects=False):
         return False
     refs=[(f-base,b-base,v) for f,b,v in references if base<=f<base+size]
     palettes=[(o-base,d,c) for o,d,c in palettes if base<=o<base+size]
-    out,stats=_compact_upload_only(decoded,refs,palettes,textures,allowed)
+    effect_ranges=[];effect_entries=[];skipped=[]
+    if compact_effects:
+        import compact_effect_records as effects
+        if struct.unpack_from('<I',decoded,4)[0]:raise ValueError('core REL not supported')
+        for i in (1,16):
+            family=rel+':0#'+str(i);qualified=[]
+            for o,data,ctx in sequences:
+                if ctx!=family+'/est':continue
+                used=48+300*struct.unpack_from('<H',data)[0]
+                if used>len(data):raise ValueError('truncated core sequence')
+                if any(data[used:]):
+                    skipped.append({'source_offset':o-base,'source_bytes':len(data),'reason':'unexplained trailer retained unchanged'})
+                else:qualified.append((o-base,data,ctx))
+            er,ee=effects.prepare_sequences(qualified,family)
+            effect_ranges+=er;effect_entries+=ee
+        effect_ranges.sort();effect_entries.sort(key=lambda e:e['source_offset'])
+        if not effect_entries:raise ValueError('no qualified core sequences')
+    out,stats=_compact_upload_only(decoded,refs,palettes,textures,allowed,effect_ranges,effect_entries)
+    if compact_effects:stats['effects']['skipped']=skipped
     # A whole unselected family can move, but its internal offsets and all
     # payload bytes must remain unchanged, including presently raw sections.
     def body(data,i):
         num=struct.unpack_from('<I',data)[0];ofs=struct.unpack_from('<%dI'%num,data,16)
         return data[ofs[i]:min([o for o in ofs if o>ofs[i]]+[len(data)])]
     for i in range(n):
-        if i not in slots and offsets[i] and body(decoded,i)!=body(out,i):
+        if i not in checked_slots and offsets[i] and body(decoded,i)!=body(out,i):
             raise ValueError('unselected core family changed: '+str(i))
     packaged=mirror.replace_native_payload(container,out)
-    report={'contract':'core-effects-hud-upload-only-v1' if include_effects else 'core-hud-upload-only-v1','source_file':str(source_file),
+    report={'contract':'core-resident-effects-v1' if compact_effects else 'core-effects-hud-upload-only-v1' if include_effects else 'core-hud-upload-only-v1','source_file':str(source_file),
         'source_sha256':hashlib.sha256(source).hexdigest(),**stats,
-        'qualification':coverage,'qualified_selection':families,
+        'qualification':coverage,'qualified_selection':sorted(set(families+([rel+':0#1',rel+':0#16'] if compact_effects else []))),
         'retained_unqualified':[e for e in coverage if e.get('complete') is False or not e.get('handled')],
         'loading':'compact type-0 reads directly into matching fixed core reservation; original sound blocks retained',
-        'limits':'Only selected qualified texture consumers; other core coverage unchanged. Target savings require a smaller actual reservation.'}
+        'limits':'Selected upload-only textures and optional audited EST readers only; other core coverage unchanged. Target savings require a smaller actual reservation. Debug effect editing is not qualified.'}
     destination.mkdir();(destination/'core.das').write_bytes(packaged)
     (destination/'core.arc').write_bytes(out)
     (destination/'compact-core-report.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -336,12 +373,14 @@ if __name__=='__main__':
         choice.add_argument('--compact-room',type=Path)
         choice.add_argument('--compact-core',type=Path)
         parser.add_argument('--core-effects',action='store_true',help='also externalize qualified core EFF #1 upload-only images')
+        parser.add_argument('--compact-core-est',action='store_true',help='lossless resident packing for qualified core EST #1/#16')
         parser.add_argument('--textures',type=Path,required=True)
         parser.add_argument('--output',type=Path,required=True)
         args=parser.parse_args()
         fn,source=(compact_room,args.compact_room) if args.compact_room else (compact_core,args.compact_core)
         if args.core_effects and not args.compact_core:parser.error('--core-effects requires --compact-core')
-        report=fn(source,args.textures,args.output,include_effects=True) if args.core_effects else fn(source,args.textures,args.output)
+        if args.compact_core_est and not args.compact_core:parser.error('--compact-core-est requires --compact-core')
+        report=compact_core(source,args.textures,args.output,args.core_effects,args.compact_core_est) if args.compact_core else compact_room(source,args.textures,args.output)
         print('compact archive:',report['original_archive_bytes'],'->',report['resident_archive_bytes'],
               'recovery',report['archive_recovery_bytes'],'identities',len(report['selected']))
     else:

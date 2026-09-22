@@ -13,7 +13,7 @@ def function(text,name):
         depth+=(text[i]=='{')-(text[i]=='}');i+=1
     return text[start:i]
 
-def fixture(path):
+def fixture(path, core=False):
     records=[]
     for i in range(24):
         r=bytearray(300);r[1]=11;r[264]=i%2;r[265]=0
@@ -32,6 +32,8 @@ def fixture(path):
     body+=idx+bytes(64)
     struct.pack_into('<2I',body,0,2,len(body)-64);struct.pack_into('<2I',body,16,64,off)
     body[24:32]=b'EFF\0ESQ\0'
+    if core:
+        body=body[:-64];struct.pack_into('<I',body,4,0);struct.pack_into('<I',body,off+24,len(body))
     (path/'candidate.arc').write_bytes(body)
     (path/'reference.bin').write_bytes(seq)
     (path/'heads.bin').write_bytes(struct.pack('<3I',64,0,len(records)))
@@ -47,12 +49,15 @@ unsigned rng_calls;unsigned Rnd(){return ++rng_calls*29;}
 void PSMTXCopy(const Mtx a,Mtx b){memcpy(b,a,48);}
 """
 MAIN=r"""
+int bind(const std::vector<unsigned char>& a){
+ return word(a.data()+4)?re4dc_effect_bind((void*)a.data(),a.size()):re4dc_effect_bind_core((void*)a.data(),a.size());
+}
 int main(int argc,char**argv){
  assert(argc==2);root=argv[1];auto a=read_bytes_file(root+"/candidate.arc"),original=a;
  auto ref=read_bytes_file(root+"/reference.bin"),heads=read_bytes_file(root+"/heads.bin");
  auto bad=a;unsigned esq=0;for(unsigned i=0;i<word(a.data());++i)
   if(!memcmp(a.data()+16+4*word(a.data())+4*i,"ESQ",4))esq=word(a.data()+16+4*i);
- assert(esq);bad[esq+8]=2;assert(!re4dc_effect_bind(bad.data(),bad.size()));
+ assert(esq);bad[esq+8]=2;assert(!bind(bad));
  // Malformed index, span, count, mask and noncontiguous record starts fail
  // before publishing a binding or reading past the archive.
  for(unsigned test=0;test<6;++test){
@@ -67,9 +72,19 @@ int main(int argc,char**argv){
    case 5:put(head+48+4,word(a.data()+head+48));break;
   }
   if(test<3)put(esq+20,net_crc32le(broken.data()+esq+32,12*word(a.data()+esq+12)));
-  assert(!re4dc_effect_bind(broken.data(),broken.size()));
+  assert(!bind(broken));
  }
- assert(re4dc_effect_bind(a.data(),a.size()));assert(!re4dc_effect_bind(a.data(),a.size()));
+ assert(bind(a));assert(!bind(a));
+ // The persistent core binding must leave all four module bindings available.
+ auto module=a,core=a;
+ if(!word(module.data()+4)){unsigned end=module.size();module.resize(end+64);memcpy(module.data()+4,&end,4);unsigned total=module.size();memcpy(module.data()+esq+24,&total,4);}
+ if(word(core.data()+4)){core.resize(core.size()-64);unsigned zero=0,total=core.size();memcpy(core.data()+4,&zero,4);memcpy(core.data()+esq+24,&total,4);}
+ assert(!re4dc_effect_bind(core.data(),core.size()));assert(!re4dc_effect_bind_core(module.data(),module.size()));
+ std::vector<std::vector<unsigned char>> other;other.reserve(4);
+ for(unsigned i=0;i<(word(a.data()+4)?3U:4U);++i){other.push_back(module);assert(bind(other.back()));}
+ if(word(a.data()+4))assert(bind(core));
+ auto excess=module;assert(!bind(excess));auto extra_core=core;assert(!bind(extra_core));
+ for(auto& m:other)re4dc_effect_unbind(m.data());if(word(a.data()+4))re4dc_effect_unbind(core.data());
  unsigned checked=0,retained=0,raw=0;std::vector<void*> saved;
  for(unsigned group=0;group<heads.size()/12;++group){
   const auto* ent=heads.data()+group*12;auto* head=reinterpret_cast<EspSeqData*>(a.data()+word(ent));
@@ -97,7 +112,7 @@ int main(int argc,char**argv){
  for(void* p:saved)if(reinterpret_cast<std::uintptr_t>(p)&1){unsigned scratch[75];bool failed=false;
   try{re4dc_effect_record_read(p,scratch);}catch(const std::runtime_error&){failed=true;}assert(failed);break;}
  // Relocate/rebind the same archive while its old backing stays allocated.
- auto relocated=a;assert(relocated.data()!=a.data());assert(re4dc_effect_bind(relocated.data(),relocated.size()));
+ auto relocated=a;assert(relocated.data()!=a.data());assert(bind(relocated));
  for(unsigned group=0;group<heads.size()/12;++group){const auto* e=heads.data()+group*12;
   auto* h=reinterpret_cast<EspSeqData*>(relocated.data()+word(e));auto* old=reinterpret_cast<EspSeqData*>(ref.data()+word(e+4));
   for(unsigned i=0;i<word(e+8);++i){EspGenWork s;assert(!memcmp(re4dc_effect_read(re4dc_effect_ref(h,i),s),&old->rec[i],300));}}
@@ -136,8 +151,10 @@ class EffectResidency(unittest.TestCase):
     @unittest.skipUnless(shutil.which('g++'),'host compiler needed')
     def test_delayed_retention_relocation_and_retirement(self):
         with tempfile.TemporaryDirectory() as d:
-            path=Path(d);fixture(path);exe=compile_fixture(path)
-            result=subprocess.run([str(exe),str(path)],check=True,capture_output=True,text=True)
-            report=json.loads(result.stdout);self.assertEqual(report['checked_records'],26)
-            self.assertEqual(report['retained_generators'],12);self.assertEqual(report['raw_records'],2)
+            path=Path(d);exe=compile_fixture(path)
+            for core in (False,True):
+                fixture(path,core)
+                result=subprocess.run([str(exe),str(path)],check=True,capture_output=True,text=True)
+                report=json.loads(result.stdout);self.assertEqual(report['checked_records'],26)
+                self.assertEqual(report['retained_generators'],12);self.assertEqual(report['raw_records'],2)
 if __name__=='__main__':unittest.main()

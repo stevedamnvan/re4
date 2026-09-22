@@ -1,31 +1,34 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D329 adds selectable demand backing for the source parts manager, without
-reducing its **1,310 logical slots** or moving live model parts. At the matched
-block/enemy allocation points it recovers **540,352 actual source-heap bytes**.
-Further source block creation consumes 98,496 of those bytes: the sustained
-saving before motion prefetch is **441,856 bytes**, with 319 live parts in 198
-stable runs using **176,544 bytes** including metadata, alignment and allocator
-costs. The original full pool cost 618,400 bytes including allocator overhead.
+D330 completes the unchanged **75-clip diagnostic hot prefetch** in the normal
+source menu/New Game path, then reaches initial Ganado motion evaluation. It
+recovers **211,136 additional source-heap bytes before prefetch** versus D329:
+140,704 from lossless resident core EST packing and 70,432 from demand-backed
+model-info records. The earlier block/enemy allocation points gain 258,816;
+later model-info growth accounts for the difference. No hot clip is removed,
+evicted at evaluation release, or loaded on every evaluation.
 
-The enemy archive remains **1,105,152 bytes** (D328); it is not smaller again.
-The unchanged diagnostic hot profile reaches **63 clips / 793,984 cached bytes**
-before the next required key fails. The selected cache/metadata/conservative
-allocator budget still lacks **220,256 bytes**, before later actor/event/audio
-allocations, additional model parts or broader source-required hot clips.
-No evaluation-release eviction or smaller response set was used to force a fit.
+Game snapshot:75 misses/loads,6 hits,0 evictions/failures;952,768 cached/peak/read
+bytes,22,400 peak pinned bytes,2,336 cache metadata,270,941us worst resource wait.
+All145 retained headers and1,904 relocated key pointers in75 cached clips were
+verified. The unchanged SH-4 fixture covers7,500 warm evaluations without extra
+I/O plus pressure eviction/reload. Six live hits are not complete response or
+concurrency coverage; preserve the incomplete source-prefetch audit.
 
-The source title/menu, required block pool, enemy body, texture identities and
-sound-container dispatch survive. D324 remains the accepted integration reference;
-D325-D329 are selectable residency candidates. Enemy initialization, full native
-3D, audible/manual gameplay, transitions/retry and hardware acceptance remain
-open. The D328 SH-4 fixture's 7,500 warm evaluations with no extra misses/reads
-remains the cache reference; this game still cannot finish warm-up. Preserve the
-source prefetch/concurrency audit and validate repeated-use/response coverage.
-See [D329](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d329-demand-backed-source-parts).
+The enemy body remains1,105,152 bytes. With the actual warmed cache, metadata
+and allocator costs, its family occupies2,067,616 bytes:1,510,176 net recovery
+versus the original allocation. This is not the eventual encounter peak. The
+full conservative selected cache budget still lacks9,120 before later resource
+needs. The next demonstrated failure is the65,536-byte r100 water render-target
+buffer with51,616 free, followed by model/collision/path allocation failures.
+A modern-C++ Ganado constructor pointer-erasure bug is corrected; the null
+archive/model errors disappear and evaluation begins. Captured3D remains visibly
+incomplete with resource/packet failures. D324 remains the accepted integration
+reference; D325-D330 are selectable candidates, not playable-room acceptance.
+See [D330](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d330-completed-hot-prefetch-core-est-and-model-info-backing).
 
 
-Updated 2026-09-21; accepted integration D324; selectable residency experiment D329.
+Updated 2026-09-21; accepted integration D324; selectable residency experiment D330.
 
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file

@@ -13,44 +13,64 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D329 parts backing; hot set still does not fit
+## Current resumption point - D330 hot prefetch completes; later room allocations fail
 
-D329 adds selectable demand backing for the source parts manager, without
-reducing its **1,310 logical slots** or moving live model parts. At the matched
-block/enemy allocation points it recovers **540,352 actual source-heap bytes**.
-Further source block creation consumes 98,496 of those bytes: the sustained
-saving before motion prefetch is **441,856 bytes**, with 319 live parts in 198
-stable runs using **176,544 bytes** including metadata, alignment and allocator
-costs. The original full pool cost 618,400 bytes including allocator overhead.
+D330 completes the unchanged **75-clip diagnostic hot prefetch** in the normal
+source menu/New Game path, then reaches initial Ganado motion evaluation. It
+recovers **211,136 additional source-heap bytes before prefetch** versus D329:
+140,704 from lossless resident core EST packing and 70,432 from demand-backed
+model-info records. The earlier block/enemy allocation points gain 258,816;
+later model-info growth accounts for the difference. No hot clip is removed,
+evicted at evaluation release, or loaded on every evaluation.
 
-The enemy archive remains **1,105,152 bytes** (D328); it is not smaller again.
-The unchanged diagnostic hot profile reaches **63 clips / 793,984 cached bytes**
-before the next required key fails. The selected cache/metadata/conservative
-allocator budget still lacks **220,256 bytes**, before later actor/event/audio
-allocations, additional model parts or broader source-required hot clips.
-No evaluation-release eviction or smaller response set was used to force a fit.
+Game snapshot:75 misses/loads,6 hits,0 evictions/failures;952,768 cached/peak/read
+bytes,22,400 peak pinned bytes,2,336 cache metadata,270,941us worst resource wait.
+All145 retained headers and1,904 relocated key pointers in75 cached clips were
+verified. The unchanged SH-4 fixture covers7,500 warm evaluations without extra
+I/O plus pressure eviction/reload. Six live hits are not complete response or
+concurrency coverage; preserve the incomplete source-prefetch audit.
 
-The source title/menu, required block pool, enemy body, texture identities and
-sound-container dispatch survive. D324 remains the accepted integration reference;
-D325-D329 are selectable residency candidates. Enemy initialization, full native
-3D, audible/manual gameplay, transitions/retry and hardware acceptance remain
-open. The D328 SH-4 fixture's 7,500 warm evaluations with no extra misses/reads
-remains the cache reference; this game still cannot finish warm-up. Preserve the
-source prefetch/concurrency audit and validate repeated-use/response coverage.
-See [D329](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d329-demand-backed-source-parts).
+The enemy body remains1,105,152 bytes. With the actual warmed cache, metadata
+and allocator costs, its family occupies2,067,616 bytes:1,510,176 net recovery
+versus the original allocation. This is not the eventual encounter peak. The
+full conservative selected cache budget still lacks9,120 before later resource
+needs. The next demonstrated failure is the65,536-byte r100 water render-target
+buffer with51,616 free, followed by model/collision/path allocation failures.
+A modern-C++ Ganado constructor pointer-erasure bug is corrected; the null
+archive/model errors disappear and evaluation begins. Captured3D remains visibly
+incomplete with resource/packet failures. D324 remains the accepted integration
+reference; D325-D330 are selectable candidates, not playable-room acceptance.
+See [D330](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d330-completed-hot-prefetch-core-est-and-model-info-backing).
 
-D329 final evidence: `C:/Flycast-Evidence/re4-dreamcast/d329b-parts-demand`.
-Private disc `/root/probe/d329b-disc`; reuse `/root/probe/d328-mirror` and
-`/root/probe/d327-fixtures`. Add `PARTS_DEMAND=1` to the existing build:
-`CORE_RESIDENT_BYTES=1501312 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776`.
-The default `PARTS_DEMAND=0` retains full backing. `parts_bridge.cpp` adapts only
-cParts storage; source model create/destroy, capacities, pose and gameplay remain.
-All 319 target slot pointers were checked against their owned runs. Host tests
-cover partial/deferred destruction, repeated reuse, pressure failure, full
-capacity, debug array push/pop and independent subscreen heap ownership.
-Live retry/subscreen gameplay and frame-cost acceptance remain unqualified;
-tool-memory bulk sweeping (Debug_flg[3] 0x200000) is explicitly rejected by this
-candidate. Do not confuse ordinary subscreen managers with that debug mode.
+D330 final evidence: `C:/Flycast-Evidence/re4-dreamcast/d330b-core-modelinfo`;
+initial candidate retained as`d330-core-modelinfo`. Private core`/root/probe/d330-core`,
+mirror`/root/probe/d330-mirror`,disc`/root/probe/d330b-disc`,unchanged fixtures
+`/root/probe/d327-fixtures`. Build:
+`CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 PARTS_DEMAND=1 MODELINFO_DEMAND=1`.
+Core producer adds`--compact-core-est` to the existing`--compact-core --core-effects`
+path with existing reference textures;143 sequences compact, five unexplained
+trailers retained raw. No texture encoding, motion profile or sound dispatch
+change. Default producer reproduces D324 bytes. Both manager options default0.
+
+Resume at`src/st1/r100.cpp::setTexRender()` ->`TexRenderMng::AllocBuf()` and the
+remaining required model/collision allocations. The source first reserves128x128
+RGBA8, then sets this water target to64x64; audit actual copy/CPU/native consumers
+before changing that lifetime or capacity. The user also authorizes a simpler
+Dreamcast water effect as a selectable, visually reviewed candidate; PS2 is a
+reference to inspect, not an established equivalent implementation. Measure
+RAM/VRAM/CPU and preserve source collision/events. Do not treat the failed buffer as
+optional or remove the water. Later contiguous-parts failure falls back to source
+linked allocation, then smaller parts/model-info/collision requests also fail.
+The heap runs out; this is not another cache thrash or subscreen stack failure.
+Enemy source initialization now preserves`subArc` through native`Em12Init`;
+other not-yet-integrated module constructors need their own check when reached.
+Full native3D/material/packet requirements and event/ARAM/audio costs remain.
+Do not clear source hold or accept the incomplete diagnostic image.
+
+D329 reference remains`C:/Flycast-Evidence/re4-dreamcast/d329b-parts-demand`.
+D330 reuses its demand-backed parts owner/run rules for model-info16-slot pages.
+Logical capacities remain1,310/460. Target pointers and all four option combinations
+are checked; played retry/subscreen and tool-memory sweeping remain unqualified.
 
 Prior D328 reference evidence: `C:/Flycast-Evidence/re4-dreamcast/d328-resident-effects` (normal-game
 loading, corrected menu capture, exact ELF/disc/assets, RAM, source heap/counters)

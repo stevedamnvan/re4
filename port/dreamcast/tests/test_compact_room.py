@@ -176,4 +176,48 @@ class CompactCore(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'unqualified selected'):
                 ui.compact_core(source,textures,root/'bad',include_effects=True)
 
+class CompactCoreEst(unittest.TestCase):
+    def test_native_indices_and_nonzero_trailers_survive(self):
+        from test_le_mirror import make_eff, make_anm, make_tpl
+        image=tpl.TplImage(16,16,1,bytes(range(256)))
+        texture=bytearray(make_tpl([(16,16,1,image.data)]))
+        texture[84:84]=bytes(12);struct.pack_into('>I',texture,28,96)
+        eff,_=make_eff([(7,bytes(texture),make_anm(16,16,0,0,1))])
+        eff=bytearray(eff);eff+=bytes((-len(eff))%32);ids=struct.unpack_from('>I',eff,8)[0]
+        struct.pack_into('>IHHIHHI',eff,ids,2,1,0,0,2,0,0)
+        record=bytearray(300);record[1]=11
+        seq=bytearray(struct.pack('>H',2)+bytes(46)+record*2);seq+=bytes((-len(seq))%32)
+        raw=bytearray(struct.pack('>H',1)+bytes(46)+record);raw+=bytes((-len(raw))%32)+b'TRAILER!'+bytes(24)
+        table=len(eff);struct.pack_into('>I',eff,32,table)
+        eff+=struct.pack('>3I',2,32,32+len(seq))+bytes(20)+seq+raw
+        arc=bytearray(320);struct.pack_into('>I',arc,0,36)
+        for i in range(36):
+            struct.pack_into('>I',arc,16+4*i,len(arc))
+            arc[160+4*i:164+4*i]=b'EFF\0' if i in (1,16,25) else b'CNS\0'
+            arc+=eff if i in (1,16,25) else bytes(32)
+        container=bytearray(ui.mirror.CONTAINER_MAGIC+bytes(1024-32))+arc
+        struct.pack_into('>4I',container,32,0,len(arc),0,1024);struct.pack_into('>I',container,64,ui.mirror.END_OF_TABLE)
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'core.das';source.write_bytes(container);tex=root/'tex';tex.mkdir()
+            key,_=ui.image_identity(image)
+            package,_=tpl.build_package([image],[tpl.MaterialBinding('source',0,None)],twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
+            (tex/(key+'.re4tex')).write_bytes(package)
+            baseline=ui.compact_core(source,tex,root/'baseline',include_effects=True)
+            report=ui.compact_core(source,tex,root/'candidate',include_effects=True,compact_effects=True)
+            self.assertEqual(len(report['effects']['entries']),2);self.assertEqual(len(report['effects']['skipped']),2)
+            self.assertEqual(baseline['resident_archive_bytes']-report['resident_archive_bytes'],report['effects']['recovery_bytes'])
+            data=(root/'candidate/core.arc').read_bytes();n=struct.unpack_from('<I',data)[0]
+            self.assertEqual(n,38)
+            for i in (1,16):
+                e=struct.unpack_from('<I',data,16+4*i)[0];t=e+struct.unpack_from('<I',data,e+32)[0]
+                second=t+struct.unpack_from('<I',data,t+8)[0]
+                self.assertEqual(data[second+352:second+384],b'TRAILER!'+bytes(24))
+            for e in report['selected']:
+                self.assertEqual(data[e['resident_payload']:e['resident_payload']+8],b'R4NREF\0\0')
+            for slot in (36,37):
+                off=struct.unpack_from('<I',data,16+4*slot)[0]
+                size_at=24 if slot==36 else 28
+                self.assertEqual(struct.unpack_from('<I',data,off+size_at)[0],len(data))
+            self.assertEqual(source.read_bytes(),container)
+
 if __name__=='__main__':unittest.main()

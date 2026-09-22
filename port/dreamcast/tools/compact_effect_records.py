@@ -1,8 +1,9 @@
-"""Lossless, resident EST record layout for the audited em12 consumers only.
+"""Lossless, resident EST record layout for audited effect consumers only.
 
 Original 48-byte heads survive. Each sequence holds record offsets followed by
 raw or zero-word-elided records. No disc cache, clip selection, float conversion,
-RNG call or source effect is removed. Unknown/retaining consumers stay raw.
+RNG call or source effect is removed. Family qualification belongs to the caller;
+unknown/retaining consumers stay raw.
 """
 import struct, zlib
 MAGIC=b'R4ESQTBL'

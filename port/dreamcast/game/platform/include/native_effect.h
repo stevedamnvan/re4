@@ -6,6 +6,8 @@
 struct Re4dcEffectStats { unsigned sequences, records, reads, raw_reads, failures; uint64_t worst_decode_us; };
 extern "C" {
 int re4dc_effect_bind(void* archive, unsigned bytes);
+// Separate persistent core slot; does not consume any of the four module slots.
+int re4dc_effect_bind_core(void* archive, unsigned bytes);
 void re4dc_effect_unbind(void* archive);
 void* re4dc_effect_record_ref(void* head, unsigned index);
 void* re4dc_effect_record_read(void* reference, void* scratch300);

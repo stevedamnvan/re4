@@ -1313,3 +1313,161 @@ resource recovery must close the220,256-byte lower bound and later actor/event/
 audio needs while preserving this hot set, its source audit and native3D work.
 Core/effect record packing was priced at roughly150KB additional potential,
 not implemented or qualified for other owners; do not count it as freed memory.
+
+
+## D330: completed hot prefetch, core EST and model-info backing
+
+This selectable candidate extends two existing mechanisms. It does not reduce
+the motion hot profile, geometry, actor components or source manager capacities.
+
+| Existing mechanism | Source connection | Small native adaptation |
+|---|---|---|
+|`compact_effect_records.py`, qualified converter, `compact_spans`, ESQ record reader|`CoreDataRead` -> `EspInit` core EFF slots1/16, owners0/D1 -> existing `EstSet`/`EspEstSetSelect` and repeating generators|Opt-in core EST ranges and a separate persistent core binding; four module bindings remain available.|
+|D329 `parts_bridge.cpp` owner/run backing and source `cManager` algorithms|`cModInfoMgr` create/destroy and source models' retained`pModelInfo`/`pList` pointers|Instantiate existing backing for model-info,16-slot pages; no live pointer moves.|
+|Source enemy module constructor|`cEmMgr::construct` installs`subArc` -> `Em12Init` -> `em10_R0_Init`|Native default-initialization preserves the manager-installed pointer; PPC keeps the original spelling.|
+
+### Core and model-info ownership
+
+Core archive1,501,312 -> **1,360,608**,140,704 actual bytes removed from its
+fixed reservation, including the appended ESQ index and unchanged59 NTR identities.
+143 sequences/791 records use the qualified reader; all175 sequences/891 records
+remain. Five sequences with nonzero unexplained trailers remain ordinary,
+including every trailer byte. Noneligible retaining sprite/generator records
+stay raw. No source effect, palette/noise/mip semantics, RNG operation, sound
+container or texture encoding is dropped. The original core family/parser gates
+remain; VIB/SAT qualification is not implied. Unselected families retain their
+converted bytes. Other owners and debug effect editing are not newly qualified.
+
+The existing codec reconstructs exact300-byte records into caller-owned scratch,
+without heap allocation, disc reads or a decoded bank. Core binding borrows the
+ESQ index until core reload; `CoreDataRead` unbinds before overwrite and binds
+before source initialization. Stable source heads survive. Existing retained
+generator references resolve through the live binding. One extra16-byte binding
+is added; final ELF BSS does not grow because of layout padding. The existing
+nested-call stack qualification remains, not a new unbounded decode stack.
+
+Model-info has no audited cross-slot pointer arithmetic or raw manager-array
+readers; source models retain individual records and linked lists. Existing
+D329 owner/retirement, deferred flags, debug park/restore and pressure rules are
+reused, with16-record pages. All460 slots remain available. Partial/deferred
+releases cannot free a page holding another live record. Dead pages remain
+cached. No second full pool is retained. EmMgr stays contiguous: its many raw
+consumers prevent treating sparse conversion as another equivalent small change.
+Default`MODELINFO_DEMAND=0` preserves full allocation.
+
+### Matched loading measurements
+
+| Source point | D329b | D330b |
+|---|---:|---:|
+| Source heap arena |9,987,168|10,127,872|
+| Free after required1,126,272 block allocation |2,018,048|2,276,864|
+| Free after1,105,152 enemy body allocation |902,528|1,161,344|
+| Free before motion metadata |804,032|1,015,168|
+| Model-info backing at prefetch, incl allocator |134,400|63,968|
+| Successfully prefetched clips / bytes |63 /793,984|75 /952,768|
+| Free after selected hot prefetch |not completed|52,768|
+
+Early gain258,816 includes118,112 model-info recovery. At205 live model-info
+records the backing has grown to63,968, leaving70,432 sustained recovery plus
+140,704 core = **211,136 incremental bytes before prefetch**. Original
+PartsMgr savings remain separate; additional parts/metadata still grow later.
+
+Enemy body remains1,105,152:2,472,576 less than original3,577,728. The actual
+warmed family adds952,768 cached files,2,336 slot metadata,76 allocations at
+96-byte adapter/allocator overhead, and the enemy body's64-byte overhead:
+**2,067,616 total versus3,577,792 original =1,510,176 net recovery**. This
+candidate does not shrink the body again. Full selected-cache capacity1,007,936
+with conservative14,016 allocator costs gives provisional1,448,288 net recovery;
+that budget still lacks9,120 before later resources. This is a conservative
+reservation calculation, not measured eventual full-encounter occupancy.
+
+Game motion counters:75 misses/loads,6 hits,0 evictions/failures,952,768 current
+and peak cached bytes,952,768 read bytes,0 current/22,400 peak pinned bytes,
+2,336 metadata,**270941us worst successful resource wait**.
+The source still pins only for evaluation safety and leaves unpinned hot/cold
+cache entries resident; cold eviction remains pressure-driven, hot entries are
+not victims. No cache-policy code or source hot-set selection changes in D330.
+
+RAM verification checked all145 persistent source proxy headers, all75 live
+cache payloads and1,904 relocated key pointers against exact selected files.
+Full payloads match after accounting for table relocation; persistent headers
+remain unmodified. Target manager checks validate every1,310/460 slot pointer.
+Later snapshot PartsMgr:413 backed/395 live,224,448 peak,232 runs,2 failed growth
+attempts; ModInfoMgr:224 backed/live,68,736 peak,14 pages,4 failed attempts.
+These are peaks of a failed initialization, not accepted gameplay peaks.
+
+The initial snapshot catches prefetch in progress. The later one records6 real
+source cache hits with no extra misses/reads beyond the75 prefetch loads. That
+is narrow game evidence; unchanged D328b SH-4 fixture remains the repeated-use
+reference:7,500 warm evaluations,0 additional misses/bytes, with pressure testing
+981,440 peak cache/32,416 peak pins,185 misses,2,743,392 bytes,34 evictions and
+273,518us worst wait. Pointer release/eviction/reload/cancellation coverage is
+retained and the host motion tests rerun. Do not combine these fixture counters
+with live-game timing or infer a completed response/concurrency audit.
+
+Source audit`/root/probe/d325-prefetch-final.json` remains with the candidate:
+indirect R1 dispatch, event/Work aliases, complete immediate-response/repeated-use
+closure, and active instance/blend/shape/camera concurrency are still open. Do
+not replace that audit with either six hits or the fixture's selected75 clips.
+
+### Next exact failures and constructor correction
+
+The normal fixture delivers title0008 then0100 and leaves title5/1 through5/3,
+7/3 to source game room initialization. Required block/enemy allocations,
+37 enemy texture identities, static em12 prolog and selected prefetch succeed.
+The first subsequent request is`r100::setTexRender -> GetTexRenderMgr ->
+TexRenderMng::AllocBuf`:65,536 with51,616 free,13,984 short including64 overhead.
+This water target starts128x128 RGBA8 then source sets64x64. Follow its actual
+copy/CPU/native consumers before changing backing, capacity or lifetime. Do
+not disable the water or report a failed optional subsystem as accepted.
+
+D330's first replay separately exposed`EspDataLoad EM10:NULL` and Ganado model
+failure. SH-4`Em12Init` disassembly showed a0xDE0-byte memset generated by modern
+value-initialization, erasing the source manager's archive pointer. Native
+`new(em)cEm10` now calls the base constructor and installs the vtable without
+that memset; PowerPC preprocessing remains unchanged. D330b removes the null
+archive/model errors, constructs the enemy's source parts and reaches evaluation.
+Other modules need the same issue checked when integrated, not bulk-edited.
+
+Later room model creation fails a30,240-byte contiguous run, tries the original
+linked fallback, then exhausts smaller parts/model-info/collision/path requests.
+Native output is **visibly incomplete**; resource failures and packet overflow
+are recorded. The capture deadline ends the90-second run; these are actual
+allocation failures before the harness exit. No source hold/black flag was forced.
+Event/ARAM/audio support, target render-to-texture, full native scene/materials,
+responsive manual combat, retries/transitions and physical validation remain open.
+
+### Verification and identities
+
+Host tests:four full/demand manager combinations with actual source manager
+algorithms; exact core record reconstruction, delayed generator retention,
+archive relocation/retirement and independent core+four-module binding capacity;
+synthetic combined ESQ/NTR conversion with raw-trailer preservation; source enemy
+constructor lifetime; existing motion cache regression.13 test methods total.
+Actual core fixture checks891 records,334 retained generator cases,180 raw reads,
+30,106 decode calls,0 I/O/heap allocations. Original default core producer is
+byte-identical to D324/D329. PPC preprocessing unchanged for cManager/read/em12.
+No new full dual-emulator framework or raw assets enter Git.
+
+Final evidence`C:/Flycast-Evidence/re4-dreamcast/d330b-core-modelinfo`, initial
+`d330-core-modelinfo` retained. Includes source menu/incomplete3D, RAM, exact
+assets/fixture/emulator/config/capture tools, source snapshots and result.json.
+ELF SHA256`a258704f368124d9b4e57b2b3282ac9940488b73abe654f2479b62258f0bf80c`;
+disc SHA256`1a523ae9c2465431a4f576dec188a33796f0090f768d08aeecde3318204d3474`.
+Base4b85a3f plus recorded owned/inherited dirty work. KOS804b3195,SH GCC15.2;
+text/data/BSS2,285,452/75,620/672,856 (+1,912 text, unchanged BSS vsD329).
+Build`CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 PARTS_DEMAND=1 MODELINFO_DEMAND=1`.
+Use private`/root/probe/d330-mirror`,`/root/probe/d330b-disc` and unchanged
+`/root/probe/d327-fixtures`; generator`--compact-core --core-effects --compact-core-est`.
+
+**Keep selectable, not promoted to accepted room/default assets.** The source
+menu remains visible and selected cache warm-up now fits. Follow the demonstrated
+water/model/collision and full3D dependencies without dropping hot responses,
+required content or concurrency coverage. This checkpoint does not complete
+the persistent menu-plus-three-room objective.
+
+User steering after D330: simpler water is an authorized selectable candidate.
+First distinguish equivalent target right-sizing from a cheaper visual effect.
+Preserve gameplay/collision/events; measure RAM/VRAM/CPU and inspect source-aligned
+views before accepting a quality trade. PS2 behavior must be inspected before
+claiming its water technique or equivalent appearance.

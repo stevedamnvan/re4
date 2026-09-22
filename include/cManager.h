@@ -160,6 +160,12 @@ template<> int cManager<cParts>::arrayFree();
 template<> cParts* cManager<cParts>::workAt(u32 no);
 template<> bool cManager<cParts>::prepareWork(u32 no, u32 count);
 template<> cParts* cManager<cParts>::getPrevWork(cParts* p);
+class cModelInfo;
+template<> int cManager<cModelInfo>::arrayAlloc(u32 n);
+template<> int cManager<cModelInfo>::arrayFree();
+template<> cModelInfo* cManager<cModelInfo>::workAt(u32 no);
+template<> bool cManager<cModelInfo>::prepareWork(u32 no, u32 count);
+template<> cModelInfo* cManager<cModelInfo>::getPrevWork(cModelInfo* p);
 #endif
 
 // Member initializer list, in this order: the stores come out in this order (body assignments

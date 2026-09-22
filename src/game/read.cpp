@@ -284,11 +284,20 @@ void CoreDataRead()
     DvdReadInfo info;
     int req;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Core reload has the source's suspended boot lifetime. Remove borrowed
+    // effect identities before DVD overwrites their backing.
+    re4dc_effect_unbind((void*) CORE_DATA_ADDR);
+#endif
     pG->pArc = (ArcFile*) CORE_DATA_ADDR;
 #line 219 "D:/Bio4/Prog/read.cpp"
     req = DVD_READ(3, CORE_DATA_ADDR, 0, 0, 0, 0x8001);
     Dvd.ReadCheckInfo(req, &info);
 #if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (!re4dc_effect_bind_core(pG->pArc, info.size[0][0])) {
+        re4dc_missing("invalid prepared native core effects");
+        return;
+    }
     // Bind offline identities before source TPL initialization relocates fields.
     if (!re4dc_ui_bind_core(pG->pArc, info.size[0][0])) {
         re4dc_missing("invalid prepared native core identities");

@@ -21,6 +21,12 @@ void* Debug_alloc(u32,int);void Debug_free(void*);
 #include "cManager.h"
 class cParts : public cUnit { public: cParts* pList; unsigned value;
  cParts(){be_flag=1;pList=0;value=0x1234;} };
+class cModelInfo:public cUnit {public: unsigned value; cModelInfo(){be_flag=1;value=91;} };
+class cModInfoMgr:public cManager<cModelInfo>{public:
+ cModInfoMgr():cManager<cModelInfo>(sizeof(cModelInfo),0){}
+ void* memAlloc(u32);void memFree(void*);void memClear(cModelInfo*,u32);
+ int construct(cModelInfo* p,u32){new(p)cModelInfo;return 1;}
+};
 class cPartsMgr:public cManager<cParts>{public:
  cPartsMgr():cManager<cParts>(sizeof(cParts),0){}
  void* memAlloc(u32);void memFree(void*);void memClear(cParts*,u32);
@@ -39,9 +45,9 @@ void* mem_alloc(u32,const char*,int,int,int);void memclr_asm(void*,u32);int MemG
    s=(ROOT/'src/game/model.cpp').read_text();a=s.index('static inline cParts* PartsMgrWork');b=s.index('\ncPartsMgr PartsMgr;',a)
    (d/'sequence.cpp').write_text('#include "model.h"\n'+s[a:b])
    (d/'main.cpp').write_text(CHECKS)
-   for mode in [0,1]:
+   for mode in range(4):
     exe=d/f'check{mode}'
-    subprocess.run(['g++','-std=c++20','-O1','-g','-fsanitize=address,undefined','-fno-sanitize=vptr','-fno-omit-frame-pointer',f'-DRE4DC_PARTS_DEMAND={mode}',f'-I{d}',str(ROOT/'port/dreamcast/game/parts_bridge.cpp'),str(d/'sequence.cpp'),str(d/'main.cpp'),'-o',str(exe)],check=True)
+    subprocess.run(['g++','-std=c++20','-O1','-g','-fsanitize=address,undefined','-fno-sanitize=vptr','-fno-omit-frame-pointer',f'-DRE4DC_PARTS_DEMAND={mode&1}',f'-DRE4DC_MODELINFO_DEMAND={mode>>1}',f'-I{d}',str(ROOT/'port/dreamcast/game/parts_bridge.cpp'),str(d/'sequence.cpp'),str(d/'main.cpp'),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
 
 CHECKS=r'''
@@ -63,8 +69,25 @@ void memclr_asm(void* p,u32 n){memset(p,0,n);}
 void re4dc_log(const char*,...){}void re4dc_missing(const char* s){throw std::runtime_error(s);}
 void* Debug_alloc(u32 n,int){auto p=mem_alloc(n,0,0,0,13);memclr_asm(p,n);return p;}void Debug_free(void* p){OSFreeToHeap(allocations.at(p).owner,p);}
 void* cPartsMgr::memAlloc(u32 n){return mem_alloc(n,0,0,0,13);}void cPartsMgr::memFree(void* p){OSFreeToHeap(allocations.at(p).owner,p);}void cPartsMgr::memClear(cParts* p,u32 n){memclr_asm(p,n);}
+void* cModInfoMgr::memAlloc(u32 n){return mem_alloc(n,0,0,0,13);}void cModInfoMgr::memFree(void* p){OSFreeToHeap(allocations.at(p).owner,p);}void cModInfoMgr::memClear(cModelInfo* p,u32 n){memclr_asm(p,n);}
 void release(cPartsMgr& m,cParts* p){while(p){auto next=p->pList;m.destroy(p);p=next;}}
 int main(){
+ // Model-info keeps pointer-bearing source records stable across page growth,
+ // reuse, deferred deletion, subscreen ownership and an incomplete last page.
+ cModInfoMgr info;assert(info.arrayAlloc(35));auto first=info.create();assert(first);
+ first->value=123;unsigned page_calls=calls;
+ for(unsigned i=1;i<16;++i)assert(info.create(0,i));assert(calls==page_calls);
+ auto last=info.create(0,34);assert(last&&first==info.workAt(0)&&first->value==123);
+ if(RE4DC_MODELINFO_DEMAND){deny=true;assert(!info.create(0,16));deny=false;assert(first->value==123);}
+ auto middle=info.create(0,16);assert(middle&&first==info.workAt(0)&&last==info.workAt(34));
+ page_calls=calls;for(int i=0;i<100;++i){info.destroy(middle);middle=info.create(0,16);assert(middle);}assert(calls==page_calls);
+ info.flag=2;info.destroy(first);info.dieCheck();assert(first->be_flag&0x400);info.dieCheck();assert(!first->be_flag);info.flag=0;
+ for(unsigned i=0;i<35;++i){auto p=info.workAt(i);if(!p||!(p->be_flag&0x601))assert(info.create(0,i));}
+ assert(info.countActiveWork()==35&&!info.create()&&last==info.workAt(34));
+ assert(info.arrayPush(4));auto tool=info.create();assert(tool);info.destroy(tool);assert(info.arrayPop());assert(info.countActiveWork()==35&&last==info.workAt(34));
+ current=5;cModInfoMgr ssinfo;assert(ssinfo.arrayAlloc(17)&&ssinfo.create());ssinfo.destroyAll();current=4;ssinfo.arrayFree();
+ info.destroyAll();current=5;info.arrayFree();assert(allocations.empty());current=4;
+
  cPartsMgr m;assert(m.arrayAlloc(32));auto zero=m.createSequential(0);assert(zero);m.destroy(zero);auto a=m.createSequential(5);auto b=m.createSequential(4);assert(a&&b&&m.countActiveWork()==9);
  for(int j=0;j<4;++j)assert(a[j].pList==a+j+1);for(int j=0;j<3;++j)assert(b[j].pList==b+j+1);
  // A partial model release must not permit relocation of its surviving parts.
