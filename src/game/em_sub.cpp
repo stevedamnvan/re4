@@ -3449,7 +3449,12 @@ int TrolleyItemSetCk(Vec* pos, u16 id, int num)
         return 0;
     }
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        obj = (cObj*) ObjMgr.workAt(i);
+        if (!obj) continue;
+#else
         obj = (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
         if ((obj->be_flag & 0x201) != 1) {
             continue;
         }
@@ -3476,7 +3481,12 @@ int BullItemSetCk(Vec* pos, u16 id, int num)
         return 0;
     }
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        obj = (cObj*) ObjMgr.workAt(i);
+        if (!obj) continue;
+#else
         obj = (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
         if ((obj->be_flag & 0x201) != 1) {
             continue;
         }

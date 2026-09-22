@@ -753,7 +753,13 @@ static inline cObj* ObjMgrWork(u32 no)
     if (no >= ObjMgr.nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    // Indexed references (including future light parents) own a stable slot.
+    if (!ObjMgr.prepareWork(no, 1)) return 0;
+    return ObjMgr.workAt(no);
+#else
     return (cObj*)((u8*)ObjMgr.pArray + ObjMgr.size * no);
+#endif
 }
 
 struct EspGenWork;

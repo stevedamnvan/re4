@@ -275,7 +275,11 @@ static inline int em31DeadCk(cEm* em)
 // Work `no` of the object manager without the range check (the pillar scans loop over nArray).
 static inline cObj* em31ObjWork(u32 no)
 {
+#if !defined(__PPC__)
+    return ObjMgr.workAt(no);
+#else
     return (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * no);
+#endif
 }
 
 // Enemy manager work `no` the same way (em31SearchBody).
@@ -4362,6 +4366,9 @@ int em31PillarCk(cEm31* em)
     PSMTXInverse(em->mat, inv);
     for (i = 0; i < ObjMgr.nArray; i++) {
         cObj* o = em31ObjWork(i);
+#if !defined(__PPC__)
+        if (!o) continue;
+#endif
 
         if ((o->be_flag & 0x201) == 1 && o->id == 0x1F && ((cObjPillar*) o)->ckSet()) {
             PSMTXMultVec(inv, &o->pos, &lp);
@@ -4398,6 +4405,9 @@ int em31PillarCk2(cEm31* em)
     PSMTXInverse(em->mat, inv);
     for (i = 0; i < ObjMgr.nArray; i++) {
         cObj* o = em31ObjWork(i);
+#if !defined(__PPC__)
+        if (!o) continue;
+#endif
 
         if ((o->be_flag & 0x201) == 1 && o->id == 0x1F && ((cObjPillar*) o)->ckSet()) {
             PSMTXMultVec(inv, &o->pos, &lp);
@@ -4423,6 +4433,9 @@ void em31PillarAtkCk(cEm31* em, Vec* pos)
 
     for (i = 0; i < ObjMgr.nArray; i++) {
         cObj* o = em31ObjWork(i);
+#if !defined(__PPC__)
+        if (!o) continue;
+#endif
 
         if ((o->be_flag & 0x201) == 1 && o->id == 0x1F && ((cObjPillar*) o)->ckSet()) {
             if ((pos->x - o->pos.x) * (pos->x - o->pos.x) + (pos->z - o->pos.z) * (pos->z - o->pos.z) <
@@ -4474,6 +4487,9 @@ int em31JumpCk(cEm31* em)
     PSMTXInverse(m, m);
     for (i = 0; i < ObjMgr.nArray; i++) {
         cObj* o = em31ObjWork(i);
+#if !defined(__PPC__)
+        if (!o) continue;
+#endif
 
         if ((o->be_flag & 0x201) == 1 && o->id == 0x1F && ((cObjPillar*) o)->ckSet()) {
             PSMTXMultVec(m, &o->pos, &lp);

@@ -447,7 +447,11 @@ static inline cObj* objWorkChkP(u32 no)
     if (no >= m->nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    return ObjMgrWork(no);
+#else
     return (cObj*) ((u8*) m->pArray + m->size * no);
+#endif
 }
 
 // Light editor frame. Mode 0 copies the pads (pad 1 edits, pad 2 moves the camera), 1 CAMERA MODE
@@ -2070,7 +2074,11 @@ static void edit_light_parent()
     case 4:
         eprintf(0x40, 0xA8, 0, pTool->color, "ID    %d", cur->parent.no);
         eprintf(0x40, 0xB6, 0, pTool->color, "PARTS %d", cur->parent.partsNo);
+#if !defined(__PPC__)
+        obj = ObjMgrWork(cur->parent.no);
+#else
         obj = (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * cur->parent.no);
+#endif
         if (obj) {
             switch (obj->id) {
             case 2:
@@ -5825,7 +5833,11 @@ void drawPath(int x, int y, cLightPathData* p, u8 flag, u32 cur)
 // Object work `no` without the range check.
 static inline cObj* objWorkNoChk(u32 no)
 {
+#if !defined(__PPC__)
+    return ObjMgr.workAt(no);
+#else
     return (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * no);
+#endif
 }
 
 // Light usage analysis (Flag 4): per scroll object the lights hitting it (anaTbl: count, .., id),
@@ -5842,7 +5854,11 @@ int cLightTool::lightAnalysis()
     memclr_asm(anaTbl, n * 4);
     LitAnaIdx = 0;
     for (i = 0; i < n; i++) {
+#if !defined(__PPC__)
+        if (objWorkNoChk(i) && objWorkNoChk(i)->isAlive()) {
+#else
         if (objWorkNoChk(i)->isAlive()) {
+#endif
             cObj* obj = objWorkNoChk(i);
             if (obj->kindid == 2) {
                 if (obj->LightInfo.getLightNum() > 4) {

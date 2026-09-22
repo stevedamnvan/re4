@@ -1101,7 +1101,11 @@ void tBlockArea_disp()
 // Object work `no` without the range check.
 static inline cObj* objWorkNoChk(u32 no)
 {
+#if !defined(__PPC__)
+    return ObjMgr.workAt(no);
+#else
     return (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * no);
+#endif
 }
 
 // Shows only the scroll models of the current block (on) or every block's models (off) by toggling
@@ -1112,6 +1116,9 @@ void tBlockArea_dispBlockModel(int on)
 
     for (i = 0; i < ObjMgr.nArray; i++) {
         cObj* obj = objWorkNoChk(i);
+#if !defined(__PPC__)
+        if (!obj) continue;
+#endif
         u32 be = obj->be_flag;
         int blk;
 
@@ -1170,6 +1177,9 @@ void tBlockArea_dispBlockBox(u8 no, u32 col)
 
     for (i = 0; i < ObjMgr.nArray; i++) {
         cObj* obj = objWorkNoChk(i);
+#if !defined(__PPC__)
+        if (!obj) continue;
+#endif
         cModelInfo* info;
         Mtx m;
         Mtx r;

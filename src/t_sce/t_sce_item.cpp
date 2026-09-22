@@ -1473,7 +1473,12 @@ void tSceItemSetRoomData(int size)
 
     if (SceAtSys.x11D == 1) Mem_free(SceAtSys.pItemData);
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        o = (cObj*) ObjMgr.workAt(i);
+        if (!o) continue;
+#else
         o = (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
         if (o->isAlive() && o->id == 0x19) ObjMgr.destroy(o);
     }
 #line 1694 "D:/Bio4/Prog/t_sce_item.cpp"

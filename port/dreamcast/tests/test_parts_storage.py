@@ -34,6 +34,9 @@ class cPartsMgr:public cManager<cParts>{public:
  cParts* createSequential(u32);
 };
 ''')
+   # Use the real indexed helper: a light may keep its result before create.
+   obj=(ROOT/'include/obj.h').read_text();a=obj.index('static inline cObj* ObjMgrWork');b=obj.index('\nstruct EspGenWork;',a)
+   (d/'obj.h').write_text(OBJECT_HEADER+obj[a:b])
    (d/'global.h').write_text('#pragma once\nstruct Global{unsigned Debug_flg[4];};extern Global* pG;\n')
    (d/'main_mem.h').write_text('''#pragma once
 #include "types.h"
@@ -45,13 +48,25 @@ void* mem_alloc(u32,const char*,int,int,int);void memclr_asm(void*,u32);int MemG
    s=(ROOT/'src/game/model.cpp').read_text();a=s.index('static inline cParts* PartsMgrWork');b=s.index('\ncPartsMgr PartsMgr;',a)
    (d/'sequence.cpp').write_text('#include "model.h"\n'+s[a:b])
    (d/'main.cpp').write_text(CHECKS)
-   for mode in range(4):
+   for mode in range(8):
     exe=d/f'check{mode}'
-    subprocess.run(['g++','-std=c++20','-O1','-g','-fsanitize=address,undefined','-fno-sanitize=vptr','-fno-omit-frame-pointer',f'-DRE4DC_PARTS_DEMAND={mode&1}',f'-DRE4DC_MODELINFO_DEMAND={mode>>1}',f'-I{d}',str(ROOT/'port/dreamcast/game/parts_bridge.cpp'),str(d/'sequence.cpp'),str(d/'main.cpp'),'-o',str(exe)],check=True)
+    subprocess.run(['g++','-std=c++20','-O1','-g','-fsanitize=address,undefined','-fno-sanitize=vptr','-fno-omit-frame-pointer','-fno-pie','-no-pie',f'-DRE4DC_PARTS_DEMAND={mode&1}',f'-DRE4DC_MODELINFO_DEMAND={(mode>>1)&1}',f'-DRE4DC_OBJECT_DEMAND={(mode>>2)&1}',f'-I{d}',str(ROOT/'port/dreamcast/game/parts_bridge.cpp'),str(d/'sequence.cpp'),str(d/'main.cpp'),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
 
+OBJECT_HEADER = r'''
+#pragma once
+#include "model.h"
+class cObj: public cUnit { public: unsigned value; cObj(){be_flag=1;value=73;} };
+class cObjMgr:public cManager<cObj>{public:
+ cObjMgr():cManager<cObj>(sizeof(cObj),2){}
+ void* memAlloc(u32);void memFree(void*);void memClear(cObj*,u32);
+ int construct(cObj* p,u32){new(p)cObj;return 1;}
+};
+extern cObjMgr ObjMgr;
+'''
 CHECKS=r'''
 #include "model.h"
+#include "obj.h"
 #include "global.h"
 #include "main_mem.h"
 #include <cassert>
@@ -71,7 +86,32 @@ void* Debug_alloc(u32 n,int){auto p=mem_alloc(n,0,0,0,13);memclr_asm(p,n);return
 void* cPartsMgr::memAlloc(u32 n){return mem_alloc(n,0,0,0,13);}void cPartsMgr::memFree(void* p){OSFreeToHeap(allocations.at(p).owner,p);}void cPartsMgr::memClear(cParts* p,u32 n){memclr_asm(p,n);}
 void* cModInfoMgr::memAlloc(u32 n){return mem_alloc(n,0,0,0,13);}void cModInfoMgr::memFree(void* p){OSFreeToHeap(allocations.at(p).owner,p);}void cModInfoMgr::memClear(cModelInfo* p,u32 n){memclr_asm(p,n);}
 void release(cPartsMgr& m,cParts* p){while(p){auto next=p->pList;m.destroy(p);p=next;}}
+void* cObjMgr::memAlloc(u32 n){return mem_alloc(n,0,0,0,13);}void cObjMgr::memFree(void* p){OSFreeToHeap(allocations.at(p).owner,p);}void cObjMgr::memClear(cObj* p,u32 n){memclr_asm(p,n);}
+cObjMgr ObjMgr;
 int main(){
+ // An indexed reference can exist before its object. No construction, moving,
+ // eager scan commitment, dead-page eviction, or ID reuse may invalidate it.
+ assert(ObjMgr.arrayAlloc(35));unsigned start_calls=calls;
+ if(RE4DC_OBJECT_DEMAND){for(int i=0;i<35;++i)assert(!ObjMgr.workAt(i));assert(calls==start_calls);}
+ cObj* parent=ObjMgrWork(17);assert(parent&&!parent->be_flag);
+ auto object=ObjMgr.create(0,17);assert(object==parent&&parent->value==73);
+ auto rear=ObjMgr.createBack(0);assert(rear&&rear==ObjMgr.workAt(34));
+ ObjMgr.destroy(object);ObjMgr.dieCheck();assert(parent->be_flag&0x400);
+ ObjMgr.dieCheck();assert(!parent->be_flag&&ObjMgr.workAt(17)==parent);
+ if(RE4DC_OBJECT_DEMAND){deny=true;assert(!ObjMgr.prepareWork(0,1));deny=false;assert(ObjMgr.workAt(17)==parent);}
+ assert(ObjMgr.create(0,17)==parent);start_calls=calls;
+ for(int i=0;i<100;++i){ObjMgr.destroy(parent);ObjMgr.dieCheck();ObjMgr.dieCheck();assert(ObjMgr.create(0,17)==parent);}assert(calls==start_calls);
+ // Logical predecessor, including across a physical page and a dead slot.
+ auto at32=ObjMgr.create(0,32);assert(at32&&ObjMgr.getPrevWork(at32)==ObjMgrWork(31));
+ auto at0=ObjMgr.create(0,0);assert(at0&&!ObjMgr.getPrevWork(at0));
+ std::vector<cObj*> objects;for(unsigned i=0;i<35;++i){auto p=ObjMgrWork(i);if(!(p->be_flag&0x601))p=ObjMgr.create(0,i);assert(p);objects.push_back(p);}
+ assert(ObjMgr.countActiveWork()==35&&!ObjMgr.create());for(unsigned i=0;i<35;++i)assert(ObjMgrWork(i)==objects[i]);
+ assert(!ObjMgrWork(35)&&!ObjMgr.prepareWork(35,1)&&!ObjMgr.prepareWork(0,2));
+ assert(ObjMgr.arrayPush(4));auto obj_debug=ObjMgr.create();assert(obj_debug);ObjMgr.destroy(obj_debug);ObjMgr.dieCheck();ObjMgr.dieCheck();assert(ObjMgr.arrayPop());assert(ObjMgrWork(17)==parent&&ObjMgr.countActiveWork()==35);
+ ObjMgr.destroyAll();ObjMgr.dieCheck();ObjMgr.dieCheck();assert(!parent->be_flag);current=5;ObjMgr.arrayFree();assert(allocations.empty());current=4;
+ // Source heap reset then manager roomInit forgets prior pages, not double-free.
+ ObjMgr.arrayAlloc(17);assert(ObjMgrWork(16));for(auto [p,info]:allocations)free(p);allocations.clear();ObjMgr.roomInit();ObjMgr.arrayAlloc(9);assert(ObjMgr.create());ObjMgr.destroyAll();ObjMgr.dieCheck();ObjMgr.dieCheck();ObjMgr.arrayFree();assert(allocations.empty());
+
  // Model-info keeps pointer-bearing source records stable across page growth,
  // reuse, deferred deletion, subscreen ownership and an incomplete last page.
  cModInfoMgr info;assert(info.arrayAlloc(35));auto first=info.create();assert(first);

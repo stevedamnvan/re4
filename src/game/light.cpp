@@ -1248,7 +1248,11 @@ int cLight::setParent(cModel* m)
     }
     n = ObjMgr.nArray;
     for (i = 0; i < n; i++) {
+#if !defined(__PPC__)
+        if (m && (cModel*) ObjMgr.workAt(i) == m) {
+#else
         if ((cModel*) ((u8*) ObjMgr.pArray + ObjMgr.size * i) == m) {
+#endif
             setParent(4, (ParentNo & 0xFFFF0000) | i);
             return 1;
         }
@@ -1279,7 +1283,11 @@ cModel* cLight::calcParent()
         }
         break;
     case 4:
+#if !defined(__PPC__)
+        pParent = ObjMgrWork(parent.no);
+#else
         pParent = (cModel*) ((u8*) ObjMgr.pArray + ObjMgr.size * parent.no);
+#endif
         break;
     }
     return pParent;

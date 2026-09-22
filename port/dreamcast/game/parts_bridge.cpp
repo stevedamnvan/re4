@@ -1,6 +1,7 @@
-// Selectable backing for the existing parts and model-info managers. Logical slots, source
+// Selectable backing for the reviewed source managers. Logical slots, source
 // constructors/destructors and model-local contiguous arrays remain authoritative.
 #include "model.h"
+#include "obj.h"
 #include "global.h"
 #include "main_mem.h"
 #include "re4dc_platform.h"
@@ -25,6 +26,11 @@ static_assert(sizeof(Pool<cParts>) % 32 == 0 && sizeof(Pool<cModelInfo>) % 32 ==
 template<class T> constexpr bool demand=false;
 template<> constexpr bool demand<cParts> = RE4DC_PARTS_DEMAND;
 template<> constexpr bool demand<cModelInfo> = RE4DC_MODELINFO_DEMAND;
+template<> constexpr bool demand<cObj> = RE4DC_OBJECT_DEMAND;
+// Source lights and indexed clients can retain even an unconstructed/dead
+// object slot. Once exposed, its address stays valid until source pool teardown.
+template<class T> constexpr bool retain_slots=false;
+template<> constexpr bool retain_slots<cObj> = true;
 template<class T> bool sparse(cManager<T>* m) { return demand<T> && !m->pArrayPush; }
 template<class T> Pool<T>* pool(cManager<T>* m) { return (Pool<T>*)m->pArray; }
 template<class T> void report(Pool<T>* p, const char* why) {
@@ -86,7 +92,7 @@ template<class T> bool prepare_work(cManager<T>* m,u32 first,u32 count) {
     for(Chunk<T>* c=p->chunks;c;c=c->next)
         if(first>=c->first && first-c->first<c->count && count<=c->count-(first-c->first))return true;
     for(Chunk<T>* c=p->chunks;c;c=c->next) {
-        if(c->first<first+count && c->first+c->count>first && alive(c))return false;
+        if(c->first<first+count && c->first+c->count>first && (retain_slots<T> || alive(c)))return false;
     }
     // Only fully dead chunks can be replaced. Deferred-deletion flags count as
     // live. Partial releases cannot invalidate the surviving model's pointers.
@@ -98,7 +104,7 @@ template<class T> bool prepare_work(cManager<T>* m,u32 first,u32 count) {
     Chunk<T>* c=(Chunk<T>*)mem_alloc(bytes,"native parts run",0,0,p->heap);
     if(!c) {
         // Keep dead runs reusable normally; under heap pressure reclaim them.
-        for(Chunk<T>** q=&p->chunks;*q;) { if(!alive(*q))discard(p,q);else q=&(*q)->next; }
+        for(Chunk<T>** q=&p->chunks;*q;) { if(!retain_slots<T> && !alive(*q))discard(p,q);else q=&(*q)->next; }
         c=(Chunk<T>*)mem_alloc(bytes,"native parts run",0,1,p->heap);
     }
     if(!c) { ++p->failures;report(p,"allocation failed");return false; }
@@ -110,10 +116,13 @@ template<class T> bool prepare_work(cManager<T>* m,u32 first,u32 count) {
 }
 template<class T> T* previous_work(cManager<T>* m,T* p) {
     if(!m->pArray || !p)return 0;
-    for(u32 i=1;i<m->nArray;++i)if(m->workAt(i)==p)return m->workAt(i-1);
+    for(u32 i=1;i<m->nArray;++i)if(m->workAt(i)==p) {
+        if(retain_slots<T> && !m->prepareWork(i-1,1))return 0;
+        return m->workAt(i-1);
+    }
     return 0;
 }
-// Only these two reviewed managers use this backing implementation. Parts keep
+// Only these reviewed managers use this backing implementation. Parts keep
 // model-sized runs; model-info has no cross-slot arithmetic/contiguity contract
 // and uses bounded pages to avoid one heap allocation per material/model record.
 template<> int cManager<cParts>::arrayAlloc(u32 n){return array_alloc(this,n);}
@@ -130,3 +139,15 @@ template<> bool cManager<cModelInfo>::prepareWork(u32 i,u32 n){
     return prepare_work(this,first,count);
 }
 template<> cModelInfo* cManager<cModelInfo>::getPrevWork(cModelInfo* p){return previous_work(this,p);}
+
+// Fixed object pages never overlap and are never reclaimed under pressure.
+// Scans use workAt without committing; ObjMgrWork commits stable indexed slots.
+template<> int cManager<cObj>::arrayAlloc(u32 n){return array_alloc(this,n);}
+template<> int cManager<cObj>::arrayFree(){return array_free(this);}
+template<> cObj* cManager<cObj>::workAt(u32 n){return work_at(this,n);}
+template<> bool cManager<cObj>::prepareWork(u32 i,u32 n){
+    if(i>=nArray || n!=1)return false;
+    const u32 first=i&~7U, count=nArray-first<8?nArray-first:8;
+    return prepare_work(this,first,count);
+}
+template<> cObj* cManager<cObj>::getPrevWork(cObj* p){return previous_work(this,p);}

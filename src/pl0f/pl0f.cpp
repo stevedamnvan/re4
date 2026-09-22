@@ -1743,7 +1743,12 @@ int pl0fCrashCk(cPl0f* em)
         }
     }
     for (n = 0; n < ObjMgr.nArray; n++) {
+#if !defined(__PPC__)
+        cObj* o = (cObj*) ObjMgr.workAt(n);
+        if (!o) continue;
+#else
         cObj* o = (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * n);
+#endif
 
         if ((o->be_flag & 0x201) == 1 && o->id == 0x1C) {
             f32 r = o->scale.x * 1800.0f;

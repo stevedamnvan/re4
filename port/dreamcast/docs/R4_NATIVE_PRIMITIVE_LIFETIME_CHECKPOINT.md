@@ -1552,3 +1552,107 @@ Build: `CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT
 model/collision residency and native scene connection. Simpler water remains
 an authorized, separately measured and visually reviewed candidate; it must
 preserve source collision/events and cannot substitute for missing integration.
+
+
+## D332: stable object pages pass the room allocation frontier
+
+`parts_bridge.cpp` now supports opt-in `OBJECT_DEMAND=1` through the existing
+`cManager<cObj>` source algorithms. The reused allocator retains source heap
+ownership, slot directory, zero initialization, constructors/destructors, ordering,
+logical predecessor, debug array parking and room reset semantics. Its only new
+policy is eight-slot object pages that remain allocated until source pool teardown.
+The default full pool remains available; no renderer or archive format is added.
+
+Why object lifetime differs from model-info: `cLight::calcParent` can store a raw
+slot pointer before construction, and a dead slot can be reused at the same address.
+`ObjMgrWork` therefore commits its page before returning an indexed pointer, without
+constructing an object. Scans use `workAt` and skip never-backed zero slots. Retained
+pages are not pressure victims. Source scan order and dead backed records remain;
+no live object moves and all 340 logical slots are still usable.
+
+Audited direct consumers include block visibility, ladders, source enemy/object
+searches, light parent mapping, effect-model cleanup, debug camera/work and indexed
+tool helpers. Alias readers through `cObjMgr*` are included. The existing
+`getPrevWork` is adapted to logical predecessor across physical pages for scroll
+groups. Unintegrated later modules are not runtime-qualified by these edits.
+PowerPC preprocessing matches the pre-edit source in all 18 affected shared files.
+
+### Actual memory at source boundaries
+
+| Source point | D331 | D332b |
+|---|---:|---:|
+| Source arena | 10,127,872 | 10,127,872 |
+| Free after required block pool | 2,276,864 | 2,582,048 |
+| Free after enemy body | 1,161,344 | 1,466,528 |
+| Free before water | 51,616 | 189,472 |
+| Free after water | 35,168 | 173,024 |
+| Object backing including overhead, later snapshot | 334,624 | 212,704 |
+| Backed/live parts | 383/383 | 527/527 |
+| Parts allocation failures | 24 | 0 |
+
+The early 305,184 recovery shrinks as source objects allocate: 137,856 before
+water, **121,920** later. Final object directory is 1,504 bytes, pages including
+headers/allocator 211,200, 27 pages/212 backed/206 live. No staging or second full
+pool is retained. Object resident peak equals 212,704 in this observed run.
+Parts grow to 276,992, model-info to 73,504; these are successful additional
+requests, not regressions to conceal. Required 2,400/30,240-byte runs and source
+collision/path setup now proceed. All directory entries for 1,310 parts, 460
+model-info and 340 object slots validate against their actual owning chunks.
+No failed native room allocation or `R100Init : set failed` is in the 135-second
+run. Later source heap has 41,472 free; not a complete encounter or transition peak.
+No new VRAM resource or geometry change is introduced by the backing adapter.
+
+Enemy archive/cache content is unchanged: actual warmed family 2,067,616,
+1,510,176 net recovery from original. Cache counters: 75 misses/loads, 6 hits,
+zero failures/evictions, 952,768 current/peak/read bytes, 22,400 peak pinned,
+2,336 metadata, 270,939 us worst wait. All 145 retained headers, 75 cached
+payloads and 1,904 relocated key pointers validate. The unchanged counters in
+later/final snapshots accompany a stalled game, not accepted repeated gameplay.
+D328b retains warm/pressure coverage; the source prefetch audit remains incomplete.
+The only em10 source change is a nullable object scan; the evidence records old/new
+hashes and exact delta without silently declaring the old audit complete.
+
+### New execution frontier
+
+The source reaches Rno0=3/frame1239 with game and scenario tasks present, all
+required model parts allocated. It then stays at frame1239 through the 125-second
+snapshot: main suspend/gate1, source System0x800, black framebuffer, zero native
+model presentations. Native diagnostics have 21 committed parts, 8,512 peak packet
+bytes, 8 resource failures, zero invalid/overflow counts. The final image is black;
+this is not restoration of the earlier cabin. The visible menu capture remains.
+
+The next source/native mismatch is `cSceSys::scheduler`: it deliberately sets
+`pParentThread=0` around nested priority-14 tasks. The current native
+`NativeTaskParent` substitutes main for all non-ISR tasks. That changes suspend/
+resume ownership during scenario dispatch. Preserve the source per-dispatch parent,
+including null, alongside thread-owned task identity; do not force hold flags or
+return to the resolved post-title stack investigation. This checkpoint does not
+include that scheduler correction. Eight model resource failures, material/
+lighting/water connection and source event/ARAM/audio behavior remain open.
+
+### Checks and identity
+
+Eight host combinations of full/demand parts, model-info and objects execute the
+actual manager/backing and indexed lookup. ASan/UBSan cover pre-construction
+parent references, death/reuse without I/O/allocation, no pressure eviction of
+dead object pages, cross-page predecessors, complete logical capacity, deferred
+destruction, debug park/restore, owning-heap frees and reset without stale frees.
+There are no active type-4 light parents in the target snapshot: that particular
+retained-pointer scenario is source/fixture evidence, not live light coverage.
+Both full and demand object modes link on SH-4; restoring the candidate reproduces
+the captured ELF exactly. Played inventory/retry/room transitions remain open.
+
+Final evidence `C:/Flycast-Evidence/re4-dreamcast/d332b-object-pages`, initial
+`d332-object-pages` retained. Private disc `/root/probe/d332b-disc`, unchanged
+D330 mirror/core and D327 fixtures. Base 54b99d2 plus recorded inherited and owned
+changes. KOS804b3195, SH GCC15.2. Text/data/BSS 2,287,388 /75,620 /672,856:
++1,800 text, no data/BSS increase or source-arena loss. Exact sources, executable,
+assets, emulator/config/input/capture tools and snapshots are in the manifest.
+ELF SHA256 `ff1aac2773393f80aa371f35194e92acab393d9de718148bc1ad5874d04d5d58`;
+disc SHA256 `66243305b397696b4ed28f87897a5c94b4bec0da93cecbd8a31f790b1d1739ee`.
+Build `CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 PARTS_DEMAND=1 MODELINFO_DEMAND=1 OBJECT_DEMAND=1`.
+
+**Keep selectable.** No geometry, simulation, collision, motion hot set, water,
+object capacity or gameplay content is removed. Continue the newly exposed
+scenario handoff and connected scene path. No playable room, FPS, manual combat,
+correct audio or physical-console acceptance; the three-room objective is active.

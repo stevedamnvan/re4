@@ -113,7 +113,11 @@ void cDbWork::dispObj()
     int x;
     int y;
 
+#if !defined(__PPC__)
+    obj = ObjMgr.workAt(wkNo);
+#else
     obj = ObjMgrWork(wkNo);
+#endif
     eprintf(32, 28, 4, 0, "OBJ %d  [0x%08X]", wkNo, obj);
     if (Joy[0].rep & JOY_RIGHT) {
         wkNo++;
@@ -122,7 +126,11 @@ void cDbWork::dispObj()
         wkNo--;
     }
     wkNo = (wkNo + ObjMgr.nArray) % ObjMgr.nArray;
+#if !defined(__PPC__)
+    if (obj && (obj->be_flag & 0x201) == 1) {
+#else
     if ((obj->be_flag & 0x201) == 1) {
+#endif
         dispModel(obj, 4, 3);
         x = 4;
         y = 20;

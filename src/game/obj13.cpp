@@ -728,7 +728,12 @@ int SubLadderClimbCk(cEm* em)
         return 0;
     }
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cObjLadder* obj = (cObjLadder*) ObjMgr.workAt(i);
+        if (!obj) continue;
+#else
         cObjLadder* obj = (cObjLadder*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
 
         if ((obj->be_flag & 0x201) == 1 && obj->id == 0x13 && obj->ckClimb()) {
             if ((em->pos.x - obj->pos.x) * (em->pos.x - obj->pos.x) + (em->pos.y - obj->pos.y) * (em->pos.y - obj->pos.y) +
@@ -759,7 +764,12 @@ int SubLadderClimbCk2(cEm* em)
     u32 i;
 
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cObjLadder* obj = (cObjLadder*) ObjMgr.workAt(i);
+        if (!obj) continue;
+#else
         cObjLadder* obj = (cObjLadder*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
 
         if ((obj->be_flag & 0x201) == 1 && obj->id == 0x13 && obj->getStatus() != 0) {
             f32 dy = em->pos.y - obj->pos.y;
@@ -1237,7 +1247,12 @@ int LadderNearCk(Vec* pos)
     u32 i;
 
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cObjLadder* obj = (cObjLadder*) ObjMgr.workAt(i);
+        if (!obj) continue;
+#else
         cObjLadder* obj = (cObjLadder*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
         LadderWork* w = &obj->ladder;
 
         if ((obj->be_flag & 0x201) == 1 && obj->id == 0x13 && w->status == 0 && !(obj->ladder.flags & 2)) {
@@ -1264,7 +1279,12 @@ void LadderEventTrans(int mode)
     u32 i;
 
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cObjLadder* obj = (cObjLadder*) ObjMgr.workAt(i);
+        if (!obj) continue;
+#else
         cObjLadder* obj = (cObjLadder*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
 
         if ((obj->be_flag & 0x201) == 1 && obj->id == 0x13) {
             if (mode == 1) {

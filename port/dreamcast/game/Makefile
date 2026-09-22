@@ -148,11 +148,13 @@ $(OBJDIR)/platform/mem.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/core-budget.h
 # Opt-in backing policy; logical source capacity and cParts layout are unchanged.
 PARTS_DEMAND ?= 0
 MODELINFO_DEMAND ?= 0
+OBJECT_DEMAND ?= 0
 .PHONY: parts-budget-force
 $(OBJDIR)/parts-budget.h: parts-budget-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_PARTS_DEMAND %s\n' '$(PARTS_DEMAND)' > $@.tmp
 	@printf '#define RE4DC_MODELINFO_DEMAND %s\n' '$(MODELINFO_DEMAND)' >> $@.tmp
+	@printf '#define RE4DC_OBJECT_DEMAND %s\n' '$(OBJECT_DEMAND)' >> $@.tmp
 	@cmp -s $@.tmp $@ || cp $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/parts_bridge.o: parts_bridge.cpp $(OBJDIR)/parts-budget.h

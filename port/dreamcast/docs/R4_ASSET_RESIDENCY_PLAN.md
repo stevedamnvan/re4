@@ -1,44 +1,49 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-D331 allocates the r100 water target at its source-configured **64x64 RGBA8**
-size: **16,384 bytes instead of a 65,536-byte requirement**. It reuses the
-existing target manager, ID/mask, effect and room ownership. The normal menu/New
-Game replay now passes this allocation with 35,168 source-heap bytes free.
-This is not 49,152 extra free bytes versus D330: its larger request failed and
-consumed nothing. D331 actually consumes 16,448 including allocator overhead.
+D332 adds selectable **object backing on demand** using the existing manager
+allocator. All 340 logical slots remain available. Pages stay at stable addresses
+through the source room lifetime, including unconstructed/dead slots retained by
+indexed readers. Final backing is **212,704 instead of 334,624 bytes**: **121,920
+actual source-heap bytes recovered**, including directory/page/allocator costs.
 
-The next failure is a 2,400-byte model-parts request with 2,240 free; later
-collision/path requests fail and `R100Init` reports failure. Native `GXCopyTex`
-and the multi-texture water material remain unconnected. No simplified water,
-complete room, FPS, audio or hardware acceptance is claimed. Source menu remains
-visible; diagnostic 3D is visibly incomplete. D324 remains the accepted
-integration reference; D325-D331 remain selectable residency candidates.
+The normal menu/New Game replay now passes the previously failing required
+model-parts and collision/path allocations. All 527 model parts are backed;
+no manager allocation failure occurs in this run, and 41,472 source-heap bytes
+remain. This is initialization progress, not a complete encounter memory peak.
 
-D330's hot-prefetch progress is retained: 75 loads/misses, 6 hits, no evictions
-or failures; 952,768 cached/peak/read bytes, 22,400 peak pinned, 2,336 metadata,
-270,939 us worst wait in D331. All 145 retained headers and 1,904 relocated key
-pointers were verified again. Warm enemy-family residency remains 2,067,616
-including overhead, **1,510,176 less than the original**. The selected working
-set's response/concurrency audit remains open; unchanged D328b is the repeated
-warm-use/eviction fixture. This is not yet the complete encounter peak.
-See [D331](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d331-source-configured-water-target-allocation).
+The next reproduced blocker is a **scheduler handoff**: source frame 1239,
+Rno0=3, main thread suspended, zero native model presentations and black output
+remain unchanged through the 125-second snapshot. The source nested scenario
+scheduler sets `pParentThread=0`; `NativeTaskParent` instead hardcodes the main
+thread. Preserve per-dispatch source parent semantics without restoring stale
+cursor ownership or forcing source hold/black flags. Native scene/material/water,
+event/ARAM/audio and manual gameplay remain unqualified.
+
+Motion residency is unchanged: 75 misses/loads, 6 hits, no eviction/failure,
+952,768 cached/peak/read bytes, 22,400 peak pinned, 2,336 metadata, 270,939 us worst
+wait. All 145 source headers and 1,904 relocated key pointers validate. Warm
+enemy-family net recovery stays 1,510,176 bytes. Six hits followed by a stalled
+frame do not prove live stability; retain the D328b fixture and incomplete source
+prefetch/concurrency audit. D324 remains the accepted integration reference;
+D325-D332 are selectable candidates, not playable-room acceptance.
+See [D332](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d332-stable-object-pages-pass-the-room-allocation-frontier).
 
 
-Updated 2026-09-21; accepted integration reference D324; experiment D331. Historical budgets below
+Updated 2026-09-21; accepted integration reference D324; experiment D332. Historical budgets below
 retain their named checkpoints. This supports PLAYABLE_PATH and REALTIME_PATH;
 it is not a competing prerequisite roadmap.
 
 ### Where the remaining memory can come from
 
-D331 retains 1,161,344 free after the enemy body and 1,015,168 before motion
-metadata. Actual selected prefetch completes with 52,768; two parts leave 51,616.
-The water allocation now consumes 16,448, leaving 35,168. Required models then
-exhaust the heap: a 2,400-byte parts run fails with 2,240 free. Do not treat its
-224-byte immediate shortfall as the whole-room deficit. Source ObjMgr/EmMgr
-backing is the next bounded ownership audit, with exact D331 live-slot inventory
-in the evidence folder; raw indexed pointers prevent blindly sparsifying either.
-Full selected cache capacity plus conservative overhead still exceeds prefetch
-headroom by 9,120 before later consumers; actual warm occupancy is smaller.
+D332 leaves 2,582,048 after the required block and 1,466,528 after the enemy
+body: +305,184 at both early points. As objects are constructed, the saving falls
+to 137,856 before water and 121,920 at the later snapshot. Full room-model parts
+and collision allocations now succeed, leaving 41,472 free. This is the stalled
+initialization working set; event/ARAM/audio, moving combat and transition peaks
+are not priced as complete. Keep the still-incomplete motion response/concurrency
+audit. The next blocker is source/native scheduler ownership, not a reason to
+remove more hot motions or lower object capacity. Largest-block/whole-encounter
+peaks and full cache-budget growth remain required after execution advances.
 
 User steering: evaluate simpler native water when worthwhile, alongside exact
 right-sizing of the source target. Keep the original selectable, measure real

@@ -6427,7 +6427,12 @@ void em2bYaguraSearch(cEm2b* em)
 
     w->pYagura = 0;
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cObj* o = (cObj*) ObjMgr.workAt(i);
+        if (!o) continue;
+#else
         cObj* o = (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
 
         if ((o->be_flag & 0x201) != 1) {
             continue;

@@ -237,8 +237,16 @@ void debugCamera::move(Camera* cam, JOY* joy, int flag)
                 numObj = 0;
             }
             for (;;) {
+#if !defined(__PPC__)
+                obj = ObjMgr.workAt(numObj);
+#else
                 obj = ObjMgrWork(numObj);
+#endif
+#if !defined(__PPC__)
+                if (!obj || !(obj->be_flag & 1)) {
+#else
                 if (!(obj->be_flag & 1)) {
+#endif
                     if (--i == 0) {
                         break;
                     }
@@ -252,10 +260,23 @@ void debugCamera::move(Camera* cam, JOY* joy, int flag)
             }
         }
         if (joy->on & JOY_A) {
+#if !defined(__PPC__)
+            cObj* selected = ObjMgr.workAt(numObj);
+            if (selected && (selected->be_flag & 1)) {
+#else
             if (ObjMgrWork(numObj)->be_flag & 1) {
+#endif
+#if !defined(__PPC__)
+                cModel* parts = selected->getPartsPtr(0);
+#else
                 cModel* parts = ObjMgrWork(numObj)->getPartsPtr(0);
+#endif
                 if (parts == NULL) {
+#if !defined(__PPC__)
+                    cam->param.at = selected->pos;
+#else
                     cam->param.at = ObjMgrWork(numObj)->pos;
+#endif
                 } else {
                     cam->param.at = parts->world;
                 }

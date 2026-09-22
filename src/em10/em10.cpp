@@ -13306,7 +13306,12 @@ static void em10_R1_TakeAway(cEm10* em)
             }
         }
         for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+            cObj* o = (cObj*) ObjMgr.workAt(i);
+            if (!o) continue;
+#else
             cObj* o = (cObj*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
             if (o && o->isAlive()) {
                 o->setNoSuspend(0);
             }

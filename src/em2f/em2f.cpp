@@ -1743,7 +1743,12 @@ void em2fIslandCrashCk(cEm2f* em)
     u32 i;
 
     for (i = 0; i < ObjMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cObj1c* o = (cObj1c*) ObjMgr.workAt(i);
+        if (!o) continue;
+#else
         cObj1c* o = (cObj1c*) ((u8*) ObjMgr.pArray + ObjMgr.size * i);
+#endif
         cModel* p;
         f32 r;
         f32 d;

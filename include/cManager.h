@@ -78,8 +78,8 @@ public:
     T* getPrevWork(T* p);
     int dieCheck();
 #if !defined(__PPC__)
-    // Native parts storage preserves logical slots, with backing only for used runs.
-    // Every other manager still uses its original contiguous array.
+    // Native reviewed managers preserve logical slots with demand backing.
+    // Other managers keep their original contiguous arrays.
     T* workAt(u32 no) { return (T*)((u8*)pArray + size * no); }
     bool prepareWork(u32 no, u32 count) { return no < nArray && count <= nArray - no; }
 #endif
@@ -166,6 +166,12 @@ template<> int cManager<cModelInfo>::arrayFree();
 template<> cModelInfo* cManager<cModelInfo>::workAt(u32 no);
 template<> bool cManager<cModelInfo>::prepareWork(u32 no, u32 count);
 template<> cModelInfo* cManager<cModelInfo>::getPrevWork(cModelInfo* p);
+class cObj;
+template<> int cManager<cObj>::arrayAlloc(u32 n);
+template<> int cManager<cObj>::arrayFree();
+template<> cObj* cManager<cObj>::workAt(u32 no);
+template<> bool cManager<cObj>::prepareWork(u32 no, u32 count);
+template<> cObj* cManager<cObj>::getPrevWork(cObj* p);
 #endif
 
 // Member initializer list, in this order: the stores come out in this order (body assignments
