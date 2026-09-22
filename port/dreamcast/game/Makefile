@@ -12,6 +12,7 @@
 # Sources outside this directory are never written to: objects go under obj/.
 
 TARGET = re4dc-game.elf
+.DEFAULT_GOAL := all
 ROOT = ../../..
 
 # The executable is the DOL's own code (src/game). The REL modules (stage
@@ -68,6 +69,18 @@ GAME_CPPFLAGS = -std=gnu++20 -fpermissive -w $(GAME_OPT) \
 	-I$(ROOT)/include -I$(ROOT)/src -Iplatform/include -DRE4DC_GAME
 PLATFORM_CPPFLAGS = -std=gnu++20 -Wall -Wextra $(GAME_OPT) \
 	-Iplatform/include -DRE4DC_GAME
+
+# Immutable qualified EVD file backing; mutable swaps remain explicitly rejected.
+# Keep the source reference selectable while the event path is integrated.
+EVENT_FILES ?= 0
+.PHONY: event-files-force
+$(OBJDIR)/event-files.h: event-files-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_EVENT_FILES %s\n' '$(EVENT_FILES)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/src/game/datactrl.o: $(OBJDIR)/event-files.h
+$(OBJDIR)/src/game/datactrl.o: GAME_CPPFLAGS += -include $(OBJDIR)/event-files.h
 SDK_CFLAGS = -w $(GAME_OPT) -Iplatform/sdk -I$(ROOT)/include
 
 KOS_GCCVER_MIN = 12.0.0

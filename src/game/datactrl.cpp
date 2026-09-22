@@ -16,6 +16,9 @@
 #include "eprintf.h"
 #include "libgpu.h"
 #include "snd.h"
+#if defined(RE4DC_GAME)
+#include "native_event_file.h"
+#endif
 
 extern "C" {
 void OSReport(const char* fmt, ...);
@@ -47,6 +50,20 @@ struct DcTile {
 #define ARAM_END 0xD00000
 
 cDataCtrl DC;
+
+#if defined(RE4DC_GAME)
+extern "C" int re4dc_event_file_range(unsigned address, unsigned bytes)
+{
+    if (!bytes) return 0;
+    for (int i = 0; i < 32; ++i) {
+        const cDataUnit& u = DC.m_DataUnit[i];
+        if ((u.m_be_flag & (1 | RE4DC_EVENT_FILE_FLAG)) != (1 | RE4DC_EVENT_FILE_FLAG) || u.m_condition != 4) continue;
+        const unsigned base = (unsigned) (u32) u.m_addr;
+        if (address >= base ? address - base < u.m_size : base - address < bytes) return 1;
+    }
+    return 0;
+}
+#endif
 
 // Stores the unit's file name (at most 31 chars; longer is a fatal error), "" for NULL.
 #line 52 "D:/Bio4/Prog/datactrl.cpp"
@@ -289,6 +306,25 @@ void cDataUnit::setLoadToMram()
             dest = m_fix_addr;
             setMallocInfo(0, NULL);
         }
+#if defined(RE4DC_GAME) && RE4DC_EVENT_FILES
+        if (m_be_flag & RE4DC_EVENT_FILE_FLAG) {
+            // The caller's final allocation is the only complete RAM copy.
+            // Failed/partial reads are never published to source consumers.
+            if (!re4dc_event_file_install(m_name, m_size, (void*) dest)) {
+                m_err = 2;
+                m_command = 0;
+                checkMallocRelease();
+                dest = 0;
+                break;
+            }
+            m_addr = (void*) dest;
+            m_condition = 2;
+            m_command = 0;
+            m_wait = 0;
+            OSReport("DC:%s check FILE_MRAM_OK\n", m_name);
+            break;
+        }
+#endif
         no = Aram.DmaTransReq(1, (u32) m_addr, dest, m_size, wait);
         m_id = no;
         if (no >= 0) {
@@ -333,6 +369,24 @@ void cDataUnit::setLoadToAram()
         } else {
             dest = arg;
         }
+#if defined(RE4DC_GAME) && RE4DC_EVENT_FILES
+        if (re4dc_event_file_name(m_name)) {
+            if (!re4dc_event_file_prepare(m_name, m_size)) {
+                m_err = 2;
+                m_command = 0;
+                dest = 0;
+                break;
+            }
+            m_be_flag |= RE4DC_EVENT_FILE_FLAG;
+            m_addr = (void*) dest;
+            m_id = -1;
+            m_condition = 4;
+            m_command = 0;
+            m_wait = 0;
+            OSReport("DC:%s check FILE_READY bytes=%u\n", m_name, m_size);
+            break;
+        }
+#endif
 #line 366 "D:/Bio4/Prog/datactrl.cpp"
         no = DvdReadN(m_name, NULL, dest, 0, 0, wait | 0x8, __FILE__, __LINE__);
         if (pG->dev_mode == 1) {
@@ -354,6 +408,16 @@ void cDataUnit::setLoadToAram()
         }
         break;
     case 2:
+#if defined(RE4DC_GAME) && RE4DC_EVENT_FILES
+        if (m_be_flag & RE4DC_EVENT_FILE_FLAG) {
+            // After activation these bytes can contain relocated pointers and
+            // mutations. Never discard them by treating the original as current.
+            m_err = 3;
+            m_command = 0;
+            OSReport("DC:%s mutable event parking unsupported; retaining MRAM\n", m_name);
+            break;
+        }
+#endif
         if (arg == 0) {
             dest = DC.getAramFree(m_size);
             if (dest == 0) {
@@ -380,6 +444,18 @@ void cDataUnit::setLoadToAram()
         }
         break;
     case 4:
+#if defined(RE4DC_GAME) && RE4DC_EVENT_FILES
+        if (m_be_flag & RE4DC_EVENT_FILE_FLAG) {
+            if (arg != 0 && arg != (u32) m_addr) {
+                m_addr = (void*) arg;
+                dest = arg;
+                re4dc_event_file_moved();
+                OSReport("DC:%s FILE_REBASE addr=%08x bytes=%u\n", m_name, arg, m_size);
+            }
+            m_command = 0;
+            break;
+        }
+#endif
         if (arg != 0 && arg != (u32) m_addr) {
             if (DC.dbgHeap == 1) {
                 dest = (u32) Debug_alloc(m_size, 1);
@@ -437,6 +513,9 @@ int cDataUnit::setClear()
     OSReport("DC:%s set CLEAR\n", m_name);
 clear:
     checkMallocRelease();
+#if defined(RE4DC_GAME)
+    m_be_flag &= ~RE4DC_EVENT_FILE_FLAG;
+#endif
     m_addr = NULL;
     dest = 0;
     m_condition = 0;

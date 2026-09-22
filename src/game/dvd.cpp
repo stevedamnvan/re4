@@ -16,6 +16,9 @@
 //    the r9 anti-dependence and its load ranked first).
 #include "types.h"
 #include "dvd.h"
+#if defined(RE4DC_GAME)
+#include "native_event_file.h"
+#endif
 
 // The file table is defined before the other headers are included: its strings precede the
 // map_obj.h/light.h/widget.h/card.h/sofdec.h strings in the original .rodata.
@@ -438,6 +441,13 @@ int DvdReadN(const char* name, void* dst, int a, int b, int c, int mode, const c
 // (synchronous DMAs), after letting a running read finish its current piece.
 void MemorySwap(void* mram, u32 aram, u32 size)
 {
+#if defined(RE4DC_GAME)
+    // Immutable EVD backing cannot receive the modified MRAM half. Reject
+    // before touching either buffer; this is an explicit remaining dependency.
+    if (size > 0xffffffe0U || re4dc_event_file_range(aram, ALIGN32(size))) {
+        re4dc_event_file_reject_swap();
+    }
+#endif
     u8* p;
     u32 q;
     u32 rest;
@@ -1079,6 +1089,12 @@ int cDvdQueue::fileClose()
 // and blocks, else it is appended to the list. Returns the request slot, -1 when full.
 int cAram::DmaTransReq(int type, u32 src, u32 dst, u32 len, int wait)
 {
+#if defined(RE4DC_GAME)
+    if (len > 0xffffffe0U || re4dc_event_file_range(type == 0 ? dst : src, ALIGN32(len))) {
+        OSReport("ARAM DMA rejected: immutable EVD range; use source unit installation\n");
+        return -1;
+    }
+#endif
     int no;
     AramReq* r;
     AramReq* p;

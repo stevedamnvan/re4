@@ -1,45 +1,42 @@
 # RE4 Dreamcast: boot-forward playable integration
 
-D339 keeps a bounded source-position cache in the existing native model adapter.
-The same transformed position is reused across corners of one source part; UVs,
-normals, winding, material and source pose retain their separate identities.
-The 64-entry table lives for one synchronous submission, including packet flushes;
-new part/pose/instance/camera submissions start empty. No cross-frame invalidation
-scheme, geometry reduction, new renderer or extra resident allocation is added.
+D340 adds selectable `EVENT_FILES=1` backing for qualified immutable EVD
+preloads. It reuses `le_mirror` qualification, the native DVD root, existing
+64 KiB storage reader, and source `cDataUnit` ownership. Source compaction moves
+the file reference without allocating a whole-event scratch buffer. Actual
+installation validates each payload chunk into the caller's final allocation;
+mutable parking/swaps are explicitly rejected, not silently restored from disc.
 
-Two sequential Flycast runs compare `MODEL_POSITION_CACHE=0` and `=1` (default).
-For 12 common observed source-frame tags, median presented interval drops from
-1,840.012 to 1,437.144 ms (21.9%); p95 from 1,856.699 to 1,439.648 ms. This is
-one emulator run per choice, observational completed-frame sampling, not physical
-timing or real-time play. The candidate avoids 8,334,641 of 13,072,693 position
-transforms (63.8%). Eleven focused tests pass, including both cache choices,
-source winding, clipping, seams, chunk transport and failure ownership.
+A 450-second reference run reproduces the 694,560 /669,248 /309,632-byte
+compaction failures with 41,472 bytes free. The kept candidate completes all
+three moves without these failures. Four preparations read 372 metadata bytes,
+zero EVD payload bytes, with worst observed preparation wait 16,384 us. No event
+installation occurs in this run; that transport is host-tested, not yet exercised
+by target event activation. The rejected full-preload-read variant took up to
+18,228,242 us. These are emulator integration observations, not an FPS benchmark.
 
-The candidate adds 2 KiB within the existing calling stack, no extra heap/VRAM
-allocation. Compiler-reported submit stack is 2,160 bytes; this is not a whole-
-call-chain peak. Text is 2,292,304 (+224 versus D338); data/BSS remain 76,836 /
-673,016. Required block/enemy allocation points stay 2,582,048 /1,466,528 free;
-later source free remains 41,472. Texture use is 3,244,032, peak 4,192,256, with
-97 uploads and zero missing textures. No new source-archive recovery is claimed.
+Required block/enemy allocation points remain 2,582,048 /1,466,528 free. Later
+heap free and largest block both remain 41,472: **zero additional heap recovered**.
+The change avoids failed scratch demands rather than freeing previously allocated
+storage. No new payload arena or VRAM allocation; ELF text/data/BSS are
+2,295,200 /76,836 /673,048 (+2,896 text, +32 BSS versus D339). The 540-byte
+compiler-reported transfer stack excludes callees and is not a total stack peak.
 
-Menu captures match exactly. Reviewed room captures retain ground, Leon's rear
-head, cabin and HUD. Final source frames differ, as do camera/pose buffers; the
-203,091 changed pixels are not a matched-state visual comparison. Exact packet
-comparison is supplied by focused fixtures; complete materials/lighting and
-character/encounter acceptance remain open. PVR_STREAM=1 remains opt-in and
-physical TA/OPB capacity is still unqualified.
+Source title/menu and diagnostic room output remain visible. Delivered UP at
+retrace 9011 moves Leon from approximately (-99,692,-454,-1,344) to
+(-94,864,-123,-3,059); R at 21025 exercises the source aim path. These are
+scripted controller observations, not manual encounter acceptance. Source frame
+1483 is reached; the capture stops at its 450-second deadline, not a game crash.
+Materials/lighting, event activation and mutable snapshots, full audio, inventory,
+combat, transitions/retry, performance and hardware acceptance remain open.
+Simpler water remains a selectable, unimplemented candidate.
+See [D340](R4_EVENT_ENEMY_CHECKPOINT.md#d340-qualified-immutable-event-backing).
 
-Event storage is still required. This turn verified all four existing r100 EVDs
-have complete conversion records, but ARQ still has no byte backing. Source
-`MemorySwap` must preserve modified enemy/event bytes; read-only file references
-alone cannot replace it. D339's 135-second samples remain in background preloads
-and do not log the previously documented whole-event scratch allocation failures.
-Do not report those older failures as newly reproduced in this window or claim
-the absence proves they are solved. Continue qualified event lifetime/storage,
-source materials/lighting and controller-driven progression; keep the existing
-motion hot-set/prefetch/concurrency audit open. Simpler water remains a selectable,
-unimplemented candidate. The full menu-plus-three-room goal remains active.
-See [D339](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d339-part-local-position-reuse).
+D339's part-local position cache and D338's source cull correction remain.
+D339's prior matched-frame emulator interval median was 1,437.144 ms; D340
+does not supersede that with a controlled performance comparison. Do not repeat
+the cache, strip/chunk or cull work, or mistake the unlit diagnostic backend for
+the complete accepted cabin presentation.
 
 
 Updated 2026-09-22. **This is the authoritative execution plan.** It supersedes

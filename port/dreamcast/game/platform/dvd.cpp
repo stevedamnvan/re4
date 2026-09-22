@@ -96,6 +96,13 @@ extern "C" {
 
 void re4dc_dvd_set_root(const char* root) { g_root = root; }
 
+int re4dc_dvd_native_path(const char* name, char* output, unsigned capacity)
+{
+    if (!name || !output || !capacity) return 0;
+    const int n = snprintf(output, capacity, "%s%s", g_root, name);
+    return n >= 0 && (unsigned) n < capacity;
+}
+
 s32 DVDConvertPathToEntrynum(const char* path)
 {
     char rel[64];

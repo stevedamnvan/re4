@@ -2036,6 +2036,37 @@ def compact_static_rel(rel, data, entries, bindings):
     return out
 
 
+def prepare_event_reference(rel, source):
+    """Bounded EVD preparation, using this converter's actual coverage result.
+
+    Return the qualified LE payload and its immutable-file transport certificate.
+    Callers must use this returned payload (or compare it exactly with a current
+    mirror), not attach the certificate to an unrelated cached conversion.
+    Proprietary payloads/certificates stay in private generated directories.
+    """
+    import re
+    import zlib
+    if not re.fullmatch(r'evd/[a-z0-9_]+\.evd', rel) or len(rel) >= 32:
+        raise ValueError('noncanonical event identity')
+    if not source or len(source) > 4 * 1024 * 1024 or len(source) % 32:
+        raise ValueError('event size outside bounded transport')
+    mark = len(REPORT)
+    data = bytearray(source)
+    try:
+        convert_file(rel, data)
+        records = REPORT[mark:]
+        if not records or any(not e.get('complete') or e.get('error') for e in records):
+            raise ValueError('event conversion is incomplete')
+        chunk = 65536
+        crcs = b''.join(struct.pack('<I', zlib.crc32(data[i:i+chunk]))
+                        for i in range(0, len(data), chunk))
+        cert = b'R4EVDREF' + struct.pack('<6I', 1, len(data), chunk, len(crcs)//4,
+                                       zlib.crc32(rel.encode('ascii')), zlib.crc32(crcs)) + crcs
+        return bytes(data), cert
+    finally:
+        del REPORT[mark:]
+
+
 def main():
     argv = sys.argv[1:]
     require = None

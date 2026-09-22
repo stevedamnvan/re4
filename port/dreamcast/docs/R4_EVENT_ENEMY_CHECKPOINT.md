@@ -1,6 +1,7 @@
 # D312: source event qualification and native enemy module
 
-2026-09-21. Kept as integration progress; enemy creation and room residency
+Historical D312 checkpoint (2026-09-21); later D320-D340 supersede the
+allocation and immutable-preload failures below. Kept as integration progress; enemy creation and room residency
 still fail for insufficient main RAM. No playable/rendered acceptance.
 
 ## Change and verification
@@ -65,3 +66,147 @@ scripted boot log, SH layout fixture, source token check and EVD verification.
 
 Memory figures are failed-request snapshots, not measured gameplay peaks.
 No presented frame rate, visual/audio correctness or physical-hardware result.
+
+## D340: qualified immutable event backing
+
+2026-09-22, baseline `7cc02f3223835fc9c24aaf7b7ee4bd67ac08c09e` plus preserved
+inherited integration work. This changes transport/ownership, not event scripts,
+gameplay flags, collision, geometry, camera or water.
+
+D340 adds selectable `EVENT_FILES=1` backing for qualified immutable EVD
+preloads. It reuses `le_mirror` qualification, the native DVD root, existing
+64 KiB storage reader, and source `cDataUnit` ownership. Source compaction moves
+the file reference without allocating a whole-event scratch buffer. Actual
+installation validates each payload chunk into the caller's final allocation;
+mutable parking/swaps are explicitly rejected, not silently restored from disc.
+
+A 450-second reference run reproduces the 694,560 /669,248 /309,632-byte
+compaction failures with 41,472 bytes free. The kept candidate completes all
+three moves without these failures. Four preparations read 372 metadata bytes,
+zero EVD payload bytes, with worst observed preparation wait 16,384 us. No event
+installation occurs in this run; that transport is host-tested, not yet exercised
+by target event activation. The rejected full-preload-read variant took up to
+18,228,242 us. These are emulator integration observations, not an FPS benchmark.
+
+Required block/enemy allocation points remain 2,582,048 /1,466,528 free. Later
+heap free and largest block both remain 41,472: **zero additional heap recovered**.
+The change avoids failed scratch demands rather than freeing previously allocated
+storage. No new payload arena or VRAM allocation; ELF text/data/BSS are
+2,295,200 /76,836 /673,048 (+2,896 text, +32 BSS versus D339). The 540-byte
+compiler-reported transfer stack excludes callees and is not a total stack peak.
+
+Source title/menu and diagnostic room output remain visible. Delivered UP at
+retrace 9011 moves Leon from approximately (-99,692,-454,-1,344) to
+(-94,864,-123,-3,059); R at 21025 exercises the source aim path. These are
+scripted controller observations, not manual encounter acceptance. Source frame
+1483 is reached; the capture stops at its 450-second deadline, not a game crash.
+Materials/lighting, event activation and mutable snapshots, full audio, inventory,
+combat, transitions/retry, performance and hardware acceptance remain open.
+Simpler water remains a selectable, unimplemented candidate.
+
+### Concrete source-to-native connection
+
+| Reused mechanism | Source producer/consumer | Small new adapter |
+|---|---|---|
+| `le_mirror.convert_file/fmt_evd` and existing nested handlers | Original EVD packets, named assets and pointers | `prepare_event_reference` returns the actual qualified LE payload and an `.evq` chunk-CRC certificate. Unknown/incomplete conversion rejects. |
+| Native DVD root plus `room_storage::read_chunks` | `cDataUnit::setLoadToAram/setLoadToMram` | `native_event_file.cpp` checks certificate/name/size; installation checks every64KiB chunk while copying to final destination. No second full representation. |
+| Existing DC unit array, sort and clear/delete rules | `checkAramSort` and room lifecycle | A previously unused native flag marks immutable file backing. Logical rebase retains its source filename/size and clears the command. Clear/delete removes the flag. No duplicate range registry. |
+| Source DMA and `MemorySwap` entry points | Raw range access and mutable exchange | Reject overlapping immutable ranges, including aligned spans, before a destructive copy. MRAM-to-ARAM parking keeps the owned MRAM on failure. |
+
+Only immutable EVD preloads use this selectable path. Other ARAM users, including
+block/subscreen/audio and mutable snapshots, are not qualified by this adapter.
+Preparation validates the converter-produced certificate and file length; it does
+**not** claim payload CRC verification at that moment. Only successful install
+publishes MRAM condition2. Truncation/corruption/read failure leaves the consumer
+inactive, and caller-owned destination storage is never freed by the unit.
+Installed bytes may be mutated/relocated: raw-file reload cannot replace them.
+
+Four certificates total372 bytes on disc; payloads remain byte-identical to D330.
+Files are r100s40/s41/s43/s44 (2,227,072 /694,560 /669,248 /309,632 bytes).
+After s40's source clear, three file-backed units remain ready at source-selected
+logical addresses, with zero pending commands/errors. The linked native adapter
+adds no source allocation and reuses the existing64KiB bounce buffer. New stats
+are28 bytes, with32 bytes total BSS growth from alignment. Native transfer's
+288-byte certificate array and other locals use the existing calling stack.
+KOS file-cache overhead/loading peaks are not separately instrumented as a new
+whole-encounter peak; do not report only these metadata bytes as total game cost.
+
+### Evidence and keep/reject decision
+
+Three sequential450s Flycast runs preserve exact executable/disc/config/fixture/
+capture-tool hashes and snapshots under `C:/Flycast-Evidence/re4-dreamcast/`:
+
+- `d340a-event-progression`: D339 ELF/input unchanged; reproduces all three
+  compaction failures. Final source frame1484; source free/largest41,472.
+- `d340b-event-files`: full-preload payload verification is rejected. It fixes
+  scratch allocation but adds up to18.228242s synchronous preload waiting.
+- `d340c-event-install`: keep selectable. Four prepared files, three logical
+  moves, zero EVD installs/failures,372 metadata bytes read, zero payload bytes
+  read. Worst observed preparation16.384ms. This is a reference availability
+  result; it does not prove event-play bytes were consumed on target.
+
+Candidate controller fixture adds UP at retrace9000 (delivered9011, held10800)
+and R at21000 (delivered21025, held1800). Snapshots145/200/340/395s and final
+show source movement/pose/camera changes and preserved room/HUD output. No forced
+hold/black/player state. Source Rno0=3/System0x800 at final frame1483. No EVD
+activation or new resource failure is reached; no first encounter acceptance.
+
+Required block pool1,126,272 and compact em12 body1,105,152 both allocate, at
+2,582,048 and1,466,528 free. Later snapshots validate the OSAlloc linked lists:
+one free block41,472. All manager pointer maps remain valid, with resident/peak
+parts276,992, modelinfo73,504, objects212,704. Motion cache peak952,768,
+peak pinned22,400,metadata2,336,75 misses/loads,6 hits,0 evictions/failures,
+952,768 payload bytes read and worst observed wait270,939us. All145 source
+headers/75 payloads/1,904 relocated key pointers validate. Earlier net warmed
+enemy-family recovery1,510,176 remains; D340 adds zero enemy-allocation saving.
+The repeated-use/immediate-response/concurrency audit remains incomplete.
+
+Moving/aimed candidate texture use3,260,416, peak4,192,256,98 uploads,0 missing.
+Maximum observed complete-frame model commands2,487,488; Flycast TA high-water
+still invalidzero and physical capacity unqualified. Different camera/pose
+states prevent pixel-equivalence/FPS comparison. Host compilation/checks also
+overlapped parts of these integration runs; do not treat them as isolated timing
+benchmarks or add overlapping PVR/CPU intervals. Room output remains a base-
+material diagnostic with incomplete lighting/material behavior.
+
+Thirty focused event/mirror tests pass, using real source-unit method bodies,
+real native reader, synthetic short reads/corruption,100 moves with no reread,
+fixed and allocated destinations, failures/clear/retry, and swap preflight.
+Both EVENT_FILES choices build; toggling back reproduces the kept ELF exactly.
+PowerPC preprocessed tokens of both shared source units are identical to the
+baseline; no new ProDG object comparison. Original KOS tree remains clean.
+
+### Reproduction and next consumer
+
+Use `/root/work/re4-dreamcast`, patched KOS `/root/work/kos-re4dc-d336` (base
+804b3195 plus existing D336 patch), SH GCC15.2, nativeO1. Build:
+
+```sh
+export RE4DC_KOS_BASE=/root/work/kos-re4dc-d336
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/game -j4 CORE_RESIDENT_BYTES=1360608 \
+  PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 \
+  PARTS_DEMAND=1 MODELINFO_DEMAND=1 OBJECT_DEMAND=1 \
+  PVR_STREAM=1 MODEL_POSITION_CACHE=1 EVENT_FILES=1
+```
+
+Private generated mirror `/root/probe/d340-mirror`, fixtures
+`/root/probe/d340c-fixtures`, disc `/root/probe/d340c-disc`; original D330/D327
+directories are unchanged. Reproducible private preparation scripts are copied
+into evidence. They call the existing mirror module's bounded
+`prepare_event_reference(rel, original_bytes)`, compare the returned LE bytes
+exactly with the accepted mirror, and install only its certificate alongside the
+same payload. Never generate a certificate from an unrelated stale report.
+
+Kept ELF SHA256 `c482b23419c3feba2a96b43cba791bb8e1678eba9e294e6d49514adfd5a38539`.
+Disc SHA256 `6b59bae61bbeabdd280bc025741e5a384817b74ab289a0784f6ed1a085275323`.
+`identities.json`, `event-assets.json`, `result.json`, `event-state.json`, motion
+pointer checks and the evidence manifest retain exact observations and limits.
+
+Next: reach the first event through actual player progression, trace its required
+final allocation and source completion/skip effects, and connect that activation
+without unqualified data. Implement mutable snapshots only with native motion,
+texture/effect bindings and capacity handled together. Do not blindly re-read
+the original archive over live pointers. General ARQ still does not store bytes;
+this adapter does not turn all source ARAM into backed memory. Keep lighting/
+materials, audio, inventory, combat, retry/transitions and physical gates visible.

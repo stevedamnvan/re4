@@ -13,85 +13,84 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D339 position reuse; event storage and materials remain
+## Current resumption point - D340 immutable event preloads; activation remains
 
-D339 keeps a bounded source-position cache in the existing native model adapter.
-The same transformed position is reused across corners of one source part; UVs,
-normals, winding, material and source pose retain their separate identities.
-The 64-entry table lives for one synchronous submission, including packet flushes;
-new part/pose/instance/camera submissions start empty. No cross-frame invalidation
-scheme, geometry reduction, new renderer or extra resident allocation is added.
+D340 adds selectable `EVENT_FILES=1` backing for qualified immutable EVD
+preloads. It reuses `le_mirror` qualification, the native DVD root, existing
+64 KiB storage reader, and source `cDataUnit` ownership. Source compaction moves
+the file reference without allocating a whole-event scratch buffer. Actual
+installation validates each payload chunk into the caller's final allocation;
+mutable parking/swaps are explicitly rejected, not silently restored from disc.
 
-Two sequential Flycast runs compare `MODEL_POSITION_CACHE=0` and `=1` (default).
-For 12 common observed source-frame tags, median presented interval drops from
-1,840.012 to 1,437.144 ms (21.9%); p95 from 1,856.699 to 1,439.648 ms. This is
-one emulator run per choice, observational completed-frame sampling, not physical
-timing or real-time play. The candidate avoids 8,334,641 of 13,072,693 position
-transforms (63.8%). Eleven focused tests pass, including both cache choices,
-source winding, clipping, seams, chunk transport and failure ownership.
+A 450-second reference run reproduces the 694,560 /669,248 /309,632-byte
+compaction failures with 41,472 bytes free. The kept candidate completes all
+three moves without these failures. Four preparations read 372 metadata bytes,
+zero EVD payload bytes, with worst observed preparation wait 16,384 us. No event
+installation occurs in this run; that transport is host-tested, not yet exercised
+by target event activation. The rejected full-preload-read variant took up to
+18,228,242 us. These are emulator integration observations, not an FPS benchmark.
 
-The candidate adds 2 KiB within the existing calling stack, no extra heap/VRAM
-allocation. Compiler-reported submit stack is 2,160 bytes; this is not a whole-
-call-chain peak. Text is 2,292,304 (+224 versus D338); data/BSS remain 76,836 /
-673,016. Required block/enemy allocation points stay 2,582,048 /1,466,528 free;
-later source free remains 41,472. Texture use is 3,244,032, peak 4,192,256, with
-97 uploads and zero missing textures. No new source-archive recovery is claimed.
+Required block/enemy allocation points remain 2,582,048 /1,466,528 free. Later
+heap free and largest block both remain 41,472: **zero additional heap recovered**.
+The change avoids failed scratch demands rather than freeing previously allocated
+storage. No new payload arena or VRAM allocation; ELF text/data/BSS are
+2,295,200 /76,836 /673,048 (+2,896 text, +32 BSS versus D339). The 540-byte
+compiler-reported transfer stack excludes callees and is not a total stack peak.
 
-Menu captures match exactly. Reviewed room captures retain ground, Leon's rear
-head, cabin and HUD. Final source frames differ, as do camera/pose buffers; the
-203,091 changed pixels are not a matched-state visual comparison. Exact packet
-comparison is supplied by focused fixtures; complete materials/lighting and
-character/encounter acceptance remain open. PVR_STREAM=1 remains opt-in and
-physical TA/OPB capacity is still unqualified.
+Source title/menu and diagnostic room output remain visible. Delivered UP at
+retrace 9011 moves Leon from approximately (-99,692,-454,-1,344) to
+(-94,864,-123,-3,059); R at 21025 exercises the source aim path. These are
+scripted controller observations, not manual encounter acceptance. Source frame
+1483 is reached; the capture stops at its 450-second deadline, not a game crash.
+Materials/lighting, event activation and mutable snapshots, full audio, inventory,
+combat, transitions/retry, performance and hardware acceptance remain open.
+Simpler water remains a selectable, unimplemented candidate.
 
-Event storage is still required. This turn verified all four existing r100 EVDs
-have complete conversion records, but ARQ still has no byte backing. Source
-`MemorySwap` must preserve modified enemy/event bytes; read-only file references
-alone cannot replace it. D339's 135-second samples remain in background preloads
-and do not log the previously documented whole-event scratch allocation failures.
-Do not report those older failures as newly reproduced in this window or claim
-the absence proves they are solved. Continue qualified event lifetime/storage,
-source materials/lighting and controller-driven progression; keep the existing
-motion hot-set/prefetch/concurrency audit open. Simpler water remains a selectable,
-unimplemented candidate. The full menu-plus-three-room goal remains active.
-See [D339](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d339-part-local-position-reuse).
+Keep `EVENT_FILES=1` selectable (default0), on top of the current D339 build:
+`CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 PARTS_DEMAND=1 MODELINFO_DEMAND=1 OBJECT_DEMAND=1 PVR_STREAM=1 MODEL_POSITION_CACHE=1`.
+Use patched KOS `/root/work/kos-re4dc-d336`; original KOS remains clean.
+Current ELF is the D340c candidate. Both EVENT_FILES choices build and the
+candidate is reproduced byte-identically after the toggle check. Thirty focused
+tests pass, including actual source-unit methods and native reader fixtures with
+ASan/UBSan. PowerPC preprocessing of datactrl.cpp/dvd.cpp is unchanged; no new
+ProDG object comparison is claimed. Five pre-existing missing stubs remain.
 
-D339 reference evidence: `C:/Flycast-Evidence/re4-dreamcast/d339a-position-reference`;
-candidate: `C:/Flycast-Evidence/re4-dreamcast/d339b-position-cache`. Discs are
-`/root/probe/d339a-disc` and `/root/probe/d339b-disc`; unchanged D330 mirror/core,
-D327 fixtures. Same demand options, patched KOS and PVR_STREAM=1 as D338, plus
-MODEL_POSITION_CACHE=0/1. Current ELF is the cached candidate. Reference toggle
-rebuilds the owning object; both host paths are checked. No shared game-source
-or PPC edits in D339. Preserve D338's source-cull correction and evidence.
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d340a-event-progression` (same D339
+ELF/assets, longer run); `d340b-event-files` (rejected whole-preload verification);
+`d340c-event-install` (kept metadata-preload candidate, controller diagnostic).
+Private assets `/root/probe/d340-mirror`, disc `/root/probe/d340c-disc`, fixtures
+`/root/probe/d340c-fixtures`. D330 source mirror/core and D327 fixtures remain
+unchanged. D340c fixtures add two controller holds; no source-state writes.
+ELF SHA256 `c482b23419c3feba2a96b43cba791bb8e1678eba9e294e6d49514adfd5a38539`.
+See [D340](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md#d340-qualified-immutable-event-backing).
 
-Next event connection must treat immutable preloaded EVDs separately from the
-mutable snapshots used by `MemorySwap`, `cDataSwap`, and subscreen ownership.
-All current s40/s41/s43/s44 conversion entries qualify; that does not qualify a
-native byte store. s40 is 2,227,072 bytes versus the 1,105,152-byte compact em12
-body: source event borrowing also needs capacity and lifetime adaptation. Do not
-implement compaction as pointer movement without backed data, or restore an
-enemy archive by blindly reloading over relocated/live native resource pointers.
-The private D339 source audit records exact source consumers and file identities.
+Continue the normal source-controlled approach to the cabin and first event.
+This run activates no EVD and reaches no new resource rejection after the
+compaction fix. Do not invent a freshly observed failure. The known next storage
+boundary is `cDataUnit::setLoadToMram`'s final event allocation and
+`MemorySwap`'s mutable enemy/event snapshot. The latter is guarded before any
+copy for file-backed units; general ARQ and mutable byte storage are still
+unimplemented. Source EVD consumers must retain relocated motion/texture/effect
+ownership and source completion effects. s40 remains 2,227,072 bytes versus
+the compact enemy body's1,105,152; file backing does not solve activation capacity.
 
-Continue `trans.cpp::materialSetup/alphaSetup` and existing native owners as an
-independent presentation lane. Separate-alpha and texture-blend flags differ;
-preserve alpha multiplication, thresholds, UV selection, order and depth. Do not
-equate converter alpha replacement with full source material behavior. Preserve
-lighting and complete-character requirements. Do not repeat the position cache,
-64KiB chunk work, or rotate Leon to hide the resolved culling defect.
+Motion hot-cache behavior remains unchanged in this run:952,768 cached/peak/read,
+22,400 peak pinned,2,336 metadata,75 misses/loads,6 hits,0 evictions/failures;
+worst observed wait270,939us. All145 headers and1,904 relocated pointers validate.
+Do not claim completed combat/reaction/concurrency coverage; retain the existing
+prefetch audit and keep hot data cached beyond evaluation-time pinning.
+
+Continue source material/lighting integration through the existing backend.
+Separate-alpha and texture-blend flags differ; preserve multiplication,
+thresholds, UV choice, order and depth. No water simplification is implemented.
 
 D335c remains the default bounded regression (`d335c-admission`); its sparse
 branches/HUD are not a complete scene reference. D334 background-depth and D333
 nested-task ownership corrections remain. No manual/FPS/audio/hardware acceptance.
 
-The other reproduced dependency is `datactrl.cpp::checkAramSort/setLoadToAram`:
-whole-event scratch to move r100s41/s43/s44 ARAM units. Native
-`audio_stub.cpp::ARQPostRequest` does not copy/store bytes. Existing `fmt_evd`
-already parses packet/named-asset structures; inspect each file's current
-qualification before activation. `MemorySwap` exchanges real enemy/event bytes
-through existing64KiB DVD buffers; it must retain native motion/texture/effect
-pointer ownership. Preserve source preload and cutscene completion effects.
-Do not suppress the failures with a success stub or simply disable compaction.
+Historical D338/D339 event compaction failures are now reproduced in D340a
+and avoided by the selectable D340c immutable-file path. The original ARQ path
+still lacks bytes; this is not general ARAM/audio or mutable-swap acceptance.
 
 D333 evidence `C:/Flycast-Evidence/re4-dreamcast/d333-scenario-parent`, disc
 `/root/probe/d333-disc`, preserves the task-parent correction and host/source
