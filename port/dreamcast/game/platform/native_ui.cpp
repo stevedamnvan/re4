@@ -190,7 +190,14 @@ extern "C" void re4dc_ui_init(){
     params.autosort_disabled=1; // source OT is the UI blending order
     ready=pvr_init(&params)==0;
     re4dc_log("native UI: PVR init %s; source ID adapter, 640x480\n",ready?"ok":"FAILED");
-    if(ready)pvr_set_bg_color(0,0,0);
+    if(ready){
+        pvr_set_bg_color(0,0,0);
+        // Source camera-space units can exceed 10,000. KOS's default 0.0001
+        // inverse background depth hides those valid source polygons. Leave
+        // near/far visibility to the existing source-projection clipper and
+        // place the background behind every positive inverse model depth.
+        pvr_set_zclip(0.0f);
+    }
 }
 extern "C" void re4dc_ui_begin(){
     if(model_diagnostic==1 && frame%120==0)

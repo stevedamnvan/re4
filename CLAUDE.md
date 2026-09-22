@@ -13,52 +13,63 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D333 scenario scheduler proceeds; world and ARAM remain
+## Current resumption point - D334 background depth fixed; bounded world and ARAM remain
 
-D333 fixes the native nested-scenario parent handoff. The existing source task
-scheduler now retains each dispatch's actual parent, including the null parent
-chosen by `cSceSys::scheduler`, while preserving thread-owned task identity.
-The former frame-1239 stall is resolved: snapshots advance 1246 -> 1346, main
-suspend/gate remain zero, and 108 diagnostic model frames reach presentation.
+D334 corrects the existing native frame owner's background inverse depth.
+D333's captured model vertices were all farther than KOS's default background:
+1/z=0.0000208..0.0000369 versus0.0001. `re4dc_ui_init` now places the background
+at zero inverse depth; source projection, near/far clipping, camera, assets,
+visibility and packets are unchanged. No second renderer or hold override.
 
-**The inspected output is still HUD over black, not the restored cabin.** The
-64 KiB diagnostic queue has 5,803 overflow and 21,132 resource failures by the
-final snapshot; their visible consequences and material causes remain open.
-Source hold/black flags were not overridden. Source menu output survives.
+Matched source-frame1346 captures now show **sparse distant textured branches
+and HUD**, not the restored room or complete characters. The64,000-byte queued
+packet contents match D333 exactly. Menu pixels match exactly;1,601 final pixels
+change only in the tree region. Keep this correction, not a scene acceptance.
+The64KiB diagnostic packet cap still causes5,803 overflows, with21,132 material/
+resource rejections. Continue the existing native model/frame/texture connection.
 
-Required room/model/collision allocations still pass with 41,472 source-heap
-bytes free. New failures request 694,560, 669,248 and 309,632 bytes for ARAM
-compaction scratch in `cDataUnit::setLoadToAram`, not three concurrent permanent
-allocations. The current native ARQ transfer is a no-copy placeholder; event
-bytes are not qualified resident data. Connect real event transport/lifetimes
-without pretending that removing the scratch request implements storage.
+D333's nested-scenario scheduler correction remains verified: source frames
+advance,108 model presentations, main suspend/gate0. Required room allocations
+pass; source heap free41,472. Event ARAM compaction requests694,560/669,248/309,632
+still fail; native ARQ currently acknowledges without storing bytes. Real event
+transport, source completion effects, audio and complete gameplay remain open.
 
-Warm enemy-family recovery remains 1,510,176 bytes; cache 952,768 current/peak,
-22,400 peak pinned, 75 misses/loads, six hits, no eviction/failure, 952,768 bytes
-read and 270,940 us worst wait. All 145 headers and 1,904 relocated pointers
-validate. No new evaluation/cache activity occurs after warm-up in this held
-state; the response/concurrency audit and D328b repeated-use fixture remain.
-D324 is the accepted integration reference; these are integration candidates,
-not manual room, FPS, water, audio or physical-hardware acceptance.
-See [D333](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d333-preserve-the-source-nested-scenario-parent).
+Memory is unchanged by D334 (+32 executable text bytes only). Warm enemy-family
+recovery1,510,176; cache952,768 current/peak/read,22,400 peak pinned,75 misses/loads,
+six hits, zero eviction/failure,270,940 us worst wait. All145 headers and1,904 key
+pointers validate. No additional animation evaluation occurs after warm-up in
+this run: retain D328b repeated-use evidence and the incomplete source response/
+concurrency audit. D324 remains the accepted integration reference. Simpler
+water remains an authorized selectable candidate, not an implemented PS2 effect.
+See [D334](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d334-source-unit-background-depth).
 
-D333 evidence: `C:/Flycast-Evidence/re4-dreamcast/d333-scenario-parent`;
-disc `/root/probe/d333-disc`, unchanged D330 mirror/core and D327 fixtures.
-Use all three demand flags below. Native scheduler changes only; ELF
-text/data/BSS 2,287,340 /75,620 /672,920. Actual source arena remains10,127,872.
-The focused existing task-owner test covers null/root/nested and changing parent
-across sleep/wake, repeated dispatch, stale cursor and foreign-thread rejection.
-PPC preprocessing is unchanged. Run ends at the capture deadline, not a crash.
+D334 evidence: `C:/Flycast-Evidence/re4-dreamcast/d334-background-depth`;
+disc `/root/probe/d334-disc`; unchanged D330 mirror/core and D327 fixtures.
+Build retains all three demand flags. Text/data/BSS2,287,372 /75,620 /672,920.
+Source arena10,127,872, no new heap/VRAM/scratch allocation. Matched snapshot and
+packet byte comparison isolate the depth correction; sparse trees and HUD are
+visible, most scene content and actors still absent. Native build passes.
 
-Next source dependencies: `datactrl.cpp::checkAramSort/setLoadToAram` attempts
-whole-event MRAM scratch to move r100s41/s43/s44 ARAM units. Native
-`audio_stub.cpp::ARQPostRequest` acknowledges transfers without copying; do not
-accept those event bodies or fix this with another success stub. Preserve source
-preload/skip/completion effects and actual bytes through the existing storage
-path. Separately trace why submitted native geometry yields black while HUD is
-visible; fix the existing model/UI connection, not a second renderer. Its 64KiB
-queue overflows and material/resource rejections are diagnostic limitations.
-Do not clear System0x800 or source presentation flags to manufacture acceptance.
+Continue `native_model.cpp` and `native_ui.cpp` shared packet/frame path: the
+64KiB copied-packet diagnostic fills before the required source scene fits.
+Reuse existing room native batching/submission, respecting source hold and one
+PVR frame owner; do not solve it by keeping another complete render scene or
+copying prototype gameplay. Separate unsupported material causes from queue
+capacity in the resource counter. Full lighting/TEV/fog/water remain unconnected.
+
+The other reproduced dependency is `datactrl.cpp::checkAramSort/setLoadToAram`:
+whole-event scratch to move r100s41/s43/s44 ARAM units. Native
+`audio_stub.cpp::ARQPostRequest` does not copy/store bytes. Existing `fmt_evd`
+already parses packet/named-asset structures; inspect each file's current
+qualification before activation. `MemorySwap` exchanges real enemy/event bytes
+through existing64KiB DVD buffers; it must retain native motion/texture/effect
+pointer ownership. Preserve source preload and cutscene completion effects.
+Do not suppress the failures with a success stub or simply disable compaction.
+
+D333 evidence `C:/Flycast-Evidence/re4-dreamcast/d333-scenario-parent`, disc
+`/root/probe/d333-disc`, preserves the task-parent correction and host/source
+checks. Its black output is explained in part by D334; remaining geometry and
+material omissions are still real. No manual/FPS/audio/water/hardware acceptance.
 
 D332 reference remains `C:/Flycast-Evidence/re4-dreamcast/d332b-object-pages`,
 disc `/root/probe/d332b-disc`. Its parent-handoff stall is resolved by D333;

@@ -1731,3 +1731,66 @@ text/data/BSS2,287,340 /75,620 /672,920. No physical hardware run.
 no manual gameplay, complete encounter memory, sound, FPS or water acceptance.
 The first-three-rooms goal remains active. Simpler water remains an authorized
 selectable candidate; D331's64x64 allocation is not an implemented PS2-style effect.
+
+
+## D334: source-unit background depth
+
+The existing frame owner `re4dc_ui_init` reused KOS's default background inverse
+depth0.0001. The source-driven camera/model bridge uses original units and emits
+1/(-camera_z). D333's final64,000-byte queue contains1,995 vertices with inverse
+depth0.000020828..0.000036935: all behind that background, despite valid screen
+coordinates and white diagnostic vertex colors. The pinned KOS `pvr_buffers.c`
+sets0.0001; `pvr_misc.c` writes it into `PVR_BGPLANE_Z`. See the primary
+[KOS API documentation](https://kos-docs.dreamcast.wiki/group__pvr__global.html).
+
+The correction calls existing `pvr_set_zclip(0.0f)` when the existing PVR owner
+initializes. Positive model depths now lie in front of the background. The
+shared source-projection near/far clipper, camera/FOV, source geometry/materials,
+texture selection, native packet data and presentation-hold logic are unchanged.
+No additional renderer, source object representation or per-frame pass is added.
+
+### Matched output, not complete scene acceptance
+
+Both D333/D334 final source snapshots are frame1346 with108 model presentations.
+The actual64,000 queued bytes are identical (SHA256
+`6419d2eea7d53c24d622975b74bc347bdcf9dcdc86c40bd919386609f08eebab`).
+D333 was HUD over black. D334 shows sparse distant textured branches at upper
+right with that same HUD. Final1,601 changed pixels are confined to
+x535..639/y60..182; model capture1,597 changed pixels. Menu comparison has zero
+changed pixels at640x480. These tiny visible branches prove this native depth
+connection; they are not a convincing environment or complete character render.
+
+The diagnostic64KiB queue still overflows5,803 times and records21,132 resource
+rejections; counters are cumulative. Most of the world/actors remain absent.
+Next rendering work must expand the existing native submission mechanism safely,
+preserve source material/alpha/order and hold semantics, and distinguish actual
+unsupported materials from packet capacity. Do not merely enlarge a retained
+second scene or import prototype gameplay. Event backing is an independent open
+dependency: three ARAM compaction scratch requests still fail and the native
+ARQ transfer still does not store bytes. Do not activate unqualified events.
+
+### Memory and identity
+
+Source arena10,127,872; post-block2,582,048 free; post-enemy1,466,528;
+later41,472. Parts276,992, model-info73,504, objects212,704 resident/peak; all
+manager slot pointers validate, no manager failures. No heap/BSS/data/VRAM/
+packet-buffer change. Text increases32 bytes to2,287,372; data75,620/BSS672,920.
+Cache75 misses/loads,6 hits,0 evictions/failures,952,768 current/peak/read,
+22,400 peak pinned,2,336 metadata,270,940 us worst wait. All145 headers and1,904
+key pointers validate. Family recovery remains1,510,176; no extra archive saving.
+No additional evaluation after warm-up; active repeated-combat/concurrency
+qualification remains open, with D328b's separate fixture retained.
+
+Base6bb05a2 plus captured inherited edits and the native-only depth change.
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d334-background-depth`;
+disc `/root/probe/d334-disc`; unchanged D330 mirror/core and D327 fixtures.
+ELF SHA256 `efe1bf42d26e9e6ab138b6effecb7b9f172bf2d324c6ec9a0ae59fa2ca540192`;
+disc SHA256 `7b148ff6ac9b68ab7b2596ab9fa3f6feca5cbccb72b7731dc00ee2286c4aa230`.
+Same build options as D333, KOS804b3195, SH GCC15.2. Native link passes;
+135-second Flycast capture ends by harness deadline. No additional source-game
+or asset edits, no physical-hardware evidence. Exact source/asset/emulator/tool
+identities, snapshots, private pixel/packet comparison and capture checks retained.
+
+**Keep the background correction.** Complete room, character presentation,
+water, gameplay, audio and FPS are not accepted. User-authorized simpler water
+remains a separately measured candidate; no PS2-equivalence claim.
