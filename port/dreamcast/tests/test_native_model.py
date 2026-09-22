@@ -16,10 +16,13 @@ class NativeModel(unittest.TestCase):
 #include <cmath>
 #include <cstring>
 #include <vector>
-unsigned status=99,capacity=100,committed=0,input,output;
-pvr_vertex_t pending[100],owned[100];
+#include <random>
+extern "C" void re4dc_model_submit_reference(const Re4dcModelPart*);
+unsigned status=99,capacity=100,committed=0,input,output,binds=0;float uscale=1,vscale=1,predicted_u=1,predicted_v=1;bool bind_fails=false;
+pvr_vertex_t pending[4098],owned[4098];
 extern "C" int re4dc_model_diagnostic_enabled(){return 1;}
-extern "C" int re4dc_model_packet_begin(const Re4dcModelPart*,Re4dcModelPacket* p){*p={pending,capacity,1,1};return 1;}
+extern "C" int re4dc_model_packet_reserve(const Re4dcModelPart*,Re4dcModelPacket* p){*p={pending,capacity,predicted_u,predicted_v};return 1;}
+extern "C" int re4dc_model_packet_begin(const Re4dcModelPart*,Re4dcModelPacket* p){++binds;*p={pending,capacity,uscale,vscale};return !bind_fails;}
 extern "C" void re4dc_model_packet_commit(unsigned n){memcpy(owned,pending,n*32);committed=n;}
 extern "C" void re4dc_model_result(unsigned r,unsigned i,unsigned o){status=r;input=i;output=o;}
 int pvr_prim(const void*,std::size_t){assert(false);return -1;}
@@ -28,6 +31,20 @@ std::vector<unsigned char> stream(unsigned op,std::initializer_list<unsigned> id
  for(unsigned id:ids){result.push_back(id>>8);result.push_back(id);result.push_back(0);result.push_back(0);
   if(color){result.push_back(0);result.push_back(0);} result.push_back(0);result.push_back(id);}
  return result;
+}
+// Expand actual emitted strips back into the exact triangle order consumed by
+// PVR. This catches parity, seam, clipping and rejected-triangle bridging bugs.
+std::vector<pvr_vertex_t> expanded(){
+ std::vector<pvr_vertex_t> result;unsigned start=0;
+ for(unsigned i=0;i<committed;++i){
+  const unsigned local=i-start;
+  if(local>=2){
+   const unsigned a=i-2+(local&1),b=i-1-(local&1);
+   for(unsigned id:{a,b,i}){auto v=owned[id];v.flags=0;result.push_back(v);}
+  }
+  if(owned[i].flags==PVR_CMD_VERTEX_EOL)start=i+1;
+ }
+ assert(!committed || owned[committed-1].flags==PVR_CMD_VERTEX_EOL);return result;
 }
 int main(){
  short pos[4][4]={{-2,-2,0,9},{2,-2,0,9},{2,2,0,9},{-2,2,0,9}};
@@ -42,7 +59,7 @@ int main(){
  assert(fabs(owned[0].x-256)<.001 && fabs(owned[0].y-288)<.001 && fabs(owned[0].z-.1)<.00001);
  assert(owned[1].u==1 && owned[2].v==1);
  p.cull=2;run(q);assert(committed==6);p.cull=1;run(q);assert(committed==0);p.cull=0;
- auto strips=stream(0x98,{0,1,3,2});p.cull=2;run(strips);assert(committed==6);p.cull=0;
+ auto strips=stream(0x98,{0,1,3,2});p.cull=2;run(strips);assert(committed==4 && output==2);p.cull=0;
  auto fan=stream(0xa0,{0,1,2,3});run(fan);assert(committed==6);
  // Captured native packet survives source preparation storage being overwritten.
  auto before=owned[0];pos[0][0]=0;assert(!memcmp(&before,&owned[0],32));run(q);assert(owned[0].x==320);pos[0][0]=-2;
@@ -52,7 +69,7 @@ int main(){
  // Crossing the actual source near plane invokes the shared clipper.
  skin[0][2]=10;run(q);assert(status==0 && committed>0);skin[0][2]=0;
  // Whole-part rollback even if the first triangle fit; no partial part published.
- capacity=3;run(q);assert(status==3 && committed==0);capacity=100;
+ unsigned old_binds=binds;capacity=3;run(q);assert(status==3 && committed==0 && binds==old_binds);capacity=100;
  auto invalid=q;invalid[4]=8;run(invalid);assert(status==1 && committed==0);
  auto trunc=q;trunc.pop_back();run(trunc);assert(status==1);
  auto badop=q;badop[0]=0x61;run(badop);assert(status==1);
@@ -62,13 +79,59 @@ int main(){
  p.flags=0x80000000;p.uv=(unsigned char*)signeduv;auto colored=stream(0x90,{0,1,2},true);run(colored);
  assert(status==0 && owned[0].u==-1 && owned[1].u==1);
  p.projection[0]=1;run(colored);assert(status==1); // unsupported ortho is explicit
+ p.projection[0]=0;p.flags=0;p.shift=0;p.uv_offset[0]=p.uv_offset[1]=0;
+ short many[66][3];unsigned short manyuv[66][2];
+ for(unsigned i=0;i<66;++i){many[i][0]=int(i)-32;many[i][1]=(i&1)?-2:2;many[i][2]=0;manyuv[i][0]=i*128;manyuv[i][1]=(i&1)?32768:0;}
+ p.positions=(unsigned char*)many;p.position_count=66;p.position_stride=6;p.uv=(unsigned char*)manyuv;
+ p.modelview[11]=-128;p.projection[5]=-1.f/399;p.projection[6]=-400.f/399;
+ std::vector<unsigned char> longstrip{0x98,0,66};
+ for(unsigned i=0;i<66;++i)for(unsigned byte:{0U,i,0U,0U,0U,i})longstrip.push_back(byte);
+ capacity=2048;p.stream=longstrip.data();p.stream_bytes=longstrip.size();committed=0;re4dc_model_submit_reference(&p);
+ assert(status==0 && committed==192 && output==64);auto baseline=expanded();
+ run(longstrip);assert(status==0 && committed==66 && output==64);auto candidate=expanded();
+ assert(candidate.size()==baseline.size() && !memcmp(candidate.data(),baseline.data(),baseline.size()*32));
+ // Former overflow now fits; one byte of unrelated capacity is not borrowed.
+ capacity=66;run(longstrip);assert(status==0 && committed==66);capacity=65;old_binds=binds;run(longstrip);assert(status==3 && !committed && binds==old_binds);
+ capacity=2048;
+ // Real previous implementation as oracle, randomized depth/cull/seam cases.
+ std::mt19937 rng(335);
+ unsigned savings=0;
+ for(unsigned trial=0;trial<600;++trial){
+  for(unsigned i=0;i<66;++i){
+   many[i][0]=int(rng()%81)-40;many[i][1]=int(rng()%61)-30;
+   many[i][2]=trial%3==0?int(rng()%261)-130:0;
+   manyuv[i][0]=rng();manyuv[i][1]=rng();
+  }
+  p.cull=trial%4;uscale=trial%2?.75f:1.f;vscale=trial%2?.625f:1.f;
+  predicted_u=trial%7?uscale:1;predicted_v=trial%7?vscale:1; // exact fallback for alternate native dimensions
+  // A split keeps primitive order; UV changes across it must prevent reuse.
+  auto data=longstrip;
+  if(trial%5==0){auto seam=stream(0x90,{63,64,65});seam[8]=0;seam[14]=1;data.insert(data.end(),seam.begin(),seam.end());}
+  p.stream=data.data();p.stream_bytes=data.size();committed=0;re4dc_model_submit_reference(&p);
+  assert(status==0);auto old_count=committed,old_input=input,old_output=output;auto old=expanded();
+  run(data);assert(status==0 && input==old_input && output==old_output && committed<=old_count);
+  auto now=expanded();assert(now.size()==old.size());
+  assert(old.empty() || !memcmp(now.data(),old.data(),old.size()*32));savings+=old_count-committed;
+ }
+ assert(savings);
+ // Binding failure discards all successfully prepared vertices, no partial draw.
+ p.cull=0;p.modelview[11]=-128;for(auto& vertex:many)vertex[2]=0;
+ bind_fails=true;run(longstrip);assert(status==2 && !committed);bind_fails=false;
+ // A completely rejected part consumes no texture handle, including cull-all.
+ p.cull=3;unsigned before_binds=binds;run(longstrip);assert(status==0 && output==0 && binds==before_binds);
+ p.cull=0;p.modelview[11]=1000;run(longstrip);assert(status==0 && !output && binds==before_binds);
+
+
 }
 """
    (root/"fixture.cpp").write_text(code)
    game=ROOT/"port/dreamcast/game";room=ROOT/"port/dreamcast/room"
+   reference=subprocess.check_output(["git","show","c45c0cf433c1b1fe5ae7595b1bccf29b29a0ed96:port/dreamcast/game/platform/native_model.cpp"],cwd=ROOT,text=True)
+   reference=reference.replace('"../../room/pvr_geometry.hpp"','"pvr_geometry.hpp"').replace('void re4dc_model_submit(', 'void re4dc_model_submit_reference(')
+   (root/"reference.cpp").write_text(reference)
    exe=root/"check"
    subprocess.run(["g++","-std=c++20","-O2","-fsanitize=address,undefined","-fno-omit-frame-pointer",
-    "-I"+str(root),"-I"+str(game/"platform/include"),"-I"+str(room),str(root/"fixture.cpp"),
+    "-I"+str(root),"-I"+str(game/"platform/include"),"-I"+str(room),str(root/"fixture.cpp"),str(root/"reference.cpp"),
     str(game/"platform/native_model.cpp"),str(room/"pvr_geometry.cpp"),"-o",str(exe)],check=True)
    subprocess.run([str(exe)],check=True)
 if __name__=="__main__":unittest.main()

@@ -36,33 +36,34 @@ textures. The actual core reservation is now **1,501,312 bytes**, down from
 473,696 since D322. Core paths now convert through their source layout; palette,
 mip, CPU-noise and unreviewed backing remain. The full reference is selectable.
 
-D334 corrects the existing native frame owner's background inverse depth.
-D333's captured model vertices were all farther than KOS's default background:
-1/z=0.0000208..0.0000369 versus0.0001. `re4dc_ui_init` now places the background
-at zero inverse depth; source projection, near/far clipping, camera, assets,
-visibility and packets are unchanged. No second renderer or hold override.
+D335c keeps the existing source model/frame connection and compacts consecutive
+clipped triangles into native strips only when every shared attribute matches.
+Complete-part packet admission now precedes texture loading; committed draws pin
+the cached upload. No new renderer, asset reduction or capacity increase.
+At logged native frame1320: 18 HUD quads, zero missing textures, 53 cumulative
+uploads versus D334's108; current texture VRAM1,011,712 versus2,967,552 bytes.
+Both runs still peak4,192,256 during earlier UI loading. The final candidate queue
+represents1,004 triangles in65,280 vertex bytes, versus96,384 as separate triangles.
+This is packet efficiency, not source-heap recovery or a demonstrated FPS gain.
 
-Matched source-frame1346 captures now show **sparse distant textured branches
-and HUD**, not the restored room or complete characters. The64,000-byte queued
-packet contents match D333 exactly. Menu pixels match exactly;1,601 final pixels
-change only in the tree region. Keep this correction, not a scene acceptance.
-The64KiB diagnostic packet cap still causes5,803 overflows, with21,132 material/
-resource rejections. Continue the existing native model/frame/texture connection.
+Menu pixels match D334. Final captures retain sparse branches and HUD; most world
+and actors are still absent. The64KiB diagnostic cap admits a different subset,
+and final source states differ; no whole-scene visual-equivalence claim. Eight
+focused tests pass, including exact expanded-triangle comparisons, UV/layout
+fallback, rollback and texture ownership. The135s Flycast capture reaches source
+frame1351/115 model presentations. Earlier eager-binding/HUD-loss and tentative-
+binding/upload-churn candidates are recorded as rejected.
 
-D333's nested-scenario scheduler correction remains verified: source frames
-advance,108 model presentations, main suspend/gate0. Required room allocations
-pass; source heap free41,472. Event ARAM compaction requests694,560/669,248/309,632
-still fail; native ARQ currently acknowledges without storing bytes. Real event
-transport, source completion effects, audio and complete gameplay remain open.
-
-Memory is unchanged by D334 (+32 executable text bytes only). Warm enemy-family
-recovery1,510,176; cache952,768 current/peak/read,22,400 peak pinned,75 misses/loads,
-six hits, zero eviction/failure,270,940 us worst wait. All145 headers and1,904 key
-pointers validate. No additional animation evaluation occurs after warm-up in
-this run: retain D328b repeated-use evidence and the incomplete source response/
-concurrency audit. D324 remains the accepted integration reference. Simpler
-water remains an authorized selectable candidate, not an implemented PS2 effect.
-See [D334](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d334-source-unit-background-depth).
+Source heap remains41,472 free; required block and enemy body allocations pass.
+Warm enemy-family recovery remains1,510,176 bytes; cache952,768 current/peak/read,
+22,400 peak pinned,75 misses/loads,6 hits,0 evictions/failures,270,936us worst wait.
+All145 headers and1,904 key pointers validate; no later animation evaluations,
+so repeated-combat/response/concurrency coverage remains open. D324 remains the
+accepted integration reference. Event ARAM scratch694,560/669,248/309,632 still
+fails and native ARQ does not store bytes. Full scene/materials, event transport,
+audio and playable progression remain required. Simpler water is an authorized
+selectable candidate, not an implemented or verified PS2 effect.
+See [D335](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d335-native-strips-and-complete-part-texture-admission).
 
 
 ARAM/event/audio, inventory, full manual controls, transitions/retry and physical

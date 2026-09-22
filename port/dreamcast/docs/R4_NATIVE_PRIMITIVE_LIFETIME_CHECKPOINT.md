@@ -1794,3 +1794,127 @@ identities, snapshots, private pixel/packet comparison and capture checks retain
 **Keep the background correction.** Complete room, character presentation,
 water, gameplay, audio and FPS are not accepted. User-authorized simpler water
 remains a separately measured candidate; no PS2-equivalence claim.
+
+
+## D335: native strips and complete-part texture admission
+
+### Existing connection and bounded change
+
+Reuses `clip_projected_triangle`, `begin_pvr_packet`, `submit_pvr`, shared
+`texture::Package`, storage staging and `gpu::quiesce`. The source producer is
+still `commonModelTrans` -> `re4dc_draw_model_part`, using source-selected pose,
+camera, part and material views. The existing frame owner still copies completed
+native packets before source primitive storage resets, and presents at the same
+source-controlled boundary. No source gameplay, asset or KOS driver changes.
+
+`Builder::append_triangle` joins consecutive surviving triangles only when the
+two shared vertices match bit-for-bit in every attribute, with PVR strip parity.
+UV/color seams, clipping and source order are preserved. A failed whole part is
+never committed. `re4dc_model_packet_reserve` exposes the existing free packet
+range without texture I/O. After a complete part fits, the existing bind loads
+the native package and creates the header. Default converter padding supplies
+provisional UV scales; if the actual package differs, the same synchronous part
+is prepared again with its real scale **before** clipping. No target fallback
+occurred in this run. The fallback is explicitly tested, not assumed equivalent.
+Uploads remain cached; current-frame pins follow committed packets. UI still pins
+when queued. Only unpinned entries can be evicted after the existing frame fence.
+
+Eight host tests pass with sanitizer fixtures: 600 randomized comparisons against
+D334's actual renderer expanded into exact triangles, cull/near-clip/UV seam and
+alternate-layout cases, source-buffer overwrite, capacity/rollback, plus existing
+package release/VQ/failure/fence checks. A64-triangle strip takes66 vertex records
+instead of192 with identical expanded attributes. Actual cache functions test500
+warm lookups, committed/UI protection, failed/empty admission and pressure/failure.
+Native O1 link passes; five existing missing stubs remain. No recovered source
+was edited in this slice, so there is no new PowerPC-path delta.
+
+### Target evidence and negative experiments
+
+Same135-second fixture, assets, emulator/config and capture tools:
+
+| Logged native frame1320 | D334 | D335c |
+|---|---:|---:|
+| Queued native bytes |65,408|65,376|
+| Cumulative emitted triangles |55,087|83,471|
+| HUD quads |18|18|
+| Cumulative UI missing textures |113|0|
+| Cumulative uploads |108|53|
+| Current texture VRAM bytes |2,967,552|1,011,712|
+| Earlier peak texture VRAM bytes |4,192,256|4,192,256|
+
+The native frame counter is a comparison checkpoint, not proof of equal complete
+simulation state; different admission and loading can change scheduling. Source
+final frame1351 /115 model presentations versus D3341346 /108 is not an FPS claim.
+D335c ends by harness deadline. Final partial queue contains3 headers,2,040 vertices,
+1,004 triangles:65,280 vertex bytes instead of96,384 independently emitted bytes
+(31,104 fewer,32.27%). This is encoded packet cost, not heap capacity reclaimed.
+Current room textures stay at53 total uploads through the final snapshot/log.
+
+D335a (`d335-native-strips`) kept eager texture pins: extra accepted parts consumed
+all48 handles and lost the HUD. Rejected. D335b (`d335b-visible-bind`) delayed binding
+only until the first visible triangle and pinned only on commit. HUD returned,
+but later overflowed parts repeatedly uploaded:272 at final snapshot,319 by run end;
+38 model presentations. Rejected. Complete-part admission fixes that churn without
+raising any budget. Negative source/executable snapshots and results remain private.
+
+Menu capture is pixel-identical to D334. Inspected final output retains branches
+and HUD, with3,673 changed pixels (2,575 in the HUD region). Source frames differ,
+and the cap admits a different subset: these are not identical full-scene states.
+Most environment and actors remain absent; neither old nor new diagnostic passes
+room appearance acceptance. Texture/capacity rejection counters are now separate:
+final10,602 unsupported-state,2,264 admission-capacity,0 texture,0 wrap,0 scale
+rebuild;15,261 whole-part overflows. Counters are cumulative and include partial
+current-frame preparation. Fix the actual cap/material frontier, not water polish.
+
+Existing source profiler values in final RAM refer to the **preceding completed
+frame**, whereas packet counters concern current preparation. D334 total519,320us,
+D335a569,390us, D335b2,043,089us, D335c571,772us. Accepted geometry differs. These
+single wall samples are neither matched distributions nor isolated PVR/GPU time;
+D335c is not an established frame-time win over D334. It reduces packet cost and
+wasted loading while retaining the native/source ownership contract.
+
+### Memory, residency and remaining work
+
+Native packet64KiB, texture48 handles/4MiB, staging64KiB unchanged. Text increases
+1,180 bytes and BSS32; data unchanged. Source arena10,127,872; post-block2,582,048,
+post-enemy1,466,528, later41,472 free. Parts276,992/model-info73,504/objects212,704
+resident, all owners verified; no new source archive recovery. Smaller actual
+VRAM working set does not lower its earlier menu peak or enlarge the source heap.
+
+Enemy body1,105,152 plus warm cache952,768 and metadata2,336 =2,060,256 bytes,
+with allocator/alignment included in the previously measured family2,067,616;
+net original recovery1,510,176. Cache75 misses/loads,6 hits,0 evictions/failures,
+952,768 current/peak/read,22,400 peak pinned,0 current pins,270,936us worst wait.
+All145 retained headers and1,904 relocated pointers validate. No new evaluation
+between later/final snapshots; D328b remains the separate7500-warm-evaluation and
+eviction/reload fixture. Preserve incomplete source prefetch/response/concurrency
+audit; do not infer an encounter working set from these static diagnostic frames.
+
+The actual next independent resource failure remains source ARAM compaction of
+r100s41/s43/s44: scratch694,560/669,248/309,632 with41,472 free. ARQ currently
+acknowledges without copying. Real event backing/swap, completion effects and
+audio remain open. Native submission must also preserve late source hold and room
+retirement: Render consumes the old OT before primitive reset, then tasks can
+retire resources before Render_swap. Opening/finishing TA early or guessing an RTT
+framebuffer address does not preserve that contract. Continue the existing frame
+owner and native helpers, not a second renderer or prototype gameplay loop.
+
+Simpler water remains authorized as a selectable candidate. D331's64x64 buffer
+sizing removes49,152 bytes of excess **requested** capacity, not free bytes from
+a previously successful allocation. Native water RTT/material behavior and any
+PS2 comparison remain unimplemented/unqualified. Preserve collision/events and
+original assets; measure/review the actual effect before selecting a replacement.
+
+### Identity and disposition
+
+Base `c45c0cf433c1b1fe5ae7595b1bccf29b29a0ed96` plus preserved inherited source and
+owned native edits. Evidence `C:/Flycast-Evidence/re4-dreamcast/d335c-admission`,
+disc `/root/probe/d335c-disc`; untouched D330 mirror/core and D327 fixtures.
+ELF SHA256 `d365085a3b6212c612519ae024b01bb790cbd88597422e48e907e4efe2d9d2c8`;
+disc SHA256 `8dd805ab29ef8580a2e7cb1d52c6d445064b56f7e5ca2cb0a8015d700012d132`.
+Text/data/BSS2,288,552 /75,620 /672,952; KOS804b3195, SH GCC15.2, O1 native game.
+Build `CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 PARTS_DEMAND=1 MODELINFO_DEMAND=1 OBJECT_DEMAND=1`.
+Private result/comparison/source/assets/tool identities and evidence hashes retained.
+**Keep D335c as a bounded native integration improvement.** D324 remains accepted
+integration reference; no complete room/characters, manual combat, audio, FPS or
+physical-hardware acceptance. Menu-plus-three-room goal remains active.

@@ -30,6 +30,7 @@ struct Builder {
     const Re4dcModelPart& p; Re4dcModelPacket packet{};
     Projection projection; re4dc::render::ClipParameters clip;
     unsigned used=0,input=0,stride; float scale;
+    unsigned strip_vertices=0,output=0;
     bool vertex(const unsigned char* corner,re4dc::render::RenderVertex& v){
         const unsigned vi=be16(corner),ni=be16(corner+2),ti=be16(corner+stride-2);
         if(vi>=p.position_count || ni>=p.normal_count || !ram(p.uv+ti*4,4))return false;
@@ -56,9 +57,30 @@ struct Builder {
         re4dc::render::RenderVertex in[3];
         if(!vertex(a,in[0])||!vertex(b,in[1])||!vertex(c,in[2]))return false;
         pvr_vertex_t out[6];++input;
-        unsigned count=3*re4dc::render::clip_projected_triangle(in,out,p.cull,clip);
-        if(count>packet.capacity-used)return false;
-        std::memcpy((pvr_vertex_t*)packet.vertices+used,out,count*sizeof(out[0]));used+=count;
+        unsigned count=re4dc::render::clip_projected_triangle(in,out,p.cull,clip);
+        for(unsigned i=0;i<count;++i)if(!append_triangle(out+i*3))return false;
+        return true;
+    }
+    bool append_triangle(const pvr_vertex_t* triangle){
+        auto* dst=(pvr_vertex_t*)packet.vertices;
+        // PVR alternates strip winding. Match the exact two preceding vertices
+        // (including UV/color seams), then retain just the new third vertex.
+        // CPU clipping/culling has already selected the surviving triangles.
+        const unsigned parity=strip_vertices&1;
+        const auto equal=[](const pvr_vertex_t& a,const pvr_vertex_t& b){
+            return std::memcmp((const unsigned char*)&a+4,
+                               (const unsigned char*)&b+4,sizeof(a)-4)==0;
+        };
+        if(strip_vertices>=3 && equal(dst[used-2+parity],triangle[0]) &&
+                                equal(dst[used-1-parity],triangle[1])){
+            if(used==packet.capacity)return false;
+            dst[used-1].flags=PVR_CMD_VERTEX;
+            dst[used++]=triangle[2];++strip_vertices;
+        }else{
+            if(packet.capacity-used<3)return false;
+            std::memcpy(dst+used,triangle,3*sizeof(*dst));used+=3;strip_vertices=3;
+        }
+        ++output;
         return true;
     }
     bool walk(bool emit){
@@ -104,7 +126,20 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
               (p->flags&0x80000000U)?8U:6U,std::ldexp(1.0f,-int(p->shift))};
     b.clip.context=&b.projection;
     if(!b.walk(false)){re4dc_model_result(1,0,0);return;}
-    if(!re4dc_model_packet_begin(p,&b.packet)){re4dc_model_result(2,0,0);return;}
+    // Prepare into the existing uncommitted packet range before any upload.
+    // Source data stays live for this entire synchronous draw call.
+    if(!re4dc_model_packet_reserve(p,&b.packet)){re4dc_model_result(2,0,0);return;}
     if(!b.walk(true)){re4dc_model_result(3,b.input,0);return;}
-    re4dc_model_packet_commit(b.used);re4dc_model_result(0,b.input,b.used/3);
+    if(b.used){
+        const float u=b.packet.u_scale,v=b.packet.v_scale;
+        if(!re4dc_model_packet_begin(p,&b.packet)){re4dc_model_result(2,b.input,0);return;}
+        if(u!=b.packet.u_scale || v!=b.packet.v_scale){
+            // The normal offline layout pads to native powers of two. Do not
+            // assume an alternate package follows that policy: use its actual
+            // scale BEFORE clipping, preserving the reference interpolation.
+            b.used=b.input=b.output=b.strip_vertices=0;
+            if(!b.walk(true)){re4dc_model_result(3,b.input,0);return;}
+        }
+    }
+    re4dc_model_packet_commit(b.used);re4dc_model_result(0,b.input,b.output);
 }

@@ -276,13 +276,77 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
             last=source.index('extern "C" void re4dc_ui_init(',first)
             bindings=source[first:last]
             setup='struct EnemyIdentity {void* archive=nullptr;re4dc::texture::SourceIdentityTable table;};\nEnemyIdentity enemy_identities[4];unsigned nsource;void re4dc_log(const char*,...){}\n'
-            setup+='re4dc::texture::SourceIdentityTable player_identities,weapon_identities,room_identities;bool ready;unsigned nquad,model_used,identity_hits,closed;struct Entry{};Entry entries[1];void close_entry(Entry&){assert(render_calls);++closed;}void re4dc_missing(const char*){assert(false); }\n'
+            setup+='re4dc::texture::SourceIdentityTable player_identities,weapon_identities,room_identities;bool ready;unsigned nquad,model_used,identity_hits,closed;struct Entry{};Entry entries[1];Entry* model_handle;void close_entry(Entry&){assert(render_calls);++closed;}void re4dc_missing(const char*){assert(false); }\n'
             fixture=fixture.replace('int main(',setup+bindings+'int main(',1)
             cpp=root/"fixture.cpp";cpp.write_text(fixture)
             scene=ROOT/"port/dreamcast/room";exe=root/"fixture"
             subprocess.run(["g++","-std=c++17","-fsanitize=address,undefined","-fno-omit-frame-pointer","-I"+str(root),"-I"+str(scene),str(cpp),
                             str(scene/"texture_package.cpp"),str(scene/"gpu_lifecycle.cpp"),str(scene/"room_storage.cpp"),"-o",str(exe)],check=True)
             subprocess.run([str(exe)]+[str(root/name) for name in ("asset","vq","unknown","oversized","palette","identities","stream","bad_crc","small_vq")],check=True)
+
+
+    @unittest.skipUnless(shutil.which("g++"), "host compiler required")
+    def test_texture_pin_matches_committed_packet_ownership(self):
+        source=(ROOT/"port/dreamcast/game/platform/native_ui.cpp").read_text()
+        loader=source[source.index("void close_entry("):source.index('\n}\nextern "C" void re4dc_ui_invalidate_sources')]
+        commit=source[source.index('extern "C" void re4dc_model_packet_commit('):source.index('extern "C" void re4dc_model_result(')]
+        fixture=r"""
+#include "native_ui.h"
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#define re4dc_log(...) ((void)0)
+unsigned uploads=0,closes=0;bool upload_fails=false;
+namespace re4dc::texture {
+constexpr unsigned kPayloadVq=1;
+struct Header{unsigned texture_count=1,data_size=32;};
+struct Texture{unsigned payload=0,data_size=32,width=8,height=8;};
+struct Package{
+ Header h;Texture t;unsigned bytes=0;
+ bool open_streamed(const char*){return true;}
+ bool upload(){if(upload_fails)return false;++uploads;bytes=32;return true;}
+ bool release_payload(){return true;}void close(){if(bytes)++closes;bytes=0;}
+ unsigned vram_bytes()const{return bytes;}unsigned metadata_bytes()const{return 0;}
+ const Header& header()const{return h;}const Texture* textures()const{return &t;}
+ const char* error()const{return "fixture";}void* pvr_texture(int){return nullptr;}
+};
+unsigned pvr_format(const Texture&){return 0;}
+}
+struct Key{unsigned crc=0,fnv=0;bool operator==(const Key& b)const{return crc==b.crc&&fnv==b.fnv;}};
+struct Entry{re4dc::texture::Package package;Key key;unsigned frame=0;bool valid=false;};
+Entry entries[2],*model_handle=nullptr;unsigned frame=5,used=0,peak=0,loads=0;
+unsigned model_used=0,model_pending=1,model_peak=0;
+constexpr unsigned kVramBudget=128;
+unsigned image_size(const Re4dcUiImage&){return 32;}
+bool image_key(const Re4dcUiImage& i,Key& k){k.crc=(uintptr_t)i.pixels;k.fnv=k.crc;return true;}
+int re4dc_ui_heap_free(){return 1000;}unsigned pvr_mem_available(){return 1000;}
+"""+loader+commit+r"""
+int main(){
+ Re4dcUiImage a{};a.width=a.height=8;a.pixels=(void*)1;
+ auto* first=load(a,false);assert(first&&first->valid&&first->frame!=frame&&used==32&&uploads==1);
+ // Releasing an evaluation does not evict its upload. Reuse stays warm.
+ for(unsigned i=0;i<500;++i)assert(load(a,false)==first);
+ assert(uploads==1);model_handle=first;re4dc_model_packet_commit(3);
+ assert(first->frame==frame&&model_used==4&&model_peak==128);
+ a.pixels=(void*)2;auto* failed_part=load(a,false);assert(failed_part&&failed_part!=first);
+ model_handle=failed_part;re4dc_model_packet_commit(0);
+ assert(failed_part->frame!=frame&&model_used==4); // no packet, no current-frame pin
+ a.pixels=(void*)3;auto* third=load(a,false);assert(third==failed_part&&first->frame==frame);
+ // UI pins immediately because its quad is queued immediately.
+ a.pixels=(void*)4;auto* ui=load(a);assert(ui==third&&ui->frame==frame);
+ assert(load(a,false)==ui&&ui->frame==frame); // tentative model use cannot unpin UI
+ a.pixels=(void*)5;assert(!load(a,false)); // both committed owners survive pressure
+ // Actual caller fences before advancing frame. Old uploads become eligible.
+ ++frame;auto* next=load(a,false);assert(next&&next->frame!=frame&&used==64);
+ model_handle=next;re4dc_model_packet_commit(3);assert(next->frame==frame);
+ a.pixels=(void*)6;upload_fails=true;assert(!load(a,false));assert(next->valid&&next->frame==frame&&used==32);
+ upload_fails=false;assert(load(a));assert(used==64);
+}
+"""
+        with tempfile.TemporaryDirectory() as d:
+            p=pathlib.Path(d);cpp=p/"pin.cpp";cpp.write_text(fixture);exe=p/"pin"
+            subprocess.run(["g++","-std=c++17","-fsanitize=address,undefined","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)
+            subprocess.run([str(exe)],check=True)
 
     @unittest.skipUnless(shutil.which("g++"), "host compiler required")
     def test_runtime_key_matches_offline_key(self):

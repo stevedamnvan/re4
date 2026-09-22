@@ -31,9 +31,10 @@ extern "C" int re4dc_vi_black();
 // Diagnostic only: 64 KiB of copied native packets, allocated on first model.
 // Roll back an entire part on overflow. No deferred source/primitive pointers.
 constexpr unsigned kModelPacketBytes=64*1024;
-pvr_vertex_t* model_packets; unsigned model_used,model_pending;
+pvr_vertex_t* model_packets; unsigned model_used,model_pending; Entry* model_handle;
 int model_diagnostic=-1;
 unsigned model_parts,model_invalid,model_resource,model_overflow,model_input,model_output,model_peak,model_presented;
+unsigned model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds;
 
 
 unsigned image_size(const Re4dcUiImage& i) {
@@ -87,10 +88,10 @@ void close_entry(Entry& entry) {
     if(entry.valid) used-=entry.package.vram_bytes();
     entry.package.close();entry.valid=false;
 }
-Entry* load(const Re4dcUiImage& image) {
+Entry* load(const Re4dcUiImage& image,bool pin=true) {
     if(!image.pixels || !image_size(image) || !image.width || !image.height || image.width>1024 || image.height>1024) return nullptr;
     Key key{};if(!image_key(image,key))return nullptr;
-    for(auto& e:entries) if(e.valid && e.key==key) {e.frame=frame;return &e;}
+    for(auto& e:entries) if(e.valid && e.key==key) {if(pin)e.frame=frame;return &e;}
     Entry* slot=nullptr;
     for(auto& e:entries) if(!e.valid){slot=&e;break;}
     if(!slot) for(auto& e:entries) if(e.frame!=frame && (!slot || e.frame<slot->frame)) slot=&e;
@@ -126,7 +127,7 @@ Entry* load(const Re4dcUiImage& image) {
     re4dc_log("native UI: bounded upload heap=%d->%d metadata=%u staging=existing-65536 source_allocation=0\n",heap_before,re4dc_ui_heap_free(),slot->package.metadata_bytes());
     if(ok)++loads;
     if(!ok) return nullptr;
-    slot->valid=true;slot->key=key;slot->frame=frame;used+=slot->package.vram_bytes();
+    slot->valid=true;slot->key=key;slot->frame=pin?frame:0;used+=slot->package.vram_bytes();
     if(used>peak) peak=used;
     return slot;
 }
@@ -179,7 +180,7 @@ extern "C" void re4dc_ui_retire_room(){
     // No queued draw may outlive its source room. Shared cached uploads may be
     // reloaded from their stable identities; no archive texels are needed.
     // Core descriptors belong to the persistent core region and survive this reset.
-    nquad=0;model_used=0;nsource=0;room_identities.clear();identity_hits=0;
+    nquad=0;model_used=0;model_handle=nullptr;nsource=0;room_identities.clear();identity_hits=0;
     for(auto& e:enemy_identities){e.table.clear();e.archive=nullptr;}
     for(auto& entry:entries)close_entry(entry);
 }
@@ -249,6 +250,8 @@ extern "C" void re4dc_ui_present(){
     pvr_list_finish();pvr_scene_finish();
     if(frame%120==0 && model_diagnostic==1)
         re4dc_log("native model DIAGNOSTIC: frame=%u packets=%u parts=%u invalid=%u resource=%u overflow=%u input=%u emitted=%u peak=%u heap=%d black=%d\n",frame,model_used*32,model_parts,model_invalid,model_resource,model_overflow,model_input,model_output,model_peak,re4dc_ui_heap_free(),re4dc_vi_black());
+    if(frame%120==0 && model_diagnostic==1)
+        re4dc_log("native model rejection: capacity=%u state=%u texture=%u wrap=%u empty=%u scale_rebuild=%u\n",model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds);
     if(frame%120==0) re4dc_log("native UI: frame=%u quads=%u drawn=%u missing=%u unsupported=%u drops=%u vram=%u peak=%u staging=%u loads=%u freed=%u culled=%u fb=%08x,%08x black=%d\n",frame,nquad,drawn,missing,unsupported,dropped,used,peak,staging_peak,loads,reclaimed,culled,(unsigned)pvr_get_front_buffer(),(unsigned)pvr_get_back_buffer(),re4dc_vi_black());
 }
 
@@ -260,9 +263,10 @@ extern "C" int re4dc_model_diagnostic_enabled(){
     }
     return model_diagnostic;
 }
-extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket* out){
+extern "C" int re4dc_model_packet_reserve(const Re4dcModelPart* p,Re4dcModelPacket* out){
     if(!frame_ready || !re4dc_model_diagnostic_enabled() || p->blend>4 || p->depth_mode>2 ||
-       p->wrap_s>1 || p->wrap_t>1 || (p->material_flags&4) || (p->image.format>=8 && p->image.format!=14) || !p->image.pixels)return 0;
+       p->wrap_s>1 || p->wrap_t>1 || (p->material_flags&4) || (p->image.format>=8 && p->image.format!=14) || !p->image.pixels || !p->image.width || !p->image.height ||
+       p->image.width>1024 || p->image.height>1024){++model_state_rejects;return 0;}
     if(!model_packets){
         // KOS-owned bounded scratch outlives source room-heap resets. Using the
         // current source heap here would leave a dangling queue after room retire.
@@ -270,11 +274,23 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
         re4dc_log("native model DIAGNOSTIC packet allocation=%08x bytes=%u heap=%d\n",(unsigned)model_packets,kModelPacketBytes,re4dc_ui_heap_free());
         if(!model_packets)return 0;
     }
-    if(model_used+7>kModelPacketBytes/32)return 0;
-    Entry* handle=load(p->image);if(!handle)return 0;
+    if(model_used+4>kModelPacketBytes/32){++model_capacity_rejects;return 0;}
+    // Same default padding policy as convert_tpl; binding below checks the
+    // actual package. A different native layout triggers exact UV preparation.
+    unsigned width=8,height=8;
+    while(width<p->image.width)width*=2;
+    while(height<p->image.height)height*=2;
+    model_pending=model_used+1;
+    out->vertices=model_packets+model_pending;out->capacity=kModelPacketBytes/32-model_pending;
+    out->u_scale=float(p->image.width)/width;out->v_scale=float(p->image.height)/height;
+    return 1;
+}
+extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket* out){
+    if(!re4dc_model_packet_reserve(p,out))return 0;
+    Entry* handle=load(p->image,false);if(!handle){++model_texture_rejects;return 0;}
     const auto& t=handle->package.textures()[0];
     // Repeating a padded image would repeat its border. Reject, never change wrap.
-    if((p->wrap_s && t.width!=p->image.width)||(p->wrap_t && t.height!=p->image.height))return 0;
+    if((p->wrap_s && t.width!=p->image.width)||(p->wrap_t && t.height!=p->image.height)){++model_wrap_rejects;return 0;}
     unsigned fmt=re4dc::texture::pvr_format(t);
     pvr_poly_cxt_t c;pvr_poly_cxt_txr(&c,PVR_LIST_TR_POLY,fmt,t.width,t.height,handle->package.pvr_texture(0),PVR_FILTER_BILINEAR);
     c.gen.culling=PVR_CULLING_NONE; // source cull applied once by shared clipper
@@ -286,16 +302,19 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
     c.txr.uv_clamp=(pvr_uv_clamp_t)((p->wrap_s?0:PVR_UVCLAMP_U)|(p->wrap_t?0:PVR_UVCLAMP_V));
     pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);std::uint32_t count;
     re4dc::render::begin_pvr_packet(model_packets+model_used,count,header);
-    model_pending=model_used+count;
+    model_pending=model_used+count;model_handle=handle;
     out->vertices=model_packets+model_pending;out->capacity=kModelPacketBytes/32-model_pending;
+    if(out->u_scale!=float(p->image.width)/t.width || out->v_scale!=float(p->image.height)/t.height)++model_scale_rebuilds;
     out->u_scale=float(p->image.width)/t.width;out->v_scale=float(p->image.height)/t.height;
     if(model_parts<6)re4dc_log("native model DIAGNOSTIC source=%08x info=%08x part=%08x positions=%u stride=%u stream=%u flags=%08x material=%02x cull=%u\n",(unsigned)p->model,(unsigned)p->info,(unsigned)p->part,p->position_count,p->position_stride,p->stream_bytes,p->flags,p->material_flags,p->cull);
     return 1;
 }
 extern "C" void re4dc_model_packet_commit(unsigned count){
-    if(count){model_used=model_pending+count;if(model_used*32>model_peak)model_peak=model_used*32;}
+    // A loaded but wholly clipped/rolled-back part owns no submitted packets.
+    // Keep its upload cached; pin only when this part actually commits a draw.
+    if(count){model_handle->frame=frame;model_used=model_pending+count;if(model_used*32>model_peak)model_peak=model_used*32;}
 }
 extern "C" void re4dc_model_result(unsigned reason,unsigned input,unsigned output){
-    if(reason==0)++model_parts;else if(reason==1)++model_invalid;else if(reason==2)++model_resource;else ++model_overflow;
+    if(reason==0){++model_parts;if(!output)++model_empty_parts;}else if(reason==1)++model_invalid;else if(reason==2)++model_resource;else ++model_overflow;
     model_input+=input;model_output+=output;
 }

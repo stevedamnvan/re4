@@ -22,9 +22,12 @@ void re4dc_draw_model_part(const void* model,const void* info,const void* part,
 }
 
 // Adapter/owner interface. Returned storage belongs to the one native frame,
-// already holds a header, and is committed only after a complete part succeeds.
+// reserves header space, and is committed only after a complete part succeeds.
+// reserve() performs no texture I/O. begin() binds the validated native texture
+// after geometry fits; differing native UV scales require preparation again.
 // A failed part leaves used bytes unchanged. Source pointers never enter it.
 struct Re4dcModelPacket { void* vertices; unsigned capacity; float u_scale,v_scale; };
+extern "C" int re4dc_model_packet_reserve(const Re4dcModelPart*,Re4dcModelPacket*);
 extern "C" int re4dc_model_packet_begin(const Re4dcModelPart*,Re4dcModelPacket*);
 extern "C" void re4dc_model_packet_commit(unsigned vertices);
 extern "C" void re4dc_model_result(unsigned reason,unsigned input_triangles,unsigned output_triangles);
