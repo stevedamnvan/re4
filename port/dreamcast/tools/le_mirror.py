@@ -632,6 +632,26 @@ def fmt_osd(sw, off, size, ctx):
         raise ValueError('nonzero or unknown OSD requires source layout recovery')
 
 
+def fmt_empty_evs(sw, off, size, ctx):
+    """Only the bounded empty room EVS; nonempty event bundles stay unsupported.
+
+    game.cpp passes this to EventMgr::SetEvs (event.cpp). SetEvs forms the
+    table pointer even with num == 0, but neither dereferences nor retains it.
+    Canonicalize that unused offset to an in-bounds empty table, rather than
+    propagating the observed r101 0xCD debug-fill pointer. No event is registered
+    and consequently there is no EVS-owned cleanup or retained event pointer.
+    """
+    sw._check(off, size)
+    if size != 32 or sw.peek32(off) != 0:
+        raise ValueError('nonempty or unknown EVS requires source layout recovery')
+    tail = bytes(sw.data[off + 4:off + 32])
+    if tail not in (bytes(28), b'\xcd' * 28):
+        raise ValueError('empty EVS has unqualified header/padding')
+    sw.u32(off)
+    sw.u32(off + 4)
+    struct.pack_into('<I', sw.data, off + 4, 8)
+
+
 def fmt_sce_at(sw, off, size, ctx):
     """sce_at.h SceAtWork: shared trigger header plus typed source payload."""
     sw._check(off, 16)
@@ -1487,6 +1507,7 @@ def fmt_smx(sw, off, size, ctx):
 
 TAG_FORMATS = {
     b"OSD\0": fmt_osd,
+    b"EVS\0": fmt_empty_evs,
     b"AEV\0": fmt_sce_at,
     b"ITA\0": fmt_sce_at,
     b"RTP\0": fmt_rtp,

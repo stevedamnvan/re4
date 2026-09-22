@@ -504,6 +504,47 @@ class EventCurveVariantTest(unittest.TestCase):
         with self.assertRaises(ValueError):f.parse(broken)
 
 
+class EmptyEvsTest(unittest.TestCase):
+    def test_empty_evs_canonicalizes_unused_pointer_and_qualifies_archive(self):
+        for fill in (0, 0xcd):
+            with self.subTest(fill=fill):
+                source = bytes(4) + bytes([fill]) * 28
+                arc = make_tagged([('EVS', source)])
+                out = bytearray(arc)
+                LE.REPORT.clear()
+                LE.convert_file('st1/r101.arc', out)
+                row = next(e for e in LE.REPORT if e.get('sub') == 'st1/r101.arc#0')
+                self.assertTrue(row['complete'])
+                offset = struct.unpack_from('<I', out, 0x10)[0]
+                count, table = struct.unpack_from('<2I', out, offset)
+                self.assertEqual((count, table), (0, 8))
+                self.assertLess(table, len(source))
+                self.assertEqual(out[offset + 8:offset + 32], source[8:])
+
+    def test_rejects_nonempty_unknown_size_and_malformed_empty(self):
+        cases = [be32(1) + bytes(28), be32(0xffffffff) + bytes(28),
+                 bytes(16), bytes(64), bytes(4) + be32(8) + bytes(24),
+                 bytes(4) + bytes([0xcd]) * 27 + bytes(1)]
+        for source in cases:
+            with self.subTest(source=source):
+                data = bytearray(source)
+                with self.assertRaises(ValueError):
+                    LE.fmt_empty_evs(LE.Swapper(data, 'empty-evs'), 0, len(data), 'test')
+                self.assertEqual(data, source)
+
+    def test_failed_evs_rolls_back_without_poisoning_neighbor(self):
+        bad = be32(1) + bytes(28)
+        arc = make_tagged([('EVS', bad), ('EVS', bytes(4) + b'\xcd' * 28)])
+        out = bytearray(arc)
+        LE.REPORT.clear()
+        LE.convert_file('st1/reject.arc', out)
+        rows = {e['sub']: e for e in LE.REPORT if 'sub' in e}
+        self.assertFalse(rows['st1/reject.arc#0']['handled'])
+        self.assertTrue(rows['st1/reject.arc#1']['complete'])
+        offset = struct.unpack_from('<I', out, 0x10)[0]
+        self.assertEqual(out[offset:offset + 32], bad)
+
+
 class RequireTest(unittest.TestCase):
     def test_required_parts_must_be_complete_or_safe_raw(self):
         report = [
