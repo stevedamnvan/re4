@@ -1,4 +1,4 @@
-# D350-D351: native strip reuse and prepared draw-plan experiment
+# Native renderer integration checkpoints: D350-D352
 
 Updated 2026-09-22. Base HEAD `ed9165bc7069232df840aba5a70150166b21989b`
 plus the recorded inherited integration overlay. No historical gameplay, pose,
@@ -85,7 +85,7 @@ D351c ELF SHA256:
 Disc SHA256:
 `a6f07c608e08bea6b2403cd565a4d2ee0503cea067e8f1f51a7b908bf50f4883`.
 Text/data/BSS 2,319,564 /77,016 /676,856. Toolchain is pinned KOS
-`/root/work/kos-re4dc-d336`, SH GCC15.2; Flycast SHA256
+`/root/work/kos-re4dc-d336`, SH GCC 15.2; Flycast SHA256
 `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`.
 The private mirror remains `/root/probe/d343-mirror`; fixture
 `/root/probe/d347d-fixtures`. Manifests preserve individual asset/tool hashes.
@@ -149,10 +149,133 @@ SH4ZAM status checked 2026-09-22: no SH4ZAM includes/link dependency/symbols in
 this target. The old room uses KOS mat_trans_single/FTRV; the current native model
 hot loop still multiplies its modelview with scalar operations. SH4ZAM is a
 specific candidate for the batch transform/normal kernels, with pinned version,
-GCC15.2 compatibility, matrix convention/register ownership and numerical-error
+GCC 15.2 compatibility, matrix convention/register ownership and numerical-error
 checks required. See https://sh4zam.com/ . Do not label current code SH4ZAM-backed
 or claim another project's speedup. This does not replace missing preparation,
 source material/lighting or event/gameplay connections.
+
+
+## D352 integrated stack and asset-lifetime boundary
+
+In progress, 2026-09-22. User direction supersedes the historical per-component
+sequence above. HEAD7afde16 plus recorded inherited work; one default-off
+`D349_RENDERER_STACK=1` candidate, compared against selector0 from the same state.
+No automatic promotion, source gameplay substitutions or copied prototype loop.
+
+The integration has three explicit adapters:
+
+| Adapter | Source producer and lifetime | Reused mechanism / current connection |
+| --- | --- | --- |
+| Asset | `cModInfoMgr::create`, active `ModInfoMgr` list, archive/block bind/relocate/retire | `model_asset_bridge.cpp` prepares the existing `NativeDrawPlan` once per changed asset set before emission; owner/slab code retains compact spans and optional immutable bounds. Draw lookup does not install. |
+| Frame | current source skinning arrays, instance matrix, camera/projection, visibility and facing | `model_bridge.cpp` borrows current arrays through the source render barrier; `pvr_geometry` direct strips/visibility/clipping and native packet owner consume them. No second deformation or gameplay loop. |
+| Material/light | source shader/texture animation/alpha setup and selected GX light state | Existing GX hooks capture semantic state; shared prepared lighting, material headers and existing texture handles feed OP/TR. Supported source masks reuse prepared native packages. |
+
+Plans contain16-byte headers plus8 bytes per command, not decoded corners.
+A 9000-corner command takes24 bytes. B partitions the existing 64 KiB slab into
+24 KiB packets,8 KiB static-light storage,32 KiB metadata (including its entry
+table). D351's32 KiB source-arena cut is removed. Storage staging is 16 KiB in
+both game arms (room target remains64 KiB):49,152 BSS bytes removed, unchanged
+source capacity and small-file unaligned/direct-read rules. No new streamer,
+source texture copy or fourth asset registry was introduced.
+
+Historical code reuse does not permit importing historical semantics blindly.
+The extracted historical `PreparedActorLights` evaluator remains shared with the
+room target. Source GX coefficients use the source-semantic evaluator where the
+historical attenuation/material model cannot express them. FTRV/compiler policy,
+visibility, strips and packet mechanisms are reused. The tiny unchanged-state
+static-light cache is not the historical full world-light bake; moving-camera
+reuse and source-exact integer rounding are still qualification limits.
+
+Graded same-UV masks use10 explicit offline native texture pairs (157,952 gross
+VRAM bytes if all loaded), through the existing package/identity cache. Source
+alpha GREATER0/depth equivalence, higher thresholds, independent UVs, no-image,
+specular/fog and general TEV remain incomplete. PT phase is currently empty;
+this is not full punch-through support. Batch-local source positions use bounded
+frame scratch; offline local-index preparation/whole-scene plan coverage are
+not proven. Full character appearance cannot be claimed from build/tests alone.
+
+### Prerequisites and initial target attempts
+
+Initial D352 A reached room output but exhausted KOS heap during native uploads;
+source heap still had66,592 bytes. The reduced shared I/O staging addresses that
+separate native budget. V2 A and B then reproduced em12 Rno1/step4 before any
+3D use. Both are loader failures, not performance measurements. Their complete
+snapshots are preserved under d352v2a/b-integrated-stack. A forced-interleaving
+host control reproduces exactly step4: foreground pumping reenters a queue while
+synchronous KOS DVD I/O yields, before the source increments its step. The common
+candidate serializes a complete `cDvdQueue::Read` call using existing native-I/O
+cancellation depth. Contention yields/returns pending; source completion and
+sound/container handling remain unchanged. No success stub or state forcing.
+
+V3 A passes menu, required block/enemy loading and reaches diagnostic room
+rendering with 66,592 source free bytes. Current v3 ELF identities:
+
+| Arm | SHA256 | text / data / BSS bytes |
+| --- | --- | --- |
+| A | `e63750eaea6098e4b7262a4e69d36b5c2d4f3d6ef761153df23ddd508ed13b53` | 2,316,372 /77,016 /624,696 |
+| B | `35a74030ba8b92a1cbb9ea5050d9f248b09d7a1a24bbc9735b1e167dc1e4451c` | 2,335,548 /82,920 /625,560 |
+
+B's static executable cost is 25,944 bytes above A; it is not free simply because
+metadata reuses a slab. Source arena request remains13 MiB in both; the effective
+source heap remains a separately measured value. Peak native allocations and
+complete gameplay peaks are not implied by these linker sizes.
+
+Evidence lives in `D:/Flycast-Evidence/re4-dreamcast/d352v3a-integrated-stack`
+and `d352v3b-integrated-stack`: exact source snapshot/inherited patch, executable,
+assets/fixture, KOS/GCC/Flycast/config and capture identities. KOS d336, GCC 15.2,
+mirror `/root/probe/d343-mirror`, fixture `/root/probe/d352-fixtures`. Reuse the
+existing 160-second startup/source fixture and corrected framebuffer reader.
+It contains no combat route or movie playback. Earlier D352/v2 discs are now
+verified xdelta3 encodings against the preserved D351c disc; individual
+`disc-compression.json` files record hashes/restoration. Captures/ELFs remain.
+
+Host checks pass for structural-only plans, no draw-time install, same-address
+reload/leases/retire, bounded/short reads, native VQ, shared lighting capture,
+source queue reentry, deferred source pose lifetime and native pass/frame owner.
+PowerPC preprocessed block/trans/model/DVD bodies match HEAD plus the initial
+inherited patch. This is not a new ProDG object comparison. Both target arms
+build. SH4ZAM is not linked; no global fast-math was added.
+
+Whole-stack target outcome is pending below; a successful loader/isolated adapter
+is not restored cabin or three-room acceptance. Keep source events/audio,
+inventory, complete materials/characters, active combat, transitions/retry,
+response and hardware qualification visible.
+
+
+### D352 v3-v5 full-candidate failures and current boundary
+
+The common DVD queue-step fix is committed/pushed06567b3; remote SHA verified.
+The renderer stack remains unpromoted. V3 B entered an empty PT list although
+pinned KOS enabled only OP/TR bins; completion masks could not agree. V4 removes
+that list entry. Its very small packet counts were invalid performance evidence:
+KOS mat_trans_single returns reciprocal depth and was incorrectly used for an
+affine modelview transform. V5 uses mat_trans_nodiv, then the existing source
+projection. These are fixes following whole-stack failures, not per-feature FPS
+promotion. New focused deferred-stream host check passes.
+
+V5 B ELF `ed1cd78a61b4fae0cb5bee390c962622b642e3218361d90494a0a541e3a6fffa`,
+text/data/BSS2,335,516/82,920/625,560. Evidence directory
+`D:/Flycast-Evidence/re4-dreamcast/d352v5b-integrated-stack`. Final RGB565 readback
+shows source-controlled Leon and the forest/cabin geometry. The collected flip
+trace does not keep advancing reliably after initial room frames, despite later
+source draw-plan log updates. Resolve actual presentation/queue ownership before
+claiming a steady-state frame budget. This is neither full appearance acceptance
+nor active combat acceptance. The harness ends at its160-second deadline.
+
+Asset registration reported531 part references and 95 successful prepares at one
+update. The32 KiB partition saturates; a later frame has 38 plan hits and 203
+uncovered part calls, ~2,018,080 reference GX bytes walked. Zero draw-time plan
+installation is established, but zero whole-scene GX parsing is not. Do not hide
+capacity fallback behind the structural metadata design. Source free remains
+66,592 after required block/enemy loading.
+
+After commit06567b3 the user requested a separate PS2 r100 COLOR/NORMAL inventory
+and prelit-room experiment. Its isolated worktree is
+`/root/work/re4-r100-prelit-d353`, branch`experiment/r100-prelit-d353`; private
+inputs/results are`/root/probe/d353-ps2-r100-prelit`. It uses the preserved D349
+room target for a diagnostic lighting comparison. It does not replace the
+recovered game, fix D352 presentation, promote PS2 content or accept gameplay.
+
 
 ## D354 - stable integrated profile, not performance acceptance (2026-09-22)
 
@@ -195,7 +318,7 @@ from HEAD alone. Never overwrite current work with a historical reference.
 | A | `7323c4ebba36a3b9067fddd17fbff2286c0ccf6e109fbb525c6052ca2085e9de` | 2,323,676 / 78,236 / 621,144 |
 | B | `74fc73aefca2311066074ba01be4a3376821cf2db1176ea0fa94eddc5643e5b5` | 2,343,728 / 85,480 / 622,008 |
 
-Both use KOS `/root/work/kos-re4dc-d336`, GCC15.2, mirror
+Both use KOS `/root/work/kos-re4dc-d336`, GCC 15.2, mirror
 `/root/probe/d343-mirror`, fixture `/root/probe/d354v7-fixtures`, and Flycast
 SHA256 `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`.
 Private recipes `/root/probe/d354v8-build-arm.sh` and
@@ -322,7 +445,7 @@ bytes, selected light sets 5,920, light-state records 3,264 and basis 288. UI us
 source ordering, not opaque work waiting for a TR drain.
 
 The previously accepted 8 KiB reassignment remains inside the existing 64 KiB native
-slab: 24 KiB packet storage,8KiB deferred spill and32KiB compact metadata. No source
+slab: 24 KiB packet storage,8 KiB deferred spill and 32 KiB compact metadata. No source
 capacity is removed. The shared texture cache had a separate demonstrated limit:
 64 simultaneously pinned handles could not serve the70-texture working set.
 Rebalance existing static metadata to 80 handles and 128 source-key entries
@@ -383,3 +506,215 @@ coverage remain unaccepted. Final images are at different end ticks, not a pixel
 comparison fixture. No audible-output, manual input responsiveness, encounter,
 transition/retry or physical-hardware acceptance is claimed. Keep the candidate
 selectable and unpromoted; carry these limits into the continuing integrated work.
+
+
+## D355 - shared preparation audit and bounded candidate (2026-09-22)
+
+Five matched source ticks **2382-2386** qualify the unique-input audit: all 1,310 part records have matching reference counts and two order checksums in the actual native-model host fixture. Later logs have transport gaps and/or pose-dependent replay differences; they are not silently counted as full-window evidence. SH-4 CPU times below are target TMU2 spans, not host timings. The host replay has four packet-count differences at clipping/precision boundaries against SH-4 at tick2382; the source reference-order checks still match. This is preparation evidence, not a pixel-equivalence claim.
+
+| Per frame | Observed work | Distinct qualified inputs |
+|---|---:|---:|
+| Positions | 201,203 references; 132,776 transforms | 70,118 |
+| Normals | 201,203 references; 156,075 transforms | 82,717 |
+| Lighting | 156,075 vertex evaluations; 389,180 individual-light evaluations | 100,531 position/normal pairs; 100,531 complete lit-input keys |
+| Selected lights | 262 list builds | 115 model/info-scoped list states |
+| Packet preparation | 129,284 direct-strip pack calls | 127,896 render-input identities, including rejected work |
+| Submitted PVR | 111,376 vertex records at tick2382 | Not the same population as pre-cull prepared inputs |
+
+UV/normal/color seams remain separate. Position keys include source instance/info, pose backing, stride/scale, transform, projection and viewport; normal keys include backing and current normal matrix. Lit keys additionally include selected light values, channel/ambient/material/diffuse/attenuation/TEV state and required source color identity. Position-dependent attenuation forbids treating normal identity alone as a lit-input identity. In this window vertex-color/channel distinctions add no pairs, but the adapter must still handle them.
+
+There are 105 source models. Prepared lights average 3.000 per part build, maximum 7; averaging each model's part samples first gives 2.733. These are source-selected lists, not nearest-light or fixed-light approximations.
+
+Per-part distinct totals are 71,537 positions, 83,650 normals, 101,481 lit inputs and 127,912 render inputs. Reuse across parts/passes therefore accounts for 1,419 positions, 933 normals, 950 lit inputs and only 16 complete render inputs. Most repeated preparation is within parts/strips. This does not establish the same working-set locality as the historical offline clustered room.
+
+Top ten by each exclusive CPU stage (mean microseconds over the five qualified ticks). Addresses identify the exact source instances/parts in the private RAM fixture; model kind 0 is player, 1 enemy, 2 scenery. Separate instances of a shared part remain separate transforms.
+
+### Models
+
+| Rank | Transform / project | Lighting | Packet preparation |
+|---:|---|---|---|
+| 1 | 0x8cbcf200 (kind 0): 30,349.8 | 0x8cbcf200 (kind 0): 50,473.2 | 0x8cbcf200 (kind 0): 32,004.2 |
+| 2 | 0x8cbe9aa0 (kind 1): 22,924.8 | 0x8cbe9aa0 (kind 1): 37,590.4 | 0x8cbe9aa0 (kind 1): 23,975.6 |
+| 3 | 0x8cf99050 (kind 2): 13,867.6 | 0x8cf7de90 (kind 2): 21,653.2 | 0x8cf99050 (kind 2): 14,675.0 |
+| 4 | 0x8cf7de90 (kind 2): 13,860.8 | 0x8cf99050 (kind 2): 21,646.4 | 0x8cf7de90 (kind 2): 14,372.8 |
+| 5 | 0x8cf7b148 (kind 2): 12,956.0 | 0x8cf65a58 (kind 2): 20,689.6 | 0x8cf7b148 (kind 2): 14,046.4 |
+| 6 | 0x8cbe8f18 (kind 1): 11,542.4 | 0x8cf8d3d8 (kind 2): 20,192.2 | 0x8cf7e268 (kind 2): 11,519.8 |
+| 7 | 0x8cf7e268 (kind 2): 10,821.4 | 0x8cf7b148 (kind 2): 19,620.2 | 0x8cf98c78 (kind 2): 11,499.0 |
+| 8 | 0x8cf98c78 (kind 2): 10,803.8 | 0x8cf7e268 (kind 2): 17,884.2 | 0x8cbe8f18 (kind 1): 11,148.4 |
+| 9 | 0x8cf984c8 (kind 2): 10,656.0 | 0x8cbe8f18 (kind 1): 17,045.4 | 0x8cf984c8 (kind 2): 11,113.2 |
+| 10 | 0x8cf8d3d8 (kind 2): 9,745.2 | 0x8cf98c78 (kind 2): 16,114.8 | 0x8cf65a58 (kind 2): 10,191.2 |
+
+### Batches (model / source part)
+
+| Rank | Transform / project | Lighting | Packet preparation |
+|---:|---|---|---|
+| 1 | 0x8cf99050 / 0x8c838e00: 13,867.6 | 0x8cf7de90 / 0x8c838e00: 21,653.2 | 0x8cf99050 / 0x8c838e00: 14,675.0 |
+| 2 | 0x8cf7de90 / 0x8c838e00: 13,860.8 | 0x8cf99050 / 0x8c838e00: 21,646.4 | 0x8cf7de90 / 0x8c838e00: 14,372.8 |
+| 3 | 0x8cf7b148 / 0x8c801440: 12,956.0 | 0x8cf8d3d8 / 0x8cc910a0: 20,192.2 | 0x8cf7b148 / 0x8c801440: 14,046.4 |
+| 4 | 0x8cbe9aa0 / 0x8ca65b00: 11,092.0 | 0x8cf7b148 / 0x8c801440: 19,620.2 | 0x8cf7e268 / 0x8c84c720: 11,519.8 |
+| 5 | 0x8cf7e268 / 0x8c84c720: 10,821.4 | 0x8cf7e268 / 0x8c84c720: 17,884.2 | 0x8cf98c78 / 0x8c84c720: 11,499.0 |
+| 6 | 0x8cf98c78 / 0x8c84c720: 10,803.8 | 0x8cbe9aa0 / 0x8ca65b00: 17,700.4 | 0x8cf984c8 / 0x8c84c720: 11,113.2 |
+| 7 | 0x8cf984c8 / 0x8c84c720: 10,656.0 | 0x8cf98c78 / 0x8c84c720: 16,114.8 | 0x8cbe9aa0 / 0x8ca65b00: 10,725.0 |
+| 8 | 0x8cf8d3d8 / 0x8cc910a0: 9,745.2 | 0x8cf984c8 / 0x8c84c720: 15,878.0 | 0x8cf8d3d8 / 0x8cc910a0: 10,001.8 |
+| 9 | 0x8cf84bc0 / 0x8c81a800: 9,080.6 | 0x8cf988a0 / 0x8c7f1840: 14,104.2 | 0x8cf8aa68 / 0x8c81a800: 9,784.8 |
+| 10 | 0x8cf8aa68 / 0x8c81a800: 9,076.8 | 0x8cf831b0 / 0x8c7f1840: 14,094.4 | 0x8cf84bc0 / 0x8c81a800: 9,746.2 |
+
+### Implementation and current qualification
+
+The existing part-local position/shade preparation has a shared model/frame alternative inside the same native-model adapter. It borrows **12,288 bytes from the existing packet scratch**, retaining the 64 KiB slab, 32 KiB draw metadata and 8 KiB queue spill; packet scratch becomes 12 KiB. No source heap or queue growth. Exact source-state changes and frame/owner invalidation reset dependent values. Normal preparation is separate from position and lit-pair identity. Prepared lights are shared across compatible parts; packed RGB is lazy and remains a candidate rather than accepted quality/performance policy.
+
+Packed validity includes the current source transform/pose generation, normal matrix, selected light contents and order, source channels, ambient/material source and values, diffuse/attenuation, TEV scale and actual mutable vertex-color value. Alpha and UV remain separate live packet inputs. Synthetic checks cover changed channel/color/normal/light inputs and frame reuse.
+
+The v2 collision-chain map reduced transforms to 124,060, normal transforms to 128,006 and lighting calls to 147,287, with 114 light builds versus 262. However, slot retirement/lookup overhead increased instrumented render p50 to about 2,318 ms. **Negative result; not a performance promotion.** It retained source heap 66,592 bytes, no new texture uploads, and no post-warm-up aborts in the sampled window. The run did not hang: sparse console logging was initially misread; completed-frame telemetry continued normally.
+
+V3 completed with bounded four-way keyed slots and lazy packed RGB, but remains
+obsolete under the user's correction. Do not tune its lookup or promote it. The
+next integrated candidate uses load-time dense local indices and generation-tagged
+arrays, matching the R3v/R3x preparation boundary. Full target qualification of
+that replacement is recorded separately as D356.
+
+Largest captured source strip is 105 vertices, below the new 383-vertex packet capacity. This predicts no capacity-induced strip fallback, but target flush/PVR-call/fallback deltas still govern acceptance. Do not infer unchanged packet cost merely from that bound.
+
+Private evidence: `C:/Flycast-Evidence/re4-dreamcast/d355b-reuse-audit` and `d355v2b-integrated-stack`; both discs are preserved as verified xdelta3 against the recorded D351c base. D354v8 B remains whole. Audit recipe/scripts and exact source snapshots are under `/root/probe/d355-*`; the captured evidence includes `reuse-report.json`, RAM, sealed views and executable/asset/tool identities. The obsolete v3 target recipe used `/root/probe/d355v3-build-arm.sh` and `d355v3-prepare-arm.py`; do not overwrite completed artifacts.
+
+
+## D356 - dense local indices, measured admission limit (2026-09-22)
+
+Keep the integrated candidate default-off and intact, but **do not promote its
+performance**. D356 replaces the rejected keyed hot-loop cache with asset-bound
+local indices and generation slots in the existing shared preparation workspace.
+Prepared-light reuse extends across compatible source part boundaries. Source
+pose, normal matrix, selected lights, channels, material/alpha and order remain
+authoritative; there are no fixed-light or gameplay substitutions.
+
+### Reproducible full-stack comparison
+
+D356v4 A/B completes **85 identical recorded source snapshots**, ticks 2382-2466,
+native frames 2383-2467, presentations 2349-2433. All measured windows have zero
+discarded frames, queue drops, native allocation/texture failures or post-warm-up
+uploads, with contiguous observed IDs. Warm-up excludes the first 32 model frames;
+the existing startup discard/allocation-probe history is not erased. The source
+snapshot covers player/camera/motion and selected system/room flags, not every
+enemy/RNG state. The fixture remains a settled opening view, not combat acceptance.
+
+| Matched instrumented measurement | A recovered baseline | B integrated stack |
+| --- | ---: | ---: |
+| Render wall p50 / p95 | 1192.463 / 1195.034 ms | 1948.184 / 1950.040 ms |
+| Presented interval p50 / p95 | 1220.280 / 1222.786 ms | 1973.462 / 1973.474 ms |
+| Source heap free | 66,592 B | 66,592 B |
+| Native slab | 65,536 B | 65,536 B |
+| Texture VRAM / peak | 3,276,800 / 4,192,256 B | 3,682,304 / 4,192,256 B |
+| PVR calls / submitted bytes, median | 188 / 2,471,456 | 470 / 3,578,720 |
+
+B's exclusive median TMU2 stages are lighting 759.753 ms, packet pack477.745 ms,
+transform/project 417.505 ms, clip fallback160.405 ms, topology 48.552 ms,
+model setup 13.222 ms, visibility 0.990 ms, texture resolve 1.006 ms/upload 0,
+OP submission 9.023 ms/PT0/TR0.940 ms, TR enqueue 6.803 ms/drain 2.162 ms,
+UI enqueue 0.113 ms/drain 0.136 ms and other 47.708 ms. Stage medians need not sum to
+the median total. Presentation fence 20.226 ms and asynchronous PVR render ~7.503 ms
+are separate intervals and must not be added to CPU spans. Source pose preparation
+remains about 9.918 ms. Do not optimize skinning next.
+
+There are 552,808 /975,486 median clock reads. Empty-scope overhead estimates are
+185.450 /338.219 ms; do not subtract them as exact corrections or call these
+instrumented results release FPS. A still lacks B's selected lighting/material
+coverage, so this is a matched source-state diagnostic, not equal visual coverage.
+Both final images were inspected: source-controlled Leon/handgun, cabin/forest
+and HUD are visible with the corrected rear-facing view. The user subsequently accepted candidate B's current appearance as accurate
+for now and stopped the visual-gap investigation. Keep B as the accepted visual
+baseline for this continuing performance work; no lighting/material redesign is
+authorized by A/B brightness differences. This does not promote its performance.
+End captures are at
+different ticks, no enemy is visible in this view, and they do not certify complete
+characters through unexercised poses, audio or manual responsiveness.
+
+### Reuse coverage and bounded-memory failure
+
+Per measured B frame:200,643 position references;132,787 position transforms;
+155,777 normal transforms;387,269 individual-light evaluations. Dense local slots
+cover only **2,970 references (1.48%)**, versus 197,673 general references. The shared
+state boundary records 263 parts,126 position/normal state builds and 137 state
+hits each,**114 light builds /149 light-build hits**,22 position/normal/shade
+batch activations,127 dense normal hits and 2,036 dense packed colors. The older
+D355 audit retains unique-input and top-ten tables; those distinct counts are
+not relabelled as a new D356 audit.
+
+Structural coverage is 209 prepared /140 unprepared live part submissions and
+841,824 fallback GX bytes walked per frame. Final metadata fills 32,768 bytes:
+8 KiB entry table,16 KiB structural/bounds partition,8 KiB local mappings. It contains
+239 tracked streams,132 structural plans,107 stable negatives and 4,748 raw bound
+bytes. No steady owner misses or invalid plans were observed. Native source heap
+capacity and queue capacity did not change.
+
+Final local mappings fill**8,192/8,192 bytes** (early8,128 reporting was superseded):
+12 source parts,2,872 encoded corners,2,305 pairs,22 batches;7,978 payload bytes
+and 214 alignment bytes. This is source-asset data, not live instance-weighted work.
+The existing whole-part allocator rejects large useful parts even in an empty
+partition: stream 8c83af60 needs 16,268 B;8c84e880 needs 12,147 B;8c8035a0 needs 14,764 B.
+
+Reconstructing the current encoding across the239 tracked streams gives 111,515
+source corners,94,127 pairs and 737 batches, requiring**314,429 bytes** before
+alignment. Formula:12/part + 16/batch + 2/pair + 1/corner. This is not a request to
+allocate314 KB. It demonstrates why an8 KB copied local-ID companion cannot
+provide broad prepare-once reuse. Merely changing first-fit order is insufficient.
+Independently generated LocalBatch domains also invalidate slots on domain change;
+matching source state alone does not yet share vertex values across those domains.
+
+A read-only exact-index check finds136/737 batches (12,935 source corners) can
+use implicit source ranges instead: position/normal spans each fit160 slots,
+and one index uniquely determines the complete position/normal/color identity.
+Their33,611 B corner/pair payload could become compact range/mode descriptors.
+None of the three largest examples qualifies under the current batching. This
+is an unimplemented coverage opportunity, not a target speedup claim. Continue
+the same source-backed asset/batch representation and generation slots; do not
+grow source heap/queues, revive a keyed cache, or disguise the admission gap with
+prelighting/SH4ZAM. Preserve whole strips and draw order when qualifying batches.
+
+Packet workspace is 12 KiB versus D354's24 KiB, with a383-vertex capacity and observed
+maximum source strip 105. B records 212 packet flushes and ~470 PVR calls/frame
+(D354 B ~344 calls), recording the current transport/flush cost with the smaller packet area.
+Strip fallbacks are 171 versus the older192, with 1,184 clipped triangles;10,411-
+10,428 strips remain intact, zero reconstructed strips. Hardware culling applies
+to 153 OP and 81 TR submissions; PT has no submissions in this fixture. These
+revision differences do not isolate packet capacity as the only changed cause.
+Queue high-water25,536 remains below 26,624 (masked 22,880, blend 2,656 at medians).
+
+### Loader correction shared by both arms
+
+D356v3 B never reached rendering: em/em23.drs request 32 was pending in PUSH,
+pCur_queue still pointed to that slot, and both DVD workers had stopped. Saved
+headers described completed em12. The synchronous source blockRead borrow could
+restore a completed/recycled request after native filesystem I/O yielded.
+
+Commit f2ed3dc extends the existing native DVD owner across blockRead header
+save/use/restore and ReadProc completion publication. Same-thread Read steps
+nest; foreign pumps yield without holding IRQs across I/O. Restore checks the
+request ID/live/unpublished state; completion clears only its own current pointer.
+Scopes end before task exit. No source flags or em23 loading are bypassed.
+The actual-body regression fixture passes -O2 and ASAN/UBSAN scheduling/reuse/
+header-lifetime cases. PowerPC preprocessed tokens match the pre-slice source;
+full ProDG comparison was not rerun. Both v4 arms now load em23 and render.
+
+### Identities and disposition
+
+Private evidence: C:/Flycast-Evidence/re4-dreamcast/d356v4[a|b]-integrated-stack;
+matched report: d356v4-comparison.json. Each arm retains its ELF,disc,source overlay,
+owned-source snapshot,asset/fixture manifests,toolchain/capture identities,logs,RAM
+and menu/final images. Recipes: /root/probe/d356v4-build-arm.sh and
+d356v4-prepare-arm.py; report helper: C:/Game Dev/Emulators/re4-session-scripts/
+d356v4-report.py. Admission inspection: /root/probe/d356v4-admission-review.md.
+
+Base is e698b98 plus the preserved working overlay (not a clean-HEAD build).
+Both use /root/probe/d343-mirror and /root/probe/d354v7-fixtures; matching selected
+input manifest SHA256 a78cb8af57acf76d8ee27610bee1e9a8072f0eca7d43761cd6ceb1a1e474e3b2; fixture manifest 76e6289eb9f1b84e36aa08582e2ff10fd29a1287cb6b1e4209202c149f427708.
+SH GCC 15.2.0; KOS 804b3195ebd1a06a27cc2b3a5eacf7a2429040a3 with the recorded
+pinned patch; KOS library f5b2f71970dabd1d51199bc77e11102fb63c80765ef7ccac334db9208139b9ca.
+Flycast 64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a.
+
+A ELF 4c71d4d52e8eeba66915c48379755e76283f01a1743d5843c8b2948599743d36;
+B ELF ac75515e925c89b60c544e92b0bd744504ff0d163d9e0c4f5c7ccf2170b82dba.
+ELF text/data/BSS: A2,324,384/78,236/621,304; B2,352,576/85,480/622,232.
+No additional source archive/animation recovery. No physical-hardware acceptance.
+Keep the loader correction; preserve the integrated renderer as an unpromoted
+candidate and correct its insufficient dense coverage. The three-room goal,
+manual combat, full presentation/audio, event activation and retry remain open.

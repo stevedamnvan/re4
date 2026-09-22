@@ -1,33 +1,75 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-## Current native preparation checkpoint - D350/D351, 2026-09-22
+Current D356 priority (2026-09-22): continue wholesale D349 architecture integration.
+The user accepts v4 B's current appearance as accurate for now. Preserve it and
+stop investigating the A/B visual gap; the open gate is performance.
+The dense generation-slot candidate completed a stable85-tick full-stack A/B,
+but is not promoted: B render p50/p951948.184/1950.040 ms versus A 1192.463/1195.034 ms.
+Prepared-light sharing works (114 builds/149 hits); dense vertex mapping covers
+only 1.48% of live references. Both metadata partitions are full. The present
+per-corner companion encoding requires 314,429 B across tracked streams and cannot
+deliver scene-wide reuse inside its8 KiB budget. Correct that source-backed
+representation/admission boundary; do not add a keyed cache, cut source heap,
+grow queues, or hide the integration gap with visual substitutions. Full-stack
+acceptance remains the unit. Preserve the measured packet cost of borrowing
+workspace:212 flushes/~470PVR calls,171strip fallbacks, source heap 66,592 B.
+The source-preserving DVD borrow correction f2ed3dc is in both arms; the earlier
+v3 B loading stall is not a renderer timing result. See the
+[D356 checkpoint](R4_NATIVE_PREPARATION_CHECKPOINT.md#d356---dense-local-indices-measured-admission-limit-2026-09-22)
+for exact identities, spans, coverage limits and the next representation boundary.
 
-[D350-D351](R4_NATIVE_PREPARATION_CHECKPOINT.md) records the implemented shared
-strip connection and prepared draw-plan experiment. D350 reduces the recovered
-scene's observed presented p50 from 1621.893 to 1003.415 ms with unchanged resident
-budgets. It retains the same unlit diagnostic output; it is not full cabin parity.
+Previous qualified D354 reference:
+The stable diagnostic A/B now has 70 matching source snapshots/ticks and passes the
+zero-discard/allocation-failure/post-warm-upload and bounded-queue gates. It is not
+performance or full appearance acceptance. B's instrumented p50 render span is
+1842.358 ms: lighting 723.596 ms, packet preparation 456.764 ms, transform 377.852 ms and
+clipping 159.034 ms. Source preparation ~9.9 ms is secondary. Profiling overhead is
+substantial and explicitly reported. [D354](R4_NATIVE_PREPARATION_CHECKPOINT.md#d354---stable-integrated-profile-not-performance-acceptance-2026-09-22)
+contains exact work, queue, RAM/VRAM, strip/cull and clock data.
 
-The D351 copied-plan cache is **not promoted**: its funded 16 KiB backing costs
-32 KiB source-arena capacity for only 3.33% observed median improvement to 970.051 ms.
-Only two installed parts are reused in the settled view, while 185 fall back.
-Installed plans decode zero GX bytes, but the whole scene still walks 2,990,528
-reference bytes per frame. Keep it selectable; do not scale duplicate storage
-without solving actual ownership/representation costs. Final source free/largest
-falls from 66,592 to 33,824. Required init succeeds; gameplay/retry peak is unproven.
+Use those findings to complete the same asset/frame/material-light preparation
+contracts. Do not restart per-mechanism target promotion, skinning, prelighting or
+store-queue experiments. TMU2 remains the nested wall clock; PRFC1 is a separate
+possible follow-up for the dominant stage. Earlier sequences below are supporting
+backlog, not permission to optimize a measured sub-20 ms component first.
 
-Continue qualified native preparation, source material/pass classification,
-current selected-light preparation, then conservative visibility and batch-local
-transforms. Do not import historical camera/pose/gameplay or assume its depth+1
-projection convention applies here. Current hot vertex math is scalar; SH4ZAM
-is not linked and is a candidate for the explicit native transform connection.
-Stage attribution remains incomplete; PVR registration includes CPU preparation,
-and GPU intervals overlap. Settled-view timings do not qualify active combat.
+## Current native preparation - D352/D354 integrated candidate, 2026-09-22
+
+The current default-off `D349_RENDERER_STACK` experiment is accepted or rejected
+as one system. Build two arms from the same latest recovered source, assets,
+configuration and input: A baseline, B complete compatible stack. Internal tests
+guard mechanisms; do not target-measure/promote them one at a time. Bisect only
+a demonstrated whole-stack visual/performance failure.
+
+The integration boundary is source asset lifetime -> compact native structural
+metadata -> current source pose/camera/material/light state -> shared native
+kernels/frame owner. `model_asset_bridge.cpp` visits source-accepted OT registrations before
+render submission and installs only new asset/lifetime plans; draw lookup does
+not construct plans. Source display lists and
+arrays remain backing under their resource generation. Metadata shares the
+existing 64 KiB native slab, with no additional source-heap reservation or full
+geometry copy. Historical prepared-light, visibility, direct-strip, clipping,
+texture and packet mechanisms remain the implementation references. Preserve
+source behavior where historical inputs/lighting assumptions do not match.
+
+[D352 evidence and limits](R4_NATIVE_PREPARATION_CHECKPOINT.md#d352-integrated-stack-and-asset-lifetime-boundary)
+records current measurements. Earlier D350/D351 values are historical diagnostic
+results, not current FPS or a recommendation to keep their copied-corner cache.
+D352 also addresses the measured KOS staging limit and reproduced source DVD
+queue reentry in both target arms. Source free/largest and native allocation
+headroom are distinct budgets. A loader stall has no renderer timing result.
+
+Full acceptance still requires complete current-facing characters/cabin/HUD,
+source-selected lighting/materials/alpha, meaningful CPU p50/p95 and presentation
+improvement, zero duplicated rendering, actual decode/transform/light/clip/PVR/
+fallback counts, RAM/VRAM and responsive encounter controls. Settled outdoor
+views do not qualify combat, free-camera movement, death or retry. Do not add
+overlapping CPU/GPU intervals or call native submission-wall time whole-game CPU.
 
 [D349](R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md) remains the preserved visual and
 performance reference: historical `5f42caa`, early CPU p50 48.880 ms, whole trace
-57.559 ms, mean presented interval 55.158 ms (~18.13 FPS). Its complete room/actor/
-HUD/lighting/sound workload differs from the recovered diagnostic. User rejected
-its old facing defect. Historical artifacts and private inputs remain untouched.
+57.559 ms, mean presented interval 55.158 ms (~18.13 FPS). Its workload differs;
+the user rejects its old facing defect. Historical inputs remain unchanged.
 
 ## Previous D344 memory checkpoint
 
@@ -350,3 +392,29 @@ review under the asset policy instead of quietly altering camera or gameplay.
 
 The next task remains the dependency needed for the boot-forward playable slice,
 not the next letter in a graphics experiment series.
+
+## SH4ZAM reuse decision (2026-09-22)
+
+SH4ZAM can save implementation time on residual native kernels; it does not
+supply source resource lifetimes or D349 local-index preparation. Current native
+transforms already use KOS mat_trans_nodiv/FTRV, and KOS pvr_prim already uses
+store queues. No SH4ZAM dependency is linked or newly installed by this review.
+The shared selected-light evaluator still has scalar distance/normalization/dot
+work. After dense reuse is corrected, prefer a pinned mature implementation
+over writing new assembly if the measured residual stage justifies it.
+
+| Mechanism | Existing insertion point | Qualification |
+| --- | --- | --- |
+| shz_inv_sqrtf, dot/magnitude helpers | source_lighting.cpp prepared evaluator | Preserve zero-distance, attenuation, channel and selected-light semantics; bound numerical/color error against reference and measure full candidate. |
+| Reciprocal helpers | native_model.cpp projection | Only if residual projection is material; respect signed camera depth, near clipping and finite/depth accuracy. Positive-only FSRRA forms cannot receive arbitrary signed z. |
+| memcpy32 / SQ copy helpers, PVR examples | Existing packet copy/submission | Only if measured transport matters; current OP/PT/TR submission is about 10 ms. Preserve alignment, locking, buffer ownership and matrix registers; XMTRX variants can clobber the loaded transform. |
+
+Primary references:[SH4ZAM](https://sh4zam.com/),
+[scalar API](https://sh4zam.com/shz__scalar_8h.html),
+[memory API](https://sh4zam.com/shz__mem_8h.html),
+[implementation and MIT license](https://github.com/gyrovorbis/sh4zam),
+[native PVR examples](https://github.com/dfchil/sh4zam_pvr).
+The website currently advertises 0.9.0 and tuning for GCC 16; the pinned project
+uses GCC 15.2. Pin the exact revision, retain notices and verify that compiler/API
+combination before adoption. Do not silently upgrade the shared SDK or infer that
+GCC 16 is a hard requirement. No FPS saving is claimed by this source review.

@@ -24,13 +24,31 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D350 reuses the room's native strip preparation in the recovered game, reducing
-observed presented-frame median **1621.893 ->1003.415 ms** without another resident
-buffer. D351 adds a selectable prepared draw-plan adapter, but its current cache
-policy is **not promoted**: approximately 3.3% further gain costs 32 KiB source-heap
-capacity and covers only two regularly reused parts. Required initialization and
-visible diagnostic rendering run; full materials/lighting and encounter play
-remain unfinished. See [implementation, tests and measured limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md).
+D356 retains one **unpromoted integrated D349 renderer candidate** behind
+`D349_RENDERER_STACK=1`. Source asset/batch preparation supplies dense generation
+slots; current source pose/camera/material/light state remains authoritative.
+The existing 64 KiB native slab and source heap capacity are unchanged.
+
+The completed instrumented A/B has 85 identical recorded source snapshots at
+ticks 2382-2466, zero measured frame/queue drops or texture/native allocation
+failures, and no post-warm-up uploads. Source free heap remains66,592 bytes;
+deferred occupancy25,536 remains below 26,624 bytes. The native DVD borrow ownership
+fix restores normal em23 loading in both arms. Intact strips and OP hardware
+culling remain present.
+
+The performance gate **has not passed**: matched render-wall p50/p95 is
+1192.463/1195.034 ms for A and 1948.184/1950.040 ms for B; pageflip p50 is
+1220.280/1973.462 ms. A lacks B's selected lighting/material coverage. Prepared
+lights are shared, but dense vertex mappings cover only 1.48% of live references:
+the present per-corner metadata encoding does not fit the bounded budget for
+the expensive parts. Correct the preparation representation before optimizing
+remaining math. No SH4ZAM library is linked yet. Instrumentation overhead is
+substantial; these are not release FPS or physical-hardware results.
+[Current evidence, identities and limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d356---dense-local-indices-measured-admission-limit-2026-09-22).
+
+The user accepts B's current presentation as accurate for now. Preserve it while
+fixing preparation reuse. The settled opening fixture does not qualify responsive
+encounter play, audio, transitions/retry or physical hardware.
 
 The historical D349/`5f42caa` reference remains isolated and preserved: 48.880 ms
 early CPU median, 57.559 ms whole trace and 55.158 ms mean presentation interval
@@ -65,7 +83,7 @@ See [D346](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d346-counted-task-handoff-and-event
 D320 loads a compact qualified r100 archive directly: **4,669,568 ->3,812,576
 bytes**, recovering **856,992 source-heap bytes**. The required **1,126,272-byte
 block pool now allocates** and blocks0-2 load/create. Source title/menu remains
-visible. The shared texture path uses the existing64 KiB storage buffer for
+visible. The shared texture path uses the existing 64 KiB storage buffer for
 bounded native uploads; no full package is staged on the source heap.
 
 D322 and D324 extend the same native path to qualified persistent core HUD/effect
@@ -126,8 +144,8 @@ See [the texture checkpoint](docs/R4A_TEXTURE_INVENTORY_CHECKPOINT.md).
 
 Smaller native render assets are authorized selectable candidates, with source
 gameplay/complete components preserved and actual RAM/CPU/visual checks. PS2 mesh
-substitution alone cannot meet the current66%-size enemy target: GC mesh backing
-is only11.60% of that archive. Texture and motion storage require attention too.
+substitution alone cannot meet the current 66%-size enemy target: GC mesh backing
+is only 11.60% of that archive. Texture and motion storage require attention too.
 
 ## Preserved scene-runtime visual and performance references
 
