@@ -1,0 +1,23 @@
+# Uses the existing real-motion fixture and source-preparation rules.
+ifeq ($(origin BUILD), undefined)
+override BUILD := ../build/motion-residency-sh4
+endif
+include Makefile
+.DEFAULT_GOAL := residency
+CACHE_TARGET := $(BUILD)/re4dc-motion-residency.elf
+CXXFLAGS += -std=gnu++20 -DRE4DC_GAME -I../game/platform/include
+GAME_OBJS := $(addprefix $(BUILD)/,$(addsuffix .o,$(GAME_NAMES)))
+FDLIBM_OBJS := $(addprefix $(BUILD)/fdlibm_,$(addsuffix .o,$(FDLIBM_NAMES)))
+CACHE_OBJS := $(BUILD)/residency_kos_main.o $(BUILD)/native_motion.o $(BUILD)/room_storage.o $(BUILD)/mem_log.o
+.PHONY: residency
+residency: $(CACHE_TARGET)
+$(BUILD)/residency_kos_main.o: residency_kos_main.cpp | $(BUILD)
+	kos-c++ $(CXXFLAGS) -I$(STUB_DIR) -c $< -o $@
+$(BUILD)/native_motion.o: ../game/platform/native_motion.cpp | $(BUILD)
+	kos-c++ $(CXXFLAGS) -std=gnu++20 -c $< -o $@
+$(BUILD)/room_storage.o: ../room/room_storage.cpp | $(BUILD)
+	kos-c++ $(CXXFLAGS) -std=gnu++20 -c $< -o $@
+$(BUILD)/mem_log.o: ../game/platform/mem.cpp | $(BUILD)
+	kos-c++ $(CXXFLAGS) -std=gnu++20 -DRE4DC_CORE_RESIDENT_BYTES=1501312 -c $< -o $@
+$(CACHE_TARGET): $(CACHE_OBJS) $(BUILD)/motion_checks.o $(BUILD)/real_motion_checks.o $(GAME_OBJS) $(FDLIBM_OBJS)
+	kos-c++ -Wl,--gc-sections -o $@ $^

@@ -1,3 +1,6 @@
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_motion.h"
+#endif
 // game/cam_motion.cpp: CameraMotion, a Camera driven by a camera motion file (cutscene cameras):
 // the file holds Hermite key tracks for position, target, roll and fov; move() evaluates them at
 // the current frame and CameraSequenceCtrl advances / loops / ends the sequence.
@@ -33,6 +36,11 @@ CameraMotion::CameraMotion(void* data, int hokan, int flags, f32 frame)
     tbl = (u32*) ((u32) w->partsNo + w->nParts);
     tbl = (u32*) (((u32) tbl + 3) & ~3);
     tbl++;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    u32* native_keys = tbl;
+    Re4dcMotionLease keys(data, &native_keys, tbl);
+    if (!keys.external())
+#endif
     if ((s32) tbl[0] >= 0) {
         for (i = 0; i < w->nParts; i++) {
             tbl[i] += (u32) w->data;
@@ -70,12 +78,20 @@ void CameraMotion::move()
     CameraMotionWork* w = &m_info;
     int i;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    u32* native_keys = w->keyTbl;
+    Re4dcMotionLease keys(w->data, &native_keys, native_keys);
+#endif
     pp->frame = w->frame;
     pp->maxFrame = w->maxFrame;
     pp->flags = 2;
     for (i = 0; i < w->nParts; i++) {
         pp->type = w->partsInfo[i] >> 12;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        pp->key = (u8*) native_keys[i];
+#else
         pp->key = (u8*) w->keyTbl[i];
+#endif
         switch (w->partsNo[i]) {
         case 0:
             HermiteInterpolation(pp, &pos, w->hist[i]);

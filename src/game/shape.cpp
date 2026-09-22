@@ -1,3 +1,6 @@
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_motion.h"
+#endif
 // game/shape: vertex-morph ("shape") animation of a model part — the face morphs of the player /
 // partner and the mouth / eye shapes of the enemies. A ShapeData holds per-channel Hermite key
 // tables of blend weights; up to 5 shapes play at once on a cModelInfo (info->shape[]). ShapeSet
@@ -223,7 +226,14 @@ void CalculateShape_new(cModelInfo* info, ShapeData* data, f32 rate, u8* dst)
     w->idx = (u8*) w->data + (w->num * 2 + 3);
     p = (s32*) (w->idx + w->num);
     p = (s32*) (((u32) p + 3) & ~3);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    ++p;
+    Re4dcMotionLease keys(data, (unsigned**) &w->table, (unsigned*) p);
+    if (keys.external()) p = w->table;
+    else if (*p >= 0) {
+#else
     if (*++p >= 0) {
+#endif
         for (i = 0; i < w->num; i++) {
             p[i] += (u32) w->data;
         }

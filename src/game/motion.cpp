@@ -7,6 +7,12 @@
 // interpolation (MotionHokan) and the quaternion blend table. Fcc_get_data_* decode the ten key
 // stream layouts (f32 / s16 values and tangents).
 #include "motion.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_motion.h"
+#define MOTION_KEY(w, i) native_keys[i]
+#else
+#define MOTION_KEY(w, i) w->pHermite_data[i]
+#endif
 #include "global.h"
 #include "db_log.h"
 #include "math_sub.h"
@@ -235,6 +241,11 @@ void MotionSetCore(cModel* m, void* w_, void* data_, int seq_, int hokan, int fl
     tbl = (u32*) ((u32) w->pJoint_no + w->Joint_num);
     tbl = (u32*) (((u32) tbl + 3) & ~3);
     tbl++;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    u32* native_keys = tbl;
+    Re4dcMotionLease keys(data, &native_keys, tbl);
+    if (!keys.external())
+#endif
     if ((s32) tbl[0] >= 0) {
         for (i = 0; i < w->Joint_num; i++) {
             tbl[i] += (u32) w->pMot;
@@ -367,20 +378,20 @@ void MotionSetCore(cModel* m, void* w_, void* data_, int seq_, int hokan, int fl
     pp->frame = w->Mot_frame;
     if (w->Null_pos != 0xFFFF) {
         pp->type = w->pJoint_kind[w->Null_pos] >> 12;
-        pp->key = (u8*) w->pHermite_data[w->Null_pos];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_pos);
         HermiteInterpolation(pp, &w->Pos, hist0);
         w->Pos_old = w->Pos;
     }
     if (w->Null_rot != 0xFFFF) {
         pp->type = w->pJoint_kind[w->Null_rot] >> 12;
-        pp->key = (u8*) w->pHermite_data[w->Null_rot];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_rot);
         HermiteInterpolation(pp, &w->Ang, hist1);
         w->Ang_old = w->Ang;
     }
     if (w->Null_pos != 0xFFFF) {
         pp->frame = 0.0f;
         pp->type = w->pJoint_kind[w->Null_pos] >> 12;
-        pp->key = (u8*) w->pHermite_data[w->Null_pos];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_pos);
         HermiteInterpolation(pp, &v0, hist0);
         pp->frame = w->Mot_frame_max;
         pp->flags |= 2;
@@ -390,7 +401,7 @@ void MotionSetCore(cModel* m, void* w_, void* data_, int seq_, int hokan, int fl
     if (w->Null_rot != 0xFFFF) {
         pp->frame = 0.0f;
         pp->type = w->pJoint_kind[w->Null_rot] >> 12;
-        pp->key = (u8*) w->pHermite_data[w->Null_rot];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_rot);
         HermiteInterpolation(pp, &v0, hist1);
         pp->frame = w->Mot_frame_max;
         pp->flags |= 2;
@@ -404,7 +415,7 @@ void MotionSetCore(cModel* m, void* w_, void* data_, int seq_, int hokan, int fl
             if (cam->parts[4] != 0xFF) {
                 pp->frame = 0.0f;
                 pp->type = w->pJoint_kind[cam->parts[4]] >> 12;
-                pp->key = (u8*) w->pHermite_data[cam->parts[4]];
+                pp->key = (u8*) MOTION_KEY(w, cam->parts[4]);
                 HermiteInterpolation(pp, &v2, hist0);
             }
             cam->frame = 0;
@@ -660,6 +671,10 @@ void MotionMoveCore(cModel* m, MotionWork* w, int flag)
     if (w->pMot == 0) {
         return;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    u32* native_keys = w->pHermite_data;
+    Re4dcMotionLease keys(w->pMot, &native_keys, native_keys);
+#endif
     if (!(w->Mot_attr & 0x8000)) {
         w->Mot_frame = SEQ_FRAME(w->Seq.frame);
     } else {
@@ -718,7 +733,7 @@ void MotionMoveCore(cModel* m, MotionWork* w, int flag)
                 continue;
             }
             pp->type = info >> 12;
-            pp->key = (u8*) w->pHermite_data[i];
+            pp->key = (u8*) MOTION_KEY(w, i);
             if (i == cam->parts[0]) {
                 HermiteInterpolation(pp, &cam->out[0], cam->hist[0]);
                 if (w->Mot_attr & 0x40) {
@@ -769,7 +784,7 @@ void MotionMoveCore(cModel* m, MotionWork* w, int flag)
             MOTION_PARTS(p)->flags |= 0x80000000;
         }
         pp->type = w->pJoint_kind[i] >> 12;
-        pp->key = (u8*) w->pHermite_data[i];
+        pp->key = (u8*) MOTION_KEY(w, i);
         if (MOTION_PARTS(p)->flags & 0x04000000) {
             pp->flags |= 8;
         } else {
@@ -976,6 +991,10 @@ void MotionGetSpeed(cModel* m, MotionWork* w, int flag, Vec* pos, Vec* rot)
     Mtx rm;
     int flip;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    u32* native_keys = w->pHermite_data;
+    Re4dcMotionLease keys(w->pMot, &native_keys, native_keys);
+#endif
     w->Mot_frame = SEQ_FRAME(w->Seq.frame);
     pp->flags = 0;
     w->Ang_old = w->Ang;
@@ -1000,14 +1019,14 @@ void MotionGetSpeed(cModel* m, MotionWork* w, int flag, Vec* pos, Vec* rot)
     if (w->Null_pos != 0xFFFF) {
         pp->frame = w->Mot_frame;
         pp->maxFrame = w->Mot_frame_max;
-        pp->key = (u8*) w->pHermite_data[w->Null_pos];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_pos);
         pp->type = w->pJoint_kind[w->Null_pos] >> 12;
         HermiteInterpolation(pp, &a, MOT_HIST(w, flip, 1));
     }
     if (w->Null_rot != 0xFFFF) {
         pp->frame = w->Mot_frame;
         pp->maxFrame = w->Mot_frame_max;
-        pp->key = (u8*) w->pHermite_data[w->Null_rot];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_rot);
         pp->type = w->pJoint_kind[w->Null_rot] >> 12;
         HermiteInterpolation(pp, &b, MOT_HIST(w, flip, 0));
     }
@@ -1071,6 +1090,10 @@ void MotionGetPosition(cModel* m, Vec* pos, Vec* rot)
     HermitePrm* pp;
     int flip;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    u32* native_keys = w->pHermite_data;
+    Re4dcMotionLease keys(w->pMot, &native_keys, native_keys);
+#endif
     pos->x = pos->y = pos->z = 0.0f;
     rot->x = rot->y = rot->z = 0.0f;
     w->Mot_frame = SEQ_FRAME(w->Seq_old.frame);
@@ -1095,14 +1118,14 @@ void MotionGetPosition(cModel* m, Vec* pos, Vec* rot)
     if (w->Null_pos != 0xFFFF) {
         pp->frame = w->Mot_frame;
         pp->maxFrame = w->Mot_frame_max;
-        pp->key = (u8*) w->pHermite_data[w->Null_pos];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_pos);
         pp->type = w->pJoint_kind[w->Null_pos] >> 12;
         HermiteInterpolation(pp, pos, MOT_HIST(w, flip, 1));
     }
     if (w->Null_rot != 0xFFFF) {
         pp->frame = w->Mot_frame;
         pp->maxFrame = w->Mot_frame_max;
-        pp->key = (u8*) w->pHermite_data[w->Null_rot];
+        pp->key = (u8*) MOTION_KEY(w, w->Null_rot);
         pp->type = w->pJoint_kind[w->Null_rot] >> 12;
         HermiteInterpolation(pp, rot, MOT_HIST(w, flip, 0));
     }

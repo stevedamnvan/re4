@@ -36,10 +36,17 @@ textures. The actual core reservation is now **1,501,312 bytes**, down from
 473,696 since D322. Core paths now convert through their source layout; palette,
 mip, CPU-noise and unreviewed backing remain. The full reference is selectable.
 
-The enemy still needs 3,577,728 bytes with 956,192 free at its first request
-(**2,621,536-byte / 2.50 MiB shortfall** before overhead). Source 3D emits diagnostic
-packets, but source hold still yields zero model presentations. This is not a
-restored cabin or gameplay. Read [D324](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+D325 adds selectable enemy motion-key residency while D324 remains the accepted
+integration/reference asset selection. The normal loader requests 1,907,456 instead
+of 3,577,728 bytes, still fails with 956,192 free, and keeps the required 1,126,272-byte
+block pool. No enemy heap recovery is claimed. Hot keys persist after evaluations;
+source pointer/eviction/cancellation tests and a native SH-4 cache fixture pass.
+The 75-clip prefetch profile remains diagnostic: complete repeated-use/response and
+concurrency closure is required before promotion. Its provisional net capacity
+saving is only about 0.62 MiB after conservative metadata/allocator costs, not the
+1.59 MiB body-request reduction. Continue qualified resource-lifetime recovery and
+the existing source-driven 3D integration; source hold and room acceptance remain
+unresolved. See [D325](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d325-motion-key-residency-candidate).
 
 ARAM/event/audio, inventory, full manual controls, transitions/retry and physical
 hardware remain open. The first three source rooms remain the objective.

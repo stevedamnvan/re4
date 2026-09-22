@@ -399,11 +399,19 @@ void TaskKill(TASK* t)
         OSCancelThread(&t->Thread);
         break;
     case TASK_RUN:
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        // Native disc I/O can yield while this source status is still RUN.
+        // Only the actual executing owner may exit itself. A different task
+        // must use the cancellation drain before its stack can be destroyed.
+        if (OSGetCurrentThread() == &t->Thread) TaskExit();
+        else OSCancelThread(&t->Thread);
+#else
         if (t->Status & TASK_SUSPEND) {
             OSCancelThread(&t->Thread);
         } else {
             TaskExit();
         }
+#endif
         break;
     }
     t->Status = TASK_NONE;

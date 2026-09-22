@@ -1,3 +1,4 @@
+#include "native_motion.h"
 // Dolphin OS interface over KallistiOS: threads, thread queues, semaphores,
 // interrupts, time, stopwatches, arena/heaps (heaps are the SDK's own OSAlloc.c
 // compiled in platform/sdk), reset, font, console queries.
@@ -298,6 +299,7 @@ OSThread* OSGetCurrentThread(void)
 void OSExitThread(void* val)
 {
     OSThread* t = threadOf(thd_current);
+    if (re4dc_motion_thread_busy(thd_current)) re4dc_missing("thread exit during motion lease");
     t->val = val;
     t->state = OS_THREAD_STATE_MORIBUND;
     thd_exit(val);
@@ -307,14 +309,25 @@ void OSCancelThread(OSThread* thread)
 {
     if (thread->kt != NULL && thread->kt != thd_current) {
         int old = irq_disable();
+        // A KOS read can yield inside a source evaluation. Let its bounded
+        // native resource scope finish before thd_destroy discards its stack.
+        // Hold IRQ exclusion across the final zero-busy check and destruction.
+        while (re4dc_motion_thread_busy(thread->kt)) {
+            thread->suspend = 0;
+            thread->gateCount = 0;
+            unpark(thread);
+            irq_restore(old);
+            thd_pass();
+            old = irq_disable();
+        }
         if (thread->kt->state == STATE_WAIT && thread->kt->wait_obj == &g_gate) {
             thread->kt->wait_obj = NULL;
             thread->kt->state = STATE_READY;
             thd_add_to_runnable(thread->kt, false);
         }
-        irq_restore(old);
         thd_destroy(thread->kt);
         thread->kt = NULL;
+        irq_restore(old);
     }
     thread->state = OS_THREAD_STATE_MORIBUND;
 }

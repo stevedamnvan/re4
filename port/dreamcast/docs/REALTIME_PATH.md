@@ -1,15 +1,18 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Current measured candidate D324 keeps the visible source menu, compact r100
-archive and required 1,126,272-byte block pool. Qualifying core effect paths and
-extending existing upload-only texture externalization reduces the actual core
-reservation to 1,501,312 bytes: another 473,696 source-heap bytes beyond D322.
-First em12 still requests 3,577,728 with 956,192 free (2,621,536 short before
-overhead). Source frame1234 still holds model presentation; no room/playability
-acceptance. Continue large resource-lifetime recovery with the source-driven
-native scene/actor/event connection. See [D324](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+D325 adds selectable enemy motion-key residency while D324 remains the accepted
+integration/reference asset selection. The normal loader requests 1,907,456 instead
+of 3,577,728 bytes, still fails with 956,192 free, and keeps the required 1,126,272-byte
+block pool. No enemy heap recovery is claimed. Hot keys persist after evaluations;
+source pointer/eviction/cancellation tests and a native SH-4 cache fixture pass.
+The 75-clip prefetch profile remains diagnostic: complete repeated-use/response and
+concurrency closure is required before promotion. Its provisional net capacity
+saving is only about 0.62 MiB after conservative metadata/allocator costs, not the
+1.59 MiB body-request reduction. Continue qualified resource-lifetime recovery and
+the existing source-driven 3D integration; source hold and room acceptance remain
+unresolved. See [D325](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d325-motion-key-residency-candidate).
 
-Updated 2026-09-21; current integration candidate D324.
+Updated 2026-09-21; accepted integration D324; selectable residency experiment D325.
 
 Historical renderer measurements retain their original revision identities.
 **Execution priority belongs to [PLAYABLE_PATH.md](PLAYABLE_PATH.md).** This file

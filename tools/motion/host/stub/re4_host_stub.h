@@ -1,3 +1,9 @@
+#ifndef PPC_REG
+#define PPC_REG(...)
+#endif
+#ifndef RE4_INLINE
+#define RE4_INLINE
+#endif
 // Host (x86-64) stand-in for the game headers that the compiled game sources include
 // (src/game/motion.cpp, ik.cpp, the functions extracted from math_sub.cpp / sub2.cpp / model.cpp
 // and the SDK's C matrix code). Only what those translation units need: 32-bit fixed-width types,
@@ -19,7 +25,10 @@ typedef int32_t s32;
 typedef int64_t s64;
 typedef uint8_t u8;
 typedef uint16_t u16;
-typedef uint32_t u32;
+// Match the recovered native game ABI: newlib uint32_t is unsigned long on
+// SH-4, while source u32 and the native key-pointer bridge use unsigned int.
+typedef unsigned int u32;
+static_assert(sizeof(u32) == 4, "fixture requires 32-bit source words");
 typedef uint64_t u64;
 typedef float f32;
 typedef double f64;

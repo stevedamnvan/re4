@@ -11,4 +11,5 @@ struct RealMotionCheckResult {
     float max_world_error;
 };
 
-RealMotionCheckResult run_real_motion_checks();
+RealMotionCheckResult run_real_motion_checks(void* motion_override = nullptr,
+    void (*after_evaluation)(void*) = nullptr);

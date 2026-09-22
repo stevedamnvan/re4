@@ -625,3 +625,207 @@ active/blending clips, source header readers, events, per-instance pins, loading
 scratch and retry/retire ownership must be measured. Blender is secondary; the
 isolated static roundtrip/geometry experiment is not a main-branch runtime change.
 See the current allocation-backed priorities in R4_ASSET_RESIDENCY_PLAN.md.
+
+## D325: motion key residency candidate
+
+D324 remains the accepted integration/reference asset selection. D325 is a
+selectable implementation and diagnostic checkpoint, **not an encounter-qualified
+prefetch policy or successful enemy allocation**. No animation, effect, mesh,
+SEQ event, enemy state or source hold flag is deleted to make the result fit.
+
+### Source connection and ownership
+
+`prepare_enemy_motions.py` reuses `le_mirror` qualification, static REL compaction,
+the existing FCV codec and DVD payload replacement. Shared `compact_spans()` now
+also supports an inserted header slot. DRS retains its original DVD/sound records;
+only the main-body request points at the smaller prepared body. Original main
+payload bytes remain on disc, never loaded alongside the replacement. Exact LE
+clips are separate identity-addressed files, not another animation format.
+
+`readEmData()` binds the MTC table before module consumers. Source FCV headers,
+joint-kind/number arrays, frame counts, ordinal slots and SEQ tables remain in the
+resident archive. Cache entries contain full exact LE clips; every load validates
+length, CRC/FNV, header equality and all key offsets before publishing relocated
+pointers. No source `MotionWork` or `CameraMotionWork` contains an evictable cache
+address: only evaluation-local tables do. Hermite histories retain indices/values,
+not key addresses. Shape evaluation's table is local stack work.
+
+| Source consumer / boundary | Required lifetime and native connection |
+|---|---|
+| em12 module initialization / `readEmData` | Model/Work references, source headers and SEQ/EFF remain archive-owned. Stable header proxies are retained; bind/prefetch precedes prolog consumption. |
+| `MotionSetCore`, `MotionMoveCore`, `MotionGetSpeed`, `MotionGetPosition` | Existing source evaluator runs unchanged on leased keys. Blend/second MotionWork can acquire the same or another entry. Pins protect every evaluation; release retains cached keys. |
+| `CameraMotion` construction/move and `CalculateShape_new` | Same FCV key boundary is adapted; no assumption that every FCV is skeletal. These adapters compile and preserve PPC preprocessing; this checkpoint's real pose fixture is skeletal, not full camera/morph acceptance. |
+| `EspDataLoad` and effect users | Borrow TPL/ANM/EST/SST/path/EFM pointers with reference-counted release. Entire EFF family stays resident. No justified effect eviction boundary is implemented here. |
+| `InitModule`, room heap retirement | Unbind before archive destruction; retire before room-heap replacement. Refuse retirement while pinned. D325 supports prepared room-heap 4 archives only; stage/frozen/ARAM swap ownership remains rejected/unqualified. |
+
+The new `native_motion` adapter uses existing `storage::Arena/read_file` and its
+bounded bounce storage. A reader mutex is acquired before `fs_open` can yield;
+contention retains the existing explicit reentry result. Cache access/load is
+serialized; hot entries never become LRU victims, cold entries are evicted only
+under capacity pressure and never while pinned. The original full archive remains
+selectable and takes its ordinary source evaluation path.
+
+### Preserved source prefetch and concurrency audit
+
+`audit_enemy_motion_prefetch.py` uses the **existing** enemy inventory and source
+references, not another extraction or a replay-used list. `PL_ARC_PTR` word indices
+are inventory ordinals +4. WALK expands base..base+5; BACK includes both operands;
+actual FCV tags filter out SEQ companions. The current conservative response,
+locomotion and cabin-attack closure selects 75 clips / 952,768 bytes. It includes
+weapon/damage variants rather than only the four sampled poses.
+
+**This is incomplete.** All direct em10 references cover 112 clips / 1,418,592
+bytes; 33 more entries need initialization/module Work-table and indirect/event
+resolution. Indirect R1 dispatch, authored spawns, all active instances,
+blend/component/camera/shape use and prefetch-release boundaries still require
+closure. The audit always reports `source_complete:false`; producing this candidate
+requires `--diagnostic-incomplete-prefetch`. Do not promote 75 clips as the complete
+repeated-use/immediate-response set. Two largest cold clips provide a diagnostic
+capacity reserve, not proof of sufficient gameplay concurrency. An unchanged set
+larger than that selection can still thrash; require a closed set before acceptance.
+
+Source scheduling normally suspends the parent across native task I/O until
+`TaskSleep`; ISR work has separate ownership. `pCTask` is a scheduler cursor, not
+the native owner. Cache scopes and pins track `thd_current` under IRQ exclusion.
+`OSCancelThread` drains outstanding cache I/O/evaluations before `thd_destroy`,
+keeping IRQ exclusion across the final empty check and destruction. `TaskKill`
+now distinguishes the actual running thread: another task marked RUN during a
+native I/O yield goes through cancellation, not the caller's `TaskExit`. Self exit
+with an active lease is explicitly rejected. `systemResetCommon` calls
+`TaskAllClear` before `EmReadInit`; `InitModule` unbinds before freeing backing.
+A focused host check compiles the **actual TaskKill/OSCancelThread bodies** with
+the actual cache, blocks a read, and verifies no destroy before I/O and pin release.
+This is supporting evidence; full game cancellation/retry during loaded combat is
+not established because the enemy body still fails its allocation.
+
+### Measured and bounded costs
+
+| Item | D324 reference | D325 selectable candidate |
+|---|---:|---:|
+| Actual first em12 main-body request | 3,577,728 | 1,907,456 |
+| Free at that request | 956,192 | 956,192 |
+| Required block pool / free afterward | 1,126,272 succeeds /966,496 | same |
+| Main-body request reduction | — | 1,670,272 |
+| Enemy allocation / source-heap bytes actually reclaimed | failed /0 | failed /0 |
+| Remaining body-only shortfall | 2,621,536 | 951,264, before cache/overhead |
+| Selected hot key payload | resident in archive | 952,768 |
+| Cold payload capacity reserve | — | 55,168 |
+| Target slot metadata | — | 2,336 |
+
+The prepared body includes 28,928 retained FCV-header bytes, 2,944 table bytes and
+32 header-growth bytes. 145 externalized entries total 1,702,176 bytes. The older
+1,823,552 inventory figure counts source FCV backing, not this exact unique key
+transport; do not claim all of it was removed. Other families and static REL
+remain byte-equivalent after required offset rebasing.
+
+**Net budget is much smaller than the body reduction.** At full selected payload
+capacity, 1,670,272 -1,007,936 -2,336 =660,000 bytes before allocation overhead.
+`motion_bridge` records the OS heap owner; each allocation adds 32 owner bytes,
+32 source MAD-tag bytes and32 OS cell bytes. A conservative 146-allocation bound
+adds 14,016 bytes, giving **645,984 bytes of provisional net recovery with that capacity/overhead**,
+not a measured successful-game saving. The initial 75-hot set plus metadata costs
+962,400 including 76 allocation overheads, leaving707,872 before cold use.
+Retaining all 145 keys hot would instead **increase** this family's total by 48,256
+bytes. This rules out calling a tiny two-clip cache or full-bank prefetch a solution
+to the encounter's remaining memory gap. Further source working-set closure and
+qualified texture/resource-lifetime recovery are still necessary.
+
+Loading replaces the body directly; it never first allocates the 3,577,728-byte
+reference. Cache cold eviction precedes replacement allocation. No new whole-clip
+scratch copy is introduced; shared storage bounce remains 64 KiB. The per-clip
+cache publication peak is bounded by its payload budget; allocator metadata,
+archive, shared bounce and whole-game loading/retry peaks are separate costs.
+
+### Evidence and decision
+
+The existing real-motion fixture now accepts an alternate motion pointer and an
+after-evaluation hook. `Makefile.residency` links the same source motion/IK/math,
+actual native cache/storage and existing platform RAM logger. It is a diagnostic
+executable using KOS-owned test allocations, **not source-heap or room acceptance**.
+The real em12 fixture is model 440/motion 1, 34 parts, 26 joints, four sampled poses.
+A separate pressure phase changes only fixture hot flags to make that motion
+cold, checks retained source pointers, and evicts/reloads it between evaluations.
+No game candidate assets are changed by that stress phase.
+
+Host: all 34 parts match at the four poses with zero measured root/angle/world
+error after 634 forced evictions. Real-key host fixture: 75 initial loads/952,768
+bytes; 100 warm repetitions add 0 misses/bytes. Peak cached payload 1,007,776;
+peak pinned 32,416; host slot metadata 3,488 (host pointers are wider). Host 528 us
+wait is not target I/O evidence. Synthetic tests also hold one cold pin while
+another entry is replaced, verify every relocated key and an unchanged archive,
+and observe ownership through a yielding read and cancellation.
+
+Final Flycast timings/identities and the final normal-loader replay are recorded
+in the private evidence manifests listed in the handoff. The SH-4 cache test must
+show zero warm reloads, bounded numerical errors and clean retirement. Cold disc
+wait is reported as a resource stall, never a gameplay speedup. There is no
+physical-hardware test, complete encounter hot-set closure, live combat timing,
+loaded-enemy peak, event/audio acceptance or successful death/retry yet.
+
+Keep the selectable adapter and tests; **do not promote the incomplete prefetch
+profile**. Continue allocation-backed lifetime work and source prefetch closure
+alongside the existing recovered-game renderer connection. Do not restart model
+extraction, substitute the cabin prototype loop, clear source hold or create a
+new streaming framework. D324 remains the accepted reference; three-room goal
+and the other existing backlogs remain active.
+
+Final target evidence:
+
+- Normal loader: `C:/Flycast-Evidence/re4-dreamcast/d325c-motion-request`.
+  Exact source title capture, allocation trace and model-boundary snapshot are
+  preserved with a validated manifest. Main-body request 1,907,456 still fails
+  with 956,192 free. Source heap 9,475,968 and post-block 966,496 are unchanged.
+  No native motion bind occurs in this run; no enemy heap recovery is credited.
+- Cache/source-pose fixture: `C:/Flycast-Evidence/re4-dreamcast/d325b-motion-cache`.
+  75 initial misses/read 952,768 bytes; 100 repetitions/7,500 evaluations add
+  **zero misses and zero bytes**. Separate forced-pressure phase finishes at
+  185 cumulative misses/loads, 34 evictions and 2,743,392 cumulative bytes read.
+ Peak cache payload 981,440; peak pinned 32,416; target metadata 2,336;
+ peak payload+metadata 983,776. These do not include KOS allocator headers or the
+ separate 1,907,456-byte test archive. Worst resource wait 273,519 us (273.519ms),
+ including read/validation and mutex wait where present. Emulated CD timing is
+ not physical-disc acceptance or a live input-response measurement.
+ Four source poses pass: root error 0.00000381, angle 0.00000003, world 0.00036621;
+ existing bounds are 0.001/0.0002/0.05. Every cache load validates and relocates
+ all key pointers; the fixture also checks retained source fields and unchanged
+ archive bytes through pressure/reload. Clean cache retirement leaves 0 test-owned
+ payload bytes. Effect, shape and camera behavior need their own runtime fixtures.
+
+Cache ELF SHA256 `7428cef433acd19ecf8778a1d9c71768d52fa4c47346a36f65d2b2aee1ce6423`;
+cache disc SHA256 `755e916582ea12ec30e259cb72214a5c4ec09f317251bbc0a7416c7818c079fb`.
+KOS `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`, SH GCC15.2.0,
+Flycast `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`.
+Game text/data/BSS 2,275,740/75,620/672,632: +8,096 text/+448 BSS versus D324,
+without changing the measured source-heap capacity. Same five missing stubs.
+
+Focused checks: 4 motion-residency (including actual TaskKill/OSCancelThread drain),
+5 shared UI/package/storage,3 compact-archive and27 mirror checks pass. PPC
+preprocessed tokens match the 0518c93 source for motion/read/camera/shape/scheduler;
+this is not a fresh full ProDG object-comparison claim. The em12 epilog is empty;
+that fact is part of D325's narrow unbind contract, not permission to discard keys
+before a future nonempty module's last CPU consumer. No physical-hardware gate.
+
+Reproduce from existing assets, using fresh private output paths:
+
+```sh
+python3 port/dreamcast/tools/audit_enemy_motion_prefetch.py \
+  --inventory /root/probe/d325-enemy-v2/motion-residency-report.json \
+  --output <fresh-audit.json>
+python3 port/dreamcast/tools/prepare_enemy_motions.py \
+  --source /root/re4data/em/em12.drs --hot-audit <fresh-audit.json> \
+  --diagnostic-incomplete-prefetch --output <fresh-prepared-directory>
+source port/dreamcast/kos-env.sh
+make -C port/dreamcast/game -j4 CORE_RESIDENT_BYTES=1501312
+make -C port/dreamcast/motion -f Makefile.residency residency -j4 \
+  BUILD=<private-cache-build> REAL_FIXTURE_DIR=/root/probe/d325-real \
+  REAL_SOURCE=/root/re4data/em/em12.drs
+```
+
+The last command uses the existing model 440/motion 1 real fixture, not the default
+Leon fixture. Fixture data is private; `/root/probe/d325-cache-data/em12.arc` and
+`/root/probe/d325-cache-fixtures/mot` are packaged with existing `mkdisc.sh`.
+Normal-game packaging uses `/root/probe/d325-mirror`, `/root/probe/d325-fixtures`,
+and `/root/probe/d325-owner-disc`; none is a default asset promotion.
+
+Normal-game ELF SHA256 `4ef0ff3d2f736a9f45538abf29fc1873a9ea0deac9df854f0903b866d749a8de`;
+game disc SHA256 `36ebccb312ab211313ceb67a3bcc778a3aef63f2f66d1a303100568cfcf206e0`.

@@ -1,5 +1,6 @@
 #if defined(RE4DC_GAME) && !defined(__PPC__)
 #include "native_ui.h"
+#include "native_motion.h"
 #endif
 // game/game: the game task (init / stage / room / main loop / door / ending / option steps), the
 // save data front end (cGameSave), the died demo, difficulty points, the primitive buffer and
@@ -1374,6 +1375,7 @@ void gameDoordemo()
 void gameRoomMemInit()
 {
 #if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_motion_retire_all();
     re4dc_ui_retire_room();
 #endif
     if (pG->System_flg & 0x200000) {

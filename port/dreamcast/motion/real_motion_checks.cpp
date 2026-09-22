@@ -134,7 +134,7 @@ void update_max_error(float actual, float expected, float* maximum, bool* finite
 
 } // namespace
 
-RealMotionCheckResult run_real_motion_checks() {
+RealMotionCheckResult run_real_motion_checks(void* motion_override, void (*after_evaluation)(void*)) {
     RealMotionCheckResult result{};
     result.part_count = kPartCount;
     result.frames_tested = kSampleCount;
@@ -147,7 +147,8 @@ RealMotionCheckResult run_real_motion_checks() {
 
     cEm* model = &fixture.model;
     model->Motion.Mot_flag = 0;
-    MotionSetCore(model, &model->Motion, fixture.image, 0, 0, 0, 0);
+    MotionSetCore(model, &model->Motion, motion_override ? motion_override : fixture.image, 0, 0, 0, 0);
+    if(after_evaluation) after_evaluation(model);
     result.joint_count = model->Motion.Joint_num;
     result.max_frame = model->Motion.Mot_frame_max;
     if(result.joint_count != kJointCount ||
@@ -161,10 +162,12 @@ RealMotionCheckResult run_real_motion_checks() {
         model->Motion.Mot_attr &= ~1u;
         model->Motion.Seq_frame = kSampleFrames[sample];
         MotionMove(model);
+        if(after_evaluation) after_evaluation(model);
 
         Vec root_position{};
         Vec root_rotation{};
         MotionGetPosition(model, &root_position, &root_rotation);
+        if(after_evaluation) after_evaluation(model);
         const float* root_pos = &root_position.x;
         const float* root_rot = &root_rotation.x;
         for(int axis = 0; axis < 3; ++axis) {

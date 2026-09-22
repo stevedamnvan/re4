@@ -101,6 +101,30 @@ _NATIVE_MAGIC = b'R4NREF\0\0'
 _NATIVE_TABLE_MAGIC = b'R4NTBL\0\0'
 
 
+def compact_spans(decoded, references, ranges):
+    """Replace sorted non-overlapping source spans and rebase observed offsets.
+
+    Returns the compact bytes and original-to-resident offset mapping. A retained
+    reference into a discarded span is rejected, never silently redirected.
+    """
+    for previous,current in zip(ranges,ranges[1:]):
+        if previous[1]>current[0]:raise ValueError('overlapping replacement spans')
+    def mapped(offset):
+        saved=0
+        for a,b,record in ranges:
+            if offset<a or (offset==a and a!=b):break
+            if offset<b:raise ValueError('retained offset enters replaced span')
+            saved+=b-a-len(record)
+        return offset-saved
+    out=bytearray();cursor=0
+    for a,b,record in ranges:
+        out+=decoded[cursor:a]+record;cursor=b
+    out+=decoded[cursor:]
+    for field,base,value in references:
+        struct.pack_into('<I',out,mapped(field),mapped(base+value)-mapped(base))
+    return out,mapped
+
+
 def _compact_upload_only(decoded, references, palettes, textures, allowed):
     """Shared source-layout transform, using the existing converter's offsets.
 
@@ -152,21 +176,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed):
             selected.append(entry)
     ranges=sorted((a,b,record) for a,(b,record) in seen.items())
     if not ranges:raise ValueError('no qualified upload-only payloads')
-    for previous,current in zip(ranges,ranges[1:]):
-        if previous[1]>current[0]:raise ValueError('overlapping texture payloads')
-    def mapped(offset):
-        saved=0
-        for a,b,record in ranges:
-            if offset<=a:break
-            if offset<b:raise ValueError('retained offset enters removed texels')
-            saved+=b-a-len(record)
-        return offset-saved
-    out=bytearray();cursor=0
-    for a,b,record in ranges:
-        out+=decoded[cursor:a]+record;cursor=b
-    out+=decoded[cursor:]
-    for field,base,value in references:
-        struct.pack_into('<I',out,mapped(field),mapped(base+value)-mapped(base))
+    out,mapped=compact_spans(decoded,references,ranges)
     # Append a compact identity index in spare tagged-header space. Existing
     # offset slots/ordinals stay in place, including direct ROOM_ARC_PTR readers.
     table_offset=len(out);table=bytearray()

@@ -3,6 +3,11 @@
 #include <kos.h>
 
 #include <cstring>
+#if defined(__sh__)
+#include <kos/mutex.h>
+#else
+#include <mutex>
+#endif
 
 namespace re4dc::storage {
 namespace {
@@ -20,6 +25,21 @@ constexpr std::size_t kSectorBytes = 2048U;
 // streaming path. Holds at most one bounded chunk or one small package.
 alignas(32) std::uint8_t g_small_file_bounce[kReadChunkBytes + 32U];
 bool bounce_busy = false;
+// Reserve before fs_open: that call may yield too. All users share this
+// existing bounce buffer; a competing reader gets the explicit retry result.
+#if defined(__sh__)
+mutex_t reader_mutex = MUTEX_INITIALIZER;
+struct ReaderGuard {
+    bool acquired = mutex_trylock(&reader_mutex)==0;
+    ~ReaderGuard() { if(acquired) mutex_unlock(&reader_mutex); }
+};
+#else
+std::mutex reader_mutex;
+struct ReaderGuard {
+    bool acquired = reader_mutex.try_lock();
+    ~ReaderGuard() { if(acquired) reader_mutex.unlock(); }
+};
+#endif
 std::uint8_t* small_file_buffer() { return g_small_file_bounce + 16U; }
 
 std::size_t align_up(std::size_t value) {
@@ -64,7 +84,8 @@ void Arena::rewind(std::size_t mark) {
 }
 
 bool read_chunks(file_t file, std::size_t bytes, ChunkConsumer consume, void* context) {
-    if(bounce_busy || !consume) return false;
+    ReaderGuard guard;
+    if(!guard.acquired || bounce_busy || !consume) return false;
     bounce_busy = true;
     bool ok = true;
     while(bytes && ok) {
@@ -92,7 +113,8 @@ bool read_exact(file_t file, void* destination, std::size_t bytes) {
 
 ReadResult read_file(Arena& arena, const char* path) {
     ReadResult result{};
-    if(bounce_busy) { result.error="storage reader re-entry"; return result; }
+    ReaderGuard guard;
+    if(!guard.acquired || bounce_busy) { result.error="storage reader re-entry"; return result; }
     const std::size_t mark = arena.mark();
     const std::uint32_t started = timer_us_gettime64() & 0xffffffffU;
 

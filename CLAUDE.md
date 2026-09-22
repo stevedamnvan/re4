@@ -13,7 +13,46 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D324 core recovery; 2.50 MiB enemy gap remains
+## Current resumption point - D325 selectable key cache; enemy still cannot fit
+
+D325 implements retained hot keys, cold LRU eviction only under pressure,
+evaluation-local relocated pointers, source-owner allocation/free and native task
+cancellation draining. Source consumers and prefetch/concurrency audit are in the
+D325 section of `port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md`.
+The native game still fails its first enemy allocation: request 1,907,456 versus
+956,192 free (body gap 951,264 before the cache). Required block pool still succeeds.
+The 1,670,272 body reduction is **not** actual enemy heap recovery. Provisional
+hot+reserve 1,007,936 and slot/allocator costs leave only about 0.62MiB net capacity
+saving. 75 source-selected hot clips are incomplete; do not promote the profile.
+
+Owned implementation: `tools/prepare_enemy_motions.py`,
+`tools/audit_enemy_motion_prefetch.py`, `game/platform/native_motion.cpp`,
+`game/motion_bridge.cpp`, guarded source motion/camera/shape/read/scheduler hooks,
+and shared storage guard. Full original archives remain selectable. No new
+renderer/decoder/extraction. `Makefile.residency` extends the existing real-motion
+fixture with actual SH-4/KOS cache reads; tests do not accept game heap/gameplay.
+
+Private prepared bytes `/root/probe/d325-enemy-v2`; exact source audit
+`/root/probe/d325-prefetch-final.json`; staging `/root/probe/d325-mirror` and
+`/root/probe/d325-fixtures`. Build game `CORE_RESIDENT_BYTES=1501312`.
+Native cache fixture build `/root/probe/d325-cache-sh4-v2`, real pose data
+`/root/probe/d325-real`. All proprietary assets/evidence stay private.
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d325c-motion-request` (normal
+source menu/block success, enemy still fails before cache bind) and
+`C:/Flycast-Evidence/re4-dreamcast/d325b-motion-cache` (SH-4 cache/pose diagnostic).
+Warm 75-clip set: 100 repeats, 0 new reads. Pressure: 981,440 peak key bytes, 32,416
+peak pinned, 2,336 metadata, 273,519 us worst resource wait. All 34 parts/26 joints
+pass four pose samples after reload; no complete game or physical-hardware claim.
+D324 remains the accepted baseline. Keep the source-hold/3D, enemy/effect/audio,
+complete hot-set/concurrency, actual loaded peaks and transition/retry requirements
+visible. Next work is source-qualified working-set closure and further native
+texture/resource backing recovery, not pretending the remaining memory is solved.
+
+The later-FPS Blender skill is installed at
+`C:/Users/lambd/.codex/skills/re4-blender-model-optimization/SKILL.md`; invoke
+`$re4-blender-model-optimization`. Asset-free backup branch
+`experiment/r100-environment-blender` is pushed at `fa6a536`. The skill preserves
+the rejected D323 pilot and does not promote its assets or supersede residency.
 
 D324 source-menu replay passes with core EFF #1 Path conversion and selectable
 externalized effect/HUD texture backing. Actual core reservation 1,501,312;
@@ -94,7 +133,7 @@ proposals. Read the D319 addendum in R4A_TEXTURE_INVENTORY_CHECKPOINT.md and
 C:/Flycast-Evidence/re4-dreamcast/d319-existing-vq. Preserve the uncompressed fixture.
 
 Implementation bf85bd2 is committed/pushed; D320c now directly loads r100 at3,812,576 versus4,669,568 bytes, recovering
-856,992 real source-heap bytes. The required1,126,272-byte block pool ALLOCATES;
+856,992 real source-heap bytes. The required 1,126,272-byte block pool ALLOCATES;
 blocks0-2 load/create. First enemy3,577,728 still fails with147,360 free (shortfall
 3,430,368 before overhead). 97 offline identities replace upload-only source
 texels; mip/palette/CPU-noise/unreviewed payloads remain. Shared Package/storage

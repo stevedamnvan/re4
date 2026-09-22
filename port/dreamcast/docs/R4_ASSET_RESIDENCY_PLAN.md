@@ -1,15 +1,18 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-Current measured candidate D324 keeps the visible source menu, compact r100
-archive and required 1,126,272-byte block pool. Qualifying core effect paths and
-extending existing upload-only texture externalization reduces the actual core
-reservation to 1,501,312 bytes: another 473,696 source-heap bytes beyond D322.
-First em12 still requests 3,577,728 with 956,192 free (2,621,536 short before
-overhead). Source frame1234 still holds model presentation; no room/playability
-acceptance. Continue large resource-lifetime recovery with the source-driven
-native scene/actor/event connection. See [D324](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md).
+D325 adds selectable enemy motion-key residency while D324 remains the accepted
+integration/reference asset selection. The normal loader requests 1,907,456 instead
+of 3,577,728 bytes, still fails with 956,192 free, and keeps the required 1,126,272-byte
+block pool. No enemy heap recovery is claimed. Hot keys persist after evaluations;
+source pointer/eviction/cancellation tests and a native SH-4 cache fixture pass.
+The 75-clip prefetch profile remains diagnostic: complete repeated-use/response and
+concurrency closure is required before promotion. Its provisional net capacity
+saving is only about 0.62 MiB after conservative metadata/allocator costs, not the
+1.59 MiB body-request reduction. Continue qualified resource-lifetime recovery and
+the existing source-driven 3D integration; source hold and room acceptance remain
+unresolved. See [D325](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d325-motion-key-residency-candidate).
 
-Updated 2026-09-21; current integration reference D324. Historical budgets below
+Updated 2026-09-21; accepted integration reference D324; experiment D325. Historical budgets below
 retain their named checkpoints. This supports PLAYABLE_PATH and REALTIME_PATH;
 it is not a competing prerequisite roadmap.
 
@@ -22,7 +25,7 @@ already recovered room/core/static-REL/primitive bytes again.
 
 | Existing measured backing | Bytes | Proposed lever and acceptance limit |
 |---|---:|---|
-| em12 FCV bank (153 clips) | 1,823,552 | Keep compact headers/identities, load and pin active/blending clips via source motion boundaries. Largest clip32,416. A hypothetical256–512KiB cache leaves1,299,264–1,561,408 gross bytes before new metadata/scratch; not an accepted cache size or net saving. Preserve direct header readers, events, actor sharing, release/retry and source timing. |
+| em12 FCV bank (153 source entries) | 1,823,552 | D325 externalizes145 entries /1,702,176 unique transport bytes, retaining headers/events. Main body drops1,670,272, but provisional hot+reserve costs1,007,936 plus metadata/allocator costs: roughly645,984 net at conservative capacity bound.75-clip profile incomplete; full-bank prefetch costs more than reference. Close source repeated-use/response/concurrency set before promotion; no tiny cache assumption. |
 | em12 eligible nonpalette/nonmip texture estimate | 488,960 | Extend current source identity/native upload ownership to the enemy archive, then remove actual backing. CPU readers and whole-family qualification still required; retained token/table costs reduce the saving. No whole-archive load before discarding. |
 | Remaining r100 base-level source texels | 968,736 | Existing D313 inventory1,830,048 minus D320 removed861,312; not a fresh inventory or all safe-to-remove bytes. Primarily pending mip/palette/unreviewed families. Preserve actual mip/filter/alpha/CPU semantics and native compact VRAM representation; shared cache has finite capacity. |
 | Current player/handgun fixed-reservation slack | 295,648 | Present loads0x101a20/0x3e300 versus reservations0x118000/0x70000. Only a candidate ceiling: audit other required weapons/costumes, moduleBSS, second transfers and overlap before shrinking or adapting ownership. |

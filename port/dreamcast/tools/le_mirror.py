@@ -1878,10 +1878,15 @@ def prepare_room_archive(rel, data):
 
 
 
+# Enemy/player DRS uses this second source signature; its structural validation
+# is already performed by fmt_drs/tools.drs before any payload replacement.
+DRS_MAGIC = bytes.fromhex('836e834a835a82cc8341837a815b815b815b815b815b815b815b814981498149')
+
+
 def native_payload_slot(converted_container):
     """Validate the existing one-main-payload DVD transport contract."""
     data = converted_container
-    if len(data) < HEADER_TABLE or data[:32] != CONTAINER_MAGIC:
+    if len(data) < HEADER_TABLE or data[:32] not in (CONTAINER_MAGIC, DRS_MAGIC):
         raise ValueError('native room requires a converted DVD container')
     payload_headers = []
     ended = False

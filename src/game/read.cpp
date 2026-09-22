@@ -1,4 +1,7 @@
 #if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "native_motion.h"
+#endif
+#if defined(RE4DC_GAME) && !defined(__PPC__)
 #include "native_ui.h"
 #endif
 // game/read: room / core / option / enemy / player / weapon data loading (D:/Bio4/Prog/read.cpp).
@@ -323,6 +326,10 @@ void OptionDataRead()
 // when bit3) and the separately copied module (bit0), clears the slot.
 void InitModule(ReadModule* m)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Required before archive destruction, including the separately linked REL.
+    re4dc_motion_unbind(m->pArc);
+#endif
     if (m->pModule != NULL && (m->flag & 2)) {
         DLL_Unlink(m->pModule);
     }
@@ -527,6 +534,12 @@ int readEmData(ReadModule* m, int id, void* addr, u32 size)
         pArc = addr;
         newSize = len;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (!re4dc_motion_bind(pArc, len)) {
+        re4dc_missing("invalid prepared enemy motion archive");
+        return 0;
+    }
+#endif
     if (e->dll != 0) {
         pModule = (void*) (*(u32*) ((u8*) pArc + 4) + (u32) pArc);
         dataSize = (u32) pModule - (u32) pArc;
