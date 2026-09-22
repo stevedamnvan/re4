@@ -21,6 +21,10 @@ struct Entry { re4dc::texture::Package package; Key key{}; unsigned frame=0; boo
 struct Source { Re4dcUiImage image{}; Key key{}; };
 Entry entries[kTextureCount]; Source sources[256]; unsigned nsource;
 re4dc::texture::SourceIdentityTable room_identities,core_identities;unsigned identity_hits;
+// Match the recovered loader's four module owners; texture uploads still share
+// the existing cache and VRAM budget. These views own no texels or allocations.
+struct EnemyIdentity { void* archive=nullptr; re4dc::texture::SourceIdentityTable table; };
+EnemyIdentity enemy_identities[4];
 Re4dcUiQuad quads[kQuadCount]; Entry* handles[kQuadCount]; unsigned nquad,frame,used,peak,staging_peak;
 unsigned dropped,unsupported,missing,drawn,culled,loads,reclaimed; bool ready,frame_ready;
 extern "C" int re4dc_vi_black();
@@ -59,6 +63,8 @@ bool image_key(const Re4dcUiImage& image,Key& key) {
     Key external{};
     int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
     if(!native)native=core_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
+    for(auto& e:enemy_identities)if(!native && e.archive)
+        native=e.table.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
     if(native<0 || (native && (image.palette || image.palette_bytes))) {
         re4dc_log("native source identity: incompatible descriptor rejected\n");return false;
     }
@@ -136,6 +142,23 @@ extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
     re4dc_log("native room identities: %s count=%u archive=%u metadata_owner=room\n",ok?"ok":"REJECTED",room_identities.count(),bytes);
     return ok;
 }
+extern "C" int re4dc_ui_bind_enemy(void* archive,unsigned bytes){
+    re4dc::texture::SourceIdentityTable table;
+    if(!table.adopt(archive,bytes))return 0;
+    if(!table.count())return 1; // ordinary archive; no view needed
+    EnemyIdentity* slot=nullptr;
+    for(auto& e:enemy_identities){if(e.archive==archive)return 0;if(!e.archive && !slot)slot=&e;}
+    if(!slot)return 0;
+    slot->archive=archive;slot->table=table;nsource=0;
+    re4dc_log("native enemy identities: count=%u archive=%u metadata_owner=enemy upload_staging=0\n",table.count(),bytes);
+    return 1;
+}
+extern "C" void re4dc_ui_unbind_enemy(void* archive){
+    for(auto& e:enemy_identities)if(archive && e.archive==archive){e.table.clear();e.archive=nullptr;}
+    // Queued packets own copied native vertices/headers and cache handles; no
+    // queued reader borrows archive texels. This does not free live VRAM uploads.
+    nsource=0;
+}
 extern "C" void re4dc_ui_retire_room(){
     if(ready && re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready)
         re4dc_missing("native room retire fence failed");
@@ -143,6 +166,7 @@ extern "C" void re4dc_ui_retire_room(){
     // reloaded from their stable identities; no archive texels are needed.
     // Core descriptors belong to the persistent core region and survive this reset.
     nquad=0;model_used=0;nsource=0;room_identities.clear();identity_hits=0;
+    for(auto& e:enemy_identities){e.table.clear();e.archive=nullptr;}
     for(auto& entry:entries)close_entry(entry);
 }
 

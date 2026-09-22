@@ -829,3 +829,124 @@ and `/root/probe/d325-owner-disc`; none is a default asset promotion.
 
 Normal-game ELF SHA256 `4ef0ff3d2f736a9f45538abf29fc1873a9ea0deac9df854f0903b866d749a8de`;
 game disc SHA256 `36ebccb312ab211313ceb67a3bcc778a3aef63f2f66d1a303100568cfcf206e0`.
+
+
+## D326: enemy upload-only texture backing
+
+Keep as a selectable integration candidate, not a promoted encounter. D324 remains
+accepted; D325 motion cache/prefetch/concurrency audit is preserved. No meshes,
+source motions, SEQ events, effect behavior tables or gameplay code are removed.
+
+### Connection and ownership
+
+- Offline `prepare_enemy_motions.py --textures` reuses `prepare_native_ui`'s
+  exact-package validation, `compact_spans` offset rebasing and NTR serializer.
+  The selection/index operations are factored out of the existing room/core
+  producer; their tests and real motion-only byte equivalence pass. There is no
+  additional decoder, compressor, inventory or prepared-room transport.
+- Source `readEmData()` -> `re4dc_ui_bind_enemy()` -> existing
+  `SourceIdentityTable::adopt()/lookup()` -> existing `image_key()`/shared cache
+  -> `Package::open_streamed()/upload()/release_payload()` with the existing
+  64KiB storage reader. Four nonowning module views cost96 additional BSS bytes;
+  no second texture cache or VRAM budget is introduced.
+- Binding happens before model/effect TPL relocation and module consumers.
+  Stable archive-owned32-byte identity records replace discarded image data.
+  Identity lookup continues to work after the source mutates TEXHeader.data.
+  InitModule unbinds after DLL_Unlink and before archive free. Existing room
+  retirement fences the GPU, clears queued native work and all enemy views.
+  Queued native packets own copied geometry/header/cache handles; the view's
+  retirement does not free in-flight VRAM. Full loaded-enemy retry is still open.
+
+The source contracts inspected are Em12Set/WeaponSet -> em10ModelInit/body and
+accessory model creation -> cModelInfo/calcTplAddr/commonModelTrans; and
+em10_R0_Init -> EspDataLoad(ARC4) -> espTexRegist -> cTexSys::TexRegist/CalcTplAddr.
+Their selected headers/animation tables remain source-owned; the inspected image
+consumer initializes GX texture objects, which the existing native adapter maps
+to native identity. Palette/CLUT, mip chains and CPU noise ID0xfe are excluded.
+Embedded EFM textures remain unreviewed and resident (6,144 bytes); they are not
+silently counted among the removed payloads. Source offsets, material identities,
+frame selection and the static64-byte REL descriptor remain. Other nonselected
+families are byte-compared after required offset relocation.
+
+### Bytes and actual target result
+
+| Quantity | Bytes / result |
+|---|---:|
+| D324 enemy body / D325 motion candidate |3,577,728 /1,907,456|
+| D326 combined body |1,426,304|
+| Additional body reduction versus D325 |481,152|
+| Texture-only body / saving, all motions resident |3,096,608 /481,120|
+| Source texture payload removed |482,816|
+| Retained identity records / NTR table |1,184 /480|
+| Combined header growth / motion index (already in body) |32 /2,944|
+| Required block pool / free after success |1,126,272 /966,496|
+| Free at first enemy request / body-only shortfall |956,192 /470,112|
+| Actual enemy allocation / heap recovery |failed /0|
+
+The combined body's2,151,424-byte reduction is **not** the total runtime saving.
+Keeping the same diagnostic hot+reserve budget1,007,936, target metadata2,336 and
+conservative allocator overhead14,016 gives a provisional family-budget reduction
+of1,127,136 bytes (1.075MiB). The remaining body+cache lower-bound shortfall is
+1,494,400, before body allocation overhead, later actor/event/audio allocations
+and fragmentation. Complete repeated-use/immediate-response closure may require
+more keys. No tiny evaluation-only cache or replay-derived eviction policy is used.
+
+The body is read directly at its smaller final size; the reference is never first
+loaded into RAM. Original converted sound-container records/payloads stay on disc
+and follow the existing source sound dispatch. Native upload uses the shared
+64KiB bounce and144-byte/package metadata; there is no full-size enemy texture
+staging allocation. The selected37 descriptors share36 exact-reference packages:
+1,875,008 package-file bytes,1,869,824 unique VRAM payload bytes if all resident.
+This is an offline all-images total, not measured simultaneous target residency.
+No new VQ/PAL candidate is generated; no texture resolution/filter/alpha change
+or VRAM saving is claimed. Actual world/actor simultaneous texture use remains
+subject to the shared cache, required rendering and reviewed appearance.
+
+### Validation, evidence and limits
+
+- 13 focused host checks pass:5 native UI/package/storage (real binder added),
+  4 motion-residency/PPC-source checks,3 compact room/core,1 new synthetic enemy
+  transport test.27 existing mirror checks also pass. New transport coverage
+  checks required qualification, source slot/offset identity, retained noise/mip
+  bytes, sound sample/record preservation, stale output and wrong native packages.
+- The actual combined archive passes the existing native implementations under
+  host ASan/UBSan: all37 identities resolve after header-pointer relocation,
+  all37 descriptor uploads succeed through bounded reads, retirement/reload
+  succeeds. Synthetic four-owner tests reject duplicates/capacity/corruption and
+  prove freeing one archive does not invalidate others. This is not SH-4 rendering.
+- Combined real-key host fixture:75 warm misses/952,768 bytes;100 repetitions add
+  zero misses/bytes. Pressure phase:285 cumulative misses,205 evictions,3,200,992
+  bytes read, peak cache1,007,776, peak pinned32,416, host metadata3,488; worst host
+  wait623us is not target disc timing. Every relocated key is checked and the
+  archive remains unchanged. D325's separate SH-4 evidence remains the target
+  cache reference (273,519us worst wait), not a D326 live-game result.
+- Normal Flycast source-menu/New Game replay reaches the same allocation frontier;
+  source frame1233/Rno0=3/System0x800,16 parts/5,507 input/87 output triangles,
+  8,512 peak packet bytes,0 invalid/overflow,8 resource rejects,**0 presentations**.
+  It never reaches enemy texture/cache binding because allocation still fails.
+  Source title menu remains visible; no source hold is forced clear. The90-second
+  capture harness deadline ends the run, not an identified new native fault.
+
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d326-enemy-textures`; validated manifest
+includes the exact fixture, source patch/build inputs, emulator/config/capture
+reader, menu framebuffer, allocation log, RAM snapshot and separate host results.
+Private candidates and commands are in CLAUDE.md. Reproduce with the existing
+D325 producer command plus `--textures /root/probe/d326-fixtures/tex`; omit the
+hot audit and add `--keep-motion-resident` for the independent texture-only case.
+Use fresh output directories. Final producer regenerated byte-identical combined
+and texture-only DRS outputs; motion-only DRS/ARC remains identical to D325.
+
+ELF SHA256 `5c8484f9d89c1917bd85f92f4ce8b1a9c93a00518a2674a51f447960dccad500`;
+disc SHA256 `38d89684269b5ba7635817550c2700f73cbeb9ef2684475591770b3dab4bc6a5`.
+Source base `d3e82e8bae2276f0a18abe27c213fa0d7a60f449` plus preserved dirty inputs;
+KOS `804b3195ebd1a06a27cc2b3a5eacf7a2429040a3`, SH GCC15.2.0,
+Flycast `64491c005db917cc643b50e312f78c5b04ccfa77acebbe1cd07ad6371d422c8a`.
+Text/data/BSS2,276,220/75,620/672,728 (+480 text/+96 BSS versus D325), same five
+missing stubs and unchanged source heap capacity9,475,968. No complete enemy,
+encounter performance, source effect/audio or physical-hardware acceptance.
+
+Keep the adapter and exact selectable candidates; do not change default assets.
+Continue source working-set/prefetch closure and other qualified player/weapon/
+room backing lifetimes alongside the current source-controlled 3D connection.
+Do not count this texture ceiling again, restart extraction, weaken source
+consumers or call the failed allocation an integrated cabin.

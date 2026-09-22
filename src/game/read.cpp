@@ -333,6 +333,9 @@ void InitModule(ReadModule* m)
     if (m->pModule != NULL && (m->flag & 2)) {
         DLL_Unlink(m->pModule);
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_ui_unbind_enemy(m->pArc);
+#endif
     if (m->pArc != NULL && (m->flag & 4)) {
         if (m->flag & 8) {
             Debug_free(m->pArc);
@@ -535,6 +538,10 @@ int readEmData(ReadModule* m, int id, void* addr, u32 size)
         newSize = len;
     }
 #if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (!re4dc_ui_bind_enemy(pArc, len)) {
+        re4dc_missing("invalid prepared enemy texture identities");
+        return 0;
+    }
     if (!re4dc_motion_bind(pArc, len)) {
         re4dc_missing("invalid prepared enemy motion archive");
         return 0;

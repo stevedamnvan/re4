@@ -36,17 +36,22 @@ textures. The actual core reservation is now **1,501,312 bytes**, down from
 473,696 since D322. Core paths now convert through their source layout; palette,
 mip, CPU-noise and unreviewed backing remain. The full reference is selectable.
 
-D325 adds selectable enemy motion-key residency while D324 remains the accepted
-integration/reference asset selection. The normal loader requests 1,907,456 instead
-of 3,577,728 bytes, still fails with 956,192 free, and keeps the required 1,126,272-byte
-block pool. No enemy heap recovery is claimed. Hot keys persist after evaluations;
-source pointer/eviction/cancellation tests and a native SH-4 cache fixture pass.
-The 75-clip prefetch profile remains diagnostic: complete repeated-use/response and
-concurrency closure is required before promotion. Its provisional net capacity
-saving is only about 0.62 MiB after conservative metadata/allocator costs, not the
-1.59 MiB body-request reduction. Continue qualified resource-lifetime recovery and
-the existing source-driven 3D integration; source hold and room acceptance remain
-unresolved. See [D325](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d325-motion-key-residency-candidate).
+D326 extends the existing native identity/upload path to verified enemy texture
+backing. The combined selectable body is **1,426,304 bytes**, another **481,152**
+below D325; texture-only selection is 3,096,608 bytes with all motion resident.
+The normal source menu and required 1,126,272-byte block allocation still work.
+Enemy allocation still fails against **956,192 free**: no enemy heap recovery or
+enemy rendering is claimed. Including D325's diagnostic cache capacity and
+conservative metadata/allocator costs leaves a **1,494,400-byte lower-bound gap**,
+not merely the 470,112-byte body deficit. Future actor/event/audio costs are extra.
+
+D325 hot keys remain cached after evaluation; the combined archive again passes
+100 warm repetitions with zero extra misses/reads in the host fixture. Its 75-clip
+prefetch set is still incomplete, and the source prefetch/concurrency audit remains
+required. D324 remains the accepted integration reference. Keep the existing 3D
+connection moving alongside allocation-backed lifetime work; do not clear source
+hold or promote this candidate as complete room gameplay. See
+[D326](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d326-enemy-upload-only-texture-backing).
 
 ARAM/event/audio, inventory, full manual controls, transitions/retry and physical
 hardware remain open. The first three source rooms remain the objective.

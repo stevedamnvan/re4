@@ -193,6 +193,28 @@ assert(identities.lookup(room.data()+128,16,8,14,crc,fnv)==-1);
 identities.clear();assert(!identities.lookup(room.data()+128,8,8,14,crc,fnv));
 assert(core_identities.lookup(core.data()+128,8,8,14,crc,fnv)==1); // room retirement leaves persistent core binding intact
 assert(core_identities.lookup(room.data()+128,8,8,14,crc,fnv)==0);
+// Actual recovered-game binder: four independent module owners, no extra
+// payload allocation, reject overflow/duplicate/corruption and invalidate views
+// before the caller reuses/frees backing. Rebind recycled addresses safely.
+std::vector<unsigned char> owners[5];for(auto& o:owners)o=core;
+for(unsigned i=0;i<4;++i){nsource=9;assert(re4dc_ui_bind_enemy(owners[i].data(),owners[i].size()));assert(!nsource);}
+assert(!re4dc_ui_bind_enemy(owners[0].data(),owners[0].size()));
+assert(!re4dc_ui_bind_enemy(owners[4].data(),owners[4].size()));
+memset(owners[1].data()+96,0xcd,4); // source TPL pointer relocation
+assert(enemy_identities[1].table.lookup(owners[1].data()+128,8,8,14,crc,fnv)==1);
+re4dc_ui_unbind_enemy(owners[0].data());assert(!enemy_identities[0].archive);
+assert(!enemy_identities[0].table.lookup(owners[0].data()+128,8,8,14,crc,fnv));
+memset(owners[0].data(),0xee,owners[0].size());
+assert(enemy_identities[1].table.lookup(owners[1].data()+128,8,8,14,crc,fnv)==1);
+assert(re4dc_ui_bind_enemy(owners[4].data(),owners[4].size()));
+for(auto& o:owners)re4dc_ui_unbind_enemy(o.data());
+for(auto& e:enemy_identities)assert(!e.archive && !e.table.count());
+owners[0]=core;owners[0][160]^=0x80;
+assert(!re4dc_ui_bind_enemy(owners[0].data(),owners[0].size()));
+owners[0]=core;assert(re4dc_ui_bind_enemy(owners[0].data(),owners[0].size()));
+assert(enemy_identities[0].table.lookup(owners[0].data()+128,8,8,14,crc,fnv)==1);
+re4dc_ui_unbind_enemy(owners[0].data());
+
 for(unsigned byte:{0U,160U,168U,172U,176U,180U,188U,192U,128U,144U,96U,121U}){
  room[byte]^=0x80;assert(!identities.adopt(room.data(),room.size()));assert(!identities.count());room[byte]^=0x80;
 }
@@ -237,6 +259,12 @@ ta=0;render=-1;assert(re4dc::gpu::quiesce()==FenceResult::render_timeout);
 render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
 }
 """
+            source=(ROOT/"port/dreamcast/game/platform/native_ui.cpp").read_text()
+            first=source.index('extern "C" int re4dc_ui_bind_enemy(')
+            last=source.index('extern "C" void re4dc_ui_retire_room(',first)
+            bindings=source[first:last]
+            setup='struct EnemyIdentity {void* archive=nullptr;re4dc::texture::SourceIdentityTable table;};\nEnemyIdentity enemy_identities[4];unsigned nsource;void re4dc_log(const char*,...){}\n'
+            fixture=fixture.replace('int main(',setup+bindings+'int main(',1)
             cpp=root/"fixture.cpp";cpp.write_text(fixture)
             scene=ROOT/"port/dreamcast/room";exe=root/"fixture"
             subprocess.run(["g++","-std=c++17","-fsanitize=address,undefined","-fno-omit-frame-pointer","-I"+str(root),"-I"+str(scene),str(cpp),
@@ -253,6 +281,7 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
         fixture='#include "native_ui.h"\n#include <cassert>\n'
         fixture+='struct Key{unsigned crc,fnv;};struct Source{Re4dcUiImage image;Key key;};Source sources[256];unsigned nsource;\n'
         fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
+        fixture+='struct EnemyIdentity {void* archive=nullptr;Identity table;};EnemyIdentity enemy_identities[4];\n'
         fixture+=body
         fixture+=r"""
 int main(){
@@ -264,6 +293,13 @@ assert(image_size(image)==32);
 """
         fixture+=f"assert(key.crc=={crc}U && key.fnv=={fnv}U);"
         fixture+='assert(nsource==1);assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;image.pixels=(void*)1;assert(!image_key(image,key));assert(nsource==0);room_identities.state=0;core_identities.state=-1;assert(!image_key(image,key));assert(nsource==0);core_identities.state=1;image.palette=nullptr;image.palette_bytes=0;assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;assert(!image_key(image,key));}\n'
+        fixture=fixture.rsplit('}',1)[0]+r"""
+room_identities.state=core_identities.state=0;nsource=0;
+enemy_identities[2].archive=(void*)2;enemy_identities[2].table.state=-1;
+assert(!image_key(image,key) && !nsource); // invalid payload cannot fall back to texel hashing
+enemy_identities[2].table.state=1;assert(image_key(image,key) && nsource==1);
+}
+"""
         with tempfile.TemporaryDirectory() as d:
             root=pathlib.Path(d);cpp=root/"key.cpp";cpp.write_text(fixture);exe=root/"key"
             subprocess.run(["g++","-std=c++17","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)

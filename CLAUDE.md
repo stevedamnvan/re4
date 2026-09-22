@@ -13,40 +13,49 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D325 selectable key cache; enemy still cannot fit
+## Current resumption point - D326 selectable enemy textures + retained key cache
 
-D325 implements retained hot keys, cold LRU eviction only under pressure,
-evaluation-local relocated pointers, source-owner allocation/free and native task
-cancellation draining. Source consumers and prefetch/concurrency audit are in the
-D325 section of `port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md`.
-The native game still fails its first enemy allocation: request 1,907,456 versus
-956,192 free (body gap 951,264 before the cache). Required block pool still succeeds.
-The 1,670,272 body reduction is **not** actual enemy heap recovery. Provisional
-hot+reserve 1,007,936 and slot/allocator costs leave only about 0.62MiB net capacity
-saving. 75 source-selected hot clips are incomplete; do not promote the profile.
+D326 normal boot requests a1,426,304-byte em12 body versus D325's1,907,456 and
+D324's3,577,728. First allocation still fails with956,192 free. Required block
+pool1,126,272 succeeds/free966,496; source heap9,475,968 unchanged. Another481,152
+bytes are removed from requested backing, but **actual enemy heap recovery is0**.
+470,112 body gap plus diagnostic cache1,007,936, metadata2,336 and conservative
+allocator costs14,016 leaves at least1,494,400 still needed, before further
+actors/events/audio/loading headroom. Do not call the body reduction a full fit.
 
-Owned implementation: `tools/prepare_enemy_motions.py`,
-`tools/audit_enemy_motion_prefetch.py`, `game/platform/native_motion.cpp`,
-`game/motion_bridge.cpp`, guarded source motion/camera/shape/read/scheduler hooks,
-and shared storage guard. Full original archives remain selectable. No new
-renderer/decoder/extraction. `Makefile.residency` extends the existing real-motion
-fixture with actual SH-4/KOS cache reads; tests do not accept game heap/gameplay.
+The existing enemy producer now optionally externalizes37 upload-only descriptors
+(36 images) through the existing NTR identity table/shared native cache/storage.
+Source readEmData binds before native consumers; InitModule unbinds after epilog
+before free; room retirement clears the views under the existing GPU fence.
+No new renderer or texture backend. Palette/mip/CPU-noise/unreviewed embedded EFM
+texels remain. Texture-only selection keeps every FCV and requests3,096,608.
+No default asset promotion. D324 remains the accepted reference.
 
-Private prepared bytes `/root/probe/d325-enemy-v2`; exact source audit
-`/root/probe/d325-prefetch-final.json`; staging `/root/probe/d325-mirror` and
-`/root/probe/d325-fixtures`. Build game `CORE_RESIDENT_BYTES=1501312`.
-Native cache fixture build `/root/probe/d325-cache-sh4-v2`, real pose data
-`/root/probe/d325-real`. All proprietary assets/evidence stay private.
-Evidence: `C:/Flycast-Evidence/re4-dreamcast/d325c-motion-request` (normal
-source menu/block success, enemy still fails before cache bind) and
-`C:/Flycast-Evidence/re4-dreamcast/d325b-motion-cache` (SH-4 cache/pose diagnostic).
-Warm 75-clip set: 100 repeats, 0 new reads. Pressure: 981,440 peak key bytes, 32,416
-peak pinned, 2,336 metadata, 273,519 us worst resource wait. All 34 parts/26 joints
-pass four pose samples after reload; no complete game or physical-hardware claim.
-D324 remains the accepted baseline. Keep the source-hold/3D, enemy/effect/audio,
-complete hot-set/concurrency, actual loaded peaks and transition/retry requirements
-visible. Next work is source-qualified working-set closure and further native
-texture/resource backing recovery, not pretending the remaining memory is solved.
+D325 retained hot/cold cache, evaluation-local pointers, thread cancellation and
+source audit remain intact. The75-clip hot set is **incomplete**; the combined
+archive passes100 warm host repetitions with0 new misses/bytes, but neither
+complete concurrency/prefetch nor game cancellation/retry is accepted. SH-4
+D325 cache/pose evidence remains `C:/Flycast-Evidence/re4-dreamcast/d325b-motion-cache`:
+981,440 peak key bytes,32,416 peak pinned,2,336 metadata,273,519us worst wait.
+Keep this separate from D326's normal game, which never reaches enemy binding.
+
+D326 evidence: `C:/Flycast-Evidence/re4-dreamcast/d326-enemy-textures`, validated
+manifest, exact executable/disc/fixtures, source menu capture and allocation/RAM
+snapshot. Source frame1233/Rno0=3/System0x800, zero model presentations. Host
+37-identity relocation/upload/retire/reload checks pass; visible enemy and actual
+simultaneous VRAM remain unqualified. All36 images total1,869,824 native VRAM bytes
+if resident; use the existing shared budget, not a second enemy budget.
+
+Current private prepared inputs `/root/probe/d326-combined` and
+`/root/probe/d326-textures-only`; final-producer byte-equivalent copies at
+`/root/probe/d326-final-combined` and`/root/probe/d326-final-textures-only`.
+Mirror `/root/probe/d326-mirror`, fixtures `/root/probe/d326-fixtures`, disc
+`/root/probe/d326-disc`; build `CORE_RESIDENT_BYTES=1501312`.
+Source prefetch audit `/root/probe/d325-prefetch-final.json` is unchanged.
+Read D325/D326 in `port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md`
+and the existing resource plan. Continue source working-set closure and further
+qualified backing/lifetime recovery with the source 3D connection. Preserve
+required enemy/effect/audio, hold/presentation, loading peaks and retry gates.
 
 The later-FPS Blender skill is installed at
 `C:/Users/lambd/.codex/skills/re4-blender-model-optimization/SKILL.md`; invoke
@@ -73,8 +82,8 @@ and exact dirty-source/executable/assets. D322/full-core references retained;
 default still full0x234000 with existing pre-transfer guard. Runtime native backend
 unchanged in D324. No physical-hardware or full peak/performance acceptance.
 
-Large next memory task is motion/resource residency, not another generic asset
-inventory: em12 FCV backing 1,823,552; existing eligible texture estimate 488,960.
+D325/D326 implement selectable motion/texture residency; do not repeat the old
+1,823,552 FCV /488,960 texture inventory as if it were untouched recovery.
 Preserve active/blending clip lifetime, headers/direct source readers/events and
 complete enemy components. Room/player/weapon native backing can supply the rest;
 calculate net metadata/scratch/VRAM costs, don't promise a fit from raw ceilings.

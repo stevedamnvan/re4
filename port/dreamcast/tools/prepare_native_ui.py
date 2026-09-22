@@ -125,17 +125,8 @@ def compact_spans(decoded, references, ranges):
     return out,mapped
 
 
-def _compact_upload_only(decoded, references, palettes, textures, allowed):
-    """Shared source-layout transform, using the existing converter's offsets.
-
-    The caller qualifies its selected family and supplies a reviewed consumer
-    predicate. Unselected byte ranges remain intact; no runtime decoder added.
-    """
-    n=struct.unpack_from('<I',decoded)[0]
-    offsets=struct.unpack_from('<%dI'%n,decoded,16)
-    tags=[bytes(decoded[16+4*n+4*i:20+4*n+4*i]) for i in range(n)]
-    if min(x for x in offsets if x)<16+8*(n+1):
-        raise ValueError('archive lacks spare native-identity header slot')
+def select_upload_only(decoded, palettes, textures, allowed):
+    """Existing qualified image selection, shared by room/core/enemy producers."""
     selected=[];retained=[];seen={}
     for tpl_off,raw,ctx in palettes:
         if not allowed(ctx):
@@ -175,19 +166,34 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed):
             else:seen[a]=(b,record)
             selected.append(entry)
     ranges=sorted((a,b,record) for a,(b,record) in seen.items())
-    if not ranges:raise ValueError('no qualified upload-only payloads')
-    out,mapped=compact_spans(decoded,references,ranges)
-    # Append a compact identity index in spare tagged-header space. Existing
-    # offset slots/ordinals stay in place, including direct ROOM_ARC_PTR readers.
-    table_offset=len(out);table=bytearray()
+    return ranges, selected, retained
+
+
+def native_identity_index(selected, mapped, original_bytes, resident_bytes):
+    """Serialize the existing NTR records; archive placement belongs to its loader."""
+    table=bytearray()
     for item in selected:
         table+=struct.pack('<3I',mapped(item['source_payload']),mapped(item['source_header']),mapped(item['source_tpl']))
         item['resident_payload']=mapped(item['source_payload'])
         item['resident_header']=mapped(item['source_header'])
         item['resident_tpl']=mapped(item['source_tpl'])
-    table_size=(32+len(table)+31)&~31;new_size=len(out)+table_size
-    native_header=struct.pack('<8s6I',_NATIVE_TABLE_MAGIC,1,len(selected),12,zlib.crc32(table)&0xffffffff,len(decoded),new_size)
-    out+=native_header+table+bytes(table_size-32-len(table))
+    table_size=(32+len(table)+31)&~31
+    header=struct.pack('<8s6I',_NATIVE_TABLE_MAGIC,1,len(selected),12,zlib.crc32(table)&0xffffffff,original_bytes,resident_bytes)
+    return header+table+bytes(table_size-32-len(table))
+
+
+def _compact_upload_only(decoded, references, palettes, textures, allowed):
+    """Shared source-layout transform, using the existing converter's offsets."""
+    n=struct.unpack_from('<I',decoded)[0]
+    offsets=struct.unpack_from('<%dI'%n,decoded,16)
+    tags=[bytes(decoded[16+4*n+4*i:20+4*n+4*i]) for i in range(n)]
+    if min(x for x in offsets if x)<16+8*(n+1):
+        raise ValueError('archive lacks spare native-identity header slot')
+    ranges,selected,retained=select_upload_only(decoded,palettes,textures,allowed)
+    if not ranges:raise ValueError('no qualified upload-only payloads')
+    out,mapped=compact_spans(decoded,references,ranges)
+    table_offset=len(out);table_size=(32+12*len(selected)+31)&~31
+    out+=native_identity_index(selected,mapped,len(decoded),len(out)+table_size)
     struct.pack_into('<I',out,0,n+1)
     struct.pack_into('<I',out,16+4*n,table_offset)
     for i,tag in enumerate(tags+[b'NTR\0']):out[16+4*(n+1)+4*i:20+4*(n+1)+4*i]=tag
