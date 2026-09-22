@@ -357,7 +357,7 @@ int main(){
         key,_=UI.image_identity(image);crc,fnv=[int(x,16) for x in key.split("-")]
         fixture='#include "native_ui.h"\n#include <cassert>\n'
         fixture+='struct Key{unsigned crc,fnv;};struct Source{Re4dcUiImage image;Key key;};Source sources[256];unsigned nsource;\n'
-        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities,player_identities,weapon_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
+        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities,option_identities,player_identities,weapon_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
         fixture+='struct EnemyIdentity {void* archive=nullptr;Identity table;};EnemyIdentity enemy_identities[4];\n'
         fixture+=body
         fixture+=r"""
@@ -372,6 +372,9 @@ assert(image_size(image)==32);
         fixture+='assert(nsource==1);assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;image.pixels=(void*)1;assert(!image_key(image,key));assert(nsource==0);room_identities.state=0;core_identities.state=-1;assert(!image_key(image,key));assert(nsource==0);core_identities.state=1;image.palette=nullptr;image.palette_bytes=0;assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;assert(!image_key(image,key));}\n'
         fixture=fixture.rsplit('}',1)[0]+r"""
 room_identities.state=core_identities.state=0;nsource=0;
+option_identities.state=-1;assert(!image_key(image,key) && !nsource);
+option_identities.state=1;assert(image_key(image,key) && nsource==1);
+option_identities.state=0;nsource=0;
 enemy_identities[2].archive=(void*)2;enemy_identities[2].table.state=-1;
 assert(!image_key(image,key) && !nsource); // invalid payload cannot fall back to texel hashing
 enemy_identities[2].table.state=1;assert(image_key(image,key) && nsource==1);

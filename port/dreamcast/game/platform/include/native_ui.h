@@ -19,6 +19,8 @@ void re4dc_ui_end_frame(int present);
 void re4dc_ui_submit(const Re4dcUiQuad*);
 void re4dc_ui_invalidate_sources();
 int re4dc_ui_bind_core(void*,unsigned);
+int re4dc_ui_bind_option(void*,unsigned);
+void re4dc_ui_unbind_option();
 int re4dc_ui_bind_room(void*,unsigned);
 void re4dc_ui_retire_room();
 int re4dc_ui_bind_player(void*,unsigned);

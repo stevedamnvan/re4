@@ -13,7 +13,67 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D342 native crow and room effect compaction
+## Current resumption point - D343 persistent option compaction
+
+D343 externalizes the persistent option archive's 23 verified upload-only
+textures through the existing native identity/package path. The file loads
+directly into a149,920-byte reservation (full file259,648, old reservation262,144).
+Target source-heap free increases **112,224 bytes** at both required block-pool
+and em12-body points, now2,752,256 /1,636,736. Net archive reduction109,728 plus
+2496 existing slack; metadata/alignment included. No new texture encoding,
+geometry reduction, duplicate full archive, motion eviction or gameplay omission.
+
+The corrected room still fails required allocations: four crows fail model
+initialization (previously five);11360 bytes are requested with10720 free,
+followed by512-byte part, collision/object and path-scratch failures. Source
+title/menu and640x480 diagnostic room remain visible. This is not full-room,
+complete-character, performance, audio, inventory or manual-play acceptance.
+
+A source-input Options round trip resolves discarded images through native
+packages, returns to the title, then reaches room loading. Its colour-bars/EXIT
+capture matches the pinned full-archive reference byte-for-byte; this preserves
+an existing incomplete presentation, not accepted complete options UI. The
+unimplemented mutable card/ARAM fallback now stops before live backing can be
+overwritten; normal separately allocated card scratch remains unchanged.
+
+Keep the selectable saving and continue the complete initialization working-set
+audit. Room SST pricing21952 gross remains unimplemented and insufficient by
+itself to accept the encounter. Hot motion stays cached after evaluation;
+prefetch/concurrency, event activation/mutable snapshots, source presentation,
+audio and three-room progression remain open. Simpler water remains a selectable
+candidate; no PS2-equivalence or current memory saving is claimed.
+
+See [D343](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md#d343-persistent-option-textures).
+
+Selected ELF SHA256 `34771144e0f4475cfe24c11da590f52ce4152d8a90b0944f4107074ba5093ed3`.
+Patched KOS and D342 flags retained; additionally `OPTION_RESIDENT_BYTES=149920`.
+Text/data/BSS2306020 /77012 /673080; +456 text, unchanged aligned BSS/data;
+five prior missing stubs. Default option reservation remains the full0x40000.
+Private mirror `/root/probe/d343-mirror`, producer `/root/probe/d343-option`.
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d343a-option-residency` uses the
+unchanged approach fixture; `d343b-option-menu` uses the committed
+`port/dreamcast/fixtures/option-roundtrip.txt`. Both240-second integration runs
+end at their harness deadline. `d343c-option-reference` uses the pinned D342b
+ELF/full option archive with the same option fixture,100-second deadline.
+No concurrent emulator runs; no physical-hardware or frame-budget claim.
+
+Reproduce with existing `prepare_native_ui.py --compact-option
+/root/re4data/ss/eng/option.dat --textures /root/probe/d327-fixtures/tex --output
+<fresh-private-directory>`; replace only `ss/eng/option.dat` in a fresh mirror.
+The plain tagged archive is not a .dar. Preserve all current room/enemy/event
+inputs. Validation scripts `/root/probe/d343-validate.py`, `d343-analyze.py`;
+capture preparers d343-prepare/d343b-prepare/d343c-prepare must not overwrite
+their existing directories. Sealed evidence records exact disc/tool identities.
+
+14 focused tests pass; all23 private identity descriptors survive source-header
+relocation under ASan/UBSan, and10 unaffected families compare exactly (including
+all10 death palette images). Shared read/cDataSwap PPC tokens unchanged; no new
+ProDG object comparison. Motion remains952768 resident/peak/read,22400 peak pinned,
+2336 metadata,75 loads/misses,6 hits,0 evictions/failures; worst observed wait270941us.
+145 headers/1904 relocated keys validate; warm-up and final counters match.
+Failed actors/unvisited reactions still prevent full working-set qualification.
+
+## Previous D342 checkpoint - native crow and room effect compaction
 
 D342 binds the required crow module through the existing static registry and
 preserves its source-manager archive pointer using the Em12 constructor fix.

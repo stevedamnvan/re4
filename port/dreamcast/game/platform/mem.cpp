@@ -23,7 +23,8 @@ static const unsigned long kSoundSize = 0x80000;    // SND_DATA_TOP 0x80370000 t
 // compact-core report, including identity records/table and 32-byte alignment.
 static const unsigned long kCoreSize = RE4DC_CORE_RESIDENT_BYTES;
 static_assert(kCoreSize >= 32 && kCoreSize <= 0x234000 && kCoreSize % 32 == 0);
-static const unsigned long kOptionSize = 0x40000;
+static const unsigned long kOptionSize = RE4DC_OPTION_RESIDENT_BYTES;
+static_assert(kOptionSize >= 32 && kOptionSize <= 0x40000 && kOptionSize % 32 == 0);
 static const unsigned long kPlayerSize = RE4DC_PLAYER_RESIDENT_BYTES;  // 0x807EC000-0x80904000
 static const unsigned long kWeaponSize = RE4DC_WEAPON_RESIDENT_BYTES;
 static_assert(kPlayerSize >= 32 && kPlayerSize <= 0x118000 && kPlayerSize % 32 == 0);
@@ -41,6 +42,7 @@ void re4dc_mem_init(void)
         return;
     }
     printf("re4dc_mem: selected core reservation %lu bytes\n", kCoreSize);
+    printf("re4dc_mem: selected option reservation %lu bytes\n", kOptionSize);
     printf("re4dc_mem: selected player %lu weapon %lu bytes\n", kPlayerSize, kWeaponSize);
     unsigned long fixed = kSoundSize + kCoreSize + kOptionSize + kPlayerSize + kWeaponSize;
     // Take the largest arena the KOS heap gives us, leaving the runtime some room.

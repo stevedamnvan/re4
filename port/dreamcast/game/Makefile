@@ -147,12 +147,14 @@ $(OBJDIR)/model_bridge.o: model_bridge.cpp
 # Select the full source reference by default. A compact core candidate must
 # match its report; the source DVD queue rejects oversized input before copying.
 CORE_RESIDENT_BYTES ?= 0x234000
+OPTION_RESIDENT_BYTES ?= 0x40000
 PLAYER_RESIDENT_BYTES ?= 0x118000
 WEAPON_RESIDENT_BYTES ?= 0x70000
 .PHONY: core-budget-force
 $(OBJDIR)/core-budget.h: core-budget-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_CORE_RESIDENT_BYTES %s\n' '$(CORE_RESIDENT_BYTES)' > $@.tmp
+	@printf '#define RE4DC_OPTION_RESIDENT_BYTES %s\n' '$(OPTION_RESIDENT_BYTES)' >> $@.tmp
 	@printf '#define RE4DC_PLAYER_RESIDENT_BYTES %s\n#define RE4DC_WEAPON_RESIDENT_BYTES %s\n' '$(PLAYER_RESIDENT_BYTES)' '$(WEAPON_RESIDENT_BYTES)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp

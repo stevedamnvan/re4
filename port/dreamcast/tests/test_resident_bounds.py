@@ -25,6 +25,12 @@ int main(){
  assert(re4dc_resident_read_fits(0x4000,0x4000,0x3000,true,&owner,&cap));
  assert(!re4dc_resident_read_fits(0x4000,0x4000,0x3001,true,&owner,&cap));
  assert(re4dc_resident_read_fits(0x8000,0x8000,0x4000,false,&owner,&cap) && !owner);
+ // A compact option file is read directly; the old full file must not reach
+ // the adjacent persistent player region through the plain-file DVD path.
+ re4dc_mem.option=0x100000;re4dc_mem.player=0x100000+149920;
+ re4dc_mem.weapon=re4dc_mem.player+846656;re4dc_mem.heap=re4dc_mem.weapon+247776;
+ assert(re4dc_resident_read_fits(re4dc_mem.option,re4dc_mem.option,149920,false,&owner,&cap) && cap==149920);
+ assert(!re4dc_resident_read_fits(re4dc_mem.option,re4dc_mem.option,259648,false,&owner,&cap));
 }
 """
         cpp=cpp.replace('#include <cassert>','#include <cassert>\n#include <initializer_list>')

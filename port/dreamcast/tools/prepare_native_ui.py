@@ -295,6 +295,62 @@ def compact_room(source_file, textures, destination, compact_effects=False):
     return report
 
 
+def compact_option(source_file, textures, destination):
+    """Compact the persistent English option/death owner, keeping source IDs.
+
+    Its two EFF families are consumed by IdTexDataLoad; UWF, palette images and
+    mip chains remain resident. This plain tagged file uses the existing DVD
+    fixed-region bounds check, not the room .dar transport.
+    """
+    source_file,textures,destination=map(Path,(source_file,textures,destination))
+    if source_file.name.lower()!='option.dat':raise ValueError('expected option.dat')
+    if destination.exists():raise FileExistsError(destination)
+    rel='ss/eng/option.dat';source=source_file.read_bytes();decoded=bytearray(source)
+    references=[];palettes=[];start=len(mirror.REPORT)
+    old_tpl,old_offsets=mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER
+    mirror.TPL_OBSERVER=lambda file,off,data,ctx:palettes.append((off,data,ctx))
+    mirror.OFFSET_OBSERVER=lambda file,field,base,value:references.append((field,base,value))
+    try:mirror.convert_file(rel,decoded)
+    finally:mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER=old_tpl,old_offsets
+    coverage=mirror.REPORT[start:]
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w') as required:
+        required.write(rel+'\n');required.flush()
+        bad=mirror.check_required(coverage,required.name)
+    if bad:raise ValueError('unqualified option dependency: '+', '.join(bad))
+    n=struct.unpack_from('<I',decoded)[0]
+    offsets=struct.unpack_from('<%dI'%n,decoded,16)
+    tags=[bytes(decoded[16+4*n+4*i:20+4*n+4*i]) for i in range(n)]
+    if n!=11 or tags!=[b'EFF\0' if i in (0,4) else b'UWF\0' for i in range(11)] or struct.unpack_from('<I',decoded,4)[0]:
+        raise ValueError('option layout differs from reviewed contract')
+    ids_by_family={}
+    for slot in (0,4):
+        eff=offsets[slot];ids_at=eff+struct.unpack_from('<I',decoded,eff+4)[0]
+        count=struct.unpack_from('<I',decoded,ids_at)[0]
+        ids_by_family[rel+'#'+str(slot)]=[struct.unpack_from('<H',decoded,ids_at+4+i*8)[0] for i in range(count)]
+    def allowed(ctx):
+        for family,ids in ids_by_family.items():
+            if ctx.startswith(family+'/tpl'):
+                index=int(ctx.rsplit('tpl',1)[1])
+                return index<len(ids) and ids[index]!=0xfe
+        return False
+    out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed)
+    def body(data,i):
+        count=struct.unpack_from('<I',data)[0];ofs=struct.unpack_from('<%dI'%count,data,16)
+        return data[ofs[i]:min([o for o in ofs if o>ofs[i]]+[len(data)])]
+    for i in range(n):
+        if i not in (0,4) and body(decoded,i)!=body(out,i):
+            raise ValueError('option UI layout changed: '+str(i))
+    report={'contract':'english-option-upload-only-v1','source_file':str(source_file),
+        'source_sha256':hashlib.sha256(source).hexdigest(),**stats,'qualification':coverage,
+        'required_reservation_bytes':(len(out)+31)&~31,
+        'loading':'plain tagged file reads directly into selected option reservation; bind before source TPL relocation',
+        'limits':'Persistent pause/death data; palettes and UWF retained. Mutable ARAM fallback is not qualified. Target saving requires smaller reservation.'}
+    destination.mkdir();(destination/'option.dat').write_bytes(out)
+    (destination/'compact-option-report.json').write_text(json.dumps(report,indent=2)+'\n')
+    return report
+
+
 def compact_core(source_file, textures, destination, include_effects=False, compact_effects=False):
     """Externalize core HUD #25 and optionally the qualified effect #1 table.
 
@@ -389,23 +445,25 @@ def compact_core(source_file, textures, destination, include_effects=False, comp
 
 
 if __name__=='__main__':
-    if '--compact-room' in sys.argv or '--compact-core' in sys.argv:
+    if any(flag in sys.argv for flag in ('--compact-room','--compact-core','--compact-option')):
         import argparse
         parser=argparse.ArgumentParser(description='Compact reviewed source texture families using existing native packages')
         choice=parser.add_mutually_exclusive_group(required=True)
         choice.add_argument('--compact-room',type=Path)
         choice.add_argument('--compact-core',type=Path)
+        choice.add_argument('--compact-option',type=Path)
         parser.add_argument('--core-effects',action='store_true',help='also externalize qualified core EFF #1 upload-only images')
         parser.add_argument('--compact-core-est',action='store_true',help='lossless resident packing for qualified core EST #1/#16')
         parser.add_argument('--compact-room-est',action='store_true',help='lossless resident packing for qualified r100 EST owners')
         parser.add_argument('--textures',type=Path,required=True)
         parser.add_argument('--output',type=Path,required=True)
         args=parser.parse_args()
-        fn,source=(compact_room,args.compact_room) if args.compact_room else (compact_core,args.compact_core)
         if args.core_effects and not args.compact_core:parser.error('--core-effects requires --compact-core')
         if args.compact_core_est and not args.compact_core:parser.error('--compact-core-est requires --compact-core')
         if args.compact_room_est and not args.compact_room:parser.error('--compact-room-est requires --compact-room')
-        report=compact_core(source,args.textures,args.output,args.core_effects,args.compact_core_est) if args.compact_core else compact_room(source,args.textures,args.output,args.compact_room_est)
+        if args.compact_option:report=compact_option(args.compact_option,args.textures,args.output)
+        elif args.compact_core:report=compact_core(args.compact_core,args.textures,args.output,args.core_effects,args.compact_core_est)
+        else:report=compact_room(args.compact_room,args.textures,args.output,args.compact_room_est)
         print('compact archive:',report['original_archive_bytes'],'->',report['resident_archive_bytes'],
               'recovery',report['archive_recovery_bytes'],'identities',len(report['selected']))
     else:

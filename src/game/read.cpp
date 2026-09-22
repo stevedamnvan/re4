@@ -327,9 +327,26 @@ void OptionDataRead()
 
     sprintf(name, "SS/%3s/option.dat", lang[pSys->language]);
     pG->pOption = OPTION_DATA_ADDR;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_ui_unbind_option();
+#endif
 #line 262 "D:/Bio4/Prog/read.cpp"
     req = DVD_READ_N(name, OPTION_DATA_ADDR, 0, 0, 0, 0x11);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (Dvd.ReadCheckInfo(req, &info) != 1) {
+        re4dc_missing("option archive read incomplete");
+        return;
+    }
+#else
     Dvd.ReadCheckInfo(req, &info);
+#endif
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (info.addr[0][0] != (u32) OPTION_DATA_ADDR ||
+        !re4dc_ui_bind_option(pG->pOption, info.size[0][0])) {
+        re4dc_missing("invalid prepared native option identities");
+        return;
+    }
+#endif
     if (info.size[0][0] > OPTION_DATA_MAX) {
         pLog->err(0, 0, "OPTION_DAT IS TOO LARGE(%d/%d)", 0, OPTION_DATA_MAX);
         TaskSleep(60);

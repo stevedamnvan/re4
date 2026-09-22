@@ -1,0 +1,17 @@
+# Focused source menu -> Options -> menu -> New Game transport check.
+# Uses the existing platform pad fixture grammar. No source-state forcing.
+600   0008 6 card=5/3 1800
++30   0100 6 card=5/3 120
++120  1000 6 title=2 1800
++90   1000 6 title=3 600
++90   1000 6 title=4 600
++120  1000 6 title=5 2400
+# Source starts on Load Game; Down selects Options in either menu layout.
++120  0004 6 title=5/1 1200
++60   0100 6 title=5/1 600
+# Hold the option screen for inspection; START uses top_menu's normal exit.
++360  1000 6 title=5/4 1200
++120  0008 6 title=5/1 1200
++60   0100 6 title=5/1 600
+# Existing title-exit debug confirmation remains a separate progression limit.
++200  1000 6 title=7 2400

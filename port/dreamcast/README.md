@@ -24,34 +24,35 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D342 binds the required crow module through the existing static registry and
-preserves its source-manager archive pointer using the Em12 constructor fix.
-Rejected native DLL links now stop through `re4dc_missing`; the PowerPC path is
-unchanged. Crow construction reaches real model allocation, which still fails.
+D343 externalizes the persistent option archive's 23 verified upload-only
+textures through the existing native identity/package path. The file loads
+directly into a149,920-byte reservation (full file259,648, old reservation262,144).
+Target source-heap free increases **112,224 bytes** at both required block-pool
+and em12-body points, now2,752,256 /1,636,736. Net archive reduction109,728 plus
+2496 existing slack; metadata/alignment included. No new texture encoding,
+geometry reduction, duplicate full archive, motion eviction or gameplay omission.
 
-Selectable `--compact-room-est` reuses the existing resident effect codec and
-qualified room builder: r100's loaded body falls from3,812,576 to3,754,592 bytes.
-The target has **57,984 more heap bytes** at both the required block-pool and
-em12 allocation points (now2,640,032 /1,524,512 free). Existing static REL
-compaction removes another15,968 bytes from the crow body (239,904 ->223,936).
-These are real smaller final allocations, with original sound transport retained.
+The corrected room still fails required allocations: four crows fail model
+initialization (previously five);11360 bytes are requested with10720 free,
+followed by512-byte part, collision/object and path-scratch failures. Source
+title/menu and640x480 diagnostic room remain visible. This is not full-room,
+complete-character, performance, audio, inventory or manual-play acceptance.
 
-The full corrected room still does not fit: a512-byte part request fails with256
-free, then all five crows fail their11,360-byte part requests; later collision,
-object and path scratch allocations fail. Retry logs are not extra allocations.
-The title/menu and diagnostic source-controlled scene remain visible; this is
-not complete characters, a playable encounter, accepted lighting or an FPS result.
+A source-input Options round trip resolves discarded images through native
+packages, returns to the title, then reaches room loading. Its colour-bars/EXIT
+capture matches the pinned full-archive reference byte-for-byte; this preserves
+an existing incomplete presentation, not accepted complete options UI. The
+unimplemented mutable card/ARAM fallback now stops before live backing can be
+overwritten; normal separately allocated card scratch remains unchanged.
 
-Keep this bounded compaction and continue the initialization working-set audit.
-Option upload-only textures price at109,728 net archive bytes, but their fixed
-owner/card-swap lifetime is not yet adapted; reservation slack alone is only2496.
-Room SST packing prices at21,952 gross and remains unimplemented. Neither is
-counted as recovered heap. Preserve hot motion keys and the immediate-response/
-prefetch audit. Event activation/mutable snapshots, source presentation/audio,
-inventory, three-room progression and physical-hardware gates remain open.
-Simpler water remains selectable and unimplemented; PS2 equivalence is unverified.
+Keep the selectable saving and continue the complete initialization working-set
+audit. Room SST pricing21952 gross remains unimplemented and insufficient by
+itself to accept the encounter. Hot motion stays cached after evaluation;
+prefetch/concurrency, event activation/mutable snapshots, source presentation,
+audio and three-room progression remain open. Simpler water remains a selectable
+candidate; no PS2-equivalence or current memory saving is claimed.
 
-See [D342](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d342-crow-module-and-resident-room-effects).
+See [D343](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d343-persistent-option-textures).
 
 
 ### Retained integration checkpoints

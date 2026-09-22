@@ -9,6 +9,9 @@
 #include "main_mem.h"
 #include "datactrl.h"
 #include "cDataSwap.h"
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+#include "re4dc_platform.h"
+#endif
 
 extern "C" {
 void SubScreenAramRead();
@@ -44,6 +47,12 @@ int cDataSwap::SwapOut(u32 addr, u32 size, u32 aram)
 #line 64 "D:/Bio4/Prog/cDataSwap.cpp"
     mram = MEM_ALLOC(size, 0, 13);
     if (mram == NULL) {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        // ARQ currently provides no mutable backing. Do not reuse live archive
+        // bytes (including borrowed native identities) without a real snapshot.
+        re4dc_missing("cDataSwap mutable ARAM backing unavailable");
+        return 0;
+#endif
         this->m_SwapAaddr = DC.getAramFree(size);
         if (this->m_SwapAaddr != 0) {
             m_be_flag |= 2;

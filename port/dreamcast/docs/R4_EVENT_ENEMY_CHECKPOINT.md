@@ -405,3 +405,106 @@ five pre-existing missing stubs remain. Original KOS and accepted assets untouch
 d342a-crow-module ELF SHA256 `ebf366884633572052d9defab02bf0656f84984e9416dd78416dddf276e97a58`; disc SHA256 `c96b6951397ff65a73d89dd1907fb6d64864630457782271444cd549f76e48a0`.
 
 d342b-room-effects ELF SHA256 `61485913ebbf3ca3e6a2a4a6e48d91bd418d658b9185136f81bfa08dad3944d6`; disc SHA256 `d818b0688f209a738e49f035ffcdff4a6aeb021d5bbd58834082d9fc2566f831`.
+
+## D343 persistent option textures
+
+2026-09-22; baseline0a320fcbcf77943f56e5a6924e9cea2d647351e9 plus preserved
+63 inherited tracked changes. Keep the selectable candidate, with presentation
+and complete-room acceptance still open.
+
+| Reused mechanism | Recovered producer/consumer | New adapter |
+| --- | --- | --- |
+| le_mirror qualification/offset observers; select_upload_only; compact_spans/NTR index | SS/eng/option.dat, option/death EFF #0/#4, IdTexDataLoad and UWF consumers | --compact-option, whole-file qualification and exact unaffected-family validation |
+| SourceIdentityTable; image_key; Package::open_streamed/upload/release_payload; shared fences | OptionDataRead before TPL relocation, option/death native quads | one borrowed option identity view, invalidated before overwrite, retained across room retirement |
+| fixed-region budget header; DVD resident_bounds | plain option.dat read into re4dc_mem.option | selectable exact reservation; existing pre-transfer guard rejects original oversized file |
+| cDataSwap source scratch-heap path | card initialize type0/1 and other mutable swap callers | fail explicitly before the unsupported ARAM fallback touches live bytes |
+
+The original tagged file has11 entries, including EFF0/4 and9 UWF families.
+23 nonpalette/nonmip images are replaced by32-byte identities, with a320-byte
+index:736 record bytes plus320 index bytes retained. All10 death palette images
+and all UWF data remain byte-identical after qualified endian conversion. Only
+family4 changes; source indices and relative references remain valid. Native
+packages are verified against the existing converter without generating new
+texture encodings. Original archive and default0x40000 budget remain selectable.
+
+| Actual boundary | D342b | D343a |
+| --- | ---: | ---: |
+| Option file bytes |259648 |149920 |
+| Option reservation |262144 |149920 |
+| Source heap free after1126272 block allocation |2640032 |2752256 |
+| Source heap free after1105152 em12 body |1524512 |1636736 |
+| Source heap free after223936 crow body |210848 |323072 |
+
+All three matched allocation-point deltas are112224. Archive saving109728 plus
+2496 slack; not a new reduction in the enemy archive itself. Direct bounded
+DVD read into the final smaller owner avoids original/candidate overlap. The
+existing128KiB DVD staging and64KiB streamed texture reader remain; no new full
+payload buffer or VRAM reservation. The borrowed identity view is16 bytes on
+SH-4; aligned BSS does not grow. ELF text grows456 bytes to2306020, data77012,
+BSS673080. These are stage/allocation observations, not complete loading peaks.
+
+The MRAM-success cDataSwap path creates heap11 over a separately allocated
+scratch block; it does not overwrite pOption. When that allocation fails, the
+original path parks a live range in ARAM and reuses it. Native ARQ has no real
+mutable storage, so this fallback is now explicitly rejected before DMA or heap
+mutation. No general swap system is implemented or save/load acceptance claimed.
+Boot card type2 does not use this swap. Source PPC token streams are unchanged.
+
+D343a preserves the existing approach fixture. Title/main menu and640x480
+diagnostic room remain visible, with source-controlled Leon reaching approximately
+(-96176,-175,-2439), source frame1308. First failed11360-byte crow part request
+has10720 free; individual fallback512 fails at352. Four crow model failures
+remain, followed by required672/928-byte collision,7904-byte object-part and
+32-byte path scratch failures. One fewer crow model fails, but that is not
+complete crow/room acceptance. Final OS heap free/largest64; source allocatable0.
+Later allocations consume the recovered space. Do not sum failed retries.
+
+D343b exercises source title Options: Down at retrace2510, A2570 -> title5/4;
+START2930 ->5/0 ->5/1 at2962; Up3050/A3110 then title7 and START3310 reach room
+loading. Five externalized option textures load successfully; three sampled
+identity logs explicitly avoid source-texel hashing. No upload failure in this
+segment. Existing shared VRAM used4048896 at sampled option frame1200, peak4192256;
+bounded upload source-heap6076928->6076928, retained144-byte package metadata per
+load, staging released. These uploads share the pre-existing cache, not a new
+option VRAM bank. Menu input is scripted, not manual acceptance.
+
+The option image shows colour bars and EXIT, not a fully accepted options UI.
+Pinned D342b ELF/full option archive, using the same input fixture in D343c,
+produces byte-identical captured fb0 PNG SHA256
+`f3efa27e64c7da92681c547812d67d105eba4fc551187d7c6f8c42e3b673eb84`.
+This rules out the compaction as the cause of this sampled presentation; source
+UI/material/order correctness remains open. No unrelated rendering fix added.
+
+Checks:14 tests (compact_option, data_swap, resident_bounds, compact_room,
+native_ui). Actual source cDataSwap executes under ASan/UBSan: separate scratch
+preserves live bytes and restores heap ownership, rejected fallback never calls
+ARAM or mutates heaps. Private actual SourceIdentityTable methods validate all23
+descriptors before/after source header relocation, interior-pointer rejection and
+clear.10 unaffected archive families compare byte-identically. No new ProDG run.
+
+Motion unchanged952768 resident/peak/read,22400 peak pinned,2336 metadata;
+75 misses/loads,6 hits,0 eviction/failure, worst wait270941us. All145 source heads
+and1904 retained/relocated keys validate; loading-later and final counters match.
+No post-evaluation eviction introduced. Required failed actors, combat responses,
+event transitions and prefetch/concurrency audit remain unqualified.
+
+Evidence directories C:/Flycast-Evidence/re4-dreamcast/d343a-option-residency,
+d343b-option-menu, d343c-option-reference. First two use the same new ELF;
+reference uses exact accepted D342b ELF, not a rebuilt old checkout. Durations
+240/240/100 seconds; harness deadlines, no guest reboot observed. Captures are
+emulator integration evidence, not paired performance or hardware acceptance.
+Same pinned KOS/manual-flip patch,SH GCC15.2,O1,Flycast and corrected reader.
+Original references and63 inherited tracked changes preserved.
+
+Candidate ELF SHA256 `34771144e0f4475cfe24c11da590f52ce4152d8a90b0944f4107074ba5093ed3`.
+Option SHA256 `b56409dee1d1d504c54e129490fcab1f7cb27a8afe0107c7695bbc99d795a3db`.
+Approach disc SHA256 `adbbd62b9b25f5b57689c2d69329f26df0097c3a4526e029bfce9a6bdf06e4d4`.
+Options disc SHA256 `8fccad838e6242a157d192c480302f2d0f1e1ecf1ed293171f98a3524c36ed37`.
+
+Next: price the remaining required model/effect initialization lifetimes at the
+new failed allocation, preserving complete actors and collision. Existing room
+SST pricing21952 gross is only a bounded candidate, not enough evidence of full
+fit; retain hot motion data and do not disable crows/blocks. Event s03 mutable
+snapshot/final-buffer capacity, source lighting, audio, inventory, progression,
+retry and performance remain explicit. Simplified water stays selectable and
+unimplemented; PS2 equivalence must be checked before promotion.
