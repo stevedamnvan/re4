@@ -718,3 +718,107 @@ No additional source archive/animation recovery. No physical-hardware acceptance
 Keep the loader correction; preserve the integrated renderer as an unpromoted
 candidate and correct its insufficient dense coverage. The three-room goal,
 manual combat, full presentation/audio, event activation and retry remain open.
+
+## D357 - source-backed spans and historical input-contract audit (2026-09-22)
+
+D357v3 now completes 78 matching recorded source snapshots/ticks
+2387-2464. Both arms have zero measured discards/queue drops,
+native allocation/texture failures and warm uploads, with queue high-water below
+capacity. Render p50/p95: A 1,211.301/1,213.904 ms,
+B 1,971.792/1,973.605 ms; presentation p50:
+A 1,236.963 ms, B 2,006.830 ms.
+This is an instrumented settled-view comparison, not release FPS, full source/RNG
+parity, manual combat or hardware acceptance. A remains material/lighting limited;
+B retains the intended richer source presentation. The complete candidate stays
+default-off and performance is not accepted.
+
+The current legal span representation replaces persistent corner maps with
+20-byte descriptors, references the original immutable streams, and uses the
+same160-slot/12-KiB preparation workspace and8-KiB local arena. Partial admission
+ranks descriptors within a part; all source seams, whole strips/fans and reference
+fallback remain. Focused optimized/sanitizer checks pass; the captured262-part
+host fixture retains40,374 expanded triangles and byte hashes with regenerated
+unbounded metadata. That host result is not bounded target coverage.
+
+The first D357 B failed native texture-metadata allocations and did not complete
+warm-up; its A was packaged but not run. Resident executable growth was11,732 B,
+including optional detailed audit and duplicated count/admit installation walkers.
+Sharing one non-template walker saved4,038 B with the same algorithm, budgets,
+compiler policy and passing focused checks. V3 completes the valid comparison.
+No source-heap capacity was cut to obtain it.
+
+Steady B:200,643 source position references,133,147 transforms,155,195 normal
+transforms and387,402 individual-light evaluations. Dense position references
+25,985 (12.95%), normal27,212 (13.56%), shade27,301 (13.61%). Light builds114,
+reuse149; channel states126 each, state reuse137;725 batch activations,755 normal
+hits and17,889 cached color packs. Packet flushes212 and strip fallbacks171 are
+unchanged from D356v4;470 PVR calls,3,578,720 bytes. Source free66,592 B, native
+slab65,536 B, local metadata8,192 B, texture VRAM3,682,304 B, peak4,192,256 B.
+The preparation snapshot's two added counters account for32 B across live/sealed
+statistics; no metadata-budget growth. Light/transform/pack cost remains dominant.
+
+`/root/probe/d357v3-current-fallback-report.json` ranks current whole-part spans.
+Complete current witnesses2382/2385/2386 each have263 sealed parts (789 total).
+2383/2384 each lack two records and are excluded. Historical D355 had262 parts
+and ordered-reference qualification fails; it is explicitly not current state
+parity. Among complete current witnesses,167 fully general-position parts have
+159,163 references; their mean total transform/light/packet spans are
+380.831/607.262/371.068 ms.30 parts are mixed and66 all-local. These are costs of
+parts classified by position coverage, not isolated fallback-only timers.
+Highest examples include enemy0x8cbebf20 (10,798 general references), player
+0x8cbd1680 (7,217 general +5,250 local), scenery0x8cf8f858/part0x8cc93520
+(6,246 general), and two instances of part0x8c83b280 (6,046 general each).
+Addresses are current-run identities, not persistent asset IDs. Full top-model/
+part rankings are retained privately; do not generalize them across executables.
+
+### What commit history says is still missing
+
+- `21586f8` (R3v) prepared dense remaps for up to1,024 unique slots, with413,696 B
+  in tables/workspace. Current160-wide original source-index spans can fail even
+  with few distinct indices. Full remapping is a historical memory assumption,
+  not a cheap mechanism overlooked in the new code. Classify top streams before
+  claiming metadata reorder alone can solve their coverage.
+- `fcf9bf5` gave strip visibility16,384 prepared spheres (262,144 B);
+  `1e15ee5` reused group visibility across passes. Current early tests in
+  `native_model.cpp` precede vertex work correctly where bounds exist, but
+  `native_draw_plan_owner.cpp` makes structural admission a prerequisite for
+  bounds/local metadata. A negative structural entry loses all three mechanisms.
+  Prioritize independently affordable conservative group bounds in the existing
+  ownership/budget, with source position/owner lifetime validation.
+- Current source registration admits actors then scenery in OT order. Local
+  descriptor ranking occurs inside each part only. Earlier lower-benefit parts
+  can consume capacity before expensive later streams. Adapt the existing
+  asset-update admission to visible work value without changing source draw order,
+  adding persistent corner maps, heap cuts, metadata growth or frame-hot lookup.
+- Historical `5f42caa:room/main.cpp` `prepare_room_static_lighting`/`light_room_vertex`
+  retained unclamped invariant contributions and added dynamic contributions
+  before one final clamp. Its45,000 RGB+owner entries cost630,000 B. Current
+  `native_ui.cpp` allocates zero bytes to the previously ineffective tiny cache;
+  active dense shading is frame/batch reuse, not equivalent room-lifetime reuse.
+  `gx_stub.cpp::GXLoadLightObjImm`/`SourceLighting` omit original light identity,
+  world/camera provenance and pre-camera change generation. Adapt the existing
+  source lighting publication/owner boundary before retaining bounded static
+  partial contributions; current evaluator clamps/material-scales internally and
+  cannot simply cache its final result as a partial sum. World-space alone does
+  not certify immutable lights, channels, colors or model selection. This is an
+  equivalent source-lighting optimization, separate from PS2 visual substitution.
+- `PreparedModelBatch::activate` resets all channel generations when a descriptor
+  changes even if some domains remain identical. This is secondary: R3v itself
+  reset per batch and accepted604 extra cross-batch transforms. Do not invent
+  global reuse or rerank it above measured uncovered work.
+
+Already present: native FTRV/compiler policy, prepared selected-light records,
+one-pass final packet preparation, intact qualified strips, hardware facing/cull,
+source owner generations and direct/deferred native list mechanisms. `26b4442`
+(R3x) and `ee8d3e8` packet mechanisms are substantially reused. Do not rebuild
+these or claim D349's approximately49-ms historical workload predicts current
+cost. Keep the full integrated stack as the acceptance unit.
+
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d357v3[a|b]-integrated-stack` and
+parent `d357v3-comparison.json`; exact executables, asset/fixture identities,
+source overlays, SDK/emulator and capture tools are pinned per arm. Recipes
+`/root/probe/d357v3-build-arm.sh` / `d357v3-prepare-arm.py`; report
+`C:/Game Dev/Emulators/re4-session-scripts/d357v3-report.py`.
+TMU2 spans include scope/preemption overhead; no estimated overhead is subtracted.
+PVR render and presentation intervals remain separate and are not added to CPU.
+No full gameplay/audio/transition/retry or physical-hardware acceptance is claimed.

@@ -1,6 +1,29 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Current D356 priority (2026-09-22): continue wholesale D349 architecture integration.
+Current D357 priority (2026-09-22): retain the integrated D349 candidate and
+accepted presentation; complete the missing preparation input/lifetime contracts.
+The source-backed legal span implementation passes a78-tick system A/B stability
+gate, but performance remains unaccepted: B render p50/p95
+1971.792/1973.605 ms versus A1211.301/1213.904 ms. Dense position coverage is
+12.95%, normal13.56%, shade13.61%;114 prepared-light builds/149 reuse hits.
+No metadata/workspace/source-capacity growth.212 packet flushes/171 strip
+fallbacks persist. The five-witness diagnostic is separate from steady timing;
+only three complete current263-part witness frames support its ranked timings.
+
+The simultaneous history audit confirms coverage is the immediate gap, not a
+missing FTRV, compiler, direct-list or packet primitive. Structural-plan rejection
+also denies early bounds/local reuse; part-arrival allocation and sparse original
+index domains limit the admitted work. Classify the dominant uncovered streams
+before changing the existing bounded admission/bounds path. Historical invariant
+room-light reuse is another missing contract: selected GX parameters lose original
+light provenance/identity, and the ineffective tiny static cache is disabled.
+Restoring source-faithful invariant accumulation is distinct from activating the
+gated PS2 visual compromise. Do not import historical large tables, grow metadata,
+cut source heap, resume keyed lookup or promote per-component target experiments.
+See [D357](R4_NATIVE_PREPARATION_CHECKPOINT.md#d357---source-backed-spans-and-historical-input-contract-audit-2026-09-22)
+for exact history anchors, current seams, measurements and limitations.
+
+Previous D356 priority (2026-09-22): continue wholesale D349 architecture integration.
 The user accepts v4 B's current appearance as accurate for now. Preserve it and
 stop investigating the A/B visual gap; the open gate is performance.
 The dense generation-slot candidate completed a stable85-tick full-stack A/B,

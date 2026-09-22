@@ -27,6 +27,34 @@ future gated phase, not a new active experiment; continue the integrated D349
 preparation/reuse work now. Preserve this rule in subsequent handoffs alongside
 the existing menu/three-room persistent goal and deferred backlogs.
 
+## Carry forward completed side-agent work
+
+The PS2/prelighting deliverable is isolated at `d928ad6` on
+`experiment/r100-prelit-d353`, worktree `/root/work/re4-r100-prelit-d353`.
+Read its `port/dreamcast/docs/R4_PRELIT_R100_CHECKPOINT.md` when the future
+visual-profile gate above opens. The runnable candidate bakes the existing D349
+GameCube-selected static lighting into vertex RGB and keeps actors dynamic; it
+does not qualify transfer of authored PS2 RGB. Its historical room-target result
+saved 634,880 bytes of main-memory headroom and matched six sampled images.
+Those results are not recovered-game memory/FPS acceptance. Reuse that converter,
+representation and existing native modulation path as one selectable candidate;
+do not rerun the inventory or merge its historical room loop/gameplay. The earlier
+stove experiment `14dd633` remains rejected and is a separate result.
+
+The first-stage audit already feeds the current execution backlog in
+[PLAYABLE_PATH.md](port/dreamcast/docs/PLAYABLE_PATH.md#current-execution-priority-after-the-first-stage-audit).
+Its verified opening route is r100 -> r101 -> r103. Converter fix `961c51e` is
+already in primary history; the private qualified r101 DAR remains uninstalled
+and target loading unproved. Read-only reconciliation at `ee7f6c7` confirmed the
+selected r101 DAR, matching r103 DAS, r101 s00/s21/s30 EVDs and em15 DRS are still
+absent from their selected locations, and native em15/em26 bindings remain absent.
+Use the existing private `next-room-dependency-brief.md` and source exit/event
+contracts to qualify these exact dependencies and room retirement, preserving
+inventory/health/flags. Earlier audit wording that the empty-EVS converter is
+unpromoted is superseded by `961c51e`; do not repeat that fix. The 29-room source
+inventory is forward planning, not proof every listed system is missing today
+or that whole-stage implementation must precede the three-room objective.
+
 ## Active course correction - integrated D349 stack (D352, in progress)
 
 User instruction supersedes individual renderer-component promotion. One
@@ -45,7 +73,71 @@ The shared PVR owner, storage/texture ownership and completed source skinning
 remain the boundaries. Source lighting state and native pass organization are
 part of this candidate, not deferred post-performance polish.
 
-## Active D356 - load-time local indices and generation slots (2026-09-22)
+## D357 in progress - source-backed index spans
+
+The user's 314 KiB versus 8 KiB decision rejects persistent per-corner remaps.
+Current `DrawLocalPlan` contains only 20-byte legal span descriptors; immutable
+source corner/index streams remain backing. Dense channels use source index
+minus batch base, with independent position/normal and qualified exact shade
+identity. Whole strips/fans remain intact; uncovered work uses the reference.
+The existing 8 KiB local metadata and 12 KiB frame workspace do not grow.
+Finite admission ranks reusable spans within available space, not whole parts.
+Do not describe D356's explicit per-corner mapping as the active implementation.
+
+Focused host fixtures pass; tick2382 replay retains all 262 part counts, both
+ordered-reference hashes and 40,374 expanded triangles/byte hashes. This host
+replay regenerates unbounded local metadata: it does not prove target coverage
+or performance. Current capture reads 19-word sealed preparation telemetry,
+including normal/shade dense references. Audit mode3 samples five source ticks
+2382-2386; exclude those logging frames from steady timing.
+
+Initial D357 B is rejected before comparison: native texture-metadata allocation
+fails, warm-up never qualifies. Detailed audit + duplicated load-time builder
+grew the resident executable by 11,732 bytes over D356v4 B; disabling the optional
+audit alone still added 8,004 bytes. One shared non-template install walker
+removes 4,038 bytes of duplicate code, with unchanged algorithm/budgets and
+passing focused tests. No compiler policy or source-heap capacity was cut.
+D357v3 now completes 78 matching recorded source snapshots/ticks
+2387-2464. Both arms have zero measured discards/queue drops,
+native allocation/texture failures and warm uploads, with queue high-water below
+capacity. Render p50/p95: A 1,211.301/1,213.904 ms,
+B 1,971.792/1,973.605 ms; presentation p50:
+A 1,236.963 ms, B 2,006.830 ms.
+This is an instrumented settled-view comparison, not release FPS, full source/RNG
+parity, manual combat or hardware acceptance. A remains material/lighting limited;
+B retains the intended richer source presentation. The complete candidate stays
+default-off and performance is not accepted.
+
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d357v3[a|b]-integrated-stack`,
+`d357v3-comparison.json`; recipes `/root/probe/d357v3-build-arm.sh` and
+`d357v3-prepare-arm.py`. B ELF
+`d9e9b103e34852aa072550433b0ae42ad734bfd39cd50b4ac622794e43d45ddb`, A
+`cfe5673749cf0d58f71e71215c97d681c2df14b983c35790c74e86fd42442d71`.
+Dense position coverage is 25,985/200,643 (12.95%), normal 27,212 (13.56%) and
+shade 27,301 (13.61%). Light builds/hits remain114/149; packet flushes212 and
+strip fallbacks171. Metadata/workspace/source capacity have not grown.
+Three complete current audit frames (2382/2385/2386,263 parts each) identify167
+fully position-fallback parts with159,163 references and whole-part transform/
+light/packet cost380.83/607.26/371.07 ms. Historical D355 ordinal/hash qualification
+does not apply to this changed263-part record; two other witness frames lost two
+records each and are excluded. Do not label those whole-part spans fallback-only.
+
+The simultaneous history audit identifies the next integration issue: qualified
+coverage, not another math kernel. Structural-plan rejection currently withholds
+local slots AND early bounds; first-arrival part admission and sparse source
+indices further limit coverage. D349's full dense renumbering and large prepared
+bounds cannot be copied into the current budget. Classify the dominant uncovered
+streams by structural budget, index range/distinct count, and bounds eligibility;
+then adapt existing admission/bounds under the same budget. Historical invariant
+room-light reuse also remains unadapted: the bridge lacks pre-camera light
+identity/provenance/change serials, and the old tiny static cache is disabled.
+Restoring that source-faithful lifetime is distinct from the gated PS2 compromise.
+See the D357 section in R4_NATIVE_PREPARATION_CHECKPOINT.md for exact commits,
+current seams, limitations and the supporting current-work report. Do not start
+another cache framework or restore per-corner maps. Initial D357 discs are
+SHA-verified deltas; accepted D356v4 B stays whole. Both v3 captures have ended.
+
+## Previous D356 - load-time local indices and generation slots (2026-09-22)
 
 The user accepts D356v4 B's current visual presentation as accurate for now.
 Do not resume the A/B visual-gap investigation. Preserve that appearance while

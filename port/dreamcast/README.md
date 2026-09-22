@@ -24,27 +24,30 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D356 retains one **unpromoted integrated D349 renderer candidate** behind
-`D349_RENDERER_STACK=1`. Source asset/batch preparation supplies dense generation
-slots; current source pose/camera/material/light state remains authoritative.
-The existing 64 KiB native slab and source heap capacity are unchanged.
+D357 retains one **unpromoted integrated D349 renderer candidate** behind
+`D349_RENDERER_STACK=1`. Compact legal index spans now use source streams as
+backing, replacing persistent corner remaps. The existing 8 KiB local metadata,
+12 KiB workspace, 64 KiB slab and source heap capacity do not grow.
 
-The completed instrumented A/B has 85 identical recorded source snapshots at
-ticks 2382-2466, zero measured frame/queue drops or texture/native allocation
-failures, and no post-warm-up uploads. Source free heap remains66,592 bytes;
-deferred occupancy25,536 remains below 26,624 bytes. The native DVD borrow ownership
-fix restores normal em23 loading in both arms. Intact strips and OP hardware
-culling remain present.
+The completed full-stack A/B has78 identical recorded source snapshots at ticks
+2387-2464, zero measured frame/queue drops or texture/native allocation failures,
+and no post-warm-up uploads. Source free remains66,592 bytes; queue high-water
+25,536 stays below26,624 bytes. Historical DVD ownership fixes remain present.
 
-The performance gate **has not passed**: matched render-wall p50/p95 is
-1192.463/1195.034 ms for A and 1948.184/1950.040 ms for B; pageflip p50 is
-1220.280/1973.462 ms. A lacks B's selected lighting/material coverage. Prepared
-lights are shared, but dense vertex mappings cover only 1.48% of live references:
-the present per-corner metadata encoding does not fit the bounded budget for
-the expensive parts. Correct the preparation representation before optimizing
-remaining math. No SH4ZAM library is linked yet. Instrumentation overhead is
-substantial; these are not release FPS or physical-hardware results.
-[Current evidence, identities and limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d356---dense-local-indices-measured-admission-limit-2026-09-22).
+The performance gate **has not passed**: render p50/p95 A1211.301/1213.904 ms,
+B1971.792/1973.605 ms; presentation p50 A1236.963/B2006.830 ms. A lacks B's
+selected lighting/material coverage. Dense position coverage improves to12.95%,
+but most costly work still falls back. No SH4ZAM library is linked. Instrumented
+settled-view timing is not release FPS or physical-hardware acceptance.
+
+The parallel history audit identifies incomplete input contracts: bounded
+structural admission also gates early bounds/local preparation; admission follows
+part arrival rather than whole-workload benefit; and historical room-lifetime
+invariant lighting is not adapted. D349's large dense remap/bounds/light tables
+cannot be copied into this budget. Qualify the dominant uncovered source streams
+and preserve the full-stack acceptance unit, rather than rebuilding working
+FTRV/strip/cull/packet mechanisms or adding per-corner maps.
+[Current evidence, commits and limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d357---source-backed-spans-and-historical-input-contract-audit-2026-09-22).
 
 The user accepts B's current presentation as accurate for now. Preserve it while
 fixing preparation reuse. The settled opening fixture does not qualify responsive
