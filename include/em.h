@@ -329,6 +329,10 @@ public:
 
 extern cEmMgr EmMgr;
 
+#if !defined(__PPC__)
+extern "C" void re4dc_missing(const char*);
+#endif
+
 // Work `no` of the enemy manager, NULL when out of range. A free function: a cEmMgr member (even an
 // out-of-class inline) is emitted out of line into em.cpp, which owns the vtable (ctrl.h CtrlMgrWork).
 static inline cEm* EmMgrWork(u32 no)
@@ -336,7 +340,16 @@ static inline cEm* EmMgrWork(u32 no)
     if (no >= EmMgr.nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    // Indexed callers may retain dead/unconstructed slots. Never evict them.
+    if (!EmMgr.prepareWork(no, 1)) {
+        re4dc_missing("enemy indexed backing allocation");
+        return 0;
+    }
+    return EmMgr.workAt(no);
+#else
     return (cEm*)((u8*)EmMgr.pArray + EmMgr.size * no);
+#endif
 }
 
 // Pushable rack/crate enemy (game/emrack.cpp); only what pl_push calls.

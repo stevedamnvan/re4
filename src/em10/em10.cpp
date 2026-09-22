@@ -5699,7 +5699,12 @@ static void em10_R1_R100Cliff(cEm10* em)
                 SndCall(6, 4, &em->pos, 0, 0, em);
             }
             for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+                cEm* e = (cEm*) EmMgr.workAt(i);
+                if (!e) continue;
+#else
                 cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
                 if ((e->be_flag & 0x201) != 1) {
                     continue;
                 }
@@ -13300,7 +13305,12 @@ static void em10_R1_TakeAway(cEm10* em)
         BitOn(pG->Status_flg[1], 0x40);
         bio4_GXSetCopyClear(GXColor(), 0xFFFFFF);
         for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+            cEm* e = (cEm*) EmMgr.workAt(i);
+            if (!e) continue;
+#else
             cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
             if (e && e != em && pSUB && e != pSUB && e->isAlive()) {
                 e->setNoSuspend(0);
             }
@@ -16892,7 +16902,12 @@ extern "C" int em10GetGoSub(cEm10* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -19370,7 +19385,12 @@ int em10DoorOpenCk(cEm10* em, int kick)
         kick = 1;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmDoor* e = (cEmDoor*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEmDoor* e = (cEmDoor*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         EmDoorWork* dw;
         if ((e->be_flag & 0x201) != 1) {
             continue;
@@ -19450,7 +19470,12 @@ extern "C" int em10AtkDoorCk(cEm10* em)
     Vec v;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmDoor* d = (cEmDoor*) EmMgr.workAt(i);
+        if (!d) continue;
+#else
         cEmDoor* d = (cEmDoor*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         EmDoorWork* dw;
         f32 hw;
         if (!(d->be_flag & 1)) {
@@ -19532,7 +19557,12 @@ int em10SetDamageDoor(cEm10* em, int kind)
 
     PSMTXInverse(em->mat, inv);
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        d = (cEmDoor*) EmMgr.workAt(i);
+        if (!d) continue;
+#else
         d = (cEmDoor*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if (!(d->be_flag & 1)) {
             continue;
         }
@@ -19650,7 +19680,12 @@ int em10RackBreakCk(cEm10* em)
         return 0;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmRack* e = (cEmRack*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEmRack* e = (cEmRack*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if (!(e->be_flag & 1)) {
             continue;
         }
@@ -19720,7 +19755,12 @@ extern "C" int em10AtkRackCk(cEm10* em)
     Vec v;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if (!(e->be_flag & 1)) {
             continue;
         }
@@ -19768,7 +19808,12 @@ void em10SetDamageRack(cEm10* em, int a)
     Vec v;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmRack* e = (cEmRack*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEmRack* e = (cEmRack*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if (!(e->be_flag & 1)) {
             continue;
         }
@@ -19939,7 +19984,12 @@ int em10VLadderClimbCk(cEm10* em)
         return 0;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* o = (cEm*) EmMgr.workAt(i);
+        if (!o) continue;
+#else
         cEm* o = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((o->be_flag & 0x201) != 1) {
             continue;
         }
@@ -21598,7 +21648,12 @@ extern "C" int em10SomebodyFindNowCk(cEm10* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -21648,7 +21703,12 @@ extern "C" int em10SomebodyDamageNowCk(cEm10* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         int dm;
         if ((e->be_flag & 0x201) != 1) {
             continue;
@@ -21703,7 +21763,12 @@ int em10SomebodyNearCk(cEm10* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -21741,7 +21806,12 @@ void em10FindNotify(cEm10* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -22966,7 +23036,12 @@ extern "C" int em10DashCk(cEm10* em)
     }
     cnt = 0;
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* o = (cEm*) EmMgr.workAt(i);
+        if (!o) continue;
+#else
         cEm* o = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((o->be_flag & 0x201) != 1) {
             continue;
         }
@@ -23085,7 +23160,12 @@ extern "C" int em10StayCk(cEm10* em)
     }
     n = 0;
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) == 1 && e->id > 0xF && e->id <= 0x20 && e->hp > 0 && e != em &&
             e->checkStatus(EM_STATUS_ACTIVE) && EM10_WK(e)->L_pl_route < w->L_pl_route) {
             n++;
@@ -23137,7 +23217,12 @@ extern "C" int em10GoSubStayCk(cEm10* em)
     }
     cnt = 0;
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         Em10Work* ew;
         if ((e->be_flag & 0x201) != 1) {
             continue;
@@ -23739,7 +23824,12 @@ void em10DragonFireCk(cEm10* em)
         }
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm10* e = (cEm10*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm10* e = (cEm10*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         int dead;
         cDmgInfo* d;
         if ((e->be_flag & 0x201) != 1) {
@@ -24877,7 +24967,12 @@ void em10ActEvtSetTrade(cEm10* em)
         break;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -25292,7 +25387,12 @@ extern "C" int em10DootAtkCk(cEm10* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -25342,7 +25442,12 @@ extern "C" int em10ThrowNearCk(cEm10* em)
     TransMatrix(m, &em->pos);
     PSMTXInverse(m, m);
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -26144,7 +26249,12 @@ extern "C" cModel* em10SearchTruck(cEm10* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) == 1 && e->id == 0x3B) {
             *(cEm10**) ((u8*) e + 0x64C) = em;  // truck (em3b) work: driver
             w->pTruck = e;
@@ -26162,7 +26272,12 @@ extern "C" int em10SearchParasite(cEm10* em)
 
     w->pParasite = 0;
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmPartner* e = (cEmPartner*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEmPartner* e = (cEmPartner*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -26540,7 +26655,12 @@ int em10GotoPosCk(cEm10* em)
         }
         cnt = 0;
         for (j = 0; j < EmMgr.nArray; j++) {
+#if !defined(__PPC__)
+            cEm* o = (cEm*) EmMgr.workAt(j);
+            if (!o) continue;
+#else
             cEm* o = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * j);
+#endif
             if ((o->be_flag & 0x201) != 1) {
                 continue;
             }

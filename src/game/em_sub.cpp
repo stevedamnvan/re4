@@ -126,7 +126,11 @@ static inline cEm* emWork(u32 no)
     if (no >= m->nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    return m->workAt(no);
+#else
     return (cEm*) ((u8*) m->pArray + m->size * no);
+#endif
 }
 
 // Shared Rno0 routine of the object classes (emdoor / emrack tables): the "scenario" state where an
@@ -1150,6 +1154,9 @@ u32 GetWepTargetList(Vec* box, Vec* pos, WepTarget* list, u32 max, int flag)
     if (i < EmMgr.nArray) {
         do {
         em = emWork(i);
+#if !defined(__PPC__)
+        if (!em) continue;
+#endif
         if (!(em->be_flag & 1)) {
             continue;
         }
@@ -1285,6 +1292,9 @@ u32 GetWepTargetList2(Vec* p0, Vec* p1, WepTarget* list, u32 max, Vec* hit, Vec*
     if (i < (int) EmMgr.nArray) {
         do {
         em = emWork(i);
+#if !defined(__PPC__)
+        if (!em) continue;
+#endif
 
         if ((em->be_flag & 0x201) != 1) {
             continue;
@@ -1347,6 +1357,9 @@ u32 GetWepTargetList2(Vec* p0, Vec* p1, WepTarget* list, u32 max, Vec* hit, Vec*
     if (i < (int) EmMgr.nArray) {
         do {
         em = emWork(i);
+#if !defined(__PPC__)
+        if (!em) continue;
+#endif
 
         if (!(em->be_flag & 1)) {
             continue;
@@ -1496,6 +1509,9 @@ int GetWepTargetListBomb(Vec* pos, f32 r, WepTarget* list, int max, int type, in
     if (i < (int) EmMgr.nArray) {
         do {
         em = emWork(i);
+#if !defined(__PPC__)
+        if (!em) continue;
+#endif
 
         if (!(em->be_flag & 1)) {
             continue;
@@ -1718,7 +1734,12 @@ int GetWepTargetPos(Vec* pPos, Vec* pPos2, int plCheck, int wepNo, cEm** outEm, 
         PSMTXIdentity(m);
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((em->be_flag & 0x201) != 1) {
             continue;
         }
@@ -2610,7 +2631,12 @@ int EmRackCk(cEm* em, Vec* pos, f32 ang)
     }
     for (i = 0; i < EmMgr.nArray; i++) {
         off = EmMgr.size * i;
+#if !defined(__PPC__)
+        e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         e = (cEm*) ((u8*) EmMgr.pArray + off);
+#endif
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }

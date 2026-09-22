@@ -74,7 +74,12 @@ static void r107_setFish()
 
     SceSleep(1);
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if (em->id == 0x27 && (em->be_flag & 0x201) == 1) {
             ((cEm27*) em)->setWaterHeight(-13700.0f);

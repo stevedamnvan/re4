@@ -2,6 +2,7 @@
 // constructors/destructors and model-local contiguous arrays remain authoritative.
 #include "model.h"
 #include "obj.h"
+#include "em.h"
 #include "global.h"
 #include "main_mem.h"
 #include "re4dc_platform.h"
@@ -27,10 +28,12 @@ template<class T> constexpr bool demand=false;
 template<> constexpr bool demand<cParts> = RE4DC_PARTS_DEMAND;
 template<> constexpr bool demand<cModelInfo> = RE4DC_MODELINFO_DEMAND;
 template<> constexpr bool demand<cObj> = RE4DC_OBJECT_DEMAND;
+template<> constexpr bool demand<cEm> = RE4DC_ENEMY_DEMAND;
 // Source lights and indexed clients can retain even an unconstructed/dead
 // object slot. Once exposed, its address stays valid until source pool teardown.
 template<class T> constexpr bool retain_slots=false;
 template<> constexpr bool retain_slots<cObj> = true;
+template<> constexpr bool retain_slots<cEm> = true;
 template<class T> bool sparse(cManager<T>* m) { return demand<T> && !m->pArrayPush; }
 template<class T> Pool<T>* pool(cManager<T>* m) { return (Pool<T>*)m->pArray; }
 template<class T> void report(Pool<T>* p, const char* why) {
@@ -151,3 +154,15 @@ template<> bool cManager<cObj>::prepareWork(u32 i,u32 n){
     return prepare_work(this,first,count);
 }
 template<> cObj* cManager<cObj>::getPrevWork(cObj* p){return previous_work(this,p);}
+
+// Enemy creation uses source first-free order. Keep two-slot pages stable until
+// the room owner tears down; dead slots and deferred deletion are not evictions.
+template<> int cManager<cEm>::arrayAlloc(u32 n){return array_alloc(this,n);}
+template<> int cManager<cEm>::arrayFree(){return array_free(this);}
+template<> cEm* cManager<cEm>::workAt(u32 n){return work_at(this,n);}
+template<> bool cManager<cEm>::prepareWork(u32 i,u32 n){
+    if(i>=nArray || n!=1)return false;
+    const u32 first=i&~1U, count=nArray-first<2?nArray-first:2;
+    return prepare_work(this,first,count);
+}
+template<> cEm* cManager<cEm>::getPrevWork(cEm* p){return previous_work(this,p);}

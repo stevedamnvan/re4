@@ -1317,7 +1317,12 @@ void cObjLadder::breakWindow()
         v.y -= 1000.0f;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmWindow* em = (cEmWindow*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEmWindow* em = (cEmWindow*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if ((em->be_flag & 0x201) == 1 && em->id == 0x46 && em->hp > 0 && (em->ChkStatus() & 1) == 0) {
             if ((em->pos.x - v.x) * (em->pos.x - v.x) + (em->pos.y - v.y) * (em->pos.y - v.y) + (em->pos.z - v.z) * (em->pos.z - v.z) <

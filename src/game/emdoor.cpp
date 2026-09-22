@@ -2251,7 +2251,12 @@ int emDoorDoorAutoCloseCk(cEmDoor* em)
         }
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if ((e->be_flag & 0x201) != 1) {
             continue;
@@ -3249,7 +3254,12 @@ int cEmDoor::ckObj()
         // 396th insn that gives gcse the 199-bucket table in which mat's PRE pseudo precedes inv's.
         cEmMgr* m = &EmMgr;
         u32 ofs = m->size * i;
+#if !defined(__PPC__)
+        cEm* e = m->workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) m->pArray + ofs);
+#endif
         EmRackWork* rw = 0;
 
         if ((e->be_flag & 0x201) != 1) {
@@ -3396,7 +3406,12 @@ cEmDoor* DoorOpenCk(cModel* m)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmDoor* em = (cEmDoor*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEmDoor* em = (cEmDoor*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         EmDoorWork* w;
 
         if ((em->be_flag & 0x201) != 1) {
@@ -3530,7 +3545,12 @@ void emDoorDropWeapon(cEmDoor* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEmWep* e = (cEmWep*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEmWep* e = (cEmWep*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if ((e->be_flag & 0x201) != 1) {
             continue;

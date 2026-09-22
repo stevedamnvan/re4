@@ -472,7 +472,12 @@ void SceAtCheck()
     }
     sceAtCheck_main(pPL, 1);
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if (pSUB != 0 && pSUB == em) {
             sceAtCheck_main(em, 8);
             continue;
@@ -1938,7 +1943,17 @@ int sceAtCheckLadderUp(SceAtLadder* l, cModel* m)
     sceAtGetLadderPos(l, &pos, &ang);
     AreaDataInit(&area, &pos, 2, 500.0f, 2000.0f);
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) {
+            // Source checks id/position even on never-used zeroed slots.
+            Vec unusedPos = {0.0f, 0.0f, 0.0f};
+            if (AreaHitCheck(&area, &unusedPos) == 1) return 0;
+            continue;
+        }
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if (em->id <= 0x20 && m != em) {
             if (AreaHitCheck(&area, &em->pos) == 1) {

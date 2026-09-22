@@ -461,7 +461,12 @@ static void r108_str_check()
         int found = 0;
 
         for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+            cEm* em = (cEm*) EmMgr.workAt(i);
+            if (!em) continue;
+#else
             cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
             if (em->id >= 0x10 && em->id <= 0x20 && em->checkStatus(EM_STATUS_ACTIVE) != 0 && em->hp > 0 && (em->be_flag & 0x201) == 1
                 && ((cEmGanado*) em)->ckFindPL() == 1 && em->plDist2 < near) {

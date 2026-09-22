@@ -797,7 +797,12 @@ cModel* searchLockEm(Vec* pos, cModel* skip_, f32 range_)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         f32 d;
 
         if (em == skip) {

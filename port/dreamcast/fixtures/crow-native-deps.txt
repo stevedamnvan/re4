@@ -1,0 +1,4 @@
+# Opening-room em23 model and effect images. Reuse prepare_native_ui.py;
+# merge verified packages into a private fixture without replacing its reference.
+# Source archive, palette/effect CPU readers and sound transport remain resident.
+em/em23.drs

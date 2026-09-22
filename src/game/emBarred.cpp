@@ -1028,7 +1028,12 @@ int emBarredNearCk(cEmBarred* em)
         return 1;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if ((e->be_flag & 0x201) != 1) {
             continue;
@@ -1143,7 +1148,12 @@ int emBarredUnderCk(cEmBarred* em)
         }
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if ((e->be_flag & 0x201) != 1) {
             continue;

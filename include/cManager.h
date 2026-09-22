@@ -172,6 +172,12 @@ template<> int cManager<cObj>::arrayFree();
 template<> cObj* cManager<cObj>::workAt(u32 no);
 template<> bool cManager<cObj>::prepareWork(u32 no, u32 count);
 template<> cObj* cManager<cObj>::getPrevWork(cObj* p);
+class cEm;
+template<> int cManager<cEm>::arrayAlloc(u32 n);
+template<> int cManager<cEm>::arrayFree();
+template<> cEm* cManager<cEm>::workAt(u32 no);
+template<> bool cManager<cEm>::prepareWork(u32 no, u32 count);
+template<> cEm* cManager<cEm>::getPrevWork(cEm* p);
 #endif
 
 // Member initializer list, in this order: the stores come out in this order (body assignments

@@ -2806,7 +2806,12 @@ int cSubChar::checkBackEm()
     int n = EmMgr.nArray;
 
     for (i = 0; i < n; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         f32 d;
         f32 ang;
 
@@ -2881,7 +2886,12 @@ void cSubChar::analyze()
     BitOff16(subFlags2, 0x201);
     if (!SUBFLAG(this)->check(3)) {
         for (i = 0; i < n; i++) {
+#if !defined(__PPC__)
+            cEm* em = (cEm*) EmMgr.workAt(i);
+            if (!em) continue;
+#else
             cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
             if (!em->isAlive()) {
                 continue;

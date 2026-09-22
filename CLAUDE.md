@@ -13,7 +13,76 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D343 persistent option compaction
+## Current resumption point - D344 stable enemy work pages
+
+D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
+through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap
+free rises **169,600 bytes** at the required block and Ganado body allocations,
+to 2,921,856 / 1,806,336 bytes. After initialization, 20 backed slots (19 live)
+use 72,384 bytes including metadata, versus 213,184 for the original array.
+
+The bounded run now has **no source allocation failures**, and all five required
+crows have validated 24-part chains. Final free/largest source heap is 66,592
+bytes. Existing conversion prepares the missing crow packages; the observed
+128x128 body texture uploads into 32,768 VRAM bytes. Neither archive sizes nor
+motion residency change. This establishes initialization progress, not complete
+encounter fit, visual equivalence, working audio or manual play.
+
+Keep the selectable candidate; the default remains contiguous backing. Continue
+source event activation and native presentation: the diagnostic renderer still
+rejects material flag 0x04 and a source part with no image. Do not clear those
+checks without implementing their source semantics. Hot motion remains cached;
+mutable event snapshots, lighting, audio/inventory, combat, transitions/retry
+and physical-hardware acceptance remain open. Simpler water is still an
+unimplemented visual candidate, with no claimed saving or verified PS2 match.
+
+See [D344](port/dreamcast/docs/R4_EVENT_ENEMY_CHECKPOINT.md#d344-stable-enemy-work-pages).
+
+Selected ELF SHA256 `e13254ffdc7da81e439dfc5ed13d18369f5bcd388528439ddb9d43a53c5043a6`.
+Text/data/BSS: 2,309,656 / 77,012 / 673,080; +3,636 text versus D343,
+unchanged aligned data/BSS and source heap capacity; five prior missing stubs.
+Use the patched KOS `/root/work/kos-re4dc-d336` with the existing reservations
+1360608 / 149920 / 846656 / 247776 for core/option/player/weapon, all prior
+PARTS/MODELINFO/OBJECT demand options, `PVR_STREAM=1 MODEL_POSITION_CACHE=1
+EVENT_FILES=1`, and now `ENEMY_DEMAND=1`. Current module allowlist prevents
+unreviewed new RELs from enabling sparse enemy backing. Do not lower slot counts.
+
+Selected mirror `/root/probe/d343-mirror` is unchanged. Use the new private
+`/root/probe/d344b-fixtures`, which retains the approach input and existing
+native packages and adds 19 verified em23 image packages. Reproduce with
+`prepare_native_ui.py /root/re4data port/dreamcast/fixtures/crow-native-deps.txt
+<fresh-private-output>` and verify duplicate identities before merging fixtures.
+This is package completion, not texture compression or source-archive recovery.
+
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d344b-crow-textures` is selected;
+`d344a-enemy-work` retains the initial missing-texture observation. Both 240-second
+runs end at the harness deadline. No emulator is left running. Sealed manifests
+include exact executable/disc/assets/config/tool identities and inherited edits.
+Private reproduction scripts are `/root/probe/d344-*.py`, `d344b-prepare.py`;
+do not overwrite their existing output directories. Parent commit is
+87c0e1f155f0ab589696523ac3b1ec9e8fae4998; 63 inherited tracked changes preserved.
+
+Tests cover all 16 demand/reference combinations under ASan/UBSan, real manager
+reuse/deferred deletion/indexed pointers/full capacity/push-pop/owner teardown,
+and the actual ladder query's zeroed-slot behavior. All 334 current module input
+units pass the direct-reader check; 33 touched source/header PPC token streams
+are unchanged. Actual SH-4 layout assertions pass. No new ProDG comparison.
+Target checks validate all four pool directories and live enemy/parts lists.
+Motion: 952,768 resident/peak/read, 22,400 peak pinned, 2,336 metadata,
+75 loads/misses, 6 hits, zero evictions/failures, worst wait 270,939 us. All 145
+headers and 1,904 relocated keys validate; later/final counters match.
+
+Next exact presentation consumers: `re4dc_model_packet_reserve` in native_ui.cpp
+rejects `part->flags & 4` (9,845 accumulated rejections) and the same no-image
+part (109) in this run. There are zero texture/capacity/overflow/invalid rejections
+once the crow package is supplied. Trace those flags through model_bridge and
+`commonModelTrans`; don't discard geometry or simply remove the rejection.
+The 66,592-byte headroom is not an event/transition budget: immutable EVD
+preparation is qualified, but target activation and the s03 mutable snapshot/
+final destination still need source-lifetime integration. Keep both work tracks
+visible; do not repeat the resolved crow or block allocation work.
+
+## Previous D343 checkpoint - persistent option compaction
 
 D343 externalizes the persistent option archive's 23 verified upload-only
 textures through the existing native identity/package path. The file loads

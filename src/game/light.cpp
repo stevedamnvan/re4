@@ -1235,7 +1235,11 @@ int cLight::setParent(cModel* m)
     }
     n = EmMgr.nArray;
     for (i = 0; i < n; i++) {
+#if !defined(__PPC__)
+        if (m && (cModel*) EmMgr.workAt(i) == m) {
+#else
         if ((cModel*) ((u8*) EmMgr.pArray + EmMgr.size * i) == m) {
+#endif
             setParent(1, (ParentNo & 0xFFFF0000) | m->id);
             return 1;
         }

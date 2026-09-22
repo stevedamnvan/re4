@@ -1768,7 +1768,12 @@ void gameDebugDisp()
         }
         if (pG->Debug_flg[2] & 0x1000) {
             for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+                cEm* em = (cEm*) EmMgr.workAt(i);
+                if (!em) continue;
+#else
                 cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
                 Vec pos2;
                 Vec pos;
                 Vec scr2;

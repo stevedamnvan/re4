@@ -950,7 +950,12 @@ static void r101_setChickenFlag()
 
     SceSleep(1);
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if (em->id == 0x28 && em->isAlive()) {
             em->flag &= ~0x80000000;
@@ -964,7 +969,12 @@ static inline void r101_setEmSuspend(int on)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if (em->id >= 0x10 && em->id <= 0x20 && em->isAlive()) {
             em->setNoSuspend(on);

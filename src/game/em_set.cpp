@@ -134,7 +134,11 @@ static inline cEm* emSetWork(u32 no)
     if (no >= m->nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    return m->workAt(no);
+#else
     return (cEm*) ((u8*) m->pArray + m->size * no);
+#endif
 }
 
 // 1 when no live enemy already carries list entry `no` (0xFF: always 1).
@@ -147,6 +151,9 @@ int checkListId(int no)
     }
     for (i = 0; i < EmMgr.nArray; i++) {
         cEm* em = emSetWork(i);
+#if !defined(__PPC__)
+        if (!em) continue;
+#endif
 
         if ((em->be_flag & 0x201) == 1 && em->emset_no == (u8) no) {
             return 0;
@@ -292,6 +299,9 @@ cEm* GetEmPtrFromList(int no)
     }
     for (i = 0; i < EmMgr.nArray; i++) {
         cEm* em = emSetWork(i);
+#if !defined(__PPC__)
+        if (!em) continue;
+#endif
 
         if ((em->be_flag & 0x201) == 1 && em->emset_no == (u8) no) {
             return em;

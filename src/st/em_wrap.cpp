@@ -1103,7 +1103,12 @@ int SceCkFindPL(f32* dist)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* p = (cEm*) EmMgr.workAt(i);
+        if (!p) continue;
+#else
         cEm* p = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         cEmWrap em;
         Vec pos;
 

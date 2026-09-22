@@ -1009,7 +1009,12 @@ void CameraPushObject::move()
     getColumn(inv, 2, (Vec*) plmat[2]);
     plpos.x = inv[0][3]; plpos.y = inv[1][3]; plpos.z = inv[2][3];
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        e = (cModel*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         e = (cModel*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((e->id == 0x41 || e->id == 0x44 || e->id == 0x46) && (e->be_flag & 0x201) == 1) {
             PSMTXMultVec(m, &e->pos, &em_pos);
             // negated tests: `blt` / `cror so,eq,gt; bso` (a positive `>=`/`<=` gives cror + bns)

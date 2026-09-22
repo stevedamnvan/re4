@@ -1,9 +1,24 @@
 """Real manager + native backing, synthetic parts; host ABI shims only."""
 from pathlib import Path
-import subprocess,tempfile,unittest
+import subprocess,tempfile,unittest,re,runpy
 ROOT=Path(__file__).resolve().parents[3]
 
 class PartsStorage(unittest.TestCase):
+ def test_linked_enemy_readers(self):
+  """New linked modules must not silently reintroduce contiguous-slot readers."""
+  make=(ROOT/'port/dreamcast/game/Makefile').read_text()
+  modules=re.search(r'^MODULES = (.+)$',make,re.M)[1].split()
+  units=runpy.run_path(str(ROOT/'port/dreamcast/game/tools/gen_modules.py'))['units']
+  paths=set((ROOT/'src/game').glob('*.cpp'))
+  for module in modules:
+   paths.update(ROOT/p for p in units(str(ROOT/'config/G4BE08/modules'),module)[1])
+  for p in sorted(paths):
+   s='\n'.join(x for x in p.read_text().splitlines() if not re.match(r'\s*#\s*include',x))
+   native=subprocess.check_output(['g++','-E','-P','-x','c++','-'],input=s,text=True)
+   self.assertNotIn('EmMgr.pArray',native,str(p))
+   for alias in re.finditer(r'cEmMgr\* (\w+) = &EmMgr;',native):
+    self.assertNotIn(alias[1]+'->pArray',native[alias.end():native.find('\n}',alias.end())],str(p))
+
  def test_lifetimes_and_capacity(self):
   with tempfile.TemporaryDirectory() as tmp:
    d=Path(tmp)
@@ -37,6 +52,8 @@ class cPartsMgr:public cManager<cParts>{public:
    # Use the real indexed helper: a light may keep its result before create.
    obj=(ROOT/'include/obj.h').read_text();a=obj.index('static inline cObj* ObjMgrWork');b=obj.index('\nstruct EspGenWork;',a)
    (d/'obj.h').write_text(OBJECT_HEADER+obj[a:b])
+   em=(ROOT/'include/em.h').read_text();a=em.index('static inline cEm* EmMgrWork');b=em.index('// Pushable rack/crate',a)
+   (d/'em.h').write_text(ENEMY_HEADER+em[a:b])
    (d/'global.h').write_text('#pragma once\nstruct Global{unsigned Debug_flg[4];};extern Global* pG;\n')
    (d/'main_mem.h').write_text('''#pragma once
 #include "types.h"
@@ -44,13 +61,16 @@ class cPartsMgr:public cManager<cParts>{public:
 struct HeapEntry{int handle;};extern HeapEntry Heap[13];
 void* mem_alloc(u32,const char*,int,int,int);void memclr_asm(void*,u32);int MemGetCurrentHeap();
 ''')
-   (d/'re4dc_platform.h').write_text('#pragma once\nvoid re4dc_log(const char*,...);void re4dc_missing(const char*);\n')
+   (d/'re4dc_platform.h').write_text('#pragma once\nvoid re4dc_log(const char*,...);extern "C" void re4dc_missing(const char*);\n')
    s=(ROOT/'src/game/model.cpp').read_text();a=s.index('static inline cParts* PartsMgrWork');b=s.index('\ncPartsMgr PartsMgr;',a)
    (d/'sequence.cpp').write_text('#include "model.h"\n'+s[a:b])
-   (d/'main.cpp').write_text(CHECKS)
-   for mode in range(8):
+   # Exercise the real ladder query: it intentionally reads position even on
+   # unused zeroed slots, unlike ordinary live-enemy scans.
+   s=(ROOT/'src/game/sce_at.cpp').read_text();a=s.index('int sceAtCheckLadderUp(');b=s.index('\n// Type 0x11',a)
+   (d/'main.cpp').write_text(CHECKS.replace('int main(){',ENEMY_CHECKS+s[a:b]+ '\nint main(){\n check_enemies();'))
+   for mode in range(16):
     exe=d/f'check{mode}'
-    subprocess.run(['g++','-std=c++20','-O1','-g','-fsanitize=address,undefined','-fno-sanitize=vptr','-fno-omit-frame-pointer','-fno-pie','-no-pie',f'-DRE4DC_PARTS_DEMAND={mode&1}',f'-DRE4DC_MODELINFO_DEMAND={(mode>>1)&1}',f'-DRE4DC_OBJECT_DEMAND={(mode>>2)&1}',f'-I{d}',str(ROOT/'port/dreamcast/game/parts_bridge.cpp'),str(d/'sequence.cpp'),str(d/'main.cpp'),'-o',str(exe)],check=True)
+    subprocess.run(['g++','-std=c++20','-O1','-g','-fsanitize=address,undefined','-fno-sanitize=vptr','-fno-omit-frame-pointer','-fno-pie','-no-pie',f'-DRE4DC_PARTS_DEMAND={mode&1}',f'-DRE4DC_MODELINFO_DEMAND={(mode>>1)&1}',f'-DRE4DC_OBJECT_DEMAND={(mode>>2)&1}',f'-DRE4DC_ENEMY_DEMAND={(mode>>3)&1}',f'-I{d}',str(ROOT/'port/dreamcast/game/parts_bridge.cpp'),str(d/'sequence.cpp'),str(d/'main.cpp'),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
 
 OBJECT_HEADER = r'''
@@ -64,9 +84,67 @@ class cObjMgr:public cManager<cObj>{public:
 };
 extern cObjMgr ObjMgr;
 '''
+ENEMY_HEADER = r'''
+#pragma once
+#include "model.h"
+using f32=float;
+struct Vec{float x,y,z;};
+class cEm:public cUnit {public: unsigned id; Vec pos; unsigned value;
+ cEm(){be_flag=1;id=0;pos={0,0,0};value=123;} };
+using cModel=cEm;
+class cEmMgr:public cManager<cEm>{public:
+ cEmMgr():cManager<cEm>(sizeof(cEm),2){}
+ void* memAlloc(u32);void memFree(void*);void memClear(cEm*,u32);
+ int construct(cEm* p,u32 id){new(p)cEm;p->id=id;return 1;}
+};
+extern cEmMgr EmMgr;
+extern "C" void re4dc_missing(const char*);
+'''
+ENEMY_CHECKS = r'''
+void* cEmMgr::memAlloc(u32 n){return mem_alloc(n,0,0,0,13);}
+void cEmMgr::memFree(void* p){OSFreeToHeap(allocations.at(p).owner,p);}
+void cEmMgr::memClear(cEm* p,u32 n){memclr_asm(p,n);}
+cEmMgr EmMgr;
+struct SceAtLadder{Vec pos;};struct AreaData{Vec pos;};
+void sceAtGetLadderPos(SceAtLadder* l,Vec* p,float* a){*p=l->pos;*a=0;}
+void AreaDataInit(AreaData* a,Vec* p,int,float,float){a->pos=*p;}
+int AreaHitCheck(AreaData* a,Vec* p){return a->pos.x==p->x&&a->pos.y==p->y&&a->pos.z==p->z;}
+int sceAtCheckLadderUp(SceAtLadder*,cModel*);
+void check_enemies(){
+ assert(EmMgr.arrayAlloc(60));unsigned before=calls;
+ // Unused slots preserve the source ladder result without committing a pool.
+ SceAtLadder ladder{{0,0,0}};assert(!sceAtCheckLadderUp(&ladder,nullptr));
+ ladder.pos.x=100;assert(sceAtCheckLadderUp(&ladder,nullptr));assert(calls==before);
+ if(RE4DC_ENEMY_DEMAND){for(unsigned i=0;i<60;++i)assert(!EmMgr.workAt(i));assert(calls==before);}
+ auto retained=EmMgrWork(17);assert(retained&&!retained->be_flag);
+ auto player=EmMgr.create(0);assert(player==EmMgr.workAt(0));
+ auto first=EmMgr.create(0x12);assert(first==EmMgr.workAt(1));
+ assert(EmMgr.create(0x23,17)==retained);
+ retained->pos.x=100;assert(sceAtCheckLadderUp(&ladder,nullptr)); // source tests id <= 0x20 only
+ retained->id=0x12;assert(!sceAtCheckLadderUp(&ladder,nullptr));
+ assert(sceAtCheckLadderUp(&ladder,retained));
+ EmMgr.destroy(first);auto second=EmMgr.create(0x23);assert(second==EmMgr.workAt(2));
+ EmMgr.dieCheck();assert(first->be_flag&0x400);EmMgr.dieCheck();assert(!first->be_flag);
+ assert(EmMgr.create(0x12)==first);before=calls;
+ for(int i=0;i<100;++i){EmMgr.destroy(first);EmMgr.dieCheck();EmMgr.dieCheck();assert(EmMgr.create(0x12)==first);}
+ assert(calls==before&&EmMgrWork(17)==retained&&retained->pos.x==100);
+ if(RE4DC_ENEMY_DEMAND){deny=true;bool rejected=false;try{EmMgrWork(40);}catch(const std::runtime_error&){rejected=true;}
+ assert(rejected&&EmMgr.workAt(17)==retained&&!EmMgr.workAt(40));deny=false;}
+ auto rear=EmMgr.createBack(0x23);assert(rear==EmMgr.workAt(59)&&EmMgr.getPrevWork(rear)==EmMgrWork(58));
+ std::vector<cEm*> slots;for(unsigned i=0;i<60;++i){auto p=EmMgr.workAt(i);if(!p||!(p->be_flag&0x601))p=EmMgr.create(0x12,i);assert(p);slots.push_back(p);}
+ assert(EmMgr.countActiveWork()==60&&!EmMgr.create());for(unsigned i=0;i<60;++i)assert(EmMgrWork(i)==slots[i]);
+ assert(!EmMgrWork(60)&&!EmMgr.prepareWork(0,2));
+ assert(EmMgr.arrayPush(4)&&EmMgr.create());EmMgr.destroyAll();EmMgr.dieCheck();EmMgr.dieCheck();assert(EmMgr.arrayPop());
+ assert(EmMgrWork(17)==retained&&EmMgr.countActiveWork()==60);
+ EmMgr.destroyAll();EmMgr.dieCheck();EmMgr.dieCheck();current=5;EmMgr.arrayFree();assert(allocations.empty());current=4;
+ assert(EmMgr.arrayAlloc(3)&&EmMgr.create());for(auto [p,info]:allocations)free(p);allocations.clear();EmMgr.roomInit();
+ assert(EmMgr.arrayAlloc(3)&&EmMgr.createBack(0));EmMgr.destroyAll();EmMgr.dieCheck();EmMgr.dieCheck();EmMgr.arrayFree();assert(allocations.empty());
+}
+'''
 CHECKS=r'''
 #include "model.h"
 #include "obj.h"
+#include "em.h"
 #include "global.h"
 #include "main_mem.h"
 #include <cassert>

@@ -97,7 +97,12 @@ void LightAreaUpdate()
         return;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         int type;
 
         if ((em->be_flag & 0x201) != 1) {

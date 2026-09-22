@@ -165,12 +165,21 @@ $(OBJDIR)/platform/mem.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/core-budget.h
 PARTS_DEMAND ?= 0
 MODELINFO_DEMAND ?= 0
 OBJECT_DEMAND ?= 0
+ENEMY_DEMAND ?= 0
+# Direct-slot consumers reviewed for this module set. Audit any newly linked
+# module before enabling sparse enemy backing; census/reference remain usable.
+ifeq ($(ENEMY_DEMAND),1)
+ifneq ($(filter-out st1_0 st1_1 st1_2 st1_3 wep02 em12 em23,$(MODULES)),)
+$(error ENEMY_DEMAND requires a direct-slot consumer audit for the selected MODULES)
+endif
+endif
 .PHONY: parts-budget-force
 $(OBJDIR)/parts-budget.h: parts-budget-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_PARTS_DEMAND %s\n' '$(PARTS_DEMAND)' > $@.tmp
 	@printf '#define RE4DC_MODELINFO_DEMAND %s\n' '$(MODELINFO_DEMAND)' >> $@.tmp
 	@printf '#define RE4DC_OBJECT_DEMAND %s\n' '$(OBJECT_DEMAND)' >> $@.tmp
+	@printf '#define RE4DC_ENEMY_DEMAND %s\n' '$(ENEMY_DEMAND)' >> $@.tmp
 	@cmp -s $@.tmp $@ || cp $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/parts_bridge.o: parts_bridge.cpp $(OBJDIR)/parts-budget.h

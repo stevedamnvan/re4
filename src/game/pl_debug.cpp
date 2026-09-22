@@ -243,7 +243,12 @@ void cPlayer::emSearch()
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
         if ((em->be_flag & 0x201) == 1 && em->hp > 0) {
             f32 d = GetDistance3(&pos, &em->pos);
             if (d > min) {

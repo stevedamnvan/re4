@@ -508,3 +508,111 @@ fit; retain hot motion data and do not disable crows/blocks. Event s03 mutable
 snapshot/final-buffer capacity, source lighting, audio, inventory, progression,
 retry and performance remain explicit. Simplified water stays selectable and
 unimplemented; PS2 equivalence must be checked before promotion.
+
+## D344 stable enemy work pages
+
+2026-09-22; parent 87c0e1f155f0ab589696523ac3b1ec9e8fae4998 plus the preserved
+63 inherited tracked changes. Keep selectable `ENEMY_DEMAND=1` and the missing
+crow packages. Default enemy backing remains the source-sized contiguous array.
+
+| Reused mechanism | Source connection | Small new adapter |
+| --- | --- | --- |
+| parts_bridge Pool/Chunk, workAt/prepareWork and source heap handles | cEmMgr create/createBack, indexed references and source room teardown | cEm specializations, stable two-slot pages, no dead-slot eviction |
+| Existing native manager scans and lifecycle methods | source game/st1/shared em10/em_wrap readers | nonallocating sparse lookup; explicit retained indexed access; module qualification guard |
+| prepare_native_ui, convert_tpl, le_mirror qualification; shared Package/upload/fence | em23 model/effect TPLs selected by recovered game | asset-free crow-native-deps selector and private generated packages; no new converter or backend |
+
+The source first-free and last-free creation order, all 60 logical slots,
+constructors/destructors, active-list order, delayed deletion and source IDs stay
+intact. Exposed slots retain their addresses until owning room teardown, even
+after deletion. Scans cannot allocate backing. Indexed callers commit stable
+slots; allocation failure is explicit. The ladder query intentionally reads
+position even on never-used zeroed slots: preserve that result without allocating
+the entire array. Other live-work scans skip unbacked slots. Debug push/pop keeps
+its separate original contiguous array. Later RELs are not silently qualified:
+the build rejects ENEMY_DEMAND with modules outside the reviewed current set.
+
+| Actual source boundary | D343a | D344a/b |
+| --- | ---: | ---: |
+| Heap free after 1,126,272-byte block pool | 2,752,256 | 2,921,856 |
+| Heap free after 1,105,152-byte em12 body | 1,636,736 | 1,806,336 |
+| Enemy work owning allocation after initialization, including overhead | 213,184 | 72,384 |
+| Final OS heap free / largest free block | 64 / 64 | 66,592 / 66,592 |
+| Crow ModelInit failures | 4 | 0 |
+
+The early saving is 169,600 bytes (12 slots backed); the final work-array saving
+is **140,800 bytes** (20 backed, 19 live). It is not another reduction of the
+1,105,152-byte enemy archive or the motion cache. Directory is 384 bytes, ten
+pages are 7,200 bytes each, total/peak 72,384; no allocation retry/reclaim/failure.
+At all 60 slots backed, capacity remains intact but total becomes 216,384,
+3,200 above the original contiguous allocation. Include that maximum overhead
+in future room budgets. Growing cannot require a second full array or move live
+actors. The original effect pool was inspected but left unchanged: its rotating
+allocation order would eventually touch every slot, defeating retained lazy pages.
+
+More required work now fits: parts resident/peak 334,112 (647 backed/live),
+model-info 78,272 (256 backed/242 live), objects 212,704 (212/206); no pool
+failures or reclaim attempts. Actual heap lists validate size 8,840,576 with one
+66,592-byte free block. This is a bounded initialization/loading observation,
+not proof that every later event, reaction, audio request or transition fits.
+ELF text/data/BSS 2,309,656 / 77,012 / 673,080 (+3,636 text versus D343);
+aligned source heap capacity is unchanged, not zero overall platform cost.
+
+D344a still lacked native em23 textures now reachable after successful model
+creation. D344b adds 19 packages from the existing converter and qualified source
+archive; the observed body key 3d9d333a-125fadf1 uploads successfully, 128x128,
+32,768 VRAM bytes, 144 retained package metadata bytes, existing 64KiB staging,
+zero source allocation for upload. Source dimensions, original archive, palette/
+effect CPU consumers and sound transport remain intact. This uses the existing
+16-bit conversion policy; no VQ/PAL saving or visual equivalence is claimed.
+Only the private selectable fixture changes; no source texels are externalized.
+
+Both 240-second runs finish at their harness deadline, with no observed guest
+reboot and no source allocation failure. Source title/menu, HUD and moving
+640x480 diagnostic world remain visible. D344b reaches source frame 1334 and
+Leon position about (-95317,-131,-2761) through the existing approach input.
+Five crow list identities 15/16/17/32/33 each have 24 linked parts and valid model
+metadata in both later/final snapshots; active-list membership and all four
+pool directories validate. RAM model completeness is not accepted animated
+rendering, combat, audio, inventory, retry, a full room or manual play.
+
+Presentation remains explicitly diagnostic: zero texture, capacity, invalid or
+overflow rejection counters in D344b, but 9,845 material-flag0x04 rejections and
+109 no-image-part rejections remain. Inspect the source material consumers at
+model_bridge/commonModelTrans before adapting native_ui's packet-reserve guard.
+Do not remove guards as a substitute for implementing the material. No new
+frame-budget claim; runs differ in rendered workload and source frame reached.
+
+Motion preserves the complete currently classified hot set: 952,768 bytes
+resident/peak/read, 22,400 peak pinned, 2,336 metadata, 75 loads/misses, 6 hits,
+zero evictions/failures, worst wait 270,939 us in D344b. All 145 persistent source
+heads and 1,904 relocated keys validate. Warmed and final counters are unchanged;
+no repeated disc reads for an unchanged set. This slice changes no motion
+policy. Source-derived prefetch/concurrency and immediate-response coverage
+remain open for unvisited combat/event states; evaluation pinning is a minimum
+lifetime, not an eviction command. Earlier net warmed enemy-family recovery
+1,510,176 remains separate from the new 140,800 work-array saving.
+
+Checks: two focused tests, one running 16 demand/reference combinations with
+ASan/UBSan. They exercise stable retained references, 100 create/destroy reuse
+cycles, deferred deletion, first/last/indexed selection, all slots, allocation
+failure, logical predecessor, debug push/pop and owning-heap reset/free. The
+actual source ladder query is tested for unused-slot origin and live-slot
+results. Native preprocessing checks 334 configured input units including shared
+em10 in em12; 33 changed recovered source/header PPC token streams unchanged.
+Actual SH-4 assertions retain cEm/cEm23 size0xde0, manager/field offsets and crow
+work layout. No new ProDG object comparison or hardware run.
+
+Selected evidence: C:/Flycast-Evidence/re4-dreamcast/d344b-crow-textures;
+d344a-enemy-work retains the initial missing-package finding. Asset mirror is
+/root/probe/d343-mirror; selected fixtures /root/probe/d344b-fixtures. Exact ELF,
+assets, fixture, KOS/compiler, emulator/config and capture-tool identities are
+sealed with the evidence. Original/accepted directories are not mutated.
+ELF SHA256 `e13254ffdc7da81e439dfc5ed13d18369f5bcd388528439ddb9d43a53c5043a6`.
+Selected disc SHA256 `b1b8e879d6dfda9e4161b79294aeea0aae885fc02b9e5957b69eb2d7634ddb0e`.
+
+Next: continue the two demonstrated source integration boundaries: qualified
+EVD activation/mutable event destination lifetime, and the native source material
+rejections above. Preserve working menu, complete allocated actors and hot keys.
+Do not call this the cabin restored, full encounter fit or a first-room skill
+qualification. Water simplification remains a separate selectable candidate;
+no water code/asset change or PS2-equivalence claim was made.

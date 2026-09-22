@@ -1,34 +1,27 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D343 externalizes the persistent option archive's 23 verified upload-only
-textures through the existing native identity/package path. The file loads
-directly into a149,920-byte reservation (full file259,648, old reservation262,144).
-Target source-heap free increases **112,224 bytes** at both required block-pool
-and em12-body points, now2,752,256 /1,636,736. Net archive reduction109,728 plus
-2496 existing slack; metadata/alignment included. No new texture encoding,
-geometry reduction, duplicate full archive, motion eviction or gameplay omission.
+D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
+through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap
+free rises **169,600 bytes** at the required block and Ganado body allocations,
+to 2,921,856 / 1,806,336 bytes. After initialization, 20 backed slots (19 live)
+use 72,384 bytes including metadata, versus 213,184 for the original array.
 
-The corrected room still fails required allocations: four crows fail model
-initialization (previously five);11360 bytes are requested with10720 free,
-followed by512-byte part, collision/object and path-scratch failures. Source
-title/menu and640x480 diagnostic room remain visible. This is not full-room,
-complete-character, performance, audio, inventory or manual-play acceptance.
+The bounded run now has **no source allocation failures**, and all five required
+crows have validated 24-part chains. Final free/largest source heap is 66,592
+bytes. Existing conversion prepares the missing crow packages; the observed
+128x128 body texture uploads into 32,768 VRAM bytes. Neither archive sizes nor
+motion residency change. This establishes initialization progress, not complete
+encounter fit, visual equivalence, working audio or manual play.
 
-A source-input Options round trip resolves discarded images through native
-packages, returns to the title, then reaches room loading. Its colour-bars/EXIT
-capture matches the pinned full-archive reference byte-for-byte; this preserves
-an existing incomplete presentation, not accepted complete options UI. The
-unimplemented mutable card/ARAM fallback now stops before live backing can be
-overwritten; normal separately allocated card scratch remains unchanged.
+Keep the selectable candidate; the default remains contiguous backing. Continue
+source event activation and native presentation: the diagnostic renderer still
+rejects material flag 0x04 and a source part with no image. Do not clear those
+checks without implementing their source semantics. Hot motion remains cached;
+mutable event snapshots, lighting, audio/inventory, combat, transitions/retry
+and physical-hardware acceptance remain open. Simpler water is still an
+unimplemented visual candidate, with no claimed saving or verified PS2 match.
 
-Keep the selectable saving and continue the complete initialization working-set
-audit. Room SST pricing21952 gross remains unimplemented and insufficient by
-itself to accept the encounter. Hot motion stays cached after evaluation;
-prefetch/concurrency, event activation/mutable snapshots, source presentation,
-audio and three-room progression remain open. Simpler water remains a selectable
-candidate; no PS2-equivalence or current memory saving is claimed.
-
-See [D343](R4_EVENT_ENEMY_CHECKPOINT.md#d343-persistent-option-textures).
+See [D344](R4_EVENT_ENEMY_CHECKPOINT.md#d344-stable-enemy-work-pages).
 
 
 ### Previous D340 checkpoint

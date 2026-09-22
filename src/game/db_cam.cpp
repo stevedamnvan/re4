@@ -61,7 +61,11 @@ static inline cEm* EmMgrWorkP(u32 no)
     if (no >= m->nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    return EmMgrWork(no);
+#else
     return (cEm*) ((u8*) m->pArray + m->size * no);
+#endif
 }
 
 debugCamera CamDbg;

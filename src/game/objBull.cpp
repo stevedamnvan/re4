@@ -866,7 +866,12 @@ void objBullMoveAdjustEM(cObjBull* obj)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if ((em->be_flag & 0x201) == 1) {
             if (em->id == 0x42) {
@@ -1360,7 +1365,12 @@ int SubCkNearEm()
         zmin = -6000.0f;
     }
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* em = (cEm*) EmMgr.workAt(i);
+        if (!em) continue;
+#else
         cEm* em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if ((em->be_flag & 0x201) == 1 && em->id > 0xF && em->id <= 0x20 && em->hp > 0 && (em->be_flag & 2)) {
             PSMTXMultVec(inv, &em->pos, &v);
