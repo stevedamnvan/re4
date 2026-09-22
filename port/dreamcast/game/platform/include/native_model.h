@@ -44,3 +44,10 @@ extern "C" void re4dc_model_packet_abort();
 inline unsigned re4dc_model_cull(unsigned source_mode,bool force_front){
     return force_front?2U:(source_mode==0?2U:source_mode==1?1U:0U);
 }
+
+// Cumulative preparation work; distinct from PVR/internal TA capacity counters.
+// Native cache costs 2 KiB of the existing calling stack, no resident allocation.
+struct Re4dcModelWorkStats {
+    unsigned part_preparations, position_references, position_transforms, position_hits;
+};
+extern "C" const Re4dcModelWorkStats* re4dc_model_work_stats();

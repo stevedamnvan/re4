@@ -173,3 +173,14 @@ $(OBJDIR)/pvr-stream.h: pvr-stream-force
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_ui.o: $(OBJDIR)/pvr-stream.h
 $(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pvr-stream.h
+
+# Exact source-position reuse, scoped to one native part. 0 is the reference path.
+MODEL_POSITION_CACHE ?= 1
+.PHONY: model-position-force
+$(OBJDIR)/model-position.h: model-position-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_MODEL_POSITION_CACHE %s\n' '$(MODEL_POSITION_CACHE)' > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_model.o: $(OBJDIR)/model-position.h
+$(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-position.h

@@ -13,63 +13,72 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D338 source cull corrected; materials and ARAM remain
+## Current resumption point - D339 position reuse; event storage and materials remain
 
-D338 corrects the recovered-game cull mapping at the existing model adapter.
-The shared viewer clipper's screen-area values are not interchangeable with the
-source GX API values. Source SDK cull-bit conversion and negative viewport Y
-establish the required mapping. **Textured ground and the back of Leon's head
-now render correctly from the sampled view**, alongside cabin, trees, gun and
-HUD. No model rotation, pose, geometry, texture or camera change was made.
+D339 keeps a bounded source-position cache in the existing native model adapter.
+The same transformed position is reused across corners of one source part; UVs,
+normals, winding, material and source pose retain their separate identities.
+The 64-entry table lives for one synchronous submission, including packet flushes;
+new part/pose/instance/camera submissions start empty. No cross-frame invalidation
+scheme, geometry reduction, new renderer or extra resident allocation is added.
 
-D337/D338 final source frame1255, camera/projection/viewport, player root and119
-part matrices, plus8 prepared model arrays match byte-for-byte. Sampled menu
-pixels are identical. This resolves the earlier missing-ground/backwards-face
-artifact; it does not accept every character component/material or gameplay.
-Eleven focused tests pass, including200 source-winding cases and prior clipping,
-strip/chunk/ownership checks. Both build variants pass and the captured ELF
-reproduces exactly. Text/data/BSS unchanged; same64KiB packet scratch.
+Two sequential Flycast runs compare `MODEL_POSITION_CACHE=0` and `=1` (default).
+For 12 common observed source-frame tags, median presented interval drops from
+1,840.012 to 1,437.144 ms (21.9%); p95 from 1,856.699 to 1,439.648 ms. This is
+one emulator run per choice, observational completed-frame sampling, not physical
+timing or real-time play. The candidate avoids 8,334,641 of 13,072,693 position
+transforms (63.8%). Eleven focused tests pass, including both cache choices,
+source winding, clipping, seams, chunk transport and failure ownership.
 
-The135s Flycast run has30 model presentations at the final snapshot,0 packet
-overflows/invalid geometry/texture failures. Current texture VRAM3,244,032 bytes
-(+131,072 for newly visible content),97 uploads,0 missing UI textures; earlier
-peak4,192,256 unchanged. Maximum model commands/frame2,440,448; physical TA/OPB
-capacity remains unqualified because Flycast reports invalid zero usage. Keep
-PVR_STREAM=1 opt-in; last presentation interval1,823,323us is not real-time play.
+The candidate adds 2 KiB within the existing calling stack, no extra heap/VRAM
+allocation. Compiler-reported submit stack is 2,160 bytes; this is not a whole-
+call-chain peak. Text is 2,292,304 (+224 versus D338); data/BSS remain 76,836 /
+673,016. Required block/enemy allocation points stay 2,582,048 /1,466,528 free;
+later source free remains 41,472. Texture use is 3,244,032, peak 4,192,256, with
+97 uploads and zero missing textures. No new source-archive recovery is claimed.
 
-Source heap41,472 later free and required block/enemy allocations remain intact.
-Warm enemy recovery1,510,176; cache952,768 current/peak/read,22,400 peak pinned,
-75 misses/loads,6 hits,0 evictions/failures,270,938us worst wait; all145 headers
-and1,904 key pointers validate. No later motion evaluations: response/prefetch/
-concurrency coverage stays open. Separate-alpha/blended materials, lighting,
-event ARAM backing, audio and manual progression remain required. Event scratch
-694,560/669,248/309,632 still fails; no new heap recovery. Simpler water remains
-an unimplemented selectable candidate, without a PS2-equivalence or savings claim.
-See [D338](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d338-source-cull-mapping-restores-ground-and-head-surfaces).
+Menu captures match exactly. Reviewed room captures retain ground, Leon's rear
+head, cabin and HUD. Final source frames differ, as do camera/pose buffers; the
+203,091 changed pixels are not a matched-state visual comparison. Exact packet
+comparison is supplied by focused fixtures; complete materials/lighting and
+character/encounter acceptance remain open. PVR_STREAM=1 remains opt-in and
+physical TA/OPB capacity is still unqualified.
 
-D338 evidence: `C:/Flycast-Evidence/re4-dreamcast/d338-source-cull`;
-disc `/root/probe/d338-disc`; untouched D330 mirror/core and D327 fixtures.
-Build retains all three demand flags and `PVR_STREAM=1` with
-`export RE4DC_KOS_BASE=/root/work/kos-re4dc-d336` before sourcing kos-env.sh.
-Text/data/BSS2,292,080 /76,836 /673,016; source arena10,127,872. Default original-
-KOS build passes; candidate ELF restored byte-identically; original KOS clean.
+Event storage is still required. This turn verified all four existing r100 EVDs
+have complete conversion records, but ARQ still has no byte backing. Source
+`MemorySwap` must preserve modified enemy/event bytes; read-only file references
+alone cannot replace it. D339's 135-second samples remain in background preloads
+and do not log the previously documented whole-event scratch allocation failures.
+Do not report those older failures as newly reproduced in this window or claim
+the absence proves they are solved. Continue qualified event lifetime/storage,
+source materials/lighting and controller-driven progression; keep the existing
+motion hot-set/prefetch/concurrency audit open. Simpler water remains a selectable,
+unimplemented candidate. The full menu-plus-three-room goal remains active.
+See [D339](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d339-part-local-position-reuse).
 
-Do not repeat the64KiB chunk work or cosmetically rotate Leon's head. D338 fixes
-the source SDK -> native screen-area cull mapping in `re4dc_model_cull`; the
-accepted viewer helper is unchanged. Ground/back-head absence was this mapping
-defect, not missing assets or an authored rearward head pose. D337/D338 source
-pose/camera buffers match; retain the proof and corrected capture.
+D339 reference evidence: `C:/Flycast-Evidence/re4-dreamcast/d339a-position-reference`;
+candidate: `C:/Flycast-Evidence/re4-dreamcast/d339b-position-cache`. Discs are
+`/root/probe/d339a-disc` and `/root/probe/d339b-disc`; unchanged D330 mirror/core,
+D327 fixtures. Same demand options, patched KOS and PVR_STREAM=1 as D338, plus
+MODEL_POSITION_CACHE=0/1. Current ELF is the cached candidate. Reference toggle
+rebuilds the owning object; both host paths are checked. No shared game-source
+or PPC edits in D339. Preserve D338's source-cull correction and evidence.
 
-Continue `trans.cpp::materialSetup/alphaSetup`, `model_bridge.cpp` and the shared
-native resource owner. `ModelPart.flags&4` is separate alpha; `ModelTexInfo.flags&4`
-is texture blending. Current rejects2709/31 respectively (the latter also has
-no selected base image/size). `alphaSetup` uses selected alpha texture, multiplies
-previous alpha, applies model/part alphaRef, and may select a different UV path.
-Do not assume the viewer converter's alpha replacement alone reproduces those
-rules. Reuse it where proven compatible; retain filtering, alpha order and
-depth semantics. Lighting and complete material/character acceptance stay open.
-Event storage below remains an independent gameplay blocker. Physical TA/OPB
-capacity is still unqualified; command bytes are not internal TA storage.
+Next event connection must treat immutable preloaded EVDs separately from the
+mutable snapshots used by `MemorySwap`, `cDataSwap`, and subscreen ownership.
+All current s40/s41/s43/s44 conversion entries qualify; that does not qualify a
+native byte store. s40 is 2,227,072 bytes versus the 1,105,152-byte compact em12
+body: source event borrowing also needs capacity and lifetime adaptation. Do not
+implement compaction as pointer movement without backed data, or restore an
+enemy archive by blindly reloading over relocated/live native resource pointers.
+The private D339 source audit records exact source consumers and file identities.
+
+Continue `trans.cpp::materialSetup/alphaSetup` and existing native owners as an
+independent presentation lane. Separate-alpha and texture-blend flags differ;
+preserve alpha multiplication, thresholds, UV selection, order and depth. Do not
+equate converter alpha replacement with full source material behavior. Preserve
+lighting and complete-character requirements. Do not repeat the position cache,
+64KiB chunk work, or rotate Leon to hide the resolved culling defect.
 
 D335c remains the default bounded regression (`d335c-admission`); its sparse
 branches/HUD are not a complete scene reference. D334 background-depth and D333

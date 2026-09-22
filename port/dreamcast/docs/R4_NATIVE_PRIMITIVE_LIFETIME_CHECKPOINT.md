@@ -2232,3 +2232,120 @@ selection evidence, not a visual reference to reproduce. Full materials/lighting
 event storage/audio, manual three-room play and physical hardware remain open.
 Water simplification is still a separate unimplemented candidate, not this fix.
 The persistent menu-plus-three-room goal remains active.
+
+## D339: part-local position reuse
+
+Date 2026-09-22; base `ed88d5bd25833f02e6d426b30987df9080a2edc1`. Prior turn
+completed/pushed D338; this turn is a fidelity-preserving CPU-work experiment.
+
+D339 keeps a bounded source-position cache in the existing native model adapter.
+The same transformed position is reused across corners of one source part; UVs,
+normals, winding, material and source pose retain their separate identities.
+The 64-entry table lives for one synchronous submission, including packet flushes;
+new part/pose/instance/camera submissions start empty. No cross-frame invalidation
+scheme, geometry reduction, new renderer or extra resident allocation is added.
+
+Two sequential Flycast runs compare `MODEL_POSITION_CACHE=0` and `=1` (default).
+For 12 common observed source-frame tags, median presented interval drops from
+1,840.012 to 1,437.144 ms (21.9%); p95 from 1,856.699 to 1,439.648 ms. This is
+one emulator run per choice, observational completed-frame sampling, not physical
+timing or real-time play. The candidate avoids 8,334,641 of 13,072,693 position
+transforms (63.8%). Eleven focused tests pass, including both cache choices,
+source winding, clipping, seams, chunk transport and failure ownership.
+
+The candidate adds 2 KiB within the existing calling stack, no extra heap/VRAM
+allocation. Compiler-reported submit stack is 2,160 bytes; this is not a whole-
+call-chain peak. Text is 2,292,304 (+224 versus D338); data/BSS remain 76,836 /
+673,016. Required block/enemy allocation points stay 2,582,048 /1,466,528 free;
+later source free remains 41,472. Texture use is 3,244,032, peak 4,192,256, with
+97 uploads and zero missing textures. No new source-archive recovery is claimed.
+
+Menu captures match exactly. Reviewed room captures retain ground, Leon's rear
+head, cabin and HUD. Final source frames differ, as do camera/pose buffers; the
+203,091 changed pixels are not a matched-state visual comparison. Exact packet
+comparison is supplied by focused fixtures; complete materials/lighting and
+character/encounter acceptance remain open. PVR_STREAM=1 remains opt-in and
+physical TA/OPB capacity is still unqualified.
+
+Event storage is still required. This turn verified all four existing r100 EVDs
+have complete conversion records, but ARQ still has no byte backing. Source
+`MemorySwap` must preserve modified enemy/event bytes; read-only file references
+alone cannot replace it. D339's 135-second samples remain in background preloads
+and do not log the previously documented whole-event scratch allocation failures.
+Do not report those older failures as newly reproduced in this window or claim
+the absence proves they are solved. Continue qualified event lifetime/storage,
+source materials/lighting and controller-driven progression; keep the existing
+motion hot-set/prefetch/concurrency audit open. Simpler water remains a selectable,
+unimplemented candidate. The full menu-plus-three-room goal remains active.
+
+### Implementation and measurement limits
+
+Reuses `native_model.cpp::Builder::vertex`, existing source-prepared position
+arrays, the existing clipper and bounded packet owner. The only new mechanism is
+a direct-mapped 64-entry index/ProjectedVertex table in the existing Builder.
+Index collisions recompute; no coordinate welding. Only successful finite
+position calculations enter it. UV/normal validation still occurs per corner.
+Native assembly confirms cache hits avoid the scalar matrix/projection math;
+no new math library, float reassociation or fast-math option was introduced.
+
+The working test compares expanded packets against the existing reference and
+runs both cache choices through source culling, clipped/random strips, changing
+source arrays/transforms, collisions, UV retries and late failure. A 1,800-triangle
+fixture has 5,400 references: cache0 transforms all; cache1 transforms three and
+hits 5,397, while emitted vertices and failure semantics remain checked.
+
+Two sequential135s runs use unchanged assets/config/input. Twelve common
+observed source-frame tags1251..1262 provide the timing comparison. Candidate
+registration median1,398.339ms versus1,811.451; render median7.503ms in both.
+These intervals overlap; registration includes CPU preparation, tasks and I/O.
+Do not sum them or call registration a pure transfer/GPU measure. A sampler
+offset bug initially prevented reference interval rows; corrected supplementary
+reads attached to the same still-live process captured12 completed frames.
+No process restart, blue-image correction, source state force or framebuffer
+change occurred. Both sampler scripts and the limitation are preserved.
+
+Reference final source frame1256; candidate1265. Final output counters are from
+different in-progress snapshots and must not be compared as one paired frame.
+Maximum complete-frame model commands remain2,440,448 bytes. Zero model invalid,
+overflow, texture/wrap/capacity failures in both. The snapshot image comparison
+is intentionally not asserted equal: source camera and pose changed between
+different simulation frames. Both views were reviewed; no geometry reduction
+was made. Full manual/moving-scene acceptance remains outstanding.
+
+Both reference and candidate retain identical manager residency/pointer checks
+and native texture cost. Motion cache still retains952,768 bytes,22,400 peak
+pinned,2,336 metadata,75 misses/loads,6 hits,0 evictions/failures. All145 source
+headers and1,904 relocated key pointers validate; no new animation hot-set
+coverage is claimed. Net previously measured warmed enemy-family recovery stays
+1,510,176 bytes. No extra source heap was recovered by this rendering change.
+
+**Keep** the bounded cache, with `MODEL_POSITION_CACHE=0` as the reference path.
+The default bounded PVR backend and opt-in source streaming selection remain
+separate; no PVR capacity or hardware acceptance is inferred.
+
+### Evidence and continuation
+
+Reference: `C:/Flycast-Evidence/re4-dreamcast/d339a-position-reference`.
+Candidate: `C:/Flycast-Evidence/re4-dreamcast/d339b-position-cache`.
+Private discs `/root/probe/d339a-disc`, `/root/probe/d339b-disc`; unchanged D330
+mirror/core and D327 fixtures. KOS804b3195 plus unchanged D336 optional patch,
+SH GCC15.2, native O1. Exact toolchain/source/ELF/disc/asset/fixture/capture
+identities and reference/candidate build flags are preserved in evidence.
+
+Reference ELF SHA256 `c9945456dc89a2863f34a3ada56c453ca7533277d4a2d29c17ba491117908b03`;
+candidate ELF SHA256 `1fedad3816865d66b570658f9d7382fc2148fd964ee88c893a62801c225a9faf`.
+
+Event audit: the four existing EVD conversion trees qualify (90/19/18/10 records,
+respectively), but source-backed event bytes and mutable swaps are not integrated.
+The full s40 file is2,227,072 bytes, larger than the compact enemy body1,105,152;
+future source borrowing requires measured capacity and pointer lifetime handling.
+No event storage, cutscene skip/completion or gameplay flag changed this turn.
+Earlier D338 wording that scratch failures "still fail" described an unresolved
+earlier reproduction, not a fresh logged failure during its135s window. D339's
+logs likewise do not reach those failed compaction requests; keep them as an
+open dependency, not evidence of newly exercised or fixed consumers.
+
+Continue the existing event/resource and source-material connections toward
+manual play. Do not preserve a known missing resource behind successful ARQ
+callbacks. Do not add another renderer, repeat inventory/extraction, or substitute
+water/mesh simplification for the missing storage and source-system integration.

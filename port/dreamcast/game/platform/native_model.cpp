@@ -6,7 +6,11 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#ifndef RE4DC_MODEL_POSITION_CACHE
+#define RE4DC_MODEL_POSITION_CACHE 1
+#endif
 namespace {
+Re4dcModelWorkStats work_stats{};
 unsigned be16(const unsigned char* p){return (unsigned(p[0])<<8)|p[1];}
 short s16(const unsigned char* p){short v;std::memcpy(&v,p,2);return v;}
 unsigned u16(const unsigned char* p){unsigned short v;std::memcpy(&v,p,2);return v;}
@@ -32,6 +36,15 @@ struct Builder {
     unsigned used=0,input=0,stride; float scale;
     unsigned strip_vertices=0,output=0;
     bool streaming=false,bound=false,submitted=false,restart_uv=false,resource_failed=false;
+#if RE4DC_MODEL_POSITION_CACHE
+    // Part-local, source-indexed reuse. Never weld equal coordinates or retain
+    // source pointers across submissions. UVs/normals keep their own identities.
+    // Collisions simply recompute. The same bounded table survives packet flushes
+    // and UV-scale retries because neither changes the source position transform.
+    struct CachedPosition { re4dc::render::ProjectedVertex value; unsigned key; };
+    CachedPosition positions[64]{};
+    static_assert(sizeof(positions)==2048);
+#endif
     bool bind(){
         if(bound)return true;
         const float u=packet.u_scale,v=packet.v_scale;
@@ -51,17 +64,30 @@ struct Builder {
     bool vertex(const unsigned char* corner,re4dc::render::RenderVertex& v){
         const unsigned vi=be16(corner),ni=be16(corner+2),ti=be16(corner+stride-2);
         if(vi>=p.position_count || ni>=p.normal_count || !ram(p.uv+ti*4,4))return false;
-        const unsigned char* pos=p.positions+vi*p.position_stride;
-        const float a=s16(pos)*scale,b=s16(pos+2)*scale,c=s16(pos+4)*scale;
-        const float* m=p.modelview;
-        float x=m[0]*a+m[1]*b+m[2]*c+m[3];
-        float y=m[4]*a+m[5]*b+m[6]*c+m[7];
-        float z=m[8]*a+m[9]*b+m[10]*c+m[11];
-        if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z))return false;
-        v={};v.position.world_x=x;v.position.world_y=y;v.position.world_z=z;v.position.depth=-z;
-        // Behind/near vertices are clipped before their projected coordinates are used.
-        if(z!=0)project(x,y,z,&projection);
-        v.position.x=x;v.position.y=y;v.position.z=z;
+        v={};++work_stats.position_references;
+#if RE4DC_MODEL_POSITION_CACHE
+        auto& cached=positions[vi&63U];
+        if(cached.key==vi+1U){
+            v.position=cached.value;++work_stats.position_hits;
+        }else
+#endif
+        {
+            const unsigned char* pos=p.positions+vi*p.position_stride;
+            const float a=s16(pos)*scale,b=s16(pos+2)*scale,c=s16(pos+4)*scale;
+            const float* m=p.modelview;
+            float x=m[0]*a+m[1]*b+m[2]*c+m[3];
+            float y=m[4]*a+m[5]*b+m[6]*c+m[7];
+            float z=m[8]*a+m[9]*b+m[10]*c+m[11];
+            ++work_stats.position_transforms;
+            if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z))return false;
+            v.position.world_x=x;v.position.world_y=y;v.position.world_z=z;v.position.depth=-z;
+            // Behind/near vertices are clipped before projection is consumed.
+            if(z!=0)project(x,y,z,&projection);
+            v.position.x=x;v.position.y=y;v.position.z=z;
+#if RE4DC_MODEL_POSITION_CACHE
+            cached.value=v.position;cached.key=vi+1U;
+#endif
+        }
         const auto* uv=p.uv+ti*4;
         float u=(p.flags&0x80000000U)?s16(uv)/256.f:u16(uv)/32768.f;
         float w=(p.flags&0x80000000U)?s16(uv+2)/256.f:u16(uv+2)/32768.f;
@@ -145,6 +171,7 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     Projection projection{p->projection,p->viewport};
     const float near=p->projection[6]/(p->projection[5]-1),far=p->projection[6]/p->projection[5];
     if(!std::isfinite(near)||!std::isfinite(far)||near<=0||far<=near){re4dc_model_result(1,0,0);return;}
+    ++work_stats.part_preparations;
     Builder b{*p,{},projection,{near,far,640,480,project,nullptr},0,0,
               (p->flags&0x80000000U)?8U:6U,std::ldexp(1.0f,-int(p->shift))};
     b.clip.context=&b.projection;
@@ -169,3 +196,5 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     }
     re4dc_model_packet_commit(b.used);re4dc_model_result(0,b.input,b.output);
 }
+
+extern "C" const Re4dcModelWorkStats* re4dc_model_work_stats(){return &work_stats;}

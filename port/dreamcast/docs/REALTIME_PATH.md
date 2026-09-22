@@ -1,36 +1,45 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-D338 corrects the recovered-game cull mapping at the existing model adapter.
-The shared viewer clipper's screen-area values are not interchangeable with the
-source GX API values. Source SDK cull-bit conversion and negative viewport Y
-establish the required mapping. **Textured ground and the back of Leon's head
-now render correctly from the sampled view**, alongside cabin, trees, gun and
-HUD. No model rotation, pose, geometry, texture or camera change was made.
+D339 keeps a bounded source-position cache in the existing native model adapter.
+The same transformed position is reused across corners of one source part; UVs,
+normals, winding, material and source pose retain their separate identities.
+The 64-entry table lives for one synchronous submission, including packet flushes;
+new part/pose/instance/camera submissions start empty. No cross-frame invalidation
+scheme, geometry reduction, new renderer or extra resident allocation is added.
 
-D337/D338 final source frame1255, camera/projection/viewport, player root and119
-part matrices, plus8 prepared model arrays match byte-for-byte. Sampled menu
-pixels are identical. This resolves the earlier missing-ground/backwards-face
-artifact; it does not accept every character component/material or gameplay.
-Eleven focused tests pass, including200 source-winding cases and prior clipping,
-strip/chunk/ownership checks. Both build variants pass and the captured ELF
-reproduces exactly. Text/data/BSS unchanged; same64KiB packet scratch.
+Two sequential Flycast runs compare `MODEL_POSITION_CACHE=0` and `=1` (default).
+For 12 common observed source-frame tags, median presented interval drops from
+1,840.012 to 1,437.144 ms (21.9%); p95 from 1,856.699 to 1,439.648 ms. This is
+one emulator run per choice, observational completed-frame sampling, not physical
+timing or real-time play. The candidate avoids 8,334,641 of 13,072,693 position
+transforms (63.8%). Eleven focused tests pass, including both cache choices,
+source winding, clipping, seams, chunk transport and failure ownership.
 
-The135s Flycast run has30 model presentations at the final snapshot,0 packet
-overflows/invalid geometry/texture failures. Current texture VRAM3,244,032 bytes
-(+131,072 for newly visible content),97 uploads,0 missing UI textures; earlier
-peak4,192,256 unchanged. Maximum model commands/frame2,440,448; physical TA/OPB
-capacity remains unqualified because Flycast reports invalid zero usage. Keep
-PVR_STREAM=1 opt-in; last presentation interval1,823,323us is not real-time play.
+The candidate adds 2 KiB within the existing calling stack, no extra heap/VRAM
+allocation. Compiler-reported submit stack is 2,160 bytes; this is not a whole-
+call-chain peak. Text is 2,292,304 (+224 versus D338); data/BSS remain 76,836 /
+673,016. Required block/enemy allocation points stay 2,582,048 /1,466,528 free;
+later source free remains 41,472. Texture use is 3,244,032, peak 4,192,256, with
+97 uploads and zero missing textures. No new source-archive recovery is claimed.
 
-Source heap41,472 later free and required block/enemy allocations remain intact.
-Warm enemy recovery1,510,176; cache952,768 current/peak/read,22,400 peak pinned,
-75 misses/loads,6 hits,0 evictions/failures,270,938us worst wait; all145 headers
-and1,904 key pointers validate. No later motion evaluations: response/prefetch/
-concurrency coverage stays open. Separate-alpha/blended materials, lighting,
-event ARAM backing, audio and manual progression remain required. Event scratch
-694,560/669,248/309,632 still fails; no new heap recovery. Simpler water remains
-an unimplemented selectable candidate, without a PS2-equivalence or savings claim.
-See [D338](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d338-source-cull-mapping-restores-ground-and-head-surfaces).
+Menu captures match exactly. Reviewed room captures retain ground, Leon's rear
+head, cabin and HUD. Final source frames differ, as do camera/pose buffers; the
+203,091 changed pixels are not a matched-state visual comparison. Exact packet
+comparison is supplied by focused fixtures; complete materials/lighting and
+character/encounter acceptance remain open. PVR_STREAM=1 remains opt-in and
+physical TA/OPB capacity is still unqualified.
+
+Event storage is still required. This turn verified all four existing r100 EVDs
+have complete conversion records, but ARQ still has no byte backing. Source
+`MemorySwap` must preserve modified enemy/event bytes; read-only file references
+alone cannot replace it. D339's 135-second samples remain in background preloads
+and do not log the previously documented whole-event scratch allocation failures.
+Do not report those older failures as newly reproduced in this window or claim
+the absence proves they are solved. Continue qualified event lifetime/storage,
+source materials/lighting and controller-driven progression; keep the existing
+motion hot-set/prefetch/concurrency audit open. Simpler water remains a selectable,
+unimplemented candidate. The full menu-plus-three-room goal remains active.
+See [D339](R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d339-part-local-position-reuse).
 
 
 Updated 2026-09-22; accepted integration D324; integration experiment D338.

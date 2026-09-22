@@ -163,7 +163,17 @@ int main(){
  for(unsigned n=0;n<1800;++n)large.insert(large.end(),tri.begin(),tri.end());
  // Ensure a nondegenerate visible triangle.
  many[0][0]=-2;many[0][1]=-2;many[1][0]=2;many[1][1]=-2;many[2][0]=2;many[2][1]=2;
+ const auto work_before=*re4dc_model_work_stats();
  capacity=2047;all_chunks.clear();aborted=false;run(large);
+ const auto work_after=*re4dc_model_work_stats();
+ assert(work_after.position_references-work_before.position_references==5400);
+#if RE4DC_MODEL_POSITION_CACHE
+ assert(work_after.position_transforms-work_before.position_transforms==3);
+ assert(work_after.position_hits-work_before.position_hits==5397);
+#else
+ assert(work_after.position_transforms-work_before.position_transforms==5400);
+ assert(work_after.position_hits==0);
+#endif
  assert(status==0 && !aborted && input==1800 && output==1800 && all_chunks.size()==5400);
  // A late nonfinite projection must invalidate previously transferred chunks.
  // Valid source indices pass preflight; overflow appears only during transform.
@@ -186,8 +196,9 @@ int main(){
    reference=reference.replace('"../../room/pvr_geometry.hpp"','"pvr_geometry.hpp"').replace('void re4dc_model_submit(', 'void re4dc_model_submit_reference(')
    (root/"reference.cpp").write_text(reference)
    exe=root/"check"
-   subprocess.run(["g++","-std=c++20","-O2","-fsanitize=address,undefined","-fno-omit-frame-pointer",
+   for cache in (0,1):
+    subprocess.run(["g++","-std=c++20","-O2","-DRE4DC_MODEL_POSITION_CACHE="+str(cache),"-fsanitize=address,undefined","-fno-omit-frame-pointer",
     "-I"+str(root),"-I"+str(game/"platform/include"),"-I"+str(room),str(root/"fixture.cpp"),str(root/"reference.cpp"),
     str(game/"platform/native_model.cpp"),str(room/"pvr_geometry.cpp"),"-o",str(exe)],check=True)
-   subprocess.run([str(exe)],check=True)
+    subprocess.run([str(exe)],check=True)
 if __name__=="__main__":unittest.main()
