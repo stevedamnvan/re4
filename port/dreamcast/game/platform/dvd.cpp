@@ -11,19 +11,30 @@
 #include "re4dc_platform.h"
 #include "native_io.h"
 
-namespace { void* dvd_step_owner; }
+namespace {
+void* dvd_step_owner;
+kthread_t* dvd_step_thread;
+unsigned dvd_step_depth;
+}
 extern "C" void* re4dc_dvd_step_begin(){
     const int irq=irq_disable();
-    if(dvd_step_owner){irq_restore(irq);thd_sleep(1);return nullptr;}
-    // Existing native-I/O depth prevents task cancellation/parking while the
-    // step owns shared source DVD buffers. No IRQ is held across filesystem I/O.
-    dvd_step_owner=re4dc_io_begin();
-    void* token=dvd_step_owner;irq_restore(irq);return token;
+    if(dvd_step_owner && dvd_step_thread!=thd_current){
+        irq_restore(irq);thd_sleep(1);return nullptr;
+    }
+    // The outer borrow protects shared header save/use/restore. Individual
+    // source Read steps on that same thread may enter it recursively. A
+    // competing pump yields; IRQs remain enabled while native I/O is active.
+    void* token=re4dc_io_begin();
+    if(!dvd_step_owner){dvd_step_owner=token;dvd_step_thread=thd_current;}
+    ++dvd_step_depth;
+    irq_restore(irq);return token;
 }
 extern "C" void re4dc_dvd_step_end(void* token){
     const int irq=irq_disable();
-    if(!token || dvd_step_owner!=token)re4dc_missing("DVD source-step owner mismatch");
-    dvd_step_owner=nullptr;
+    if(!token || dvd_step_owner!=token || dvd_step_thread!=thd_current || !dvd_step_depth){
+        re4dc_missing("DVD source-step owner mismatch");irq_restore(irq);return;
+    }
+    if(--dvd_step_depth==0){dvd_step_owner=nullptr;dvd_step_thread=nullptr;}
     re4dc_io_end(token);irq_restore(irq);
 }
 

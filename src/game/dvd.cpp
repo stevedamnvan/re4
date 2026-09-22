@@ -1276,7 +1276,17 @@ void cDvd::ReadProc()
 
     q->startTick = OSGetTick();
     readProcMain(q);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    {
+    Re4dcDvdBorrowScope native_completion;
+#endif
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Native I/O may let a suspended source request finish while blockRead
+    // borrows the pump. Its completion does not own the borrower's pointer.
+    if (pCur_queue == q) pCur_queue = 0;
+#else
     pCur_queue = 0;
+#endif
     sync = q->chk(0x40000000);
     intr = q->chk(0x100);
     OSReport(" %d\n", OSTicksToMilliseconds(OSGetTick() - q->startTick));
@@ -1285,6 +1295,9 @@ void cDvd::ReadProc()
     } else {
         q->m_be_flag |= 0x800;
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    } // publish completion before releasing the borrowed source pump
+#endif
     if (sync == 0) {
         if (intr == 1) {
             iTaskExit();
@@ -1404,18 +1417,44 @@ int cDvd::ReadReq()
 // resumed afterwards).
 void cDvd::blockRead(cDvdQueue* q)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Preserve the existing source borrow, including shared nested headers,
+    // across yielding KOS reads. Other source pumps wait at the same guard.
+    Re4dcDvdBorrowScope native_borrow;
+#endif
     cDvdQueue* save = 0;
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    unsigned save_id = 0;
+#endif
 
     if (pCur_queue) {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        save = pCur_queue;
+        save_id = save->m_Id;
+        while (save->chk(0x20) == 1) {
+            save->Read();
+        }
+#else
         while (pCur_queue->chk(0x20) == 1) {
             pCur_queue->Read();
         }
         save = pCur_queue;
+#endif
         memcpy(header_save, header_buff, sizeof(header_buff));
         memcpy(pFilehead_save, pFilehead, sizeof(pFilehead));
     }
     pCur_queue = q;
     ReadProc();
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // A saved slot can complete (and be recycled) during yielding native I/O.
+    // Restore only the same still-live, unpublished request. Resurrecting a
+    // completed slot strands the next request in it with no DVD task owner.
+    if (save && (save->m_Id != save_id || !save->chk(1) || save->chk(0x800))) {
+        OSReport("native DVD borrow: retired saved request=%u current=%u flags=%08x\n",
+                 save_id, save->m_Id, save->m_be_flag);
+        save = 0;
+    }
+#endif
     if (save) {
         pCur_queue = save;
         memcpy(header_buff, header_save, sizeof(header_buff));

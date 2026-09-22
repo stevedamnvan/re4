@@ -21,3 +21,17 @@ public:
 // the step. Ownership extends through source post-callback bookkeeping.
 extern "C" void* re4dc_dvd_step_begin();
 extern "C" void re4dc_dvd_step_end(void*);
+
+// Borrow the source DVD shared-header state across a synchronous ReadProc.
+// Reentrant source steps use the same owner; foreign pumps wait. The scope must
+// end before a task exits, and may not span unrelated gameplay or rendering.
+class Re4dcDvdBorrowScope {
+    void* owner_;
+public:
+    Re4dcDvdBorrowScope() : owner_(nullptr) {
+        while(!owner_)owner_=re4dc_dvd_step_begin();
+    }
+    ~Re4dcDvdBorrowScope(){re4dc_dvd_step_end(owner_);}
+    Re4dcDvdBorrowScope(const Re4dcDvdBorrowScope&)=delete;
+    Re4dcDvdBorrowScope& operator=(const Re4dcDvdBorrowScope&)=delete;
+};
