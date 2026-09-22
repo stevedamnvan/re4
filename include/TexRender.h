@@ -57,6 +57,10 @@ TexRenderMng* GetTexRenderMgrAddr(int no);
 void TexRenderMgrInit();
 void TexRenderMgrRoomInit();
 int GetTexRenderMgr(TexRenderMng** out);
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+// Configure the source copy dimensions before its one owning allocation.
+int GetTexRenderMgrSized(TexRenderMng** out, u32 width, u32 height);
+#endif
 void RenderTexRenderMgr(TexRenderMng* m);
 void CopyTexRenderMgr(TexRenderMng* m);
 void TransTexRenderMgr();

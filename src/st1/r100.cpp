@@ -1232,7 +1232,13 @@ extern "C" void setTexRender()
     cObj* obj;
     u8* tbl = r100_texTbl;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // The copy and texture below are already 64x64. Avoid a 128x128 temporary
+    // reservation; target ID, mask, effect and material setup remain source-owned.
+    if (GetTexRenderMgrSized(&W->tex, 0x40, 0x40)) {
+#else
     if (GetTexRenderMgr(&W->tex)) {
+#endif
         tbl[0] = 1;
         tbl[1] = 0;
         tbl[4] = 0xF7;

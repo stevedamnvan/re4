@@ -36,32 +36,28 @@ textures. The actual core reservation is now **1,501,312 bytes**, down from
 473,696 since D322. Core paths now convert through their source layout; palette,
 mip, CPU-noise and unreviewed backing remain. The full reference is selectable.
 
-D330 completes the unchanged **75-clip diagnostic hot prefetch** in the normal
-source menu/New Game path, then reaches initial Ganado motion evaluation. It
-recovers **211,136 additional source-heap bytes before prefetch** versus D329:
-140,704 from lossless resident core EST packing and 70,432 from demand-backed
-model-info records. The earlier block/enemy allocation points gain 258,816;
-later model-info growth accounts for the difference. No hot clip is removed,
-evicted at evaluation release, or loaded on every evaluation.
+D331 allocates the r100 water target at its source-configured **64x64 RGBA8**
+size: **16,384 bytes instead of a 65,536-byte requirement**. It reuses the
+existing target manager, ID/mask, effect and room ownership. The normal menu/New
+Game replay now passes this allocation with 35,168 source-heap bytes free.
+This is not 49,152 extra free bytes versus D330: its larger request failed and
+consumed nothing. D331 actually consumes 16,448 including allocator overhead.
 
-Game snapshot:75 misses/loads,6 hits,0 evictions/failures;952,768 cached/peak/read
-bytes,22,400 peak pinned bytes,2,336 cache metadata,270,941us worst resource wait.
-All145 retained headers and1,904 relocated key pointers in75 cached clips were
-verified. The unchanged SH-4 fixture covers7,500 warm evaluations without extra
-I/O plus pressure eviction/reload. Six live hits are not complete response or
-concurrency coverage; preserve the incomplete source-prefetch audit.
+The next failure is a 2,400-byte model-parts request with 2,240 free; later
+collision/path requests fail and `R100Init` reports failure. Native `GXCopyTex`
+and the multi-texture water material remain unconnected. No simplified water,
+complete room, FPS, audio or hardware acceptance is claimed. Source menu remains
+visible; diagnostic 3D is visibly incomplete. D324 remains the accepted
+integration reference; D325-D331 remain selectable residency candidates.
 
-The enemy body remains1,105,152 bytes. With the actual warmed cache, metadata
-and allocator costs, its family occupies2,067,616 bytes:1,510,176 net recovery
-versus the original allocation. This is not the eventual encounter peak. The
-full conservative selected cache budget still lacks9,120 before later resource
-needs. The next demonstrated failure is the65,536-byte r100 water render-target
-buffer with51,616 free, followed by model/collision/path allocation failures.
-A modern-C++ Ganado constructor pointer-erasure bug is corrected; the null
-archive/model errors disappear and evaluation begins. Captured3D remains visibly
-incomplete with resource/packet failures. D324 remains the accepted integration
-reference; D325-D330 are selectable candidates, not playable-room acceptance.
-See [D330](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d330-completed-hot-prefetch-core-est-and-model-info-backing).
+D330's hot-prefetch progress is retained: 75 loads/misses, 6 hits, no evictions
+or failures; 952,768 cached/peak/read bytes, 22,400 peak pinned, 2,336 metadata,
+270,939 us worst wait in D331. All 145 retained headers and 1,904 relocated key
+pointers were verified again. Warm enemy-family residency remains 2,067,616
+including overhead, **1,510,176 less than the original**. The selected working
+set's response/concurrency audit remains open; unchanged D328b is the repeated
+warm-use/eviction fixture. This is not yet the complete encounter peak.
+See [D331](docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d331-source-configured-water-target-allocation).
 
 
 ARAM/event/audio, inventory, full manual controls, transitions/retry and physical

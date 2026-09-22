@@ -13,34 +13,38 @@ Cutscene presentation is deferred for now; required source completion effects
 and restoration of player control are still necessary. Verify the actual room
 sequence from source/data. The room-120 debug start is only a dependency fixture.
 
-## Current resumption point - D330 hot prefetch completes; later room allocations fail
+## Current resumption point - D331 water allocation passes; model/collision residency remains
 
-D330 completes the unchanged **75-clip diagnostic hot prefetch** in the normal
-source menu/New Game path, then reaches initial Ganado motion evaluation. It
-recovers **211,136 additional source-heap bytes before prefetch** versus D329:
-140,704 from lossless resident core EST packing and 70,432 from demand-backed
-model-info records. The earlier block/enemy allocation points gain 258,816;
-later model-info growth accounts for the difference. No hot clip is removed,
-evicted at evaluation release, or loaded on every evaluation.
+D331 allocates the r100 water target at its source-configured **64x64 RGBA8**
+size: **16,384 bytes instead of a 65,536-byte requirement**. It reuses the
+existing target manager, ID/mask, effect and room ownership. The normal menu/New
+Game replay now passes this allocation with 35,168 source-heap bytes free.
+This is not 49,152 extra free bytes versus D330: its larger request failed and
+consumed nothing. D331 actually consumes 16,448 including allocator overhead.
 
-Game snapshot:75 misses/loads,6 hits,0 evictions/failures;952,768 cached/peak/read
-bytes,22,400 peak pinned bytes,2,336 cache metadata,270,941us worst resource wait.
-All145 retained headers and1,904 relocated key pointers in75 cached clips were
-verified. The unchanged SH-4 fixture covers7,500 warm evaluations without extra
-I/O plus pressure eviction/reload. Six live hits are not complete response or
-concurrency coverage; preserve the incomplete source-prefetch audit.
+The next failure is a 2,400-byte model-parts request with 2,240 free; later
+collision/path requests fail and `R100Init` reports failure. Native `GXCopyTex`
+and the multi-texture water material remain unconnected. No simplified water,
+complete room, FPS, audio or hardware acceptance is claimed. Source menu remains
+visible; diagnostic 3D is visibly incomplete. D324 remains the accepted
+integration reference; D325-D331 remain selectable residency candidates.
 
-The enemy body remains1,105,152 bytes. With the actual warmed cache, metadata
-and allocator costs, its family occupies2,067,616 bytes:1,510,176 net recovery
-versus the original allocation. This is not the eventual encounter peak. The
-full conservative selected cache budget still lacks9,120 before later resource
-needs. The next demonstrated failure is the65,536-byte r100 water render-target
-buffer with51,616 free, followed by model/collision/path allocation failures.
-A modern-C++ Ganado constructor pointer-erasure bug is corrected; the null
-archive/model errors disappear and evaluation begins. Captured3D remains visibly
-incomplete with resource/packet failures. D324 remains the accepted integration
-reference; D325-D330 are selectable candidates, not playable-room acceptance.
-See [D330](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d330-completed-hot-prefetch-core-est-and-model-info-backing).
+D330's hot-prefetch progress is retained: 75 loads/misses, 6 hits, no evictions
+or failures; 952,768 cached/peak/read bytes, 22,400 peak pinned, 2,336 metadata,
+270,939 us worst wait in D331. All 145 retained headers and 1,904 relocated key
+pointers were verified again. Warm enemy-family residency remains 2,067,616
+including overhead, **1,510,176 less than the original**. The selected working
+set's response/concurrency audit remains open; unchanged D328b is the repeated
+warm-use/eviction fixture. This is not yet the complete encounter peak.
+See [D331](port/dreamcast/docs/R4_NATIVE_PRIMITIVE_LIFETIME_CHECKPOINT.md#d331-source-configured-water-target-allocation).
+
+D331 evidence: `C:/Flycast-Evidence/re4-dreamcast/d331-water-size`, disc
+`/root/probe/d331-disc`, unchanged D330 mirror/core and D327 fixtures below.
+Two host tests cover guarded allocation/copy, target identity, failure/reuse and
+unchanged PPC preprocessing. Target RAM verifies the 64x64 descriptor and owning
+buffer. Build options are unchanged. Simpler Dreamcast water is authorized as a
+selectable candidate, but has not been implemented or compared with PS2.
+
 
 D330 final evidence: `C:/Flycast-Evidence/re4-dreamcast/d330b-core-modelinfo`;
 initial candidate retained as`d330-core-modelinfo`. Private core`/root/probe/d330-core`,
@@ -52,20 +56,23 @@ path with existing reference textures;143 sequences compact, five unexplained
 trailers retained raw. No texture encoding, motion profile or sound dispatch
 change. Default producer reproduces D324 bytes. Both manager options default0.
 
-Resume at`src/st1/r100.cpp::setTexRender()` ->`TexRenderMng::AllocBuf()` and the
-remaining required model/collision allocations. The source first reserves128x128
-RGBA8, then sets this water target to64x64; audit actual copy/CPU/native consumers
-before changing that lifetime or capacity. The user also authorizes a simpler
-Dreamcast water effect as a selectable, visually reviewed candidate; PS2 is a
-reference to inspect, not an established equivalent implementation. Measure
-RAM/VRAM/CPU and preserve source collision/events. Do not treat the failed buffer as
-optional or remove the water. Later contiguous-parts failure falls back to source
-linked allocation, then smaller parts/model-info/collision requests also fail.
-The heap runs out; this is not another cache thrash or subscreen stack failure.
-Enemy source initialization now preserves`subArc` through native`Em12Init`;
-other not-yet-integrated module constructors need their own check when reached.
-Full native3D/material/packet requirements and event/ARAM/audio costs remain.
-Do not clear source hold or accept the incomplete diagnostic image.
+Resume at the required model-parts/collision allocations after `setTexRender`.
+D331 uses `GetTexRenderMgrSized` before the one owning allocation. Other targets
+retain the 128x128 default; source copy/render dimensions and water objects are
+unchanged. Native render-to-texture and multi-texture material semantics still
+need connection; do not remove the water or claim visual acceptance from this.
+
+The D331 snapshot prices ObjMgr at 334,624 bytes for 340 logical slots, with
+203 live; EmMgr at 213,184 for 60 slots, with 14 live. These are backing leads,
+not proven reclaimable bytes. Inspect source indexed/retained pointers before
+reusing demand storage. In particular, lights can retain an object slot before
+construction; do not return null for such a source binding or reclaim its backing
+after destruction. Scans, debug aliases, room retirement and future slot reuse
+must agree. Preserve full logical capacities. No object/enemy backing change is
+implemented by D331. Later model, collision, event/ARAM/audio and native3D/packet
+costs remain. Do not clear source hold or accept the incomplete diagnostic image.
+The first failed 2,400-byte run is 224 bytes short including allocator overhead;
+that is only the first request, not the complete remaining room deficit.
 
 D329 reference remains`C:/Flycast-Evidence/re4-dreamcast/d329b-parts-demand`.
 D330 reuses its demand-backed parts owner/run rules for model-info16-slot pages.

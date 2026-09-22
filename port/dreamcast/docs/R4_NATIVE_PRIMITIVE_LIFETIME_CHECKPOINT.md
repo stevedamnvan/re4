@@ -1471,3 +1471,84 @@ First distinguish equivalent target right-sizing from a cheaper visual effect.
 Preserve gameplay/collision/events; measure RAM/VRAM/CPU and inspect source-aligned
 views before accepting a quality trade. PS2 behavior must be inspected before
 claiming its water technique or equivalent appearance.
+
+
+## D331: source-configured water target allocation
+
+The native r100 path calls `GetTexRenderMgrSized(64,64)` before the existing
+`TexRenderMng::AllocBuf`. It no longer reserves 128x128 and then changes only
+the source copy/texture dimensions to 64x64. Other callers retain the default
+128x128 target. Source target ID 0xF8, mask 8, effect creation, two water objects,
+material table, viewport/copy dimensions and owning room heap are preserved.
+The PPC preprocessing of all three changed source/header files is unchanged.
+
+This is an allocation correction, not a lower-resolution water effect. Inspection
+of `RenderTexRenderMgr`, `CopyTexRenderMgr`, target lookup and r100 found no
+consumer of the unused outer buffer area. The source copy descriptor is RGBA8,
+64x64 with no sampled mip chain; the EFB source is 128x128 with downsampling.
+Native `GXCopyTex` is still a placeholder, and the native material bridge rejects
+the relevant multi-texture flag. Actual water rendering and any selectable simpler
+approximation remain open. No PS2 visual equivalence has been established.
+
+| Matched source allocation | D330b | D331 |
+|---|---:|---:|
+| Free before water | 51,616 | 51,616 |
+| Requested payload | 65,536 | 16,384 |
+| Result | failure | allocated |
+| Actual consumed including allocator | 0 | 16,448 |
+| Free after attempted allocation | 51,616 | 35,168 |
+
+Required capacity falls **49,152 bytes**, but actual free memory compared with
+the failed D330 request falls 16,448. Block/enemy allocation points are unchanged
+at 2,276,864 / 1,161,344 free. There is one allocation and no full-size temporary,
+second buffer or loading overlap. ELF text grows 136 bytes; data/BSS unchanged.
+This change does not recover another byte from the enemy archive/cache.
+
+The first later failed request is a 2,400-byte parts run with 2,240 free
+(224 short including 64-byte allocator cost). Source falls back to linked parts,
+then 512-byte runs fail; `R100Init : set failed`, collision and path allocation
+failures follow. The capture stops at its 90-second deadline; actual failures
+precede that stop. Event requests still use unqualified native ARAM semantics.
+The preserved source menu is visible; the room/Leon/HUD image is incomplete and
+is not character, water, scene or gameplay acceptance.
+
+Cache snapshot: 6 hits, 75 loads/misses, zero evictions/failures;
+952,768 current/peak/read bytes, zero current and 22,400 peak pinned bytes,
+2,336 metadata, 270939 us worst resource wait. All 145 source
+headers, 75 cached payloads and 1,904 relocated key pointers match exact files.
+Enemy family remains 2,067,616 including actual warm cache and allocator costs,
+1,510,176 net recovery versus original. Six hits do not establish sustained live
+working-set stability; D328b's unchanged repeated-use/pressure fixture remains
+separate. Source prefetch/immediate-response/concurrency closure is still open.
+
+Target manager verification: PartsMgr 383 backed/live, 207,584 resident/peak,
+206 runs, 24 failed attempts; ModInfoMgr 224 backed/216 live, 68,736 resident/peak,
+14 pages, no failures. All logical slot mappings validate. Different failed
+initialization paths are not a matched full-encounter peak comparison. A bounded
+inventory also records ObjMgr 334,624/340 slots/203 live and EmMgr 213,184/60
+slots/14 live. Neither is newly sparsified. Retained indexed object pointers,
+especially future light parents, require backing through the source pool lifetime.
+
+Verification: two host tests execute actual source acquisition/Init/AllocBuf/copy
+code with ASan/UBSan guarded buffers, default and configured sizes, target IDs,
+failed allocation, eight-target limit, room-reset reuse and input overflow.
+Mock GX writes qualify the buffer boundary only. The second test compares PPC
+preprocessing with 9c604ad. The game links and replays the unchanged source menu
+fixture through selected hot prefetch and successful water allocation. RAM reads
+verify `g_RndMgrNum=1`, size 64x64, buffer 0x8cfc2f20, ID 0xF8 and mask 8.
+No hardware, FPS, manual combat, audio, retry or complete-room claim.
+
+Evidence: `C:/Flycast-Evidence/re4-dreamcast/d331-water-size`; disc
+`/root/probe/d331-disc`; unchanged `/root/probe/d330-mirror` and
+`/root/probe/d327-fixtures`. Exact ELF/assets/emulator/config/input/capture-tool
+identities, source snapshots, RAM, logs, captures and validation are in the
+manifest. Base 9c604ad plus recorded inherited and owned changes. KOS 804b3195,
+SH GCC15.2; text/data/BSS 2,285,588 / 75,620 / 672,856.
+ELF SHA256 `85cc8fd99582523ffbaa8ed6ef17e93826dfa04b43fe4a1714a3012038beffe3`;
+disc SHA256 `6d5fe2b98e590c59cda86e0509ec2530884f85bbe8d12597b5b662fd204b096f`.
+Build: `CORE_RESIDENT_BYTES=1360608 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 PARTS_DEMAND=1 MODELINFO_DEMAND=1`.
+
+**Keep** the correctly sized source target. Continue the remaining required
+model/collision residency and native scene connection. Simpler water remains
+an authorized, separately measured and visually reviewed candidate; it must
+preserve source collision/events and cannot substitute for missing integration.

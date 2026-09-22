@@ -63,14 +63,26 @@ void TexRenderMgrRoomInit()
 // Claims the next free render target: allocates its buffer, assigns its effect texture id
 // (0xF8 + slot, the ids the esp Tool_flg 0x10000 effects draw into) and its OT mask bit
 // (8 << slot). 0 with an error when all 8 are used or memory is short.
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+int GetTexRenderMgrSized(TexRenderMng** out, u32 width, u32 height)
+#else
 int GetTexRenderMgr(TexRenderMng** out)
+#endif
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (!out || !width || !height || width > 65535 || height > 65535 ||
+        width > 0x3FFFFFFFU / height) return 0;
+#endif
     if (g_RndMgrNum == 8) {
         pLog->err(0, 0, "GetTexRenderMgr() : Manager full!!");
         return 0;
     }
     *out = &g_RndMgr[g_RndMgrNum];
     (*out)->Init();
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    (*out)->m_W_size = width;
+    (*out)->m_H_size = height;
+#endif
     if (!(*out)->AllocBuf()) {
         return 0;
     }
@@ -85,6 +97,13 @@ int GetTexRenderMgr(TexRenderMng** out)
     (*out)->used = 1;
     return 1;
 }
+
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+int GetTexRenderMgr(TexRenderMng** out)
+{
+    return GetTexRenderMgrSized(out, 0x80, 0x80);
+}
+#endif
 
 // EFB x offset that centres a 2x copy of the texture in the resized frame.
 void RenderTexRenderMgr(TexRenderMng* m)
