@@ -105,3 +105,22 @@ extern "C" void* re4dc_model_retained_storage(unsigned* bytes){
     return nullptr;
 #endif
 }
+
+// Native static packages share heap 4 and the retained preparation's reserve
+// policy: never below 80 KiB left for the source. Opened at the first bind of
+// their owner, which precedes the lazy retained allocation at first draw.
+#if RE4DC_NATIVE_STATIC
+#include "native_static.h"
+extern "C" int re4dc_static_heap_free(){
+    return memCheckHeapActive(4)?OSCheckHeap(Heap[4].handle):-1;
+}
+extern "C" void* re4dc_static_alloc(unsigned bytes){
+    const int before=re4dc_static_heap_free();
+    if(before<int(bytes+kAllocationOverhead+kSourceReserve)){
+        re4dc_log("native static: reject bytes=%u heap4_free=%d reserve=%u\n",bytes,before,kSourceReserve);
+        return nullptr;
+    }
+    return mem_alloc(bytes,"native static package",0,0,4);
+}
+extern "C" void re4dc_static_free(void* data){if(data)Mem_free_h(data,4);}
+#endif

@@ -859,6 +859,8 @@ COMPACT_GROUP = struct.Struct("<IHH6f")
 COMPACT_BATCH = struct.Struct("<9I4f")
 COMPACT_IDENTITY = struct.Struct("<BBHHH")  # owner, common, work, BIN, reserved
 COMPACT_INDEX = struct.Struct("<H")
+COMPACT_VERTEX12 = struct.Struct("<6H")  # grid x/y/z, u, v, palette index
+COMPACT_QUANTIZATION = struct.Struct("<6f2I")  # origin, step, palette count, reserved
 COMPACT_UV_ENCODING = 1  # per-batch float bias/scale + unsigned normalized 16-bit
 
 
@@ -876,7 +878,7 @@ def compact_prelit_package(
     dynamic-light eligibility. The CLI additionally verifies the bake provenance.
     No debug name is used as a runtime resource key: owner/work/BIN is explicit.
     """
-    if layout not in ("aos20", "split24"):
+    if layout not in ("aos20", "split24", "aos12"):
         raise ValueError("unknown compact vertex layout")
     if not math.isfinite(max_uv_error) or max_uv_error <= 0:
         raise ValueError("UV error bound must be finite and positive")
@@ -921,6 +923,11 @@ def compact_prelit_package(
     identity_manifest = []
     identity_by_owner_work = {}
     previous_source_id = None
+    # AoS12: one package-wide position grid, so a corner shared by batches
+    # quantizes identically everywhere; prelit colours become palette indices.
+    origin = [_f32(min(v[a] for v in vertices)) for a in range(3)]
+    step = [_f32((max(v[a] for v in vertices) - origin[a]) / 65535.0) or 1.0 for a in range(3)]
+    palette: dict[int, int] = {}; position_error = 0.0
     group_blob = bytearray(); batch_blob = bytearray()
     vertex_blob = bytearray(); attribute_blob = bytearray()
     triangle_blob = bytearray(); primitive_blob = bytearray(); strip_blob = bytearray()
@@ -973,6 +980,9 @@ def compact_prelit_package(
             raise ValueError("group count/identity exceeds compact range")
         if first_batch + batch_count > len(batches):
             raise ValueError("group batch range out of bounds")
+        if layout == "aos12":
+            # Culling bounds must contain the decoded (rounded) corners.
+            bounds = [_f32(bounds[a] - step[a]) for a in range(3)] + [_f32(bounds[3+a] + step[a]) for a in range(3)]
         group_blob.extend(COMPACT_GROUP.pack(first_batch,batch_count,source_id,*bounds))
         for bi in range(first_batch,first_batch+batch_count):
             mat, fi, ni, bg, flags, fp, np = batches[bi]
@@ -1022,6 +1032,19 @@ def compact_prelit_package(
                 color = 0xff000000 | c[0]<<16 | c[1]<<8 | c[2]
                 if layout == "aos20":
                     vertex_blob.extend(COMPACT_VERTEX.pack(*v[:3],*q,color))
+                elif layout == "aos12":
+                    p3 = []
+                    for a in range(3):
+                        value = max(0, min(65535, round((v[a] - origin[a]) / step[a])))
+                        decoded = _f32(origin[a] + _f32(value * step[a]))
+                        position_error = max(position_error, abs(decoded - v[a]))
+                        if not bounds[a] <= decoded <= bounds[3+a]:
+                            raise ValueError("AoS12 corner outside widened group bounds")
+                        p3.append(value)
+                    if color not in palette:
+                        if len(palette) == 65536: raise ValueError("AoS12 palette exceeds 16 bits")
+                        palette[color] = len(palette)
+                    vertex_blob.extend(COMPACT_VERTEX12.pack(*p3,*q,palette[color]))
                 else:
                     vertex_blob.extend(COMPACT_POSITION.pack(*v[:3],1.0))
                     attribute_blob.extend(COMPACT_ATTRIBUTE.pack(*q,color))
@@ -1034,6 +1057,9 @@ def compact_prelit_package(
         raise ValueError("unowned records or triangle total mismatch")
     if uv_error > max_uv_error:
         raise ValueError(f"compact UV error {uv_error:g} exceeds {max_uv_error:g}")
+    if layout == "aos12":
+        attribute_blob.extend(COMPACT_QUANTIZATION.pack(*origin,*step,len(palette),0))
+        attribute_blob.extend(struct.pack(f"<{len(palette)}I",*palette))
     result = bytearray(HEADER.size+COMPACT_EXTENSION.size)
     offsets = {}; sizes = {}; padding = 0
     blobs = [('materials',data[h[15]:h[15]+h[10]*64]),('groups',group_blob),
@@ -1043,12 +1069,12 @@ def compact_prelit_package(
     for name, blob in blobs:
         pad = (-len(result))%32; padding += pad; result.extend(bytes(pad))
         offsets[name] = len(result); sizes[name] = len(blob); result.extend(blob)
-    h[1:8] = [4,160,20 if layout=='aos20' else 16,2,64,32,52]
+    h[1:8] = [4,160,{'aos20':20,'split24':16,'aos12':12}[layout],2,64,32,52]
     h[8] = vertex_count
     h[15:22] = [offsets[n] for n in ('materials','groups','batches','vertices','triangle_indices','primitives','strip_indices')]
     h[22] = zlib.crc32(result[160:]) & 0xffffffff
     result[:128] = HEADER.pack(*h)
-    result[128:160] = COMPACT_EXTENSION.pack(1 if layout=='aos20' else 2,
+    result[128:160] = COMPACT_EXTENSION.pack({'aos20':1,'split24':2,'aos12':3}[layout],
         offsets['attributes'],offsets['source_groups'],len(identity_records),84,
         COMPACT_UV_ENCODING,1,0)
     before = {name:size for name,offset,size in sections};before['header']=128
@@ -1061,8 +1087,12 @@ def compact_prelit_package(
         duplicated_local_vertices=vertex_count-len(vertices),max_batch_vertices=maximum_batch,
         batches=h[12],groups=h[11],source_identities=identity_manifest,
         uv_encoding='per-batch affine unorm16',max_uv_error=uv_error,
-        max_uv_error_texels_at_1024=uv_error*1024,position_encoding='unchanged float32 XYZ',
-        color_encoding='D349 shade_color float32 truncation to opaque ARGB8888',
+        max_uv_error_texels_at_1024=uv_error*1024,
+        position_encoding=('package grid origin + uint16 * step' if layout=='aos12' else 'unchanged float32 XYZ'),
+        position_grid=(dict(origin=origin,step=step) if layout=='aos12' else None),
+        max_position_error=position_error,
+        color_encoding='D349 shade_color float32 truncation to opaque ARGB8888'+(
+            f', palette of {len(palette)} (lossless)' if layout=='aos12' else ''),
         runtime_static_normal_transforms=0,runtime_static_light_evaluations=0,
         runtime_source_corner_remaps=0,
         limits='Encoded package candidate, not runtime source-heap recovery or visual/gameplay acceptance')
@@ -1073,7 +1103,7 @@ def compact_main(argv: list[str]) -> int:
     parser.add_argument('input',type=pathlib.Path)
     parser.add_argument('output',type=pathlib.Path)
     parser.add_argument('--compact-prelit',action='store_true',required=True)
-    parser.add_argument('--layout',choices=('aos20','split24'),default='aos20')
+    parser.add_argument('--layout',choices=('aos20','split24','aos12'),default='aos20')
     parser.add_argument('--source-obj',type=pathlib.Path,required=True)
     parser.add_argument('--reference-manifest',type=pathlib.Path,required=True)
     parser.add_argument('--bake-manifest',type=pathlib.Path,required=True)

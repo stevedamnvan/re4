@@ -19,7 +19,11 @@ struct Re4dcModelPart {
     unsigned normal_stride=0, normal_shift=0, static_geometry=0;
     const re4dc::render::SourceLighting* lighting=nullptr;
     Re4dcUiImage mask{};unsigned mask_ref=256,mask_same_uv=0;
-
+    // Native static package binding (native_static.h): the owning object's
+    // creation serial, current world matrix and the source camera, borrowed
+    // like the arrays above; the part's (texId, alphaTex or 0xff) key.
+    unsigned serial=0; const float* world=nullptr; const float* view=nullptr;
+    unsigned char source_key[4]={0,0xff,0,0};
 };
 extern "C" {
 int re4dc_model_diagnostic_enabled();

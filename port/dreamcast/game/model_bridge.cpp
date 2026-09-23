@@ -65,5 +65,15 @@ extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
     p.static_geometry=rigid && m->kindid==2 && !d->shapeOfs && !(info->be_flag&2);
     p.normal_stride=nrm8?(rigid?4:3):(rigid?8:6);p.normal_shift=nrm8?6:14;
 #endif
+#if RE4DC_NATIVE_STATIC
+    // Single-node static scroll objects only: a multi-node part's own matrix is
+    // not represented by the object-level placement the package was baked at.
+    // Every other part keeps these words at their defaults, because translucent
+    // parts are queued as word differences in a bounded deferral queue (D367).
+    if(p.static_geometry && m->nParts<=1){
+        p.serial=m->serial;p.world=&m->mat[0][0];p.view=&pG->Cam.v_mat[0][0];
+        p.source_key[0]=part->texId;p.source_key[1]=(part->flags&4)?part->alphaTex:0xff;
+    }
+#endif
     re4dc_model_submit(&p);
 }

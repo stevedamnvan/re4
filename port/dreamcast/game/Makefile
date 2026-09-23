@@ -55,6 +55,12 @@ CENSUS_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(CENSUS_SRCS))
 PLATFORM_OBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(PLATFORM_SRCS))
 SDK_OBJS = $(patsubst platform/sdk/gen/%.c,$(OBJDIR)/sdk/%.o,$(SDK_GEN))
 NATIVE_REUSE_OBJS = $(OBJDIR)/native-reuse/source_lighting.o $(OBJDIR)/native-reuse/native_draw_plan.o $(OBJDIR)/native-reuse/pvr_geometry.o $(OBJDIR)/native-reuse/gpu_lifecycle.o $(OBJDIR)/native-reuse/texture_package.o $(OBJDIR)/native-reuse/room_storage.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/model_bridge.o $(OBJDIR)/model_asset_bridge.o $(OBJDIR)/motion_bridge.o $(OBJDIR)/parts_bridge.o
+# Native static room packages (NATIVE_STATIC below); default images carry none of it.
+ifeq ($(NATIVE_STATIC),1)
+NATIVE_REUSE_OBJS += $(OBJDIR)/native-reuse/room_package.o
+else
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_static.o,$(PLATFORM_OBJS))
+endif
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1
@@ -154,12 +160,17 @@ CORE_RESIDENT_BYTES ?= 0x234000
 OPTION_RESIDENT_BYTES ?= 0x40000
 PLAYER_RESIDENT_BYTES ?= 0x118000
 WEAPON_RESIDENT_BYTES ?= 0x70000
+# Bytes of the fixed 13 MiB source arena left to the KOS heap instead. The KOS
+# heap funds native code/staging and had only a few KiB spare at D362; the
+# native static candidate's code needs this. Zero keeps the reference layout.
+ARENA_KOS_BYTES ?= $(if $(filter 1,$(NATIVE_STATIC)),32768,0)
 .PHONY: core-budget-force
 $(OBJDIR)/core-budget.h: core-budget-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_CORE_RESIDENT_BYTES %s\n' '$(CORE_RESIDENT_BYTES)' > $@.tmp
 	@printf '#define RE4DC_OPTION_RESIDENT_BYTES %s\n' '$(OPTION_RESIDENT_BYTES)' >> $@.tmp
 	@printf '#define RE4DC_PLAYER_RESIDENT_BYTES %s\n#define RE4DC_WEAPON_RESIDENT_BYTES %s\n' '$(PLAYER_RESIDENT_BYTES)' '$(WEAPON_RESIDENT_BYTES)' >> $@.tmp
+	@printf '#define RE4DC_ARENA_KOS_BYTES %s\n' '$(ARENA_KOS_BYTES)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/mem.o: $(OBJDIR)/core-budget.h
@@ -289,3 +300,31 @@ $(OBJDIR)/model-draw-plan.h: model-draw-plan-force
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: $(OBJDIR)/model-draw-plan.h
 $(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_draw_plan_owner.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/model-draw-plan.h
+
+# Recovered scroll objects draw keyed v4 static room packages from
+# /cd/dc/native/<room>/<owner>.re4room (platform/native_static.cpp). Opt-in until
+# matched target visual/timing acceptance. NATIVE_STATIC_OWNERS is a mask:
+# bit 0 main scenario, bit n+1 source block n.
+NATIVE_STATIC ?= 0
+NATIVE_STATIC_OWNERS ?= 1
+ifeq ($(NATIVE_STATIC),1)
+ifneq ($(D349_RENDERER_STACK),1)
+$(error NATIVE_STATIC requires the D349_RENDERER_STACK=1 packet/deferral owner)
+endif
+# The fixed 13 MiB source arena leaves the KOS heap only a few KiB (D367); an
+# image that grows by more exhausts it at r100 thread creation. Keep this small.
+$(OBJDIR)/native-reuse/room_package.o $(OBJDIR)/platform/native_static.o: PLATFORM_CPPFLAGS += -Os
+endif
+.PHONY: native-static-force
+$(OBJDIR)/native-static.h: native-static-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_NATIVE_STATIC %s\n#define RE4DC_NATIVE_STATIC_OWNERS %sU\n' '$(NATIVE_STATIC)' '$(NATIVE_STATIC_OWNERS)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+NATIVE_STATIC_PLATFORM = $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o
+NATIVE_STATIC_GAME = $(OBJDIR)/model_bridge.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/src/game/scroll.o
+$(NATIVE_STATIC_PLATFORM) $(NATIVE_STATIC_GAME): $(OBJDIR)/native-static.h platform/include/native_static.h
+$(NATIVE_STATIC_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-static.h
+$(NATIVE_STATIC_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/native-static.h
+$(OBJDIR)/platform/native_static.o: $(OBJDIR)/d349-stack.h ../room/room_package.hpp ../room/static_room_prepare.hpp
+$(OBJDIR)/platform/native_static.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/d349-stack.h

@@ -15,6 +15,7 @@
 #endif
 #include "native_ui.h"
 #include "native_model.h"
+#include "native_static.h"
 #include "native_render_profile.hpp"
 #include "re4dc_platform.h"
 #include "../../room/texture_package.hpp"
@@ -421,6 +422,10 @@ extern "C" void re4dc_ui_retire_room(){
     re4dc_model_preparation_owner(nullptr);
 #endif
     re4dc_model_retire_draw_plans();
+    // Packets hold copied native vertices, so no queued draw borrows a package.
+#if RE4DC_NATIVE_STATIC
+    re4dc_static_retire_all();
+#endif
 #if RE4DC_PVR_STREAM
     // Source room retirement can occur on a task while the main thread owns an
     // unfinished TA list. Keep submitted texture owners until that thread closes
@@ -442,6 +447,9 @@ extern "C" void re4dc_ui_retire_room(){
     for(auto& entry:entries)close_entry(entry);
 }
 
+#if RE4DC_NATIVE_STATIC
+extern "C" unsigned re4dc_ui_frame(){return frame;}
+#endif
 extern "C" void re4dc_ui_init(){
     if(ready)return;
     pvr_init_params_t params=pvr_default_params;

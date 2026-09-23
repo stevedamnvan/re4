@@ -292,15 +292,24 @@ bool Package::validate_compact() {
     const auto& h=*reinterpret_cast<const CompactHeader*>(data_);
     const auto& b=h.base;
     const bool split=h.layout==StaticLayout::Split24;
-    if((h.layout!=StaticLayout::AoS20 && !split) || h.uv_encoding!=1 ||
+    const bool aos12=h.layout==StaticLayout::AoS12;
+    if((h.layout!=StaticLayout::AoS20 && !split && !aos12) || h.uv_encoding!=1 ||
        h.bake_policy!=1 || h.reserved || h.source_stride!=sizeof(CompactSource) ||
-       b.flags!=(kFlagSourceGroupMetadata|kFlagPrelit) ||
-       b.vertex_stride!=(split?sizeof(CompactPosition):sizeof(CompactVertex)) ||
+       (b.flags&~kFlagMaterialSourceKeys)!=(kFlagSourceGroupMetadata|kFlagPrelit) ||
+       b.vertex_stride!=(split?sizeof(CompactPosition):aos12?sizeof(CompactVertex12):sizeof(CompactVertex)) ||
        b.index_stride!=2 || b.material_stride!=sizeof(Material) ||
        b.group_stride!=sizeof(CompactGroup) || b.batch_stride!=sizeof(CompactBatch) ||
        !b.vertex_count || !b.group_count || !b.batch_count ||
        !b.material_count || !h.source_count || h.source_count>65536)
         return fail("v4 layout/stride/count mismatch");
+    // AoS12 attributes: quantization record, then its palette (words).
+    std::uint32_t palette=0;
+    if(aos12) {
+        if(h.attribute_offset%32U || !range_valid(h.attribute_offset,1,sizeof(CompactQuantization)))
+            return fail("v4 AoS12 quantization out of range");
+        palette=reinterpret_cast<const CompactQuantization*>(data_+h.attribute_offset)->palette_count;
+        if(!palette || palette>65536U) return fail("v4 AoS12 palette count");
+    }
     std::uint64_t end=sizeof(CompactHeader);
     const auto section=[&](std::uint32_t offset,std::uint32_t count,std::uint32_t stride) {
         const std::uint64_t expected=(end+31U)&~std::uint64_t(31U);
@@ -312,7 +321,8 @@ bool Package::validate_compact() {
        !section(b.group_offset,b.group_count,sizeof(CompactGroup)) ||
        !section(b.batch_offset,b.batch_count,sizeof(CompactBatch)) ||
        !section(b.vertex_offset,b.vertex_count,b.vertex_stride) ||
-       !section(h.attribute_offset,split?b.vertex_count:0,sizeof(CompactAttribute)) ||
+       !(aos12?section(h.attribute_offset,8U+palette,4U):
+               section(h.attribute_offset,split?b.vertex_count:0,sizeof(CompactAttribute))) ||
        !section(b.index_offset,b.index_count,2) ||
        !section(h.source_offset,h.source_count,sizeof(CompactSource)) ||
        !section(b.primitive_offset,b.primitive_count,sizeof(Primitive)) ||
@@ -326,8 +336,12 @@ bool Package::validate_compact() {
         return true;
     };
     if(!bounds_ok(b.bounds_min,b.bounds_max)) return fail("v4 invalid room bounds");
-    for(std::uint32_t i=0;i<b.material_count;++i)
-        if(!std::memchr(materials()[i].name,0,64)) return fail("v4 unterminated material identity");
+    const bool keyed=(b.flags&kFlagMaterialSourceKeys)!=0U;
+    for(std::uint32_t i=0;i<b.material_count;++i) {
+        MaterialSourceKey key;
+        if(!std::memchr(materials()[i].name,0,keyed?60:64)) return fail("v4 unterminated material identity");
+        if(keyed && !material_source_key(materials()[i],key)) return fail("v4 invalid material source key");
+    }
     const auto* sources=compact_sources();
     for(std::uint32_t i=0;i<h.source_count;++i) {
         const auto& src=sources[i];
@@ -399,6 +413,18 @@ bool Package::validate_compact() {
        ic!=b.index_count || sc!=b.primitive_index_count || tc!=b.triangle_count ||
        source+1!=h.source_count)
         return fail("v4 unowned records/count mismatch");
+    if(aos12) {
+        const auto& q=*compact_quantization();
+        for(unsigned a=0;a<3;++a)
+            if(!std::isfinite(q.origin[a]) || !std::isfinite(q.step[a]) || q.step[a]<=0 ||
+               !std::isfinite(q.origin[a]+65535.0f*q.step[a])) return fail("v4 AoS12 invalid quantization");
+        if(q.reserved) return fail("v4 AoS12 invalid quantization");
+        for(std::uint32_t i=0;i<palette;++i)
+            if(compact_palette()[i]>>24!=255) return fail("v4 AoS12 invalid palette");
+        for(std::uint32_t i=0;i<b.vertex_count;++i)
+            if(compact_vertices12()[i].color>=palette) return fail("v4 AoS12 palette index out of range");
+        error_=nullptr;return true;
+    }
     for(std::uint32_t i=0;i<b.vertex_count;++i) {
         float x,y,z;std::uint32_t color;
         if(split) {
@@ -451,6 +477,18 @@ bool Package::resolve_source(std::uint8_t owner,std::uint16_t work,
 const CompactVertex* Package::compact_vertices() const {
     const auto* h=compact_header();return h && h->layout==StaticLayout::AoS20?
         reinterpret_cast<const CompactVertex*>(data_+header_->vertex_offset):nullptr;
+}
+const CompactVertex12* Package::compact_vertices12() const {
+    const auto* h=compact_header();return h && h->layout==StaticLayout::AoS12?
+        reinterpret_cast<const CompactVertex12*>(data_+header_->vertex_offset):nullptr;
+}
+const CompactQuantization* Package::compact_quantization() const {
+    const auto* h=compact_header();return h && h->layout==StaticLayout::AoS12?
+        reinterpret_cast<const CompactQuantization*>(data_+h->attribute_offset):nullptr;
+}
+const std::uint32_t* Package::compact_palette() const {
+    const auto* q=compact_quantization();
+    return q?reinterpret_cast<const std::uint32_t*>(q+1):nullptr;
 }
 const CompactPosition* Package::compact_positions() const {
     const auto* h=compact_header();return h && h->layout==StaticLayout::Split24?

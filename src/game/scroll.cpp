@@ -16,6 +16,13 @@
 #include "scroll.h"
 
 extern "C" void* memcpy(void* dst, const void* src, unsigned int n);
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_NATIVE_STATIC
+// Dreamcast native static packages: bind each placed object by its SMD identity,
+// retire a block's package with its objects (port/dreamcast native_static.h).
+extern "C" void re4dc_static_bind(const void*, unsigned, int, unsigned, unsigned, unsigned, unsigned,
+                                  const float*);
+extern "C" void re4dc_static_retire_owner(int);
+#endif
 int MotionSetCore(cModel* m, void* work, void* mot, int a, int b, int c, int d);
 void slideModelAddr(u32 addr, int ofs);
 void slideTplAddr(void* tpl, int ofs);
@@ -163,6 +170,10 @@ int setObj(int blk)
             obj->be_flag &= ~0x20;
         }
         obj->matUpdate();
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_NATIVE_STATIC
+        re4dc_static_bind(obj, ((unsigned) pG->stage_no << 8) | pG->room_no, blk, i, w->binNo,
+                          (w->flags & 0x10) != 0, obj->serial, &obj->mat[0][0]);
+#endif
     }
     return 0;
 }
@@ -470,6 +481,9 @@ void BlockDestroy(int blk)
             }
         } while (next != NULL);
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_NATIVE_STATIC
+    re4dc_static_retire_owner(blk);
+#endif
 }
 
 // The SMD moved in memory by `ofs`: relocates the pointers inside every used bin and tpl.

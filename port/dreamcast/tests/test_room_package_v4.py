@@ -111,7 +111,7 @@ int main(int argc,char**argv){
         self.assertEqual(run.returncode,0 if valid else 1,run.stdout+run.stderr)
     def test_legacy_and_both_compact_readers(self):
         v3=fixture();self.read(v3,True)
-        for layout in ('aos20','split24'):
+        for layout in ('aos20','split24','aos12'):
             data,m=C.compact_prelit_package(v3,[NAME],layout)
             self.read(data,True);self.assertEqual(sum(m['sections_after'].values()),len(data))
             self.assertEqual(m['source_identities'][0]['work'],1)
@@ -140,6 +140,32 @@ int main(int argc,char**argv){
                 self.assertEqual(color,packed)
             self.assertNotIn(NAME.encode(),data) # identity retained numerically
             self.assertIn(b'real_texture_identity',data) # binding name is not debug
+    def test_aos12_grid_palette_and_bounds(self):
+        old=fixture();h=C.HEADER.unpack_from(old)
+        old_vertices=[C.VERTEX.unpack_from(old,h[18]+i*32) for i in range(h[8])]
+        old_indices=struct.unpack_from('<%dI'%h[14],old,h[21])
+        data,m=C.compact_prelit_package(old,[NAME],'aos12');q=C.HEADER.unpack_from(data)
+        ex=C.COMPACT_EXTENSION.unpack_from(data,128)
+        self.assertEqual((q[3],ex[0]),(12,3))
+        *origin_step,count,reserved=C.COMPACT_QUANTIZATION.unpack_from(data,ex[1])
+        origin,step=origin_step[:3],origin_step[3:]
+        palette=struct.unpack_from('<%dI'%count,data,ex[1]+C.COMPACT_QUANTIZATION.size)
+        new_indices=struct.unpack_from('<%dH'%q[14],data,q[21])
+        group=C.COMPACT_GROUP.unpack_from(data,q[16])
+        for a,b in zip(old_indices,new_indices):
+            v=old_vertices[a];x=C.COMPACT_VERTEX12.unpack_from(data,q[18]+b*12)
+            for axis in range(3):
+                decoded=C._f32(origin[axis]+C._f32(x[axis]*step[axis]))
+                self.assertLessEqual(abs(decoded-v[axis]),step[axis]*.5+1e-6)
+                self.assertTrue(group[3+axis]<=decoded<=group[6+axis])
+            packed=0xff000000|(int(C._f32(v[3]*255))<<16)|(int(C._f32(v[4]*255))<<8)|int(C._f32(v[5]*255))
+            self.assertEqual(palette[x[5]],packed)
+        self.assertEqual(m['vertices'],(q[8]));self.assertLessEqual(m['max_position_error'],max(step))
+        # An index past the palette, or a translucent palette entry, is rejected.
+        bad=bytearray(data);struct.pack_into('<H',bad,q[18]+10,count)
+        struct.pack_into('<I',bad,92,C.zlib.crc32(bad[160:])&0xffffffff);self.read(bytes(bad),False)
+        bad=bytearray(data);struct.pack_into('<I',bad,ex[1]+C.COMPACT_QUANTIZATION.size,0x7f000000)
+        struct.pack_into('<I',bad,92,C.zlib.crc32(bad[160:])&0xffffffff);self.read(bytes(bad),False)
     def test_crc_truncation_and_local_range_rejected(self):
         data,_=C.compact_prelit_package(fixture(),[NAME]);h=C.HEADER.unpack_from(data)
         self.read(data[:-1],False)

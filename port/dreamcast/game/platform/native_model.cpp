@@ -7,8 +7,12 @@
 re4dc::profile::State re4dc::profile::state;
 #endif
 #include "re4dc_platform.h"
+#include "native_static.h"
 #include "../../room/pvr_geometry.hpp"
 #include "../../room/native_draw_plan.hpp"
+#ifndef RE4DC_NATIVE_STATIC
+#define RE4DC_NATIVE_STATIC 0
+#endif
 #ifndef RE4DC_D349_RENDERER_STACK
 #define RE4DC_D349_RENDERER_STACK 0
 #endif
@@ -632,6 +636,16 @@ struct Builder {
 extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     RE4DC_PROFILE_SCOPE(ModelSetup);
     if(!re4dc_model_diagnostic_enabled())return;
+#if RE4DC_NATIVE_STATIC
+    // A bound scroll part draws its prelit package batches instead (or defers,
+    // or is covered by an earlier part with the same material key).
+    if(p && re4dc_static_submit(p))return;
+    // A fallback part leaves the static identity words behind: they differ per
+    // object, and the translucent queue snapshots parts as word differences.
+    Re4dcModelPart plain;
+    if(p && p->world){plain=*p;plain.serial=0;plain.world=plain.view=nullptr;
+        plain.source_key[0]=0;plain.source_key[1]=0xff;p=&plain;}
+#endif
     if(!p || p->alpha_state>511 || ((p->alpha_state&256) && (!(p->flags&0x80000000U) || !p->colors)) || p->shift>30 || (p->position_stride!=6 && p->position_stride!=8) ||
        !p->position_count || !p->normal_count || p->stream_bytes>1024*1024 ||
        !ram(p->positions,p->position_count*p->position_stride) || !ram(p->stream,p->stream_bytes) ||

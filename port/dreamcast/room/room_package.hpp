@@ -136,7 +136,7 @@ static_assert(sizeof(SourceGroup) == 76);
 // Prefix Header is unchanged; its strides/offsets describe the selected layout.
 inline constexpr std::uint32_t kCompactVersion = 4;
 inline constexpr std::uint32_t kFlagPrelit = 1U << 1U;
-enum class StaticLayout : std::uint32_t { AoS20 = 1, Split24 = 2 };
+enum class StaticLayout : std::uint32_t { AoS20 = 1, Split24 = 2, AoS12 = 3 };
 struct CompactHeader {
     Header base;
     StaticLayout layout;
@@ -152,6 +152,16 @@ struct CompactVertex {
     float x,y,z;
     std::uint16_t u,v;
     std::uint32_t argb;
+};
+// AoS12 (D367): the same batch-local vertices in 12 bytes. Positions sit on one
+// package-wide grid, origin + q * step, so a corner shared by two batches
+// rounds identically in both; the prelit colour is an index into the
+// package's palette. The attribute section holds CompactQuantization followed
+// by palette_count opaque ARGB8888 words.
+struct CompactVertex12 { std::uint16_t x,y,z,u,v,color; };
+struct CompactQuantization {
+    float origin[3], step[3];
+    std::uint32_t palette_count, reserved;
 };
 struct CompactPosition { float x,y,z,w; }; // w is validated as 1.0f
 struct CompactAttribute { std::uint16_t u,v; std::uint32_t argb; };
@@ -173,11 +183,29 @@ struct CompactSource {
 };
 static_assert(sizeof(CompactHeader)==160);
 static_assert(sizeof(CompactVertex)==20);
+static_assert(sizeof(CompactVertex12)==12);
+static_assert(sizeof(CompactQuantization)==32);
 static_assert(sizeof(CompactPosition)==16);
 static_assert(sizeof(CompactAttribute)==8);
 static_assert(sizeof(CompactGroup)==32);
 static_assert(sizeof(CompactBatch)==52);
 static_assert(sizeof(CompactSource)==84);
+
+// Optional v4 extension. prepare_streamed_room_obj.py restores each OBJ
+// material from its source ModelPart (texId, alphaTex) pair; with this flag the
+// package keeps that pair in the unused tail of the material identity, so a
+// recovered part selects its batches while its live material state is current.
+// name[60]='K', [61]=texture, [62]=alpha texture or 0xff, [63]=0. The name
+// itself must end before [60].
+inline constexpr std::uint32_t kFlagMaterialSourceKeys = 1U << 2U;
+inline constexpr std::uint8_t kMaterialNoAlpha = 0xffU;
+struct MaterialSourceKey { std::uint8_t texture, alpha; };
+inline bool material_source_key(const Material& material, MaterialSourceKey& key) {
+    const auto* tail = reinterpret_cast<const std::uint8_t*>(material.name) + 60;
+    if(tail[0] != 'K' || tail[3] != 0U) return false;
+    key = {tail[1], tail[2]};
+    return true;
+}
 
 // Load/registration-time source selection. Indices, not borrowed pointers or
 // another owner registry. The caller's existing owner generation determines
@@ -199,6 +227,9 @@ public:
 
     const Header& header() const { return *header_; }
     bool compact() const { return header_ && header_->version==kCompactVersion; }
+    bool material_keys() const {
+        return compact() && (header_->flags & kFlagMaterialSourceKeys) != 0U;
+    }
     const CompactHeader* compact_header() const;
     const CompactGroup* compact_groups() const;
     const CompactBatch* compact_batches() const;
@@ -210,6 +241,9 @@ public:
                         std::uint16_t bin, bool common,
                         CompactSourceRange& range) const;
     const CompactVertex* compact_vertices() const;
+    const CompactVertex12* compact_vertices12() const;
+    const CompactQuantization* compact_quantization() const;
+    const std::uint32_t* compact_palette() const;
     const CompactPosition* compact_positions() const;
     const CompactAttribute* compact_attributes() const;
     const std::uint16_t* local_indices() const;

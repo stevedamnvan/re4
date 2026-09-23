@@ -30,6 +30,8 @@ static const unsigned long kWeaponSize = RE4DC_WEAPON_RESIDENT_BYTES;
 static_assert(kPlayerSize >= 32 && kPlayerSize <= 0x118000 && kPlayerSize % 32 == 0);
 static_assert(kWeaponSize >= 32 && kWeaponSize <= 0x70000 && kWeaponSize % 32 == 0);
 static const unsigned long kMinHeap = 0x300000;
+static const unsigned long kArenaKosBytes = RE4DC_ARENA_KOS_BYTES;
+static_assert(kArenaKosBytes % 32 == 0 && kArenaKosBytes <= 0x40000);
 
 static unsigned char g_frameBuffer[2][32] __attribute__((aligned(32)));
 static unsigned char g_fifo[32] __attribute__((aligned(32)));
@@ -46,7 +48,9 @@ void re4dc_mem_init(void)
     printf("re4dc_mem: selected player %lu weapon %lu bytes\n", kPlayerSize, kWeaponSize);
     unsigned long fixed = kSoundSize + kCoreSize + kOptionSize + kPlayerSize + kWeaponSize;
     // Take the largest arena the KOS heap gives us, leaving the runtime some room.
-    unsigned long want = 13 * 1024 * 1024;
+    // A selected candidate may leave RE4DC_ARENA_KOS_BYTES more to KOS (Makefile).
+    unsigned long want = 13 * 1024 * 1024 - kArenaKosBytes;
+    printf("re4dc_mem: arena request %lu bytes (%lu left to KOS)\n", want, kArenaKosBytes);
     void* p = NULL;
     while (want >= fixed + kMinHeap) {
         p = memalign(32, want);
