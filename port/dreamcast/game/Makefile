@@ -322,6 +322,17 @@ $(OBJDIR)/native-profile.h: native-profile-force
 	@printf '#define RE4DC_NATIVE_RENDER_PROFILE %s\n' '$(NATIVE_RENDER_PROFILE)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
+# Default-off: DEBUG_PAD=1 lets platform/pad.cpp pass the source's debug pad chords
+# (L+START debug menu, Z item-make / puzzle debug in the sub screen) through.
+DEBUG_PAD ?= 0
+.PHONY: debug-pad-force
+$(OBJDIR)/debug-pad.h: debug-pad-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_DEBUG_PAD %s\n' '$(DEBUG_PAD)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/pad.o: $(OBJDIR)/debug-pad.h
+$(OBJDIR)/platform/pad.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/debug-pad.h
 # Default-off, bounded source-view/reuse audit through the existing RAM log.
 NATIVE_REUSE_AUDIT ?= 0
 .PHONY: native-reuse-audit-force

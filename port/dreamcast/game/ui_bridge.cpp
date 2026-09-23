@@ -69,6 +69,37 @@ extern "C" void re4dc_profile_source(re4dc::profile::Source* out){
 
 extern "C" unsigned re4dc_fixture_source_frame(){ return pG ? pG->Frame_cnt : 0; }
 
+// Controller context for platform/pad.cpp (reads last frame's state, writes nothing):
+// 1 LOOK while CameraQuasiFPS::calcDepressionRatio takes Key.substick (player free
+// movement: routine 1 idle / walk / back / run / turn / 180 turn / crouch, not aiming),
+// 2 ZOOM while the scope (Status_flg[0] 0x40, CameraScope) or binocular (0x400,
+// CameraBinocular) camera zooms on the C-stick Y, 0 NATIVE otherwise. The title never
+// reads as play: every return to it goes through systemRestartInit, which clears Rno0.
+extern "C" int re4dc_pad_context(){
+    if(!pG||!pPL||pG->Rno0!=3)return 0;             // gameMainLoop only (not options / door demo / ending)
+    unsigned s0=pG->Status_flg[0];
+    if(!(s0&0x02000000))return 0;                    // sub screen open or look-down camera (arm bit cleared)
+    if(s0&0x400)return 2;                            // binoculars read Joy[0] directly, even under KeyStop
+    if(pG->Stop_flg&0x80000000)return 0;             // KeyStop: events, messages, QTEs
+    if(s0&0x40)return 2;                             // scope: CameraScope zooms while R (Key 0x10) is held
+    if(s0&0x8000)return 0;                           // other first-person views
+    if(pPL->hp<=0||pPL->r_no_0!=0)return 0;
+    switch(pPL->r_no_1){case 0:case 1:case 2:case 3:case 4:case 5:case 0x11:return 1;}
+    return 0;
+}
+
+// Which source debug chords would fire now (platform/pad.cpp masks them unless RE4DC_DEBUG_PAD):
+// 1 gameDebug's L+START debug menu (game.cpp: Debug_flg[0] bit 31 clear), 2 the sub screen is
+// open in a type whose raw Joy Z toggles the item-make / puzzle debug menus (all but the
+// Z-opened map, SS_OPEN_MAP, where Z closes the map).
+#include "sscrn.h"
+extern "C" int re4dc_pad_debug_state(){
+    if(!pG)return 0;
+    int s=(s32)pG->Debug_flg[0]>=0?1:0;
+    if(SubScreenWk.type!=0&&SubScreenWk.type!=SS_OPEN_MAP)s|=2;
+    return s;
+}
+
 // ---------------------------------------------------------------- room lifecycle
 // Order of a room change (src/game): gameDoordemo -> gameStageInit -> StageSet
 // [re4dc_room_leave; reload: MemReplaceHeap(1,2); relink: stopRelData,
