@@ -34,7 +34,8 @@ port/dreamcast/tools/hwmodel/hwproject.sh [--name N] [--drop-traces] <evidence-d
   - about 1 min for `hwsim` (4 parallel jobs);
   - under 30 s for disc staging and the report.
 - **Disk.** Traces take about 0.8 GB (15 frames of about 55 MB). `--drop-traces` deletes them
-  after the projection. A full disk truncates traces silently. `hwproject.sh` then refuses to
+  after the projection and keeps a size list. The disc copy (about 0.6 GB) is staged in
+  `HWM_DISCS` and deleted after the run. A full disk truncates traces silently. `hwproject.sh` then refuses to
   report: it checks the simulated insns/frame against `hwtrace.log` and writes
   `proj/INVALID.txt`.
 - **Representativeness.** The 15 traced frames (2401..2520 step 8) come within 0.3% of the
@@ -46,6 +47,8 @@ Environment variables and their defaults:
 |---|---|---|
 | `HWM_BIN` | `/mnt/d/Flycast-Evidence/re4-dreamcast/hwmodel-bin` | hwtrace `flycast.exe` + harness scripts + `emu.cfg` with `Dynarec.Enabled = no` |
 | `HWM_EVROOT` | `/mnt/d/Flycast-Evidence/re4-dreamcast` | where new `hwmodel-<name>` dirs go (keep it off C:) |
+| `HWM_DISCS` | `/mnt/c/Flycast-Evidence/re4-dreamcast/_hwmodel-discs` | disc staging, outside evidence dirs; deleted after the run, sha256 kept in `disc-output/` |
+| `HWM_MINFREE_MB` | `10000` | refuse to start a trace run that would leave less than this free on the trace drive |
 | `HWM_REF` | `$HWM_EVROOT/hwmodel-ld2/proj` | reference projection for the delta table |
 | `HWM_TID1`, `HWM_TID12` | LD `pcs_symbolize.py --csv` tables for tid 1 / tid 12 | split of shared GC helpers into game-render-side / game-logic |
 | `PCS_SYMBOLIZE` | profiler `pcs_symbolize.py` | used only with `--pcs run.pcs` (sampled Flycast ms of a dynarec capture) |

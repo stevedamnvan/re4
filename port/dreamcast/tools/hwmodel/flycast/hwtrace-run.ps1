@@ -1,4 +1,4 @@
-param([string]$Out='trace', [string]$FrameAddr='', [string]$Count='2401:2520', [string]$Trace='2401:2520:8', [int]$Seconds=3600)
+param([string]$Out='trace', [string]$Cue='game.cue', [string]$FrameAddr='', [string]$Count='2401:2520', [string]$Trace='2401:2520:8', [int]$Seconds=3600)
 # hwmodel: run the interpreter-mode hwtrace Flycast build (flycast.exe here is NOT the template build).
 # Writes per-PC execution counts for frames $Count and full traces for frames $Trace (A:B:STEP)
 # into .\$Out\, then Flycast exits by itself (HWTRACE_EXIT). $FrameAddr = physical address of the
@@ -16,5 +16,5 @@ $env:HWTRACE_TRACE = $Trace
 $env:HWTRACE_EXIT = '1'
 "frameaddr $FrameAddr count $Count trace $Trace" | Out-File "$Out\params.txt" -Encoding ascii
 $t0 = Get-Date
-powershell -NoProfile -ExecutionPolicy Bypass -File boot2.ps1 -Seconds $Seconds *> "$Out\run-output.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -File boot2.ps1 -Cue $Cue -Seconds $Seconds *> "$Out\run-output.txt"
 "elapsed_s $(((Get-Date) - $t0).TotalSeconds)" | Out-File "$Out\elapsed.txt" -Encoding ascii

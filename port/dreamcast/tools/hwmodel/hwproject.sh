@@ -21,7 +21,7 @@
 #   --trace A:B:S    traced frames (default 2401:2520:8 = 15 frames, ~0.9 GB)
 #   --ref DIR        reference hwproject output dir to diff against (default $HWM_REF)
 #   --pcs FILE       run.pcs of a normal (dynarec) capture of the same build: adds sampled Flycast ms
-#   --keep-disc      keep the disc copy in the new evidence dir (default: delete after the run)
+#   --keep-disc      keep the staged disc copy (default: delete it after the run)
 #   --drop-traces    delete trace-*.bin after simulating (keeps counts, logs and proj/; ~0.8 GB saved)
 #   --jobs N         parallel hwsim jobs (default 4)
 # Output: <hwmodel dir>/proj/{nominal,low,high,nodma}.*, proj/rep/{functions,areas}.tsv,
@@ -30,6 +30,9 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 HWM_BIN=${HWM_BIN:-/mnt/d/Flycast-Evidence/re4-dreamcast/hwmodel-bin}
 HWM_EVROOT=${HWM_EVROOT:-/mnt/d/Flycast-Evidence/re4-dreamcast}
+# disc images are staged outside evidence dirs (and off the trace drive), deleted after the run
+HWM_DISCS=${HWM_DISCS:-/mnt/c/Flycast-Evidence/re4-dreamcast/_hwmodel-discs}
+HWM_MINFREE_MB=${HWM_MINFREE_MB:-10000}   # refuse to start if the trace drive would drop below this
 HWM_REF=${HWM_REF:-/mnt/d/Flycast-Evidence/re4-dreamcast/hwmodel-ld2/proj}
 HWM_TID1=${HWM_TID1:-/root/probe/d367-agents/hwmodel/data/ld-pcs-func-tid1.csv}
 HWM_TID12=${HWM_TID12:-/root/probe/d367-agents/hwmodel/data/ld-pcs-func-tid12.csv}
@@ -75,24 +78,27 @@ else
   [ ! -e "$E" ] || { echo "$E exists; pick another --name (or pass that dir to re-simulate)" >&2; exit 1; }
   NFR=$(echo "$TRACE" | awk -F: '{s=$3?$3:1; print int(($2-$1)/s)+1}')
   FREE=$(df -BM --output=avail "$HWM_EVROOT" | tail -1 | tr -dc 0-9)
-  NEED=$((NFR * 70 + 700))
-  [ "$FREE" -gt "$NEED" ] || { echo "only ${FREE} MB free on $HWM_EVROOT, need ~${NEED} MB" >&2; exit 1; }
-  mkdir -p "$E/disc-output"
+  NEED=$((NFR * 70 + 100 + HWM_MINFREE_MB))
+  [ "$FREE" -gt "$NEED" ] || { echo "only ${FREE} MB free on $HWM_EVROOT; need ~$((NFR * 70 + 100)) MB and to keep ${HWM_MINFREE_MB} MB free" >&2; exit 1; }
+  mkdir -p "$E/disc-output" "$HWM_DISCS"
   cp -r "$HWM_BIN"/. "$E"/
   for f in re4dc-game.elf syms.txt elf.sha256 head.txt candidate.txt size.txt; do
     [ -f "$SRC/$f" ] && cp "$SRC/$f" "$E/"
   done
-  cp "$DISC" "$E/disc-output/disc.bin"
-  sha256sum "$DISC" | sed "s#  .*#  disc.bin#" > "$E/disc-output/disc.sha256"
-  printf 'FILE "disc-output/disc.bin" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > "$E/game.cue"
+  DB=$HWM_DISCS/hwmodel-$NAME.bin; DC=$HWM_DISCS/hwmodel-$NAME.cue
+  cp "$DISC" "$DB"
+  sha256sum "$DB" | sed "s#  .*#  disc.bin#" > "$E/disc-output/disc.sha256"
+  (cd "$E" && sha256sum re4dc-game.elf > elf.sha256.check)
+  printf 'FILE "hwmodel-%s.bin" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' "$NAME" > "$DC"
+  echo "disc staged at $(wslpath -w "$DB") and deleted after the run" > "$E/disc-output/README.txt"
   echo "hwmodel: SH-4 hardware projection trace of $IN" > "$E/PURPOSE.txt"
   echo "$IN" > "$E/source.txt"
   echo "[tracing $NFR frames in $E; ~6 min for 2401:2520:8]"
   T0=$(date +%s)
-  "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$E/hwtrace-run.ps1")" -Out trace \
+  "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$E/hwtrace-run.ps1")" -Out trace -Cue "$(wslpath -w "$DC")" \
         -Count "$COUNT" -Trace "$TRACE" </dev/null | tr -d '\r'
   echo "[trace run $(( $(date +%s) - T0 )) s]"
-  [ "$KEEP" = 1 ] || rm -f "$E/disc-output/disc.bin"
+  [ "$KEEP" = 1 ] || rm -f "$DB" "$DC"
   N=$(ls "$E"/trace/trace-*.bin 2>/dev/null | wc -l)
   [ "$N" -gt 0 ] || { echo "no traces written; see $E/trace/run-output.txt and $E/flycast.log" >&2; exit 1; }
   [ "$N" = "$NFR" ] || echo "WARNING: $N of $NFR traced frames written (game did not reach the window?)"
@@ -135,4 +141,8 @@ python3 "$HERE/hwreport.py" --elf "$ELF" --sim "$P/nominal" --whatif low="$P/low
   --whatif nodma="$P/nodma" "${PCSA[@]}" "${CNT[@]}" --out "$P/rep" --top 30 > "$P/report.txt"
 python3 "$HERE/hwcompare.py" --cand "$P" --ref "$REF" --trace-log "$E/trace/hwtrace.log" | tee "$P/projection.txt"
 echo "[full report: $P/report.txt; tables: $P/rep/]"
-if [ "$DROP" = 1 ]; then rm -f "$E"/trace/trace-*.bin; echo "[traces deleted]"; fi
+if [ "$DROP" = 1 ]; then
+  for f in "$E"/trace/trace-*.bin; do printf '%s %s\n' "$(basename "$f")" "$(stat -c %s "$f")"; done > "$E/trace/traces-dropped.txt"
+  rm -f "$E"/trace/trace-*.bin; echo "[traces deleted]"
+fi
+echo "[$(df -BG --output=avail "$HWM_EVROOT" | tail -1 | tr -d ' ') free on the trace drive]"
