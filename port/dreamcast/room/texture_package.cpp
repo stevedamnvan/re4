@@ -51,6 +51,37 @@ void upload_native(const std::uint8_t* src, void* destination, std::size_t bytes
         pvr_txr_load(tail,static_cast<std::uint8_t*>(destination)+bulk,32);
     }
 }
+
+#ifndef RE4DC_UI_VRAM
+#define RE4DC_UI_VRAM 0
+#endif
+#if RE4DC_UI_VRAM
+// Game UI_VRAM=1. PVR texture RAM is paged in 2 KiB units (Sega hardware
+// notes): a full VQ codebook (exactly 2 KiB) is placed on a page boundary and
+// a texture of at most one page never straddles two. The allocator only
+// guarantees 32 bytes, so re-place such a texture inside a block padded by one
+// page less 32 bytes; if that block is unavailable keep the plain one (layout,
+// not correctness). pvr_textures_ then holds count sampled pointers followed
+// by count allocation bases (what pvr_mem_free() must receive); the class
+// layout is unchanged, so translation units built without the knob agree.
+pvr_ptr_t allocate_texture(std::size_t bytes, bool vq, pvr_ptr_t& base) {
+    constexpr std::uintptr_t kPage = 2048;
+    base = pvr_mem_malloc(bytes);
+    if(base == nullptr) return nullptr;
+    const std::uintptr_t start = reinterpret_cast<std::uintptr_t>(base);
+    const bool placed = vq ? (start & (kPage - 1U)) == 0 :
+        bytes > kPage || (start & (kPage - 1U)) + bytes <= kPage;
+    if(placed) return base;
+    pvr_mem_free(base);
+    base = pvr_mem_malloc(bytes + kPage - 32U);
+    if(base == nullptr) {
+        base = pvr_mem_malloc(bytes);
+        return base;
+    }
+    return reinterpret_cast<pvr_ptr_t>(
+        (reinterpret_cast<std::uintptr_t>(base) + kPage - 1U) & ~(kPage - 1U));
+}
+#endif
 } // namespace
 
 namespace {
@@ -294,7 +325,11 @@ bool Package::upload() {
         return false;
     }
     vram_fence();
+#if RE4DC_UI_VRAM
+    pvr_textures_ = static_cast<pvr_ptr_t*>(std::calloc(2U * header_->texture_count, sizeof(pvr_ptr_t)));
+#else
     pvr_textures_ = static_cast<pvr_ptr_t*>(std::calloc(header_->texture_count, sizeof(pvr_ptr_t)));
+#endif
     if(pvr_textures_ == nullptr) {
         error_ = "texture pointer allocation failed";
         return false;
@@ -328,7 +363,12 @@ bool Package::upload() {
             continue;
         }
 
+#if RE4DC_UI_VRAM
+        pvr_textures_[index] = allocate_texture(texture.data_size,
+            texture.payload == kPayloadVq, pvr_textures_[header_->texture_count + index]);
+#else
         pvr_textures_[index] = pvr_mem_malloc(texture.data_size);
+#endif
         if(pvr_textures_[index] == nullptr) {
             error_ = "PVR texture allocation failed";
             return false;
@@ -433,9 +473,15 @@ void Package::close() {
                 // freeing one would be a double free.
                 const bool owned =
                     owns_texture_ != nullptr && owns_texture_[index];
+#if RE4DC_UI_VRAM
+                if(owned && pvr_textures_[header_->texture_count + index] != nullptr) {
+                    pvr_mem_free(pvr_textures_[header_->texture_count + index]);
+                }
+#else
                 if(owned && pvr_textures_[index] != nullptr) {
                     pvr_mem_free(pvr_textures_[index]);
                 }
+#endif
             }
         }
         std::free(pvr_textures_);

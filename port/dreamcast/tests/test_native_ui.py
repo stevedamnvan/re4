@@ -196,7 +196,8 @@ assert(p.adopt(vq.data(),vq.size()));
 const auto descriptor=p.textures()[0];
 std::vector<unsigned char> expected(vq.begin()+descriptor.data_offset,vq.end());
 auto old_linear=linear_calls,old_raw=raw_calls;
-assert(p.upload());assert(allocs==1 && last_alloc==2112 && raw_bytes==2112);
+assert(p.upload());assert(allocs==1 && (last_alloc==2112 || (RE4DC_UI_VRAM && last_alloc==2112+2016)) && raw_bytes==2112);
+assert(!RE4DC_UI_VRAM || !(reinterpret_cast<std::uintptr_t>(p.pvr_texture(0))&2047)); // UI_VRAM: codebook on one 2 KiB page
 assert(raw_calls==old_raw+1 && linear_calls==old_linear);
 assert(p.vram_bytes()==2112 && re4dc::texture::pvr_format(descriptor)==0x48000000U);
 assert(!memcmp(p.pvr_texture(0),expected.data(),expected.size()));
@@ -304,7 +305,8 @@ for(int arg:{2,9}) { // normal VQ and its 8x8, 16-byte SQ tail
  std::ifstream f(argv[arg],std::ios::binary);
  std::vector<unsigned char> b((std::istreambuf_iterator<char>(f)),{});
  assert(p.open_streamed(argv[arg]));const auto d=p.textures()[0];assert(p.upload());
- assert(p.vram_bytes()==d.data_size && last_alloc==d.data_size);
+ assert(p.vram_bytes()==d.data_size && (last_alloc==d.data_size || (RE4DC_UI_VRAM && last_alloc==d.data_size+2016)));
+ assert(!RE4DC_UI_VRAM || !(reinterpret_cast<std::uintptr_t>(p.pvr_texture(0))&2047));
  assert(!memcmp(p.pvr_texture(0),b.data()+d.data_offset,d.data_size));
  assert(p.release_payload() && !p.released_bytes());p.close();assert(!allocs);
 }
@@ -329,15 +331,20 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
             fixture=fixture.replace('int main(',setup+bindings+'int main(',1)
             cpp=root/"fixture.cpp";cpp.write_text(fixture)
             scene=ROOT/"port/dreamcast/room";exe=root/"fixture"
-            subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-fsanitize=address,undefined","-fno-omit-frame-pointer","-I"+str(root),"-I"+str(scene),str(cpp),
-                            str(scene/"texture_package.cpp"),str(scene/"gpu_lifecycle.cpp"),str(scene/"room_storage.cpp"),"-o",str(exe)],check=True)
-            subprocess.run([str(exe)]+[str(root/name) for name in ("asset","vq","unknown","oversized","palette","identities","stream","bad_crc","small_vq","indexed")],check=True)
+            # Default package layout, then game UI_VRAM=1 (2 KiB page placement).
+            for knob in ("0","1"):
+                subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-DRE4DC_UI_VRAM="+knob,"-fsanitize=address,undefined","-fno-omit-frame-pointer","-I"+str(root),"-I"+str(scene),str(cpp),
+                                str(scene/"texture_package.cpp"),str(scene/"gpu_lifecycle.cpp"),str(scene/"room_storage.cpp"),"-o",str(exe)],check=True)
+                subprocess.run([str(exe)]+[str(root/name) for name in ("asset","vq","unknown","oversized","palette","identities","stream","bad_crc","small_vq","indexed")],check=True)
 
 
     @unittest.skipUnless(shutil.which("g++"), "host compiler required")
     def test_texture_pin_matches_committed_packet_ownership(self):
         source=(ROOT/"port/dreamcast/game/platform/native_ui.cpp").read_text()
-        loader=source[source.index("void close_entry("):source.index('\n}\nextern "C" void re4dc_ui_invalidate_sources')]
+        # close_entry() and load() through load's closing brace (the anonymous
+        # namespace closes next; PVR_PIPELINE fence glue may follow it).
+        first=source.index("void close_entry(")
+        loader=source[first:source.index("\n}\n}\n",source.index("Entry* load(",first))+3]
         commit=source[source.index('extern "C" void re4dc_model_packet_commit('):source.index('extern "C" void re4dc_model_result(')]
         fixture=r"""
 #include "native_ui.h"
@@ -345,8 +352,10 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
 #define re4dc_log(...) ((void)0)
-unsigned uploads=0,closes=0;bool upload_fails=false;
+unsigned uploads=0,closes=0,alloc_fails=0;bool upload_fails=false;const char* upload_error="fixture";
 namespace re4dc::texture {
 constexpr unsigned kPayloadVq=1;
 struct Header{unsigned texture_count=1,data_size=32;};
@@ -354,11 +363,11 @@ struct Texture{unsigned payload=0,data_size=32,width=8,height=8;};
 struct Package{
  Header h;Texture t;unsigned bytes=0;
  bool open_streamed(const char*){return true;}
- bool upload(){if(upload_fails)return false;++uploads;bytes=32;return true;}
+ bool upload(){if(upload_fails)return false;if(alloc_fails){--alloc_fails;upload_error="PVR texture allocation failed";return false;}upload_error=nullptr;++uploads;bytes=32;return true;}
  bool release_payload(){return true;}void close(){if(bytes)++closes;bytes=0;}
  unsigned vram_bytes()const{return bytes;}unsigned metadata_bytes()const{return 0;}
  const Header& header()const{return h;}const Texture* textures()const{return &t;}
- const char* error()const{return "fixture";}void* pvr_texture(int){return nullptr;}
+ const char* error()const{return upload_error;}void* pvr_texture(int){return nullptr;}
 };
 unsigned pvr_format(const Texture&){return 0;}
 }
@@ -367,6 +376,7 @@ struct Entry{re4dc::texture::Package package;Key key;unsigned frame=0;bool valid
 Entry entries[2],*model_handle=nullptr;unsigned frame=5,used=0,peak=0,loads=0;
 unsigned model_used=0,model_pending=1,model_peak=0;
 constexpr unsigned kVramBudget=128;
+unsigned vram_budget=1000,vram_retries=0,vram_rejects=0,reclaimed=0;
 unsigned image_size(const Re4dcUiImage&){return 32;}
 bool image_key(const Re4dcUiImage& i,Key& k){k.crc=(uintptr_t)i.pixels;k.fnv=k.crc;return true;}
 int re4dc_ui_heap_free(){return 1000;}unsigned pvr_mem_available(){return 1000;}
@@ -390,13 +400,28 @@ int main(){
  ++frame;auto* next=load(a,false);assert(next&&next->frame!=frame&&used==64);
  model_handle=next;re4dc_model_packet_commit(3);assert(next->frame==frame);
  a.pixels=(void*)6;upload_fails=true;assert(!load(a,false));assert(next->valid&&next->frame==frame&&used==32);
- upload_fails=false;assert(load(a));assert(used==64);
+ upload_fails=false;upload_error="fixture";assert(load(a));assert(used==64);
+#if RE4DC_UI_VRAM
+ // Fragmented pool: an allocation failure evicts one more unreferenced upload
+ // (never a current-frame one) and retries the reopened package.
+ ++frame;alloc_fails=1;a.pixels=(void*)7;auto* retried=load(a);
+ assert(retried&&retried->frame==frame&&vram_retries==1&&reclaimed==1&&used==32);
+ alloc_fails=1;a.pixels=(void*)8;assert(!load(a)&&retried->valid&&used==32); // nothing evictable
+ alloc_fails=0;
+ // A texture that cannot fit beside this frame's pinned uploads is refused
+ // before eviction or file I/O (no package open, nothing closed).
+ ++frame;assert(load(a)&&used==64);retried->frame=frame-1; // one pinned, one evictable
+ auto uploads_before=uploads;vram_budget=150;a.pixels=(void*)9; // 32 pinned + 128 (8x8 16-bit) > 150
+ assert(!load(a)&&vram_rejects==1&&uploads==uploads_before&&retried->valid&&used==64);
+ vram_budget=1000;
+#endif
 }
 """
         with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d);cpp=p/"pin.cpp";cpp.write_text(fixture);exe=p/"pin"
-            subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-fsanitize=address,undefined","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)
-            subprocess.run([str(exe)],check=True)
+            for knob in ("0","1"): # default cache, then UI_VRAM=1 (pool budget, retry, fail-fast)
+                subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-DRE4DC_UI_VRAM="+knob,"-fsanitize=address,undefined","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)
+                subprocess.run([str(exe)],check=True)
 
     @unittest.skipUnless(shutil.which("g++"), "host compiler required")
     def test_runtime_key_matches_offline_key(self):

@@ -51,6 +51,17 @@
 #ifndef RE4DC_TA_OPB_OVERFLOW
 #define RE4DC_TA_OPB_OVERFLOW 3
 #endif
+// UI_VRAM=1 (default off = previous image): texture cache budget from the
+// actual PVR pool after pvr_init() minus RE4DC_UI_VRAM_RESERVE_KB (the pool
+// shrinks by 2 MiB per extra MiB of TA_VERTBUF_KB); LRU eviction against the
+// real pool, one evict-and-retry on a fragmented pool, and fail-fast (no
+// eviction/file I/O) for a texture that cannot fit beside this frame's pins.
+#ifndef RE4DC_UI_VRAM
+#define RE4DC_UI_VRAM 0
+#endif
+#ifndef RE4DC_UI_VRAM_RESERVE_KB
+#define RE4DC_UI_VRAM_RESERVE_KB 64
+#endif
 #if (RE4DC_PVR_PIPELINE || RE4DC_TA_DIRECT) && !RE4DC_PVR_STREAM
 #error PVR_PIPELINE and TA_DIRECT extend the PVR_STREAM=1 frame owner
 #endif
@@ -73,6 +84,9 @@
 
 namespace {
 constexpr unsigned kQuadCount=256, kTextureCount=RE4DC_PVR_STREAM?80:48, kSourceCount=RE4DC_PVR_STREAM?128:256, kVramBudget=4*1024*1024;
+#if RE4DC_UI_VRAM
+unsigned vram_budget,vram_retries,vram_rejects; // budget: set by re4dc_ui_init() from the actual pool
+#endif
 struct Key { unsigned crc,fnv; bool operator==(const Key& b)const{return crc==b.crc && fnv==b.fnv;} };
 struct Entry { re4dc::texture::Package package; Key key{}; unsigned frame=0; bool valid=false;
 #if RE4DC_D349_RENDERER_STACK
@@ -810,6 +824,18 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
 #else
     for(auto& e:entries) if(e.valid && e.key==key) {if(pin)e.frame=frame;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
 #endif
+#if RE4DC_UI_VRAM
+    {
+        // Fail fast, before any eviction or file I/O (open_streamed CRC-reads
+        // the whole package), when even the smallest native form of the padded
+        // image (16-bit or full-codebook VQ) cannot fit beside this frame's
+        // pinned uploads. Retrying such a load every frame stalls the frame loop.
+        unsigned pw=8,ph=8;while(pw<image.width)pw*=2;while(ph<image.height)ph*=2;
+        const unsigned least=std::min(pw*ph*2,2048+pw*ph/4);
+        unsigned pinned=0;for(const auto& e:entries)if(e.valid && e.frame==frame)pinned+=e.package.vram_bytes();
+        if(pinned+least>vram_budget){++vram_rejects;RE4DC_PROFILE_COUNT(TextureBudgetFailures,1);return nullptr;}
+    }
+#endif
     Entry* slot=nullptr;
     for(auto& e:entries) if(!e.valid){slot=&e;break;}
     if(!slot) for(auto& e:entries) if(e.frame!=frame && (!slot || e.frame<slot->frame)) slot=&e;
@@ -821,6 +847,49 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     const int heap_before=re4dc_ui_heap_free();
     bool ok=slot->package.open_streamed(path);
     if(!ok) {RE4DC_PROFILE_COUNT(TextureOpenFailures,1);re4dc_log("native UI: package rejected: %s\n",slot->package.error());}
+#if RE4DC_UI_VRAM
+    // Evict the least recently used upload that this frame's scene does not
+    // reference (frame!=current); LRU order spends uploads idle >=2 frames
+    // first. A previous-frame upload may still be read by the render in
+    // flight: close() waits for it first via re4dc_pvr_vram_fence():
+    // PVR_PIPELINE=1 until the presenter resolved that scene (render done),
+    // PVR_PIPELINE=2 while pvr_present_pending() (the async decision is only
+    // applied by the render-done IRQ; a present stays pending until its flip).
+    // Without a pipeline, re4dc_ui_begin() quiesced the render before this frame.
+    auto evict=[slot]{
+        Entry* victim=nullptr;
+        for(auto& e:entries) if(&e!=slot && e.valid && e.frame!=frame && (!victim || e.frame<victim->frame)) victim=&e;
+        if(!victim) return false;
+        RE4DC_PROFILE_COUNT(TextureEvictions,1);close_entry(*victim);++reclaimed;return true;
+    };
+    if(ok) {
+        const auto& h=slot->package.header();
+        ok=h.texture_count==1 && h.data_size<=vram_budget;
+        // Accounted budget first, then the real pool (allocator overhead).
+        while(ok && (used+h.data_size>vram_budget || pvr_mem_available()<h.data_size))
+            if(!evict()) {RE4DC_PROFILE_COUNT(TextureBudgetFailures,1);ok=false;}
+    }
+    const unsigned vram_before=pvr_mem_available();
+    if(ok) {RE4DC_PROFILE_SCOPE(TextureUpload);
+        ok=slot->package.upload();
+        // A fragmented pool can refuse a block that the totals admit. Free one
+        // more unreferenced upload and retry; reopening releases the partial
+        // allocation (Package refuses to resume a partial upload in place).
+        for(const char* e=slot->package.error();!ok && e && !std::strcmp(e,"PVR texture allocation failed") && evict();e=slot->package.error()){
+            ++vram_retries;
+            re4dc_log("native UI: fragmented VRAM, evicted and retrying (retries=%u free=%u)\n",vram_retries,(unsigned)pvr_mem_available());
+            ok=slot->package.open_streamed(path) && slot->package.upload();
+        }
+        ok=ok && slot->package.release_payload();
+        if(ok){RE4DC_PROFILE_COUNT(TextureUploads,1);RE4DC_PROFILE_COUNT(TextureUploadBytes,slot->package.vram_bytes());}
+        else RE4DC_PROFILE_COUNT(TextureUploadFailures,1);
+    }
+    // The byte-wise VRAM readback below costs milliseconds per large VQ texture
+    // on hardware; VQ UI/model packages are ordinary here, so log without it.
+    if(ok && slot->package.textures()[0].payload==re4dc::texture::kPayloadVq)
+        re4dc_log("native texture VQ: bytes=%u raw16=%u free_vram=%u allocation_delta=%u\n",slot->package.textures()[0].data_size,
+            slot->package.textures()[0].width*slot->package.textures()[0].height*2,(unsigned)pvr_mem_available(),vram_before-(unsigned)pvr_mem_available());
+#else
     if(ok) {
         const auto& h=slot->package.header();
         ok=h.texture_count==1 && h.data_size<=kVramBudget;
@@ -845,6 +914,7 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
         for(unsigned n=0;n<t.data_size;++n)fnv=(fnv^data[n])*16777619U;
         re4dc_log("native texture VQ: ptr=%08x bytes=%u raw16=%u format=%08x readback_fnv=%08x free_vram=%u allocation_delta=%u\n",(unsigned)data,t.data_size,t.width*t.height*2,re4dc::texture::pvr_format(t),fnv,(unsigned)pvr_mem_available(),vram_before-(unsigned)pvr_mem_available());
     }
+#endif
     re4dc_log("native UI: upload %s vram=%u\n",ok?"ok":"FAILED",slot->package.vram_bytes());
     if(!ok) slot->package.close();
     re4dc_log("native UI: bounded upload heap=%d->%d metadata=%u staging=shared-16384 source_allocation=0\n",heap_before,re4dc_ui_heap_free(),slot->package.metadata_bytes());
@@ -1000,6 +1070,13 @@ extern "C" void re4dc_ui_init(){
 #if RE4DC_TA_GUARD || RE4DC_PERF_HUD || RE4DC_TA_VERTBUF_KB!=1024 || RE4DC_TA_DOUBLEBUF || RE4DC_TA_OPB_BINS!=16 || RE4DC_TA_OPB_OVERFLOW!=3
         re4dc_log("native VRAM layout: vertbuf=%u KiB x%u banks (%s) opb_bins=%u overflow=%u texture_pool_free=%u\n",
             unsigned(RE4DC_TA_VERTBUF_KB),2U,RE4DC_TA_DOUBLEBUF?"double-buffered":"single-bank use",unsigned(RE4DC_TA_OPB_BINS),unsigned(RE4DC_TA_OPB_OVERFLOW),(unsigned)pvr_mem_available());
+#endif
+#if RE4DC_UI_VRAM
+        {
+            const unsigned pool=pvr_mem_available(),reserve=RE4DC_UI_VRAM_RESERVE_KB*1024U;
+            vram_budget=pool>reserve?pool-reserve:0;
+            re4dc_log("native UI: texture VRAM budget=%u pool=%u reserve=%u (LRU evict + fragmentation retry)\n",vram_budget,pool,reserve);
+        }
 #endif
         pvr_set_bg_color(0,0,0);
         // Source camera-space units can exceed 10,000. KOS's default 0.0001
@@ -1166,6 +1243,9 @@ extern "C" void re4dc_ui_present(){
         re4dc_log("native model rejection: capacity=%u state=%u texture=%u wrap=%u empty=%u scale_rebuild=%u\n",model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds);
     if(frame%120==0 && model_diagnostic==1)re4dc_log("native model alpha: material=%u vertex=%u faded=%u masks=unsupported\n",model_alpha_material,model_alpha_vertex,model_alpha_faded);
     if(frame%120==0) re4dc_log("native UI: frame=%u quads=%u drawn=%u missing=%u unsupported=%u drops=%u vram=%u peak=%u staging=%u loads=%u freed=%u culled=%u fb=%08x,%08x black=%d\n",frame,nquad,drawn,missing,unsupported,dropped,used,peak,staging_peak,loads,reclaimed,culled,(unsigned)pvr_get_front_buffer(),(unsigned)pvr_get_back_buffer(),re4dc_vi_black());
+#if RE4DC_UI_VRAM
+    if(frame%120==0) re4dc_log("native UI VRAM: frame=%u budget=%u used=%u free=%u rejects=%u retries=%u evicted=%u\n",frame,vram_budget,used,(unsigned)pvr_mem_available(),vram_rejects,vram_retries,reclaimed);
+#endif
 }
 
 extern "C" void re4dc_ui_end_frame(int present){

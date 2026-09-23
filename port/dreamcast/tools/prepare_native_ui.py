@@ -239,6 +239,24 @@ def compact_model_uvs(decoded, models):
     return sorted(ranges),entries,retained
 
 
+def accepted_native_package(blob, reference):
+    """The deterministic reference package, or a vq_native_ui.py re-encode of it.
+
+    A VQ replacement keeps the file name (source identity), the single
+    descriptor's padded dimensions and its 16-bit format, so the runtime UV
+    scale (source/native size) is unchanged; only the payload is full VQ.
+    """
+    from convert_tpl import HEADER, TEXTURE, PAYLOAD_VQ
+    if blob==reference:return True
+    try:
+        h=HEADER.unpack_from(blob);r=HEADER.unpack_from(reference)
+        t=TEXTURE.unpack_from(blob,h[5]);u=TEXTURE.unpack_from(reference,r[5])
+    except struct.error:return False
+    return (h[:6]==r[:6] and h[4]==1 and t[1:4]==u[1:4] and t[7]==PAYLOAD_VQ and
+            t[5]==2048+t[1]*t[2]//4 and h[7]==t[5] and len(blob)==h[6]+h[7] and
+            zlib.crc32(blob[h[2]:])&0xffffffff==h[8])
+
+
 def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=None, native_mips=False):
     """Existing qualified image selection, shared by room/core/enemy producers.
 
@@ -274,7 +292,8 @@ def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=Non
             # in memory. No candidate encoder or output texture file is written.
             reference,_=build_package([image],[MaterialBinding('source',0,None)],
                 twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
-            if not package_path.is_file() or package_path.read_bytes()!=reference:
+            actual=package_path.read_bytes() if package_path.is_file() else b''
+            if not accepted_native_package(actual,reference):
                 raise ValueError('missing or non-reference native texture: '+key)
             chain=len(image.data)
             if hi:
@@ -307,7 +326,8 @@ def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=Non
             entry={'context':ctx,'image':i,'key':key,'source_header':tpl_off+header,
                    'source_tpl':tpl_off,'source_payload':a,'source_bytes':chain,
                    'source_sha256':hashlib.sha256(identity).hexdigest(),
-                   'native_package_sha256':hashlib.sha256(reference).hexdigest()}
+                   'native_package_sha256':hashlib.sha256(actual).hexdigest()}
+            if actual!=reference:entry['native_payload']='vq'
             if indexed:
                 entry.update(record_bytes=64,palette_bytes=len(image.palette_data),
                     palette_format=image.palette_format,palette_sha256=hashlib.sha256(image.palette_data).hexdigest(),

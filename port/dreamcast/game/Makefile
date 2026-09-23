@@ -260,6 +260,9 @@ $(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pvr-stre
 # are the current 1024/0/16/3. TA_GUARD=1: adaptive part budget + overflow
 # detection/logging; =2 also never presents an overflowed scene.
 # PERF_HUD=1: on-screen frame/CPU/render/wait/TA bars for console tests.
+# UI_VRAM=1: native texture cache budget from the actual PVR pool (minus
+# UI_VRAM_RESERVE_KB), LRU eviction/fragmentation retry/fail-fast, and 2 KiB
+# page placement of VQ codebooks and page-sized textures (texture_package).
 PVR_FAST_WAKE ?= 0
 PVR_PIPELINE ?= 0
 TA_DIRECT ?= 0
@@ -270,12 +273,15 @@ TA_OPB_BINS ?= 16
 TA_OPB_OVERFLOW ?= 3
 TA_GUARD ?= 0
 PERF_HUD ?= 0
+UI_VRAM ?= 0
+UI_VRAM_RESERVE_KB ?= 64
 .PHONY: pipeline30-force
 $(OBJDIR)/pipeline30.h: pipeline30-force
 	@mkdir -p $(dir $@)
 	@if [ "$(PVR_PIPELINE)" = 2 ]; then test "$$($(KOS_CC_BASE)/bin/$(KOS_CC_PREFIX)-nm -g --defined-only $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a | grep -Ec ' T _pvr_present_(async|wait|pending)$$')" -eq 3 || { echo 'PVR_PIPELINE=2 requires the KOS async-present patch' >&2; exit 1; }; fi
 	@printf '#define RE4DC_PVR_FAST_WAKE %s\n#define RE4DC_PVR_PIPELINE %s\n#define RE4DC_TA_DIRECT %s\n#define RE4DC_BRIDGE_LEAN %s\n' '$(PVR_FAST_WAKE)' '$(PVR_PIPELINE)' '$(TA_DIRECT)' '$(BRIDGE_LEAN)' > $@.tmp
 	@printf '#define RE4DC_TA_VERTBUF_KB %s\n#define RE4DC_TA_DOUBLEBUF %s\n#define RE4DC_TA_OPB_BINS %s\n#define RE4DC_TA_OPB_OVERFLOW %s\n#define RE4DC_TA_GUARD %s\n#define RE4DC_PERF_HUD %s\n' '$(TA_VERTBUF_KB)' '$(TA_DOUBLEBUF)' '$(TA_OPB_BINS)' '$(TA_OPB_OVERFLOW)' '$(TA_GUARD)' '$(PERF_HUD)' >> $@.tmp
+	@printf '#define RE4DC_UI_VRAM %s\n#define RE4DC_UI_VRAM_RESERVE_KB %s\n' '$(UI_VRAM)' '$(UI_VRAM_RESERVE_KB)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_ui.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/pipeline30.h
