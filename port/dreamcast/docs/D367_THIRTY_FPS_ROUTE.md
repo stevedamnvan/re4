@@ -232,6 +232,7 @@ User decisions (2026-09-23):
     - Estimates: Low is worth -2 to -4.5 hw ms quiet and -7 to -13.5 in r101 fights. It's a safety margin, not 30 fps.
     - The full native model path (-9 to -13 hw ms, bit-exact, records held in the existing 64 KiB slab) is ON in Standard.
     - Heavier Low levers approved: flat Ganado lighting; a draw-side crowd rule; a scenery-only cull at 18-20 m, with the fog kept at 25 m, only if it doesn't visibly pop.
+    - Decided 2026-09-23: crowd rule **N=2** (the nearest 2 Ganados at near/mid detail, the rest at the far tier, none hidden; 8-Ganado fight 31.5 vs 32.1 hw ms at N=6, design-ganado 08). **FTRV render maths: yes** (render-only transforms; the logic trace stays STRICT). Flat Ganado lighting (~-5.8 hw ms in the 8-Ganado fight, model estimate) is pending the user's look check.
     - A Low effect draw cap (draw side only): yes.
     - Thermal scope, self shadow and cast shadow stay in the build.
     - The quality choice is remembered on the VMU.
