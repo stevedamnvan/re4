@@ -150,6 +150,26 @@ Tools: port/dreamcast/tools/hwmodel (24ba078). `hwproject.sh <dir>` projects any
 Current stack (LF + frontend30 + UI_VRAM 2048 + tex-vq3) projects to **130.3 ms (114.7-151.1)** against LD's 157.8. Hardware keeps 172% of the Flycast gain.
 By area: render-side 32.3, actors 31.1, scenery 27.2, logic 24.7, UI 8.5, copies 3.6, TA 0.3, KOS 2.5.
 
+### D349 on hardware (hwmodel-d349)
+
+D349 (5f42caa, the r100 autoplay prototype: reduced gameplay, sampled camera and animation) projects to **76.3 ms on hardware** (Flycast 53.4). It is not cheaper per unit of work:
+- actors cost 2.69 hardware ms per 1k TA vertex records, against our 1.28;
+- scenery costs 2.20, against our 1.42.
+
+It draws less (0.87 MB TA/frame vs 1.40 MB) and runs almost no game logic, UI or GC front end. Those three are ~65 ms of our 130.
+
+Not worth porting:
+- its prepared actor lights (its most expensive kernel);
+- its RAM-buffer-plus-copy packet path;
+- AoS20 (already in our static path).
+
+Worth porting (with estimated hardware savings):
+1. prepared per-model records instead of the GC front end (-8 to -12);
+2. one straight per-part emission loop instead of the packet/defer layer (-5 to -6);
+3. precompiled HUD headers (~-1.5);
+4. a small grouped render hot path (-1 to -2);
+5. a per-frame transformed-vertex cache for scenery (~-1.5, unmeasured).
+
 ## 20 fps hardware budget (2026-09-23)
 
 Game logic is a fixed 30 Hz tick: one update per frame (main.cpp, 2 vsyncs), with no delta-time scaling; only pad repeat timers use GetSystemVcnt. Rendering at 20 fps at the correct game speed therefore needs 1.5 logic ticks per rendered frame, so logic is a fixed per-second tax whatever the frame rate. At the modelled 25.8 ms/tick, logic alone is 77% of the CPU.
