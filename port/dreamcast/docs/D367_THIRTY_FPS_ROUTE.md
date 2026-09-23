@@ -174,6 +174,30 @@ Worth porting (with estimated hardware savings):
 4. a small grouped render hot path (-1 to -2);
 5. ~~a per-frame transformed-vertex cache for scenery~~: measured at 0. The transform-once meshlets (02d5a0f) already realise it (24.4% of corners saved), and repeats across draws use different matrices. What's left is a converter-side position/attribute split, ~-0.5 to -0.8 ms, unmeasured.
 
+## Work plan: serialized perf lane (2026-09-23)
+
+Performance work is serialized: one integrated build, one change at a time.
+- After each step, measure the stacked build with hwproject and Flycast, in the r100 quiet window and the r101 fight, reporting p50, p99 and max against the 50 ms target.
+- Gains measured as separate arms overlap in the same frames, so only the stacked number counts.
+
+| Step | Change | Status |
+|---|---|---|
+| 0 | FRONT_NATIVE v1, RELEASE_FLAGS | landed (c881fba, ecbea1f) |
+| 1 | Texture preload per room, O(1) handles, no runtime CRC (movement hitches; crowd texture cost) | finishing |
+| 2 | Game-logic cuts (game30 LH recipe, then tick cuts) | queued |
+| 3 | Enemies: Leon <=5 ms, CROWD_LOD tiers, ACT_CAP, safe cuts (CUT_GORE, FX caps, static car/cops) | queued |
+| 4 | Render front end: EFFECT_LEAN, EMIT_DIRECT, FRONT_NATIVE v2 | queued |
+| 5 | Scenery: fog distance, tree cap, house from halfway, W9 worst views and per-room fog | queued |
+
+Parallel tracks (off the frame path; needed for the console gate):
+- r101/r103 bring-up (frontier W4, W9 packages);
+- audio;
+- cutscenes;
+- inventory/retry (W11);
+- GDEMU disc reads (W10).
+
+Asset exploration (PS2/Blender) is parked after the house images.
+
 ## 20 fps hardware budget (2026-09-23)
 
 Game logic is a fixed 30 Hz tick: one update per frame (main.cpp, 2 vsyncs), with no delta-time scaling; only pad repeat timers use GetSystemVcnt. Rendering at 20 fps at the correct game speed therefore needs 1.5 logic ticks per rendered frame, so logic is a fixed per-second tax whatever the frame rate. At the modelled 25.8 ms/tick, logic alone is 77% of the CPU.
