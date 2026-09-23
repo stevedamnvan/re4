@@ -845,6 +845,22 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
         // Native model/shadow/mirror adapters consume these arrays on SH-4;
         // only newly packed PVR commands are transferred to TA. Keep all other
         // cache/DMA boundaries, including the separate primStart flush, intact.
+#if RE4DC_NATIVE_ACTOR_SKIN
+        // D367 actors30: pPosBuf/pNrmBuf are read only by renderers. When the
+        // native actor path takes this info (the palette just built is copied
+        // and registered), it skins at draw time and this render-only pass is
+        // skipped; GQR6 ends in the same state. Morphed infos keep the pass.
+        {
+            int re4dc_skin_defer(cModelInfo* info, ModelData* d);
+            if (!(info->be_flag & 2) && re4dc_skin_defer(info, d)) {
+                setupGQR6(0x32073207);
+                if (d->flags & 0x20000000) {
+                    setupGQR6(0x20062006);
+                }
+                continue;
+            }
+        }
+#endif
 #if defined(__sh__)
         dc_stamp=re4dc_model_source_stamp();
 #endif
@@ -2720,6 +2736,12 @@ void setupGQR6(u32 v)
 // scaled; the normal passes set a large negative scale so that row vanishes (0x32073207,
 // 0x20062006), exactly as on the Gekko.
 static u32 g_gqr6;
+#if RE4DC_NATIVE_ACTOR_SKIN
+static u32 g_skin_palette;  // nonzero: re4dc_skin_materialize()'s saved palette
+#define RE4DC_SKIN_PALETTE (g_skin_palette ? g_skin_palette : RE4DC_LC_PALETTE)
+#else
+#define RE4DC_SKIN_PALETTE RE4DC_LC_PALETTE
+#endif
 
 static inline f32 gqrScale(u32 field)  // 6-bit two's-complement scale field -> 2^-scale
 {
@@ -2748,7 +2770,7 @@ static void CalcSk1_x(void* dst, void* src, u32 n)
     const f32 ls = gqrScale(g_gqr6 >> 16);
     const f32 ss = 1.0f / gqrScale(g_gqr6 & 0xFFFF);
     for (u32 i = 0; i < n; i++, s += 4, d += 3) {
-        const f32* m = (const f32*) (RE4DC_LC_PALETTE + (u32) ((s32) s[3] * 0x30));
+        const f32* m = (const f32*) (RE4DC_SKIN_PALETTE + (u32) ((s32) s[3] * 0x30));
         f32 x = (f32) s[0] * ls;
         f32 y = (f32) s[1] * ls;
         f32 z = (f32) s[2] * ls;
@@ -2768,7 +2790,7 @@ static void CalcSk1_x2(void* dst, void* src, u32 n)
     const f32 ls = gqrScale(g_gqr6 >> 16);
     const f32 ss = 1.0f / gqrScale(g_gqr6 & 0xFFFF);
     for (u32 i = 0; i < n; i++, s += 4, d += 3) {
-        const f32* m = (const f32*) (RE4DC_LC_PALETTE + (u32) ((u8) s[3] * 0x30));
+        const f32* m = (const f32*) (RE4DC_SKIN_PALETTE + (u32) ((u8) s[3] * 0x30));
         f32 x = (f32) s[0] * ls;
         f32 y = (f32) s[1] * ls;
         f32 z = (f32) s[2] * ls;
@@ -2785,6 +2807,51 @@ void setupGQR6(u32 v)
 {
     g_gqr6 = v;
 }
+
+#if RE4DC_NATIVE_ACTOR_SKIN
+#include "native_actor.hpp"
+// D367 actors30 (NATIVE_ACTOR_SKIN). Trans(): keep a copy of the weight
+// palette MakeWeightPalette just built (primitive buffer, same lifetime as
+// pPosBuf) and register it with the native actor path, which then skins
+// this info at draw time. Space is taken only with 64 KiB left afterwards,
+// so the source's own allocations never reach GetPrimBuff's OVERFLOW.
+extern "C" void* re4dc_prim_tail(unsigned bytes, unsigned reserve);
+int re4dc_skin_defer(cModelInfo* info, ModelData* d)
+{
+    const u32 n = d->weight_ext_num > 0xFF ? d->weight_ext_num : d->weight_palette_num;
+    if (!n || !re4dc_model_diagnostic_enabled()) {
+        return 0;
+    }
+    void* copy = re4dc_prim_tail(n * 0x30, 64 * 1024);
+    if (!copy) {
+        return 0;
+    }
+    memcpy(copy, (const void*) RE4DC_LC_PALETTE, n * 0x30);
+    return re4dc_actor_skin_register(pG->Frame_cnt, info, info->pPosBuf[pG->vtx_buf_no], (const float*) copy, n);
+}
+
+// Render(): the generic path needs this info's pPosBuf/pNrmBuf after all.
+// The source's own CalcSk1_x/_x2 from the saved palette, into the buffers
+// Trans() allocated; the locked cache and GQR6 state are left untouched.
+extern "C" void re4dc_skin_materialize(const void* info_ptr, const float* palette)
+{
+    cModelInfo* info = (cModelInfo*) info_ptr;
+    ModelData* d = info->pData;
+    const u32 saved = g_gqr6;
+    g_skin_palette = (u32) palette;
+    setupGQR6(((d->shift << 24) | (d->shift << 8)) | 0x00070007);
+    CalcSk1_x(info->pPosBuf[pG->vtx_buf_no], d->vtxOrig, d->nVtx);
+    setupGQR6(0x32073207);
+    if (d->flags & 0x20000000) {
+        setupGQR6(0x20062006);
+        CalcSk1_x2(info->pNrmBuf[pG->vtx_buf_no], d->nrmOrig, d->nNrm);
+    } else {
+        CalcSk1_x(info->pNrmBuf[pG->vtx_buf_no], d->nrmOrig, d->nNrm);
+    }
+    g_skin_palette = 0;
+    g_gqr6 = saved;
+}
+#endif
 
 #endif
 

@@ -66,6 +66,21 @@ NATIVE_ACTOR ?= 0
 ifneq ($(NATIVE_ACTOR),1)
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor.o,$(PLATFORM_OBJS))
 endif
+# D367 actors30 (all default off). NATIVE_ACTOR_FAST=1: meshlet actor path
+# (platform/native_actor_fast.cpp replaces native_actor.cpp). NATIVE_ACTOR_SKIN=1:
+# trans.cpp defers the render-only CalcSk1_x pass to draw-time skinning.
+# NATIVE_ACTOR_DIRECT=1: store-queue submission (needs the TA_DIRECT=1 API).
+NATIVE_ACTOR_FAST ?= 0
+NATIVE_ACTOR_SKIN ?= 0
+NATIVE_ACTOR_DIRECT ?= 0
+ifeq ($(NATIVE_ACTOR)$(NATIVE_ACTOR_FAST),11)
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor.o,$(PLATFORM_OBJS))
+else
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor_fast.o,$(PLATFORM_OBJS))
+ifneq ($(NATIVE_ACTOR_SKIN)$(NATIVE_ACTOR_DIRECT),00)
+$(error NATIVE_ACTOR_SKIN/NATIVE_ACTOR_DIRECT require NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1)
+endif
+endif
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1
@@ -414,9 +429,22 @@ endif
 .PHONY: native-actor-force
 $(OBJDIR)/native-actor.h: native-actor-force
 	@mkdir -p $(dir $@)
-	@printf '#define RE4DC_NATIVE_ACTOR %s\n' '$(NATIVE_ACTOR)' > $@.tmp
+	@printf '#define RE4DC_NATIVE_ACTOR %s\n#define RE4DC_NATIVE_ACTOR_FAST %s\n#define RE4DC_NATIVE_ACTOR_SKIN %s\n#define RE4DC_ACTOR_DIRECT %s\n' '$(NATIVE_ACTOR)' '$(NATIVE_ACTOR_FAST)' '$(NATIVE_ACTOR_SKIN)' '$(NATIVE_ACTOR_DIRECT)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_model.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/native-actor.h
 $(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-actor.h
 $(OBJDIR)/model_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/native-actor.h
+ifeq ($(NATIVE_ACTOR_FAST),1)
+$(OBJDIR)/platform/native_actor_fast.o: PLATFORM_CPPFLAGS += -O2 -include $(OBJDIR)/d349-stack.h -include $(OBJDIR)/native-actor.h
+$(OBJDIR)/platform/native_actor_fast.o: $(OBJDIR)/d349-stack.h $(OBJDIR)/native-actor.h ../room/pvr_geometry.hpp platform/include/native_actor.hpp platform/include/native_model.h
+ifeq ($(NATIVE_ACTOR_DIRECT),1)
+ifneq ($(TA_DIRECT),1)
+$(error NATIVE_ACTOR_DIRECT=1 requires TA_DIRECT=1 (pipeline30 direct TA API))
+endif
+$(OBJDIR)/platform/native_actor_fast.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pipeline30.h
+$(OBJDIR)/platform/native_actor_fast.o: $(OBJDIR)/pipeline30.h platform/include/ta_direct.hpp
+endif
+endif
+$(OBJDIR)/src/game/trans.o: $(OBJDIR)/native-actor.h
+$(OBJDIR)/src/game/trans.o: GAME_CPPFLAGS += -include $(OBJDIR)/native-actor.h

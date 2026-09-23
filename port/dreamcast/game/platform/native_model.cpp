@@ -663,6 +663,11 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     // the generic path below then runs unchanged.
     if(p && !p->static_geometry && re4dc_actor_submit(p))return;
 #endif
+#if RE4DC_NATIVE_ACTOR_SKIN
+    // Declined part of an info whose source CalcSk1_x pass was deferred
+    // (trans.cpp): fill its pPosBuf/pNrmBuf now, before the walker reads them.
+    if(p)re4dc_actor_materialize(p);
+#endif
     if(!p || p->alpha_state>511 || ((p->alpha_state&256) && (!(p->flags&0x80000000U) || !p->colors)) || p->shift>30 || (p->position_stride!=6 && p->position_stride!=8) ||
        !p->position_count || !p->normal_count || p->stream_bytes>1024*1024 ||
        !ram(p->positions,p->position_count*p->position_stride) || !ram(p->stream,p->stream_bytes) ||

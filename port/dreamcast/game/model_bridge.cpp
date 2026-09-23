@@ -34,6 +34,12 @@ void bind_actor_frame(){
     if(actor_frame==pG->Frame_cnt)return;
     actor_frame=pG->Frame_cnt;
     constexpr unsigned kBytes=56*1024,kReserve=16*1024;
+#if RE4DC_NATIVE_ACTOR_FAST
+    // Meshlet path: per-part conversion scratch + skin tables; 96 KiB when
+    // the buffer has it, else the same 56 KiB (larger parts then decline).
+    constexpr unsigned kFastBytes=96*1024;
+    if(void* fw=re4dc_prim_tail(kFastBytes,kReserve)){re4dc_actor_frame(fw,kFastBytes);return;}
+#endif
     void* w=re4dc_prim_tail(kBytes,kReserve);
     re4dc_actor_frame(w,w?kBytes:0);
 }
@@ -43,6 +49,19 @@ unsigned mask_ref=256,mask_same_uv;
 unsigned wrap_s,wrap_t;
 float scroll_u,scroll_v;
 }
+#if RE4DC_NATIVE_ACTOR_FAST
+// Unskinned source arrays of an info, for draw-time skinning (NATIVE_ACTOR_SKIN).
+extern "C" int re4dc_actor_model_source(const void* info_ptr,Re4dcActorSource* out){
+    auto* info=(const cModelInfo*)info_ptr;
+    if(!info || !out || !info->pData)return 0;
+    const ModelData* d=info->pData;
+    out->positions=(const unsigned char*)d->vtxOrig;out->normals=(const unsigned char*)d->nrmOrig;
+    out->position_count=d->nVtx;out->normal_count=d->nNrm;
+    out->palette_entries=d->weight_ext_num>0xff?d->weight_ext_num:d->weight_palette_num;
+    out->small_normals=(d->flags&0x20000000U)!=0;
+    return 1;
+}
+#endif
 extern "C" void re4dc_model_material(const void* object,float u,float v,unsigned flags){
     selected={};mask={};mask_ref=256;mask_same_uv=0;
     if(!object || (flags&4))return; // multi-texture blend needs its own native path
