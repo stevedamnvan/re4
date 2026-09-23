@@ -873,6 +873,50 @@ extern "C" int re4dc_static_mesh_lit(const void* object,unsigned vertices,unsign
 }
 #endif
 
+#ifndef RE4DC_SCENERY_GATE
+#define RE4DC_SCENERY_GATE 0 // obj/scenery30.h (D367 scenery30 S1a)
+#endif
+#if RE4DC_SCENERY_GATE
+namespace { unsigned gate_tests,gate_culled,gate_frame_log=~0U; }
+extern "C" float re4dc_fog_far_for_gate(float zfar);
+// S1a: 1 when the whole native mesh bound to 'object' lies beyond the depth at which
+// mesh_submit's MeshDraw rejects every cluster (cull_far: the projection far, or the fogged
+// source View far when fog is on). The mesh's grid box (origin .. origin + 65535 step) contains
+// every cluster box, so each cluster would have failed the same depth test: the caller may
+// skip the model's render setup with identical pixels.
+extern "C" int re4dc_static_gate(const void* object,const float mv[12],const float projection[7],float zfar){
+#if RE4DC_NATIVE_MESH
+    if(!stats.owners_open)return 0;
+    unsigned owner=0;
+    const MeshEntry* e=find_entry(object,owner);
+    if(!e)return 0;
+    const MeshView& v=e->common?mesh_views[kCommonView]:mesh_views[owner];
+    if(!v.package.valid() || e->mesh>=v.package.header().mesh_count)return 0;
+    if(projection[0]!=0)return 0;
+    const float near=projection[6]/(projection[5]-1),far=projection[6]/projection[5];
+    if(!re4dc::render::is_finite(near)||!re4dc::render::is_finite(far)||near<=0||far<=near)return 0;
+    float cull_far=far;
+#if RE4DC_NATIVE_FOG
+    if(re4dc_fog_enabled()){const float view_far=re4dc_fog_far_for_gate(zfar);if(view_far>near && view_far<far)cull_far=view_far;}
+#else
+    (void)zfar;
+#endif
+    const auto& mesh=v.package.meshes()[e->mesh];
+    float vz=mv[11],rz=0;
+    for(unsigned a=0;a<3;++a){
+        const float extent=mesh.step[a]*(65535.0f*0.5f),center=mesh.origin[a]+extent;
+        vz+=mv[8+a]*center;rz+=std::fabs(mv[8+a])*extent;
+    }
+    ++gate_tests;
+    const unsigned frame=re4dc_ui_frame();
+    if(frame%600==0 && frame!=gate_frame_log){gate_frame_log=frame;re4dc_log("native scenery gate: frame=%u tests=%u culled=%u\n",frame,gate_tests,gate_culled);}
+    if(-vz-rz>cull_far){++gate_culled;return 1;}
+    return 0;
+#else
+    (void)object;(void)mv;(void)projection;(void)zfar;return 0;
+#endif
+}
+#endif
 #if RE4DC_NATIVE_FOG
 namespace {
 // Last GXSetFog state (gx_stub.cpp) and the source View far plane seen by the
@@ -910,6 +954,14 @@ extern "C" void re4dc_fog_capture(int type,float start,float end,unsigned rgba){
     fog_now.type=type;fog_now.start=start;fog_now.end=end;fog_now.rgba=rgba;
 }
 extern "C" unsigned re4dc_fog_enabled(){return fog_now.type!=0;}
+#if RE4DC_SCENERY_GATE
+extern "C" float re4dc_fog_far_for_gate(float far){ // re4dc_fog_note_far's clamp, without noting
+#if RE4DC_FOG_FAR > 0
+    if(!(far<=float(RE4DC_FOG_FAR)))far=float(RE4DC_FOG_FAR);
+#endif
+    return far;
+}
+#endif
 extern "C" void re4dc_fog_note_far(float far){
 #if RE4DC_FOG_FAR > 0
     if(!(far<=float(RE4DC_FOG_FAR)))far=float(RE4DC_FOG_FAR);

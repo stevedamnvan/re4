@@ -140,6 +140,17 @@ Entry entries[kTextureCount]; Source sources[kSourceCount]; unsigned nsource;
 #if RE4DC_EFFECT_SPRITES
 unsigned fx_frame=~0U,fx_count,fx_queued,fx_direct,fx_missing,fx_dropped,fx_capped,fx_culled,fx_peak;
 #endif
+// MODEL_SLAB_LATCH=1 (scenery30.mk; default off = previous image): a failed native model slab
+// allocation is tried once per room (re4dc_ui_retire_room re-arms it), not once per part: each
+// retry walked the allocator and logged "Out of memory". The native model path then declines
+// quietly, as for any unavailable resource.
+#ifndef RE4DC_MODEL_SLAB_LATCH
+#define RE4DC_MODEL_SLAB_LATCH 0
+#endif
+#if RE4DC_MODEL_SLAB_LATCH
+bool model_slab_failed=false;
+unsigned model_slab_failures=0;
+#endif
 // TEX_RESIDENT deliberately exceeds this bound: TEX_SLOTS-80 more entries (x sizeof(Entry)).
 static_assert(RE4DC_TEX_RESIDENT || sizeof(entries)+sizeof(sources)<=64*sizeof(Entry)+256*sizeof(Source));
 #if RE4DC_UI_HANDLES
@@ -1356,6 +1367,9 @@ extern "C" void re4dc_ui_unbind_enemy(void* archive){
     sources_reset();
 }
 extern "C" void re4dc_ui_retire_room(){
+#if RE4DC_MODEL_SLAB_LATCH
+    model_slab_failed=false;
+#endif
 #if RE4DC_D349_RENDERER_STACK
     reset_deferred();
     re4dc_model_preparation_owner(nullptr);
@@ -1715,10 +1729,17 @@ extern "C" int re4dc_model_diagnostic_enabled(){
 }
 namespace {
 bool ensure_model_storage(){
+#if RE4DC_MODEL_SLAB_LATCH
+    if(!model_packets && model_slab_failed)return false;
+#endif
     if(!model_packets){
         model_packets=(pvr_vertex_t*)memalign(32,kModelSlabBytes);
         if(!model_packets)RE4DC_PROFILE_COUNT(AllocationFailures,1);
         re4dc_log("native model slab=%08x bytes=%u source_heap=%d\n",(unsigned)model_packets,kModelSlabBytes,re4dc_ui_heap_free());
+#if RE4DC_MODEL_SLAB_LATCH
+        if(!model_packets){model_slab_failed=true;++model_slab_failures;
+            re4dc_log("native model slab: allocation failed (%u), native model path off until the next room\n",model_slab_failures);}
+#endif
     }
     return model_packets!=nullptr;
 }

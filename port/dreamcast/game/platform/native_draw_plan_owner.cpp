@@ -4,6 +4,9 @@
 #ifndef RE4DC_MODEL_DRAW_PLANS
 #define RE4DC_MODEL_DRAW_PLANS 0
 #endif
+#ifndef RE4DC_PLAN_ADMIT_LEAN
+#define RE4DC_PLAN_ADMIT_LEAN 0 // obj/scenery30.h (D367 scenery30 D1)
+#endif
 #ifndef RE4DC_FRONT_LEAN
 #define RE4DC_FRONT_LEAN 0 // obj/frontend30.h (D367 frontend30)
 #endif
@@ -36,6 +39,9 @@ unsigned leases=0; bool reset_pending=false, free_pending=false;
 Re4dcDrawPlanStats stats{}, previous{};
 unsigned previous_walk_bytes=0,bounds_bytes=0;
 bool assets_dirty=true, asset_update_active=false, local_admission_dirty=true;
+#if RE4DC_PLAN_ADMIT_LEAN
+unsigned stats_assets_changed=0,stats_admissions=0;
+#endif
 const re4dc::render::DrawPlanBounds* acquired_bounds=nullptr;
 const re4dc::render::DrawLocalPlan* acquired_locals=nullptr;
 bool contains(const Owner& o,const void* p,unsigned bytes) {
@@ -152,7 +158,15 @@ static const re4dc::render::NativeDrawPlan* acquire_plan(const Re4dcModelPart* p
     if(table_bytes+arena.high_water()+local_arena.high_water()>stats.peak)stats.peak=table_bytes+arena.high_water()+local_arena.high_water();
     return entry->plan;
 }
+#if RE4DC_PLAN_ADMIT_LEAN
+// D1: a model-info creation (model.cpp) marks the assets for the next registration walk only.
+// The local admission is rebuilt when that walk really installs a plan (acquire_plan) or after a
+// reset, not on every creation: each gunshot's shell/effect model otherwise re-ran the full
+// visit_draw_locals + qsort pass (~470 ms Flycast frames) with nothing new to admit.
+extern "C" void re4dc_model_assets_changed(){assets_dirty=true;++stats_assets_changed;}
+#else
 extern "C" void re4dc_model_assets_changed(){assets_dirty=true;local_admission_dirty=true;}
+#endif
 #if RE4DC_FRONT_LEAN
 // model_asset_bridge.cpp: 1 when a registration walk over an unchanged OT
 // would install nothing and change no admission state (no pending reset,
@@ -248,6 +262,9 @@ extern "C" void re4dc_model_finish_asset_update(){
         entries[saved.owner].locals=plan;++admitted_streams;first=end;
     }
     local_admission_dirty=false;
+#if RE4DC_PLAN_ADMIT_LEAN
+    ++stats_admissions;
+#endif
     stats.used=((sizeof(Entry)*kEntries+31)&~31U)+arena.used()+local_arena.used();
     stats.peak=std::max(stats.peak,unsigned(((sizeof(Entry)*kEntries+31)&~31U)+arena.high_water()+local_arena.high_water()));
     re4dc_log("native local admission: streams=%u candidates=%u admitted_streams=%u batches=%u bytes=%u cap=%u source_heap=%d\n",
@@ -284,6 +301,9 @@ extern "C" void re4dc_model_draw_plan_frame(unsigned frame) {
           stats.invalid-previous.invalid,stats.used,stats.capacity,stats.peak,stats.resets);
     if(stats.installs!=previous.installs)re4dc_log("native local indices: used=%u cap=%u source_heap=%d workspace_slots=%u\n",
         unsigned(local_arena.used()),kLocalMetadataBytes,re4dc_ui_heap_free(),re4dc::render::kLocalSlots);
+#if RE4DC_PLAN_ADMIT_LEAN
+    if(frame%120==0)re4dc_log("native plan admission: frame=%u assets_changed=%u admissions=%u\n",frame,stats_assets_changed,stats_admissions);
+#endif
     previous=stats;previous_walk_bytes=walk_bytes;
 }
 extern "C" const re4dc::render::DrawPlanBounds* re4dc_model_acquired_bounds(){return acquired_bounds;}

@@ -1843,9 +1843,114 @@ static void frontNativeModelTrans(cModel* m, Mtx viewMat, int dry)
 
 // ModelRender for a frontNativeOk model: projection, lights, the native model walk, then
 // shaderReset's channel-0 state (its other GX calls are sinks).
+#ifndef RE4DC_SCENERY_GATE
+#define RE4DC_SCENERY_GATE 0
+#endif
+#if RE4DC_SCENERY_GATE && RE4DC_FRONT_LEAN
+extern "C" int re4dc_static_gate(const void* object, const float mv[12], const float projection[7], float zfar);
+extern "C" void GXGetProjectionv(f32*);
+// D367 scenery30 S1a: a lit native-mesh scenery object (kind 2, ot_type 2-5, one drawn rigid info)
+// whose whole mesh lies beyond the native cull depth draws nothing. Skip its lights and part walk;
+// keep the state later models read: the TPL cache / texture objects (with its cTexChg swaps), the
+// shadow manager reset, the info material colour and shaderReset's channel. Render only.
+static int sceneryGate(cModel* m)
+{
+    cModelInfo* drawn = 0;
+    if (m->ot_type < 2 || m->ot_type > 5 || m->invisible_factor * m->invisible_factor2 != 1.0f ||
+        (MODEL_EXT(m)->pFootShadowTbl != 0 && (m->be_flag & 0x10)) || !(frontLean(m) & FRONT_LEAN_LIGHTS)) {
+        return 0;
+    }
+    for (cModelInfo* info = m->pModelInfo; info != 0; info = info->pList) {
+        if (info->be_flag & 8) {
+            if (drawn || info->invisible_factor != 1.0f) {
+                return 0;
+            }
+            drawn = info;
+        }
+    }
+    ModelData* d = drawn->pData;
+    Mtx pm;
+    Mtx mv;
+    f32 projection[7];
+    if (m->be_flag & 0x4000) {
+        PSMTXConcat(m->mat, (f32(*)[4]) &drawn->x5C, pm);
+    } else {
+        PSMTXConcat(m->getPartsPtr(d->pHead->partsNo)->mat, (f32(*)[4]) &drawn->x5C, pm);
+    }
+    PSMTXConcat(pG->Cam.v_mat, pm, mv);
+    GXGetProjectionv(projection);
+    if (!re4dc_static_gate(m, &mv[0][0], projection, View._zfar)) {
+        return 0;
+    }
+    GxWork* gx = GXWORK();
+    int matSet = 0;
+    int parts = 0;
+    PSet(g_pShdMng, 0);
+    for (cModelInfo* info = m->pModelInfo; info != 0; info = info->pList) {
+        if (info->be_flag & 0x20) {
+            GXSetChanMatColor(4, *(GXColor*) info->color);
+            matSet = 1;
+        } else if (matSet == 1) {
+            GXSetChanMatColor(4, *(GXColor*) m->pModelInfo->color);
+        }
+        if (!(info->be_flag & 8)) {
+            continue;
+        }
+        parts += info->pData->displist_num;
+        ModelData* id = info->pData;
+        if (g_prev_tpl_addr != info->tpl_addr || g_prev_add_tpl_addr != info->pAddTpl) {
+            for (u32 i = 0; i < ((TEXPalette*) info->tpl_addr)->numDescriptors + info->nAddTex; i++) {
+                TEXPalette* tpl = (TEXPalette*) info->tpl_addr;
+                TEXDescriptor* td;
+                if (tpl->numDescriptors == 0) {
+                    td = TEXGet(info->pAddTpl, i);
+                } else if (i < tpl->numDescriptors) {
+                    td = TEXGet(tpl, i);
+                } else {
+                    td = TEXGet(info->pAddTpl, i - tpl->numDescriptors);
+                }
+                if ((s32) id->flags < 0) {
+                    TEXHeader* wh = td->textureHeader;
+                    wh->wrapT = 1;
+                    wh->wrapS = 1;
+                }
+                GXInitTexObj(&gx->texObj[i], td->textureHeader->data, td->textureHeader->width, td->textureHeader->height,
+                             td->textureHeader->format, td->textureHeader->wrapS, td->textureHeader->wrapT,
+                             td->textureHeader->minLOD == td->textureHeader->maxLOD ? 0 : 1);
+            }
+            if (MODEL_EXT(m)->pTexChg != 0) {
+                MODEL_EXT(m)->pTexChg->move(gx->texObj);
+            }
+        }
+        PSet(g_prev_tpl_addr, info->tpl_addr);
+        PSet(g_prev_add_tpl_addr, info->pAddTpl);
+    }
+    if (parts) {
+        // The walk's last per-part colour-stage scale (frontNativeModelTrans; errors ignored: the
+        // error cases log and use 0 there too).
+        int scale = 0;
+        const int group = m->TevScaleGroup;
+        if (group == 0 || group == 1) {
+            scale = gxCsScale[group] == 1 ? 1 : gxCsScale[group] == 2 ? 2 : 0;
+        } else if (group == 5) {
+            scale = 1;
+        } else if (group == 6) {
+            scale = 2;
+        }
+        GXSetTevColorOp(0, 0, 0, scale, 1, 0);
+    }
+    GXSetChanCtrl(0, 0, 0, 0, 0, 0, 2);
+    return 1;
+}
+#endif
 static void frontNativeRender(cModel* m, int dry)
 {
     CameraCurrentProjection();
+#if RE4DC_SCENERY_GATE && RE4DC_FRONT_LEAN
+    if (!dry && sceneryGate(m)) {
+        return;
+    }
+#endif
 #if RE4DC_FRONT_LEAN
     g_leanRender = frontLean(m) & FRONT_LEAN_LIGHTS;
     if (!g_leanRender && !dry) {
