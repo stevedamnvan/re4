@@ -228,6 +228,17 @@ User decisions (2026-09-23):
     - The switches are runtime, not compile-time. Only the selected asset set is resident. The logic trace is STRICT across modes.
     - In design at /root/probe/d367-agents/design-lowmode, design-scenery and design-ganado.
   - Outlook: all planned work lands at ~50-65 hw ms in quiet views, so 20 fps is the target. 30 fps would need every area near its floor at once.
+  - **Low mode decisions (2026-09-23, design at /root/probe/d367-agents/design-lowmode):**
+    - Estimates: Low is worth -2 to -4.5 hw ms quiet and -7 to -13.5 in r101 fights. It's a safety margin, not 30 fps.
+    - The full native model path (-9 to -13 hw ms, bit-exact, records held in the existing 64 KiB slab) is ON in Standard.
+    - Heavier Low levers approved: flat Ganado lighting; a draw-side crowd rule; a scenery-only cull at 18-20 m, with the fog kept at 25 m, only if it doesn't visibly pop.
+    - A Low effect draw cap (draw side only): yes.
+    - Thermal scope, self shadow and cast shadow stay in the build.
+    - The quality choice is remembered on the VMU.
+    - Picker: once per boot, at the first title main menu, in the game's message window; per-feature submenu in test builds only.
+    - Leon's face bones: PS2 FMV replaces most story cutscenes, so merge them always in Low, unless a route event still in-engine shows Leon's face up close (being checked).
+    - Occlusion at the 25 m fog is ~0.1 hw ms for 32.7 KB heap: dropped unless the final scenery design shows more.
+  - A bottom-up estimate puts Standard at ~73 hw ms quiet / ~80 in the r101 fight, above the earlier 50-65 outlook. Stacked step 3-5 measurements will settle it.
   - **Gore stays** ("keep gore don't remove it"): CUT_GORE (r103 corpses and the r100 gore object via the JP path) is rejected and must not enter the recipe. That route now relies on the r103 corpse constructor alias (55c0a5b). Safe cuts are down to FX_LEAN (foot shadows, about 0.1 ms). Particle/decal caps aren't possible (shared RNG), and screen filters stay (about 0 ms; some set game flags).
   - Added to the lane: outdoor occlusion/PVS (hide houses and trees behind buildings; est. -3 to -6 hw ms in r101/r103), step 5. Leon render rebuild with fewer skinned bones (render skin weights only; the game skeleton, attach points and hit zones untouched; ~5-6 -> ~3 hw ms), step 3. Lower-poly Ganado render meshes (heads kept), step 3.
   - **Rejected:** reduced animation/skin update rates for any actor ("might throw off gameplay"). Crowd tiers vary geometry and shading only; every actor's pose updates every frame. This supersedes the earlier "skinned every other/3rd-4th frame" crowd tiers.
