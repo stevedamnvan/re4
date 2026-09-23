@@ -23,6 +23,17 @@ import re
 import sys
 
 
+# Modules whose static constructors run on every link, as the GameCube REL
+# _prolog does (the Sscrn sub screen: its model managers are .bss objects that
+# a fresh link zeroes, so they must be constructed again per open). Their
+# .init_array/.ctors input sections become the null-terminated list the
+# module's own _prolog walks (re4dc_mod_<mod>_ctors). Destructors registered by
+# those constructors (__cxa_atexit) go to re4dc_mod_<mod>_atexit and run from
+# the module's _epilog list re4dc_mod_<mod>_dtors (platform/modules.cpp), so
+# nothing accumulates in the KOS atexit list across opens.
+PER_LINK_CTORS = {"Sscrn"}
+
+
 def units(cfg, mod):
     text = open(os.path.join(cfg, mod, "splits.txt")).read()
     stage = mod.split("_")[0]
@@ -75,7 +86,11 @@ def main():
         if not os.path.exists(stub_path) or open(stub_path).read() != text:
             open(stub_path, "w").write(text)
         defs = " ".join("-D_%s=%s_%s" % (k, mod, k) for k in ("prolog", "epilog", "unresolved"))
-        defs += " -D_ctors=re4dc_module_ctors -D_dtors=re4dc_module_dtors"
+        per_link = mod in PER_LINK_CTORS
+        if per_link:
+            defs += " -D_ctors=re4dc_mod_%s_ctors -D_dtors=re4dc_mod_%s_dtors" % (mod, mod)
+        else:
+            defs += " -D_ctors=re4dc_module_ctors -D_dtors=re4dc_module_dtors"
         objs = " ".join("$(OBJDIR)/mod/%s/%s.o" % (mod, s[:-4]) for s in srcs)
         # Link-time state of the REL. A GameCube OSLink of a freshly read REL
         # sees pristine .data and a zeroed .bss; here the module is resident,
@@ -101,6 +116,13 @@ def main():
             "    %s = .;" % state[4],
             "    . += SIZEOF(.data.re4dc_module.%s);" % mod,
             "  }",
+        ] + ([
+            "  .rodata.re4dc_module_ctors.%s : {" % mod,
+            "    _re4dc_mod_%s_ctors = .;" % mod,
+            "    *(.init_array .init_array.* .ctors .ctors.*)",
+            "    LONG(0)",
+            "  }",
+        ] if per_link else []) + [
             "}",
         ]) + "\n"
         if not os.path.exists(script_path) or open(script_path).read() != script:
@@ -121,7 +143,23 @@ def main():
             "echo '%s: REL static constructors/destructors need per-link execution' >&2; rm -f $@.tmp; exit 1; fi" % mod,
             "\t@if sh-elf-nm $@.tmp | awk '$$2 == \"C\" {f=1} END {exit !f}'; then "
             "echo '%s: common symbols escape the REL state span' >&2; rm -f $@.tmp; exit 1; fi" % mod,
-            "\tsh-elf-objcopy %s $@.tmp $@" % keep,
+            # PowerPC link names the module's own sources call through asm("name")
+            # (leonModelInit, numDisp, quit__9ssDbgPzzl) bind to their SH-4
+            # definitions here, as tools/link.sh does for the image: once the
+            # module's symbols are local the image link can no longer see them.
+            *([
+                "\t@sh-elf-nm $@.tmp | grep -E ' [TDBWRV] ' | awk '{print $$3}' | sort -u > $@.def",
+                "\t@sh-elf-c++filt < $@.def | paste $@.def - > $@.pairs",
+                "\t@sh-elf-nm $@.tmp | grep -E ' U ' | awk '{print $$2}' | sort -u | comm -23 - $@.def > $@.undef",
+                "\t@python3 tools/gen_aliases.py $@.undef $@.pairs $@.aliases.ld",
+                "\t@if [ -s $@.aliases.ld ]; then sh-elf-ld -r -EL -o $@.tmp2 $@.tmp $@.aliases.ld && mv $@.tmp2 $@.tmp; fi",
+                "\t@rm -f $@.def $@.pairs $@.undef",
+            ] if per_link else []),
+            *([
+                "\t@if sh-elf-nm $@.tmp | awk '$$1 == \"U\" && $$2 == \"_atexit\" {f=1} END {exit !f}'; then "
+                "echo '%s: static destructors registered with atexit' >&2; rm -f $@.tmp; exit 1; fi" % mod,
+            ] if per_link else []),
+            "\tsh-elf-objcopy %s%s $@.tmp $@" % (keep, " --redefine-sym ___cxa_atexit=_re4dc_mod_%s_atexit" % mod if per_link else ""),
             "\trm -f $@.tmp",
             "MODULE_OBJS += $(OBJDIR)/mod/%s.o" % mod,
             "-include $(MOD_%s_OBJS:.o=.d)" % mod,

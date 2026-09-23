@@ -6,6 +6,8 @@
 #include "global.h"
 #include "main_mem.h"
 #include "re4dc_platform.h"
+#include <stdlib.h>
+#include <string.h>
 extern "C" void OSFreeToHeap(int, void*);
 
 namespace {
@@ -52,8 +54,75 @@ template<class T> void discard(Pool<T>* p, Chunk<T>** link) {
 }
 }
 
+#if RE4DC_SUBSCREEN
+// Sub screen swap (sscrn_bridge.cpp). While the sub screen is open its data occupies the game's
+// 3 MiB window at pG->pStFnt, where the room allocated some of these pools (the cEm pool in heap
+// 4, for one). On the GameCube the window is swapped to ARAM and an indexed lookup into a
+// plain array there is pointer arithmetic: callers get the slot's address (its bytes are not
+// the game's until the window is restored). A demand pool instead reads its slot table and chunk
+// list from the window, and growing it wrote a heap cell and slot pointers through sub screen
+// bytes into image memory. So at open every pool whose header is in the window is frozen: its
+// slot table is copied out (KOS heap), lookups use the copy, and a slot never prepared gets a
+// zeroed stand-in work instead of an allocation. Close drops the copies.
+template<class T> struct Frozen { cManager<T>* m; void* pool; u32 n; T** slots; u32 nArray; };
+template<class T> struct Registry {
+    static cManager<T>* mgr[8]; static unsigned nmgr;
+    static Frozen<T> fz[8]; static unsigned nfz;
+};
+template<class T> cManager<T>* Registry<T>::mgr[8];
+template<class T> unsigned Registry<T>::nmgr;
+template<class T> Frozen<T> Registry<T>::fz[8];
+template<class T> unsigned Registry<T>::nfz;
+void* frozen_dummy;
+template<class T> void register_pool(cManager<T>* m) {
+    for(unsigned i=0;i<Registry<T>::nmgr;++i) if(Registry<T>::mgr[i]==m) return;
+    if(Registry<T>::nmgr<8) Registry<T>::mgr[Registry<T>::nmgr++]=m;
+    else re4dc_log("work backing: pool registry full (size=%u)\n",(unsigned)sizeof(T));
+}
+template<class T> Frozen<T>* frozen(cManager<T>* m) {
+    for(unsigned i=0;i<Registry<T>::nfz;++i)
+        if(Registry<T>::fz[i].m==m && Registry<T>::fz[i].pool==m->pArray) return &Registry<T>::fz[i];
+    return 0;
+}
+template<class T> unsigned freeze_type(u32 lo,u32 hi) {
+    unsigned n=0;
+    for(unsigned i=0;i<Registry<T>::nmgr;++i) {
+        cManager<T>* m=Registry<T>::mgr[i];
+        if(!sparse(m) || !m->pArray || u32(m->pArray)<lo || u32(m->pArray)>=hi) continue;
+        Pool<T>* p=pool(m);
+        const u32 count=m->nArray<p->capacity?m->nArray:p->capacity;
+        T** copy=(T**)malloc(count*sizeof(T*)+4);
+        if(!copy) { re4dc_missing("sub screen pool freeze allocation"); return n; }
+        memcpy(copy,p->slots(),count*sizeof(T*));
+        Registry<T>::fz[Registry<T>::nfz++]={m,m->pArray,count,copy,m->nArray};
+        re4dc_log("work backing: size=%u pool %p frozen while the sub screen is open (%u slots)\n",
+            (unsigned)sizeof(T),(void*)m->pArray,(unsigned)count);
+        ++n;
+    }
+    return n;
+}
+template<class T> void thaw_type() {
+    // The window holds the game's bytes again, so the pool header is valid. A manager the sub
+    // screen re-allocated meanwhile pointed into heap 12 (gone now) and gets its room pool back.
+    for(unsigned i=0;i<Registry<T>::nfz;++i) {
+        Frozen<T>& f=Registry<T>::fz[i];
+        if(f.m->pArray!=(T*)f.pool || f.m->nArray!=f.nArray) {
+            re4dc_log("work backing: size=%u manager moved while frozen (%p -> %p), room pool restored\n",
+                (unsigned)sizeof(T),f.pool,(void*)f.m->pArray);
+            f.m->pArray=(T*)f.pool;f.m->nArray=f.nArray;
+        }
+        free(f.slots);
+    }
+    Registry<T>::nfz=0;
+}
+#else
+template<class T> void register_pool(cManager<T>*) {}
+template<class T> struct Frozen { u32 n; T** slots; };
+template<class T> Frozen<T>* frozen(cManager<T>*) { return 0; }
+#endif
 template<class T> int array_free(cManager<T>* m) {
     if(!m->pArray) return 0;
+    if(frozen(m)) { re4dc_log("work backing: size=%u frozen pool kept (freed while the sub screen is open)\n",(unsigned)sizeof(T));return 0; }
     if(!sparse(m)) { m->memFree(m->pArray);m->pArray=0;return 1; }
     Pool<T>* p=pool(m);
     // As in the source arrayFree, callers own destruction/order. This releases
@@ -81,13 +150,21 @@ template<class T> int array_alloc(cManager<T>* m,u32 n) {
     if(!p) { re4dc_missing("parts slot allocation");return 0; }
     memclr_asm(p,bytes);p->capacity=n;p->bytes=bytes+64;p->peak=p->bytes;
     p->heap=MemGetCurrentHeap();p->handle=Heap[p->heap].handle;
-    m->pArray=(T*)p;report(p,"init");return 1;
+    m->pArray=(T*)p;register_pool(m);report(p,"init");return 1;
 }
 template<class T> T* work_at(cManager<T>* m,u32 no) {
+    if(Frozen<T>* f=frozen(m)) return no<f->n?f->slots[no]:0;
     if(!m->pArray || no>=m->nArray)return 0;
     return sparse(m)?pool(m)->slots()[no]:(T*)((u8*)m->pArray+m->size*no);
 }
 template<class T> bool prepare_work(cManager<T>* m,u32 first,u32 count) {
+#if RE4DC_SUBSCREEN
+    if(Frozen<T>* f=frozen(m)) {
+        if(!count || first>=f->n || count>f->n-first) return false;
+        for(u32 j=first;j<first+count;++j) if(!f->slots[j]) f->slots[j]=(T*)frozen_dummy;
+        return true;
+    }
+#endif
     if(!m->pArray || !count || first>=m->nArray || count>m->nArray-first)return false;
     if(!sparse(m))return true;
     Pool<T>* p=pool(m);T** slots=p->slots();
@@ -166,3 +243,21 @@ template<> bool cManager<cEm>::prepareWork(u32 i,u32 n){
     return prepare_work(this,first,count);
 }
 template<> cEm* cManager<cEm>::getPrevWork(cEm* p){return previous_work(this,p);}
+
+#if RE4DC_SUBSCREEN
+// sscrn_bridge.cpp: before the window [lo, hi) is cleared for the sub screen / after it is back.
+extern "C" unsigned re4dc_parts_freeze(u32 lo, u32 hi) {
+    constexpr u32 kDummy = sizeof(cEm) > sizeof(cParts) ? sizeof(cEm) : sizeof(cParts);
+    static_assert(sizeof(cObj) <= 0x2000 && sizeof(cModelInfo) <= 0x2000 && kDummy <= 0x2000, "stand-in size");
+    const u32 bytes = (sizeof(cObj) > kDummy ? sizeof(cObj) : kDummy) > sizeof(cModelInfo)
+        ? (sizeof(cObj) > kDummy ? sizeof(cObj) : kDummy) : sizeof(cModelInfo);
+    frozen_dummy = calloc(1, bytes);
+    if (!frozen_dummy) re4dc_missing("sub screen pool stand-in allocation");
+    return freeze_type<cParts>(lo, hi) + freeze_type<cModelInfo>(lo, hi) + freeze_type<cObj>(lo, hi) +
+           freeze_type<cEm>(lo, hi);
+}
+extern "C" void re4dc_parts_thaw() {
+    thaw_type<cParts>(); thaw_type<cModelInfo>(); thaw_type<cObj>(); thaw_type<cEm>();
+    free(frozen_dummy); frozen_dummy = 0;
+}
+#endif

@@ -143,8 +143,11 @@ inline void sources_reset(){nsource=0;handle_reset=++handle_clock;}
 #else
 inline void sources_reset(){nsource=0;}
 #endif
-#if RE4DC_TEX_RESIDENT
+#if RE4DC_TEX_RESIDENT || RE4DC_SUBSCREEN
+// (SUBSCREEN: sub screen images without a converted package are drawn every frame.)
 Key missing_keys[32]; unsigned nmissing;
+#endif
+#if RE4DC_TEX_RESIDENT
 bool preload_pending; unsigned preload_loads,preload_skipped,preload_runs;
 // Open VRAM claims (re4dc_ui_vram_claim: route movie texture, sub screen backing):
 // the room-entry preload waits while any is open and runs again after the last
@@ -937,7 +940,7 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
         if(pinned+least>vram_budget){++vram_rejects;RE4DC_PROFILE_COUNT(TextureBudgetFailures,1);return nullptr;}
     }
 #endif
-#if RE4DC_TEX_RESIDENT
+#if RE4DC_TEX_RESIDENT || RE4DC_SUBSCREEN
     // A package absent from the disc: fail without evicting an entry or
     // touching the filesystem again (it was retried every frame).
     for(const auto& m:missing_keys) if(m.crc|m.fnv) if(m==key) return nullptr;
@@ -968,7 +971,7 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     const int heap_before=re4dc_ui_heap_free();
     bool ok=slot->package.open_streamed(path);
     if(!ok) {RE4DC_PROFILE_COUNT(TextureOpenFailures,1);re4dc_log("native UI: package rejected: %s\n",slot->package.error());}
-#if RE4DC_TEX_RESIDENT
+#if RE4DC_TEX_RESIDENT || RE4DC_SUBSCREEN
     if(!ok && slot->package.error() && !std::strcmp(slot->package.error(),"open failed"))
         missing_keys[nmissing++%(sizeof(missing_keys)/sizeof(missing_keys[0]))]=key;
 #endif
@@ -1216,6 +1219,19 @@ void preload_identities(){
 extern "C" void re4dc_pvr_vram_fence(){present_fence();}
 #endif
 extern "C" void re4dc_ui_invalidate_sources(){sources_reset();re4dc_model_reset_draw_plans();}
+#if RE4DC_SUBSCREEN
+// Sub screen backing (subscreen_backing.cpp): releases the least recently used upload that
+// this frame's scene does not reference, as load() evicts for a new upload (a previous-frame
+// upload is fenced by close()). Returns its VRAM bytes, 0 when none is left.
+extern "C" unsigned re4dc_ui_reclaim_one(){
+    Entry* victim=nullptr;
+    for(auto& e:entries) if(e.valid && e.frame!=frame && (!victim || e.frame<victim->frame)) victim=&e;
+    if(!victim) return 0;
+    const unsigned bytes=victim->package.vram_bytes();
+    RE4DC_PROFILE_COUNT(TextureEvictions,1);close_entry(*victim);
+    return bytes?bytes:1;
+}
+#endif
 #if RE4DC_TEX_RESIDENT
 // A VRAM user outside the texture cache (route movie texture, sub screen backing)
 // claims `bytes`: least recently used uploads that this frame's scene does not

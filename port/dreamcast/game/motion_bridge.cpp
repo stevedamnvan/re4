@@ -11,6 +11,14 @@ extern "C" void* re4dc_motion_alloc(unsigned bytes) {
     if(!p)return 0;
     p->heap=owner;return p+1;
 }
+#if RE4DC_SUBSCREEN
+// 1 while the heap that allocated `p` still exists (sub screen close drops heap 12's).
+extern "C" int re4dc_motion_owner_live(const void* p) {
+    const int handle=((const MotionAllocation*)p-1)->heap;
+    for(int h=0;h<MEM_HEAP_NUM;++h)if(Heap[h].handle==handle)return 1;
+    return 0;
+}
+#endif
 extern "C" void re4dc_motion_free(void* p) {
     if(!p)return;
     auto* allocation=(MotionAllocation*)p-1;

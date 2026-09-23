@@ -75,7 +75,13 @@ extern "C" unsigned re4dc_fixture_source_frame(){ return pG ? pG->Frame_cnt : 0;
 // 2 ZOOM while the scope (Status_flg[0] 0x40, CameraScope) or binocular (0x400,
 // CameraBinocular) camera zooms on the C-stick Y, 0 NATIVE otherwise. The title never
 // reads as play: every return to it goes through systemRestartInit, which clears Rno0.
+#if RE4DC_W11_FIXTURE
+extern "C" void re4dc_w11_frame();
+#endif
 extern "C" int re4dc_pad_context(){
+#if RE4DC_W11_FIXTURE
+    re4dc_w11_frame();                                  // W11 test instrumentation (sscrn_bridge.cpp)
+#endif
     if(!pG||!pPL||pG->Rno0!=3)return 0;             // gameMainLoop only (not options / door demo / ending)
     unsigned s0=pG->Status_flg[0];
     if(!(s0&0x02000000))return 0;                    // sub screen open or look-down camera (arm bit cleared)
@@ -278,9 +284,15 @@ void load_cycle(){
 }
 
 // Top of gameMainLoop (Rno0 == 3). 1 = the door demo was requested.
+#if RE4DC_W11_FIXTURE
+extern "C" int re4dc_w11_room_poll(unsigned generation);
+#endif
 extern "C" int re4dc_room_cycle_poll(){
     unsigned generation,cells,bytes,stale,refused;
     if(!re4dc_room4_state(&generation,&cells,&bytes,&stale,&refused))return 0;
+#if RE4DC_W11_FIXTURE
+    re4dc_w11_room_poll(generation);                    // death / life fixture (sscrn_bridge.cpp)
+#endif
     ++room_frames;
 #if RE4DC_IO_PROBE
     io_cycle_frame(room_frames);

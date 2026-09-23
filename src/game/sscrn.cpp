@@ -44,6 +44,12 @@ void OSReport(const char* fmt, ...);
 #if defined(RE4DC_GAME) && !defined(__PPC__)
 void re4dc_threads_stack_report(void);
 #endif
+#if RE4DC_SUBSCREEN
+// sscrn_bridge.cpp: the Dreamcast backing of the ARAM-swapped sub screen area.
+void re4dc_subscreen_aram_init(SubScreenWork* wk);
+void re4dc_subscreen_swap_open(SubScreenWork* wk);
+void re4dc_subscreen_swap_close(SubScreenWork* wk);
+#endif
 void* memset(void* dst, int c, unsigned int n);
 char* strchr(const char* s, int c);
 char* strrchr(const char* s, int c);
@@ -127,6 +133,12 @@ void SubScreenAramRead()
     int req;
 
     wk->aramSize = 0;
+#if RE4DC_SUBSCREEN
+    // Dreamcast: nothing is read here. The REL is in the image (a 0x40-byte module descriptor
+    // takes its place) and ss_cmmn / ss_pzzl are read from disc into the area at open.
+    re4dc_subscreen_aram_init(wk);
+    return;
+#endif
 #line 119 "D:/Bio4/Prog/sscrn.cpp"
     req = DVD_READ_N("rel/Sscrn.rel", 0, SS_ARAM, 0, 0, 9);
     wk->pPreplfOffs = wk->aramSize;
@@ -215,7 +227,10 @@ void SubScreenGameInit()
     memset(&pG->ope_x82E8, 0, 0x44);
     pG->ope_mdt_no = 0x18;
     SubScreenRoomInit();
-#if defined(RE4DC_GAME) && !defined(__PPC__)
+#if RE4DC_SUBSCREEN
+    OSReport("Native subscreen: SubScreenGameInit complete; Sscrn module static, area backed by VRAM while open\n");
+    re4dc_threads_stack_report();
+#elif defined(RE4DC_GAME) && !defined(__PPC__)
     OSReport("Native subscreen: SubScreenGameInit complete; REL unbound, no archive consumer yet\n");
     re4dc_threads_stack_report();
 #endif
@@ -498,7 +513,11 @@ void SubScreenExec()
             RoomData.stopRelData();
             wk->pBuf = pG->pStFnt;
             DC.m_data_ctrl_flag = 0;
+#if RE4DC_SUBSCREEN
+            re4dc_subscreen_swap_open(wk);
+#else
             MemorySwap(wk->pBuf, SS_ARAM, SS_ARAM_SIZE);
+#endif
             MemSuspendHeap(4);
             if (wk->type & 0x10) {
                 wk->pHeapOffs = wk->aramSize + 0x50000;
@@ -631,7 +650,11 @@ void SubScreenExitCore(SubScreenWork* wk)
         MemDestroyHeap(12);
         MemSignalHeap(4);
         MemSetCurrentHeap(4);
+#if RE4DC_SUBSCREEN
+        re4dc_subscreen_swap_close(wk);
+#else
         MemorySwap(wk->pBuf, SS_ARAM, SS_ARAM_SIZE);
+#endif
         DC.m_data_ctrl_flag = 1;
         RoomData.restartRelData();
         MGR_PTR(cModel::mm) = &ModInfoMgr;
@@ -691,9 +714,12 @@ void SubScreenExit()
             SubScreenExitCore(wk);
             cnt = 0;
             step = 3;
+#if !RE4DC_SUBSCREEN
+            // (Dreamcast: ss_pzzl is read from disc at every open instead.)
             sscrnDataFilename(wk, "ss_pzzl.dat");
 #line 979 "D:/Bio4/Prog/sscrn.cpp"
             Dvd.ReadCheck(DVD_READ_N(wk->path, 0, SS_ARAM + wk->pzzlOfs, 0, 0, 9), 0, 0, 0);
+#endif
             pG->Disp_flg &= ~0x400;
             break;
         case 3:

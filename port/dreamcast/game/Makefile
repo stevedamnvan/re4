@@ -649,5 +649,7 @@ $(OBJDIR)/src/game/trans.o: $(OBJDIR)/native-actor.h
 $(OBJDIR)/src/game/trans.o: GAME_CPPFLAGS += -include $(OBJDIR)/native-actor.h
 # D367 frontend30 knobs (COPY_LEAN, FRONT_LEAN, MESH_DIRECT; default off: no effect).
 include frontend30.mk
+# D367 W11 knobs (SUBSCREEN, W11_FIXTURE; default off: no effect).
+include subscreen.mk
 # D367 safe cuts (FX_LEAN; default off: no effect).
 include safecuts.mk

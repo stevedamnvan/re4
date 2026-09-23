@@ -10,6 +10,9 @@
 # /cd/dc/native/<room>/. ROOMFILES replaces mirror files (a released room archive from
 # room_smd.py release: st1/<room>.dar, and its .arc) in a hard-linked copy of the mirror;
 # a released archive is only valid with its packages and NATIVE_MESH=1.
+# MIRROR_OVERLAYS="d1 d2" adds or replaces mirror files with every file under each
+# directory, at the same relative path (e.g. the converted sub screen ss/ and codec
+# op/ trees that SUBSCREEN=1 reads; ROOMFILES entries still win).
 # Default recipe (README.md): TEXDIRS="<tex-vq3 VQ overlay> <PS2 bark>". The inputs are
 # recorded in <disc-dir>/stage-inputs.txt.
 # GDI=1 also writes the GDEMU image (mkgdi.sh) from the same tree to GDI_OUT
@@ -84,10 +87,17 @@ if grep -q 'TEX_RESIDENT=1' "$build/candidate.txt" 2>/dev/null && [ -d "$fixture
   for f in "$fixtures"/tex/*.re4tex; do b=$(basename "$f"); mkdir -p "$fixtures/tex/${b:0:1}"; mv "$f" "$fixtures/tex/${b:0:1}/"; done
   echo "stage: TEX_RESIDENT build: texture packages fanned out into tex/0..f" >&2
 fi
-if [ -n "${ROOMFILES:-}" ]; then
+if [ -n "${ROOMFILES:-}${MIRROR_OVERLAYS:-}" ]; then
   overlay=$(mktemp -d "${TMPDIR:-/tmp}/re4dc-mirror.XXXXXX")
   cp -al "$mirror"/. "$overlay/"
-  for spec in $ROOMFILES; do
+  for d in ${MIRROR_OVERLAYS:-}; do
+    test -d "$d" || { echo "stage: overlay $d is not a directory" >&2; exit 1; }
+    (cd "$d" && find . -type f) | while read -r rel; do
+      rel=${rel#./}; mkdir -p "$overlay/$(dirname "$rel")"; rm -f "$overlay/$rel"
+      ln "$d/$rel" "$overlay/$rel" 2>/dev/null || cp "$d/$rel" "$overlay/$rel"
+    done
+  done
+  for spec in ${ROOMFILES:-}; do
     rel=${spec%%=*}; src=${spec#*=}
     test -e "$overlay/$rel" || { echo "stage: $rel not in the mirror" >&2; exit 1; }
     rm -f "$overlay/$rel"; cp "$src" "$overlay/$rel"

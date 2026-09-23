@@ -41,6 +41,9 @@ MODULE(em15)
 MODULE(em26)
 MODULE(em28)
 MODULE(em21)
+#if RE4DC_SUBSCREEN
+MODULE(Sscrn)
+#endif
 #undef MODULE
 }
 
@@ -70,8 +73,37 @@ static const Re4dcModule g_modules[] = {
     MODULE(14, em26),
     MODULE(17, em28),
     MODULE(6, em21),
+#if RE4DC_SUBSCREEN
+    MODULE(71, Sscrn),  // sub screen (SUBSCREEN=1; linked into the ARAM-swapped area while open)
+#endif
 };
 #undef MODULE
+
+#if RE4DC_SUBSCREEN
+// The sub screen's per-link constructors (tools/gen_modules.py PER_LINK_CTORS) register the
+// destructors of its static objects here instead of KOS's __cxa_atexit list, where one entry
+// per open would accumulate. Its _epilog (DLL_Unlink) walks re4dc_mod_Sscrn_dtors.
+namespace {
+struct ModuleExit { void (*fn)(void*); void* arg; };
+ModuleExit sscrn_exits[16];
+unsigned sscrn_nexit;
+void sscrn_run_exits()
+{
+    while (sscrn_nexit) {
+        const ModuleExit e = sscrn_exits[--sscrn_nexit];
+        e.fn(e.arg);
+    }
+}
+}
+extern "C" int re4dc_mod_Sscrn_atexit(void (*fn)(void*), void* arg, void* dso)
+{
+    (void) dso;
+    if (sscrn_nexit >= sizeof(sscrn_exits) / sizeof(sscrn_exits[0])) re4dc_missing("Sscrn atexit table full");
+    sscrn_exits[sscrn_nexit++] = {fn, arg};
+    return 0;
+}
+extern "C" { void (*re4dc_mod_Sscrn_dtors[])(void) = {sscrn_run_exits, 0}; }
+#endif
 
 namespace {
 constexpr unsigned kModules = sizeof(g_modules) / sizeof(g_modules[0]);
@@ -178,6 +210,12 @@ extern "C" int re4dc_module_bind(void* header)
         re4dc_log("module: id %lu -> %s (static, restart %u keeps state)\n", h[0], m->name, s.restarts);
     } else {
         re4dc_log("module: id %lu -> %s (static)\n", h[0], m->name);
+#if RE4DC_SUBSCREEN
+        if (m->id == 71 && sscrn_nexit) {  // the last link was not left through DLL_Unlink
+            re4dc_log("module: Sscrn fresh link drops %u stale destructors\n", sscrn_nexit);
+            sscrn_nexit = 0;
+        }
+#endif
         freshState(unsigned(index));
     }
     s.header = header;

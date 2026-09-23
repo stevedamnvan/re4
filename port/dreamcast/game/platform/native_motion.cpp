@@ -27,6 +27,12 @@ struct Binding {
 };
 struct Owner { const void* thread; unsigned leases; };
 Binding bindings[kArchives]{};
+#if RE4DC_SUBSCREEN
+// Sub screen open (sscrn_bridge.cpp): the game's heaps 2/3/4 are suspended and their cells in
+// the swapped area hold sub screen data, so nothing already resident may be evicted (freed
+// into a suspended heap); new clips load into the current heap 12 over budget meanwhile.
+bool hold;
+#endif
 Owner owners[32]{};
 Re4dcMotionStats stats{};
 std::uint64_t stamp;
@@ -106,7 +112,11 @@ unsigned* load(Binding& b,unsigned i) {
     else {
         ++stats.misses;const auto started=timer_us_gettime64();
         const unsigned size=word(e+4),bytes=aligned(size);
+#if RE4DC_SUBSCREEN
+        while(!hold && b.resident+bytes>b.budget) {
+#else
         while(b.resident+bytes>b.budget) {
+#endif
             unsigned victim=b.count;std::uint64_t oldest=~std::uint64_t(0);
             for(unsigned j=0;j<b.count;++j) {
                 const auto& q=b.slots[j];
@@ -249,6 +259,34 @@ extern "C" void re4dc_motion_release(int token) {
 extern "C" void re4dc_motion_unbind(void* archive) {
     Locked guard;for(auto& b:bindings)if(b.archive==archive && archive)release_binding(b);
 }
+#if RE4DC_SUBSCREEN
+extern "C" int re4dc_motion_owner_live(const void* p);  // motion_bridge.cpp
+extern "C" void re4dc_motion_hold(int on) { Locked guard;hold=on!=0; }
+// Sub screen close, after the area holds the game's bytes again: a slot table inside the area
+// is back to its state at open; clips loaded meanwhile came from heap 12, which is gone. Those
+// slots (and a binding whose table was in heap 12) are forgotten, not freed, and the resident
+// and pinned totals are recounted from the tables. Returns the slots dropped.
+extern "C" unsigned re4dc_motion_forget_dead_heaps() {
+    Locked guard;unsigned n=0,resident=0,pinned=0;
+    for(auto& b:bindings) {
+        if(!b.archive)continue;
+        if(b.slots && !re4dc_motion_owner_live(b.slots)) {
+            stats.metadata_bytes-=aligned(b.count*sizeof(Slot));stats.hot_bytes-=b.hot_bytes;b={};++n;continue;
+        }
+        b.resident=0;
+        for(unsigned i=0;i<b.count;++i) {
+            auto& s=b.slots[i];
+            if(s.data && !re4dc_motion_owner_live(s.data)){s={};++n;}
+            if(!s.data)continue;
+            b.resident+=aligned(word(record(b,i)+4));
+            if(s.pins)pinned+=word(record(b,i)+4);
+        }
+        resident+=b.resident;
+    }
+    stats.resident_bytes=resident;stats.pinned_bytes=pinned;hold=false;
+    return n;
+}
+#endif
 extern "C" void re4dc_motion_retire_all() {
     Locked guard;for(auto& b:bindings)if(b.archive)release_binding(b);
 }

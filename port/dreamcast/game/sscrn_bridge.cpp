@@ -1,0 +1,550 @@
+// D367 W11: the sub screen's memory backing (SUBSCREEN=1) and the W11 test instrumentation
+// (W11_FIXTURE=1). Game side; the KOS half is platform/subscreen_backing.cpp.
+//
+// The GameCube swaps 3 MiB at pG->pStFnt with ARAM 0xD00000 while the sub screen is open
+// (sscrn.cpp SubScreenExec / SubScreenExitCore): the game's bytes there (heap 2's stage data,
+// the room REL heap 3, the first ~2.8 MiB of the room heap 4) wait in ARAM, and the ARAM copy of
+// the sub screen (Sscrn.rel, ss_cmmn.dat, ss_pzzl.dat, read once at game start) comes in. The
+// Dreamcast has no ARAM, so:
+//  - open: the live bytes of the area (every byte except the payload of free heap cells) go to
+//    the VRAM backing store, then the area is cleared and filled the way the ARAM copy would
+//    fill it: a 0x40-byte module descriptor in place of Sscrn.rel (the module is in the image),
+//    ss_cmmn.dat and ss_pzzl.dat read from disc (every screen type uses both);
+//  - close: the live bytes come back and are checked against the hash taken at open.
+// The heap lists are not touched: the kept/skipped split is taken from the free lists at open
+// and reused at close, when heap 4 has been signalled back unchanged.
+#include "types.h"
+#include "global.h"
+#include "main_mem.h"
+#include "sscrn.h"
+#include "item.h"
+#include "player.h"
+#include "emhit.h"
+#include "mes.h"
+#include "re4dc_platform.h"
+#include <stdio.h>
+#include <string.h>
+
+extern "C" {
+int OSCheckHeap(int heap);
+void OSReport(const char* fmt, ...);
+void re4dc_ui_invalidate_sources();
+unsigned re4dc_vram_free();
+void re4dc_kos_heap_state(unsigned* free_chunks, unsigned* used, unsigned* break_room);
+int re4dc_fixture_read(const char* path, char* buffer, unsigned size);
+int re4dc_ssb_open(unsigned bytes, unsigned* bank_bytes, unsigned* pool_bytes);
+void re4dc_ssb_rewind();
+void re4dc_ssb_put(const void* src, unsigned bytes);
+void re4dc_ssb_get(void* dst, unsigned bytes);
+void re4dc_ssb_close();
+void re4dc_ssb_stats(unsigned* blocks, unsigned* reclaimed_uploads, unsigned* reclaimed_bytes);
+unsigned re4dc_ssb_pool_free();
+unsigned re4dc_ssb_bank_bytes();
+unsigned long long re4dc_ssb_us();
+long re4dc_ssb_file_size(const char* name);
+long re4dc_ssb_file_read(const char* name, void* dst, unsigned capacity);
+u32 re4dc_vi_retrace_count(void);
+void re4dc_fixture_state(const char* name, int a, int b);
+void re4dc_motion_hold(int on);
+unsigned re4dc_motion_forget_dead_heaps();
+unsigned re4dc_parts_freeze(u32 lo, u32 hi);  // parts_bridge.cpp
+void re4dc_parts_thaw();
+}
+
+namespace {
+constexpr u32 kSsAramSize = 0x300000;  // sscrn.cpp SS_ARAM_SIZE
+constexpr u32 kDescriptorBytes = 0x40;  // OSModuleHeader up to the prolog/epilog words
+constexpr u32 kSscrnModuleId = 71;      // config/G4BE08/modules/Sscrn/rel.json
+constexpr u32 kCompactDescriptor = 0xDC000001;  // platform/modules.cpp compact header marker
+inline u32 align32(u32 v) { return (v + 31) & ~31U; }
+
+// The OSAlloc heap descriptors: SystemMemInit hands the aligned arena start to OSInitAlloc,
+// which puts HeapDesc[MEM_HEAP_NUM] there (main_mem.cpp HeapHead).
+const OSHeapDescriptor* heap_descriptor(int h)
+{
+    if (h < 0 || h >= MEM_HEAP_NUM || Heap[h].handle < 0) return 0;
+    const OSHeapDescriptor* head = reinterpret_cast<const OSHeapDescriptor*>((u32(re4dc_mem.heap) + 0x1F) & ~0x1FU);
+    return head + Heap[h].handle;
+}
+
+// Free bytes and largest free cell of a live heap (-1: none or suspended).
+int heap_free(int h, u32* largest)
+{
+    *largest = 0;
+    const OSHeapDescriptor* d = heap_descriptor(h);
+    if (!d || Heap[h].status) return -1;
+    int total = 0;
+    unsigned guard = 0;
+    for (const OSHeapCell* c = d->free; c && guard < 100000; c = c->next, ++guard) {
+        total += c->size;
+        if (u32(c->size) > *largest) *largest = u32(c->size);
+    }
+    return total;
+}
+}  // namespace
+
+#if RE4DC_W11_FIXTURE
+// Image code integrity (W11 test builds): 64 KiB chunk hashes of [_start, _etext), logged when
+// a chunk differs from the first check (the image is never written after boot).
+extern "C" char start[] asm("_start");
+extern "C" char etext[] asm("_etext");
+namespace {
+constexpr unsigned kTextChunk = 0x10000, kTextChunks = 64;
+u32 text_hash[kTextChunks];
+bool text_have;
+}
+void w11_text_check(const char* when)
+{
+    const u32 lo = u32(start), hi = u32(etext) & ~3U;
+    unsigned bad = 0;
+    for (unsigned c = 0; c < kTextChunks && lo + c * kTextChunk < hi; ++c) {
+        const u32 a = lo + c * kTextChunk, b = a + kTextChunk < hi ? a + kTextChunk : hi;
+        u32 h = 2166136261U;
+        for (const u32* w = reinterpret_cast<const u32*>(a); u32(w) < b; ++w) h = (h ^ *w) * 16777619U;
+        if (!text_have) text_hash[c] = h;
+        else if (h != text_hash[c]) {
+            ++bad;
+            if (c == 33) {  // the image's writable tail inside [_start, _etext): changes every frame
+                text_hash[c] = h;
+                --bad;
+                continue;
+            }
+            re4dc_log("w11 text: %s chunk %u [%08x,%08x) changed %08x -> %08x\n", when, c, a, b, text_hash[c], h);
+            // First nonzero run of words that look like heap cell headers in the chunk: none known;
+            // print the first 8 words at every 0x20 step whose second word is 0 and third is small.
+            for (u32 q = a; q + 32 <= b; q += 0x20) {
+                const u32* w = reinterpret_cast<const u32*>(q);
+                if (w[0] == 0 && w[1] == 0 && w[2] && w[2] < 0x100000 && !(w[2] & 0x1F)) {
+                    re4dc_log("w11 text:   cell-like @%08x: %08x %08x %08x %08x %08x %08x %08x %08x\n", q, w[0], w[1],
+                              w[2], w[3], w[4], w[5], w[6], w[7]);
+                    break;
+                }
+            }
+            text_hash[c] = h;
+        }
+    }
+    if (!text_have) re4dc_log("w11 text: baseline %s [%08x,%08x)\n", when, lo, hi);
+    (void) bad;
+    text_have = true;
+}
+#else
+static inline void w11_text_check(const char*) {}
+#endif
+
+// ------------------------------------------------------------------------------------ backing
+#if RE4DC_SUBSCREEN
+namespace {
+struct Span { u32 start, bytes; };
+constexpr unsigned kMaxSpans = 1024;
+Span spans[kMaxSpans];
+unsigned nspan;
+u32 live_bytes, skipped_bytes, open_hash, cmmn_bytes, pzzl_bytes;
+bool swapped;
+u32 area_lo, area_hi;  // the window while swapped
+
+// Message state that the sub screen points into its own area data (MesData tables: ss_term's
+// op messages in slot 2, ss_file/ss_pzzl/ss_shop's ss_cmmn text in slot 0; cMes slots showing
+// them). SubScreenExit re-binds only slots 0/1 (cMes.roomInit) and only several frames after
+// the area holds the game's bytes again, so a pointer left into the restored area makes the
+// message system walk game data as text (Message::WidthCk "no end code", then runaway pMes).
+// The ARAM swap leaves the same pointers on the GameCube; there the stale bytes are never
+// read before roomInit. Close puts back what the game had at open instead.
+constexpr int kMesTypes = sizeof(MesData.ptr) / sizeof(MesData.ptr[0]);
+constexpr int kMesSlots = sizeof(cMes.mes) / sizeof(cMes.mes[0]);
+u8* mes_ptr_open[kMesTypes];
+u32 mes_active_open;
+
+bool in_area(const void* p, u32 lo, u32 hi) { return u32(p) >= lo && u32(p) < hi; }
+
+void save_message_state()
+{
+    for (int t = 0; t < kMesTypes; ++t) mes_ptr_open[t] = MesData.ptr[t];
+    mes_active_open = 0;
+    for (int i = 0; i < kMesSlots; ++i)
+        if (cMes.mes[i].flags2 & 1) mes_active_open |= 1U << i;
+}
+
+void restore_message_state(u32 lo, u32 hi)
+{
+    for (int t = 0; t < kMesTypes; ++t) {
+        if (MesData.ptr[t] != mes_ptr_open[t] && in_area(MesData.ptr[t], lo, hi)) {
+            re4dc_log("subscreen backing: message table %d %p -> %p (set inside the area while open)\n", t,
+                      MesData.ptr[t], mes_ptr_open[t]);
+            MesData.ptr[t] = mes_ptr_open[t];
+        }
+    }
+    // Every live slot whose text cursor is in the area (sub screen text, now game bytes) or not in
+    // main RAM at all (a NULL table + offset) is deleted, whatever it showed before the open: the
+    // area held sub screen data while open, so no slot can have kept a valid cursor there.
+    for (int i = 0; i < kMesSlots; ++i) {
+        Message& m = cMes.mes[i];
+        if (!((m.flags2 | m.be_flag) & 1)) continue;
+        const bool stale = in_area(m.m_pMes, lo, hi) || u32(m.m_pMes) < 0x8C000000U || u32(m.m_pMes) >= 0x8D000000U;
+        re4dc_log("subscreen backing: message slot %d be=%x flags2=%x pMes %p%s%s\n", i, unsigned(m.be_flag),
+                  unsigned(m.flags2), m.m_pMes, (mes_active_open & (1U << i)) ? " (live at open)" : "",
+                  stale ? " stale, deleted" : "");
+        if (stale) cMes.Delete(i);
+    }
+}
+
+u32 hash_words(const void* p, u32 bytes, u32 h)
+{
+    const u32* w = static_cast<const u32*>(p);
+    for (u32 n = bytes / 4; n; --n) h = (h ^ *w++) * 16777619U;
+    return h;
+}
+
+// The live spans of [lo, hi): the area minus the payload of every free cell of every live heap
+// (a free cell keeps its 0x20-byte header, which the heap lists need).
+void build_spans(u32 lo, u32 hi)
+{
+    struct Hole { u32 a, b; };
+    static Hole holes[kMaxSpans];
+    unsigned nhole = 0;
+    for (int h = 0; h < MEM_HEAP_NUM; ++h) {
+        const OSHeapDescriptor* d = heap_descriptor(h);
+        if (!d || Heap[h].status) continue;
+        unsigned guard = 0;
+        for (const OSHeapCell* c = d->free; c && guard < 100000; c = c->next, ++guard) {
+            u32 a = u32(c) + 0x20, b = u32(c) + u32(c->size);
+            if (b <= lo || a >= hi || b <= a) continue;
+            if (a < lo) a = lo;
+            if (b > hi) b = hi;
+            if (nhole < kMaxSpans) holes[nhole++] = {a, b};
+        }
+    }
+    for (unsigned i = 1; i < nhole; ++i) {  // insertion sort by address (a few hundred at most)
+        Hole x = holes[i];
+        unsigned j = i;
+        for (; j && holes[j - 1].a > x.a; --j) holes[j] = holes[j - 1];
+        holes[j] = x;
+    }
+    nspan = 0;
+    live_bytes = skipped_bytes = 0;
+    u32 at = lo;
+    for (unsigned i = 0; i <= nhole; ++i) {
+        const u32 end = i < nhole ? holes[i].a : hi;
+        if (end > at) {
+            if (nspan == kMaxSpans) {  // cannot describe more: keep the rest whole
+                spans[nspan - 1].bytes = hi - spans[nspan - 1].start;
+                live_bytes += hi - at;
+                return;
+            }
+            spans[nspan++] = {at, end - at};
+            live_bytes += end - at;
+        }
+        if (i < nhole) {
+            if (holes[i].b > at) {
+                const u32 a = holes[i].a > at ? holes[i].a : at;
+                skipped_bytes += holes[i].b - a;
+                at = holes[i].b;
+            }
+        }
+    }
+}
+}  // namespace
+
+// SubScreenAramRead replacement (game start): the area layout, from the disc file sizes.
+extern "C" void re4dc_subscreen_aram_init(SubScreenWork* wk)
+{
+    wk->p_module = 0;
+    wk->pPreplfOffs = 0;
+    wk->aramSize = kDescriptorBytes;
+    sscrnDataFilename(wk, "ss_cmmn.dat");
+    long size = re4dc_ssb_file_size(wk->path);
+    cmmn_bytes = size > 0 ? u32(size) : 0;
+    wk->pCommonOffs = wk->aramSize;
+    wk->aramSize += align32(cmmn_bytes);
+    sscrnDataFilename(wk, "ss_pzzl.dat");
+    size = re4dc_ssb_file_size(wk->path);
+    pzzl_bytes = size > 0 ? u32(size) : 0;
+    wk->pzzlOfs = wk->aramSize;
+    wk->aramSize += align32(pzzl_bytes);
+    OSReport("Native subscreen area: descriptor 0x%x + ss_cmmn %u @%x + ss_pzzl %u @%x (read at open, no ARAM)\n",
+             kDescriptorBytes, cmmn_bytes, wk->pCommonOffs, pzzl_bytes, wk->pzzlOfs);
+    OSReport("SubScrn Data: 0x%08x\n", wk->aramSize);
+    OSReport("SubScrn Free: 0x%08x\n", kSsAramSize - wk->aramSize);
+    if (!cmmn_bytes || !pzzl_bytes) re4dc_missing("sub screen files (ss_cmmn.dat / ss_pzzl.dat) not on disc");
+}
+
+extern "C" void re4dc_subscreen_swap_open(SubScreenWork* wk)
+{
+    if (swapped) re4dc_missing("sub screen area swapped twice");
+    const unsigned long long t0 = re4dc_ssb_us();
+    const u32 lo = u32(wk->pBuf), hi = lo + kSsAramSize;
+    build_spans(lo, hi);
+    unsigned bank = 0, pool = 0;
+    const unsigned pool_before = re4dc_ssb_pool_free();
+    if (!re4dc_ssb_open(live_bytes, &bank, &pool)) {
+        re4dc_log("subscreen backing: live=%u bank=%u pool_free=%u\n", live_bytes, re4dc_ssb_bank_bytes(), pool_before);
+        re4dc_missing("sub screen backing: no VRAM for the swapped area");
+    }
+    re4dc_ssb_rewind();
+    u32 h = 2166136261U;
+    for (unsigned i = 0; i < nspan; ++i) {
+        re4dc_ssb_put(reinterpret_cast<const void*>(spans[i].start), spans[i].bytes);
+        h = hash_words(reinterpret_cast<const void*>(spans[i].start), spans[i].bytes, h);
+    }
+    open_hash = h;
+    swapped = true;
+    area_lo = lo;
+    area_hi = hi;
+    save_message_state();
+    re4dc_motion_hold(1);
+    // Room demand pools (the cEm one, for one) whose slot tables live in the window.
+    const unsigned frozen_pools = re4dc_parts_freeze(lo, hi);
+    w11_text_check("after-open");
+    const unsigned long long t1 = re4dc_ssb_us();
+    // What the ARAM copy would bring in.
+    memset(wk->pBuf, 0, kSsAramSize);
+    u32* d = reinterpret_cast<u32*>(lo + wk->pPreplfOffs);
+    d[0] = kSscrnModuleId;
+    d[0x1c / 4] = kCompactDescriptor;
+    sscrnDataFilename(wk, "ss_cmmn.dat");
+    const long cmmn = re4dc_ssb_file_read(wk->path, reinterpret_cast<void*>(lo + wk->pCommonOffs), cmmn_bytes);
+    // ss_pzzl.dat for every type: besides the puzzles it holds the item BIN / TPL pairs that the
+    // inventory, examine and shop screens draw (read fresh each open: the pristine copy that
+    // SubScreenExit re-read into ARAM after a puzzle).
+    sscrnDataFilename(wk, "ss_pzzl.dat");
+    const long pzzl = re4dc_ssb_file_read(wk->path, reinterpret_cast<void*>(lo + wk->pzzlOfs), pzzl_bytes);
+    if (cmmn != long(cmmn_bytes) || pzzl != long(pzzl_bytes)) re4dc_missing("sub screen file read failed");
+    // Source-image pointer keys cached by the native UI named the game's bytes at these addresses.
+    re4dc_ui_invalidate_sources();
+    const unsigned long long t2 = re4dc_ssb_us();
+    unsigned blocks = 0, reclaimed = 0, reclaimed_bytes = 0;
+    re4dc_ssb_stats(&blocks, &reclaimed, &reclaimed_bytes);
+    re4dc_log("subscreen backing: open type=%x area=%08x+%x live=%u skipped_free=%u spans=%u bank=%u pool=%u "
+              "blocks=%u ui_released=%u/%uB pool_free=%u->%u save_us=%u read_us=%u cmmn=%ld pzzl=%ld frozen_pools=%u "
+              "hash=%08x\n",
+              unsigned(wk->type), lo, kSsAramSize, live_bytes, skipped_bytes, nspan, bank, pool, blocks, reclaimed,
+              reclaimed_bytes, pool_before, re4dc_ssb_pool_free(), unsigned(t1 - t0), unsigned(t2 - t1), cmmn, pzzl,
+              frozen_pools, open_hash);
+}
+
+extern "C" void re4dc_subscreen_swap_close(SubScreenWork* wk)
+{
+    w11_text_check("before-close");
+    if (!swapped) re4dc_missing("sub screen area restored without a swap");
+    const unsigned long long t0 = re4dc_ssb_us();
+    re4dc_ssb_rewind();
+    u32 h = 2166136261U;
+    for (unsigned i = 0; i < nspan; ++i) {
+        re4dc_ssb_get(reinterpret_cast<void*>(spans[i].start), spans[i].bytes);
+        h = hash_words(reinterpret_cast<const void*>(spans[i].start), spans[i].bytes, h);
+    }
+    re4dc_ssb_close();
+    swapped = false;
+    re4dc_parts_thaw();
+    restore_message_state(u32(wk->pBuf), u32(wk->pBuf) + kSsAramSize);
+    // Motion clips the screen loaded came from heap 12 (gone now); room tables are back as at open.
+    const unsigned motions = re4dc_motion_forget_dead_heaps();
+    if (motions) re4dc_log("subscreen backing: %u motion residency slots from the sub screen heap dropped\n", motions);
+    re4dc_ui_invalidate_sources();
+    const unsigned long long t1 = re4dc_ssb_us();
+    re4dc_log("subscreen backing: close area=%08x restored=%u restore_us=%u hash=%08x %s pool_free=%u\n", u32(wk->pBuf),
+              live_bytes, unsigned(t1 - t0), h, h == open_hash ? "ok" : "MISMATCH", re4dc_ssb_pool_free());
+    if (h != open_hash) re4dc_missing("sub screen backing corrupted while the screen was open");
+}
+#endif  // RE4DC_SUBSCREEN
+
+// ------------------------------------------------------------------------------ W11 fixture
+#if RE4DC_W11_FIXTURE
+namespace {
+struct Fixture {
+    bool loaded;
+    unsigned die_after, die_count, dies;    // "die <frames> <count>"
+    int life_value;                         // "life <value> <frames>" (once, first room)
+    unsigned life_after;
+    bool life_done;
+    unsigned generation, room_frames, rooms;
+    unsigned death_frame;                   // retrace count at the kill (0: alive)
+    bool continue_pending;
+    unsigned done_events;                   // "done <events>": "w11 done" 300 game frames after
+    bool done_logged;
+};
+Fixture fx{};
+
+void load_fixture()
+{
+    fx.loaded = true;
+    fx.life_value = -1;
+    static char text[512];
+    const int n = re4dc_fixture_read("/cd/dc/w11.txt", text, sizeof(text) - 1);
+    if (n <= 0) return;
+    text[n] = 0;
+    for (char* line = text; line && *line;) {
+        char* next = strchr(line, '\n');
+        if (next) *next++ = 0;
+        unsigned a = 0, b = 0;
+        int v = 0;
+        if (sscanf(line, "die %u %u", &a, &b) == 2) {
+            fx.die_after = a;
+            fx.die_count = b;
+        } else if (sscanf(line, "life %d %u", &v, &b) == 2) {
+            fx.life_value = v;
+            fx.life_after = b;
+        } else if (sscanf(line, "done %u", &a) == 1) {
+            fx.done_events = a;
+        }
+        line = next;
+    }
+    re4dc_log("w11 fixture: die after=%u count=%u life=%d after=%u done=%u\n", fx.die_after, fx.die_count,
+              fx.life_value, fx.life_after, fx.done_events);
+}
+
+u32 items_hash()
+{
+    static u8 save[0x1400];
+    const int n = ItemMgr.saveDataSize();
+    if (n <= 0 || n > int(sizeof(save))) return 0;
+    ItemMgr.save(save);
+    u32 h = 2166136261U;
+    for (int i = 0; i < n; ++i) h = (h ^ save[i]) * 16777619U;
+    return h;
+}
+
+void census(const char* when)
+{
+    w11_text_check(when);
+    u32 l2, l3, l4, l12;
+    const int f2 = heap_free(2, &l2), f3 = heap_free(3, &l3), f4 = heap_free(4, &l4), f12 = heap_free(12, &l12);
+    unsigned kfree = 0, kused = 0, kbreak = 0;
+    re4dc_kos_heap_state(&kfree, &kused, &kbreak);
+    re4dc_log("w11 census: %s room=%03x heap2=%d heap3=%d heap4=%d largest4=%u heap12=%d largest12=%u "
+              "vram_free=%u kos_free=%u kos_break=%u\n",
+              when, pG ? unsigned(pG->room_id) : 0, f2, f3, f4, l4, f12, l12, re4dc_vram_free(), kfree, kbreak);
+}
+
+void player_state(const char* when)
+{
+    if (!pG) return;
+    re4dc_log("w11 state: %s room=%03x life=%d/%d wep=%04x items=%08x pos=(%d,%d,%d) rno=%d/%d\n", when,
+              unsigned(pG->room_id), int(s16(pG->pl_life)), int(pG->pl_life_max), unsigned(ItemMgr.m_wep_id),
+              items_hash(), pPL ? int(pPL->pos.x) : 0, pPL ? int(pPL->pos.y) : 0, pPL ? int(pPL->pos.z) : 0,
+              int(pG->Rno0), int(pG->Rno1));
+}
+
+// Frame timing per phase, and the capture markers.
+enum Phase { kBoot, kGame, kSub, kDead };
+const char* const kPhaseName[] = {"boot", "game", "sub", "dead"};
+struct Window { unsigned frames; unsigned long long sum, max; };
+Window window[4];
+unsigned long long last_us;
+Phase last_phase = kBoot;
+unsigned phase_frames, opens, deaths;
+
+Phase phase_now()
+{
+    if (!pG) return kBoot;
+    if (SubScreenWk.type) return kSub;  // set by SubScreenOpen, cleared when the screen has closed
+    if (fx.death_frame) return kDead;
+    if (pG->Rno0 == 3) return kGame;
+    return kBoot;
+}
+
+void shot(const char* fmt, unsigned a, unsigned b)
+{
+    char label[48];
+    snprintf(label, sizeof(label), fmt, a, b);
+    re4dc_log("w11 shot: %s\n", label);
+}
+}  // namespace
+
+// Top of gameMainLoop (ui_bridge.cpp re4dc_room_cycle_poll), room heap live.
+extern "C" int re4dc_w11_room_poll(unsigned generation)
+{
+    if (!fx.loaded) load_fixture();
+    if (!pG || !pPL) return 0;
+    if (generation != fx.generation) {
+        fx.generation = generation;
+        fx.room_frames = 0;
+        ++fx.rooms;
+        if (fx.continue_pending) {
+            fx.continue_pending = false;
+            fx.death_frame = 0;
+        }
+    }
+    ++fx.room_frames;
+    if (fx.room_frames == 90) {
+        census(fx.dies ? "continue+90" : "room+90");
+        player_state(fx.dies ? "continue+90" : "room+90");
+        if (fx.dies) shot("continue%u-%u", fx.dies, 90);
+    }
+    if (pG->Status_flg[1] & 0x10000000) return 0;  // an event holds the game
+    if (fx.life_value >= 0 && !fx.life_done && fx.room_frames >= fx.life_after) {
+        fx.life_done = true;
+        re4dc_log("w11 fixture: life %d -> %d\n", int(s16(pG->pl_life)), fx.life_value);
+        pG->pl_life = u16(fx.life_value);
+    }
+    if (fx.die_count && fx.dies < fx.die_count && !fx.death_frame && fx.room_frames >= fx.die_after &&
+        !SubScreenWk.type && s16(pG->pl_life) > 0) {
+        ++fx.dies;
+        census("die");
+        player_state("die");
+        // The source damage entry, as an enemy hit would call it: life 1 first, so the hit
+        // cannot take the "keep 1 point" branch (LifeDownSet2 flag bit 0), then a die motion.
+        pG->pl_life = 1;
+        PlSetDamage(7, 100, 0);
+        fx.death_frame = re4dc_vi_retrace_count();
+        fx.continue_pending = true;
+        re4dc_log("w11 fixture: death %u/%u at room frame %u (life now %d)\n", fx.dies, fx.die_count, fx.room_frames,
+                  int(s16(pG->pl_life)));
+    }
+    return 0;
+}
+
+// Once per frame (platform/pad.cpp PADRead -> ui_bridge.cpp re4dc_pad_context).
+extern "C" void re4dc_w11_frame()
+{
+    if (!fx.loaded) load_fixture();
+    const unsigned long long now = re4dc_ssb_us();
+    const Phase p = phase_now();
+    if (last_us && p == last_phase) {
+        Window& w = window[p];
+        const unsigned long long dt = now - last_us;
+        ++w.frames;
+        w.sum += dt;
+        if (dt > w.max) w.max = dt;
+        if (w.frames == 60) {
+            u32 l12 = 0;
+            re4dc_log("w11 frame: phase=%s frames=%u mean_us=%u max_us=%u heap12=%d\n", kPhaseName[p], w.frames,
+                      unsigned(w.sum / w.frames), unsigned(w.max), p == kSub ? heap_free(12, &l12) : -1);
+            w = Window{};
+        }
+    }
+    if (p != last_phase) {
+        window[p] = Window{};
+        if (p == kSub) {
+            ++opens;
+            census("sub-open");
+            player_state("sub-open");
+        } else if (last_phase == kSub) {
+            census("sub-closed");
+            player_state("sub-closed");
+        }
+        if (p == kDead) ++deaths;
+        re4dc_log("w11 phase: %s -> %s opens=%u deaths=%u frame=%u\n", kPhaseName[last_phase], kPhaseName[p], opens,
+                  deaths, pG ? unsigned(pG->Frame_cnt) : 0);
+        // Padscript anchor "w11=<phase>/<n>": sub/dead count their own events, game counts both.
+        re4dc_fixture_state("w11", int(p), int(p == kSub ? opens : p == kDead ? deaths : opens + deaths));
+        phase_frames = 0;
+        last_phase = p;
+    }
+    ++phase_frames;
+    if (p == kSub || (p == kGame && opens && phase_frames < 4)) {
+        char when[32];
+        snprintf(when, sizeof(when), "%s%u-f%u", kPhaseName[p], opens, phase_frames);
+        w11_text_check(when);
+    }
+    if (p == kSub && phase_frames % 120 == 90 && phase_frames < 1500) shot("sub%u-%u", opens, phase_frames);
+    if (p == kGame && opens && phase_frames == 60) shot("closed%u-%u", opens, phase_frames);
+    if (p == kGame && fx.done_events && !fx.done_logged && opens + deaths >= fx.done_events && phase_frames == 300) {
+        fx.done_logged = true;
+        census("done");
+        player_state("done");
+        re4dc_log("w11 done: opens=%u deaths=%u\n", opens, deaths);
+    }
+    if (p == kDead && (phase_frames == 150 || phase_frames == 330 || phase_frames == 450)) shot("dead%u-%u", deaths, phase_frames);
+    last_us = now;
+}
+#endif  // RE4DC_W11_FIXTURE
