@@ -57,6 +57,9 @@ void re4dc_gx_model_lighting(re4dc::render::SourceLighting* out){
     *out={};
 #endif
 }
+#if RE4DC_D349_RENDERER_STACK
+const re4dc::render::SourceLighting* re4dc_gx_model_lighting_ref(void){return &g_lighting;}
+#endif
 
 void* GXInit(void* base, u32 size) { (void) size; re4dc_ui_init(); re4dc_log("GXInit: native ID UI; 3D remains unbound\n"); return base; }
 void* GXSetCurrentGXThread(void) { return 0; }

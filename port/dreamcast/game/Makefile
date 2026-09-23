@@ -228,6 +228,45 @@ $(OBJDIR)/pvr-stream.h: pvr-stream-force
 $(OBJDIR)/platform/native_ui.o: $(OBJDIR)/pvr-stream.h
 $(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pvr-stream.h
 
+# D367 frame pipeline (all default off). PVR_FAST_WAKE: reschedule the PVR
+# render-done/vblank waiter at once instead of on the next 10 ms tick.
+# PVR_PIPELINE (implies FAST_WAKE): resolve/present the finished scene on a
+# presenter thread while the next frame runs; fenced before the next scene
+# and before any VRAM free/upload. PVR_PIPELINE=2: no presenter thread;
+# the decision is applied by the render-done IRQ and flipped in the vblank IRQ
+# (needs the KOS async-present patch; with TA_DOUBLEBUF=1 TA input of the next
+# frame also overlaps the render). TA_DIRECT: store-queue direct submission
+# API for emitters (native_model.h). BRIDGE_LEAN: libcall-free translucent
+# view words and borrowed GX lighting per part.
+# Hardware (TA/VRAM): TA_VERTBUF_KB per-bank vertex (parameter) buffer,
+# TA_DOUBLEBUF, TA_OPB_BINS (16|32 words, OP/TR), TA_OPB_OVERFLOW; defaults
+# are the current 1024/0/16/3. TA_GUARD=1: adaptive part budget + overflow
+# detection/logging; =2 also never presents an overflowed scene.
+# PERF_HUD=1: on-screen frame/CPU/render/wait/TA bars for console tests.
+PVR_FAST_WAKE ?= 0
+PVR_PIPELINE ?= 0
+TA_DIRECT ?= 0
+BRIDGE_LEAN ?= 0
+TA_VERTBUF_KB ?= 1024
+TA_DOUBLEBUF ?= 0
+TA_OPB_BINS ?= 16
+TA_OPB_OVERFLOW ?= 3
+TA_GUARD ?= 0
+PERF_HUD ?= 0
+.PHONY: pipeline30-force
+$(OBJDIR)/pipeline30.h: pipeline30-force
+	@mkdir -p $(dir $@)
+	@if [ "$(PVR_PIPELINE)" = 2 ]; then test "$$($(KOS_CC_BASE)/bin/$(KOS_CC_PREFIX)-nm -g --defined-only $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a | grep -Ec ' T _pvr_present_(async|wait|pending)$$')" -eq 3 || { echo 'PVR_PIPELINE=2 requires the KOS async-present patch' >&2; exit 1; }; fi
+	@printf '#define RE4DC_PVR_FAST_WAKE %s\n#define RE4DC_PVR_PIPELINE %s\n#define RE4DC_TA_DIRECT %s\n#define RE4DC_BRIDGE_LEAN %s\n' '$(PVR_FAST_WAKE)' '$(PVR_PIPELINE)' '$(TA_DIRECT)' '$(BRIDGE_LEAN)' > $@.tmp
+	@printf '#define RE4DC_TA_VERTBUF_KB %s\n#define RE4DC_TA_DOUBLEBUF %s\n#define RE4DC_TA_OPB_BINS %s\n#define RE4DC_TA_OPB_OVERFLOW %s\n#define RE4DC_TA_GUARD %s\n#define RE4DC_PERF_HUD %s\n' '$(TA_VERTBUF_KB)' '$(TA_DOUBLEBUF)' '$(TA_OPB_BINS)' '$(TA_OPB_OVERFLOW)' '$(TA_GUARD)' '$(PERF_HUD)' >> $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_ui.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/pipeline30.h
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pipeline30.h
+$(OBJDIR)/model_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/pipeline30.h
+$(OBJDIR)/native-reuse/texture_package.o: $(OBJDIR)/pipeline30.h
+$(OBJDIR)/native-reuse/texture_package.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pipeline30.h
+
 # Both renderer arms retain the full source arena. Reuse a smaller native I/O
 # bounce (same reader, short-read/CRC/unaligned-small-file contracts), reclaiming
 # 48 KiB of redundant staging rather than funding metadata from gameplay RAM.

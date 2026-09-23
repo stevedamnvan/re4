@@ -13,6 +13,47 @@
 #ifndef RE4DC_D349_RENDERER_STACK
 #define RE4DC_D349_RENDERER_STACK 0
 #endif
+// Frame-pipeline knobs (obj/pipeline30.h; all default off = previous image).
+#ifndef RE4DC_PVR_FAST_WAKE
+#define RE4DC_PVR_FAST_WAKE 0
+#endif
+#ifndef RE4DC_PVR_PIPELINE
+#define RE4DC_PVR_PIPELINE 0   // 1 presenter thread (pinned KOS); 2 KOS async present (patched KOS)
+#endif
+#ifndef RE4DC_TA_DIRECT
+#define RE4DC_TA_DIRECT 0
+#endif
+#ifndef RE4DC_BRIDGE_LEAN
+#define RE4DC_BRIDGE_LEAN 0
+#endif
+#ifndef RE4DC_TA_GUARD
+#define RE4DC_TA_GUARD 0
+#endif
+#ifndef RE4DC_PERF_HUD
+#define RE4DC_PERF_HUD 0
+#endif
+// VRAM layout (defaults = the previous image: 1 MiB, one bank used, 16-word bins).
+#ifndef RE4DC_TA_VERTBUF_KB
+#define RE4DC_TA_VERTBUF_KB 1024
+#endif
+#ifndef RE4DC_TA_DOUBLEBUF
+#define RE4DC_TA_DOUBLEBUF 0
+#endif
+#ifndef RE4DC_TA_OPB_BINS
+#define RE4DC_TA_OPB_BINS 16
+#endif
+#ifndef RE4DC_TA_OPB_OVERFLOW
+#define RE4DC_TA_OPB_OVERFLOW 3
+#endif
+#if (RE4DC_PVR_PIPELINE || RE4DC_TA_DIRECT) && !RE4DC_PVR_STREAM
+#error PVR_PIPELINE and TA_DIRECT extend the PVR_STREAM=1 frame owner
+#endif
+#if RE4DC_PVR_FAST_WAKE || RE4DC_PVR_PIPELINE || RE4DC_TA_GUARD
+#include <dc/asic.h>
+#include <dc/vblank.h>
+#include <kos/genwait.h>
+#include <kos/sem.h>
+#endif
 #include "native_ui.h"
 #include "native_model.h"
 #include "native_static.h"
@@ -67,6 +108,35 @@ constexpr unsigned kViewMasks=(kViewWords+31)/32;
 static_assert(sizeof(Re4dcModelPart)%sizeof(unsigned)==0);
 struct DeferredPart { DeferredPart* next;DeferredLighting* lighting;unsigned changed[kViewMasks]; };
 Re4dcModelPart* deferred_basis=nullptr;
+#if RE4DC_BRIDGE_LEAN
+// Same word-difference encoding. The 4-byte memcpy()s above were libcalls on
+// SH4 (strict alignment through char*): D367 T spent 4.4 ms/frame of memcpy/
+// memset in view_words plus 1.4 ms in its own loop. Re4dcModelPart is 4-byte
+// aligned (pointers/floats/unsigned only), so read it as may_alias words.
+typedef unsigned __attribute__((may_alias)) AliasWord;
+static_assert(alignof(Re4dcModelPart)>=alignof(unsigned));
+unsigned view_words(const Re4dcModelPart& p,const Re4dcModelPart& base,unsigned* masks,unsigned* values){
+    const auto* a=reinterpret_cast<const AliasWord*>(&p);
+    const auto* b=reinterpret_cast<const AliasWord*>(&base);
+    unsigned count=0;
+    for(unsigned m=0;m<kViewMasks;++m){
+        unsigned bits=0;const unsigned first=m*32,last=std::min(kViewWords,first+32);
+        for(unsigned i=first;i<last;++i){
+            const unsigned word=a[i];
+            if(word!=b[i]){bits|=1U<<(i-first);if(values)values[count]=word;++count;}
+        }
+        if(masks)masks[m]=bits;
+    }
+    return count;
+}
+Re4dcModelPart restore_view(const DeferredPart* node){
+    Re4dcModelPart out=*deferred_basis;const auto* values=reinterpret_cast<const unsigned*>(node+1);
+    auto* words=reinterpret_cast<AliasWord*>(&out);
+    for(unsigned m=0;m<kViewMasks;++m)
+        for(unsigned bits=node->changed[m];bits;bits&=bits-1)words[m*32+__builtin_ctz(bits)]=*values++;
+    return out;
+}
+#else
 unsigned view_words(const Re4dcModelPart& p,const Re4dcModelPart& base,unsigned* masks,unsigned* values){
     unsigned count=0;if(masks)std::memset(masks,0,kViewMasks*sizeof(unsigned));
     for(unsigned i=0;i<kViewWords;++i){
@@ -83,6 +153,7 @@ Re4dcModelPart restore_view(const DeferredPart* node){
     }
     return out;
 }
+#endif
 DeferredLighting* deferred_lights=nullptr;
 unsigned selected_mask(const SourceLighting& s){return s.enable?s.mask&255U:0U;}
 unsigned deferred_light_bytes(const SourceLighting&){return sizeof(DeferredLighting)+light_parameter_bytes;}
@@ -166,17 +237,249 @@ unsigned frame_header_hits,frame_header_builds,frame_pvr_calls,frame_pvr_bytes;
 unsigned frame_queue_peak,frame_queue_drops;
 std::uint64_t frame_render_start;
 
+#if RE4DC_PVR_FAST_WAKE || RE4DC_PVR_PIPELINE
+// KOS wakes a thread blocked in pvr_wait_render_done()/pvr_resolve_frame()
+// from the render-done and vblank interrupts without rescheduling (only the
+// TA-done path calls thd_schedule(true)). With THD_SCHED_HZ=100 the waiter
+// then sleeps until the next 10 ms tick: D367 T idled 29 ms/frame as ONE run
+// per frame of ~25 or ~35 ms (render 7.5 + vblank + up to 2 x 10 ms ticks).
+// Chain both interrupts and reschedule, as KOS's TA-done path does, only
+// while a native PVR waiter is registered. No game thread is woken or
+// reordered here: thd_schedule(true) keeps the interrupted thread at the
+// front of its priority group.
+volatile unsigned pvr_waiters;
+asic_evt_handler_entry_t kos_render_done{};
+unsigned wake_renders,wake_vblanks;
+void render_done_chain(uint32_t code,void* data){
+    (void)data;
+    if(kos_render_done.hdl)kos_render_done.hdl(code,kos_render_done.data);
+    if(pvr_waiters){++wake_renders;thd_schedule(true);}
+}
+void vblank_wake(uint32_t,void*){
+    if(pvr_waiters){++wake_vblanks;thd_schedule(true);}
+}
+struct PvrWaiter {
+    PvrWaiter(){const int o=irq_disable();pvr_waiters=pvr_waiters+1;irq_restore(o);}
+    ~PvrWaiter(){const int o=irq_disable();pvr_waiters=pvr_waiters-1;irq_restore(o);}
+};
+void install_fast_wake(){
+    kos_render_done=asic_evt_set_handler(ASIC_EVT_PVR_RENDERDONE_TSP,render_done_chain,nullptr);
+    // Registered after pvr_init(): runs after KOS's flip handler.
+    const int handle=vblank_handler_add(vblank_wake,nullptr);
+    re4dc_log("native pvr wake: render-done chained=%d vblank handler=%d\n",kos_render_done.hdl!=nullptr,handle);
+}
+#endif
+#if RE4DC_TA_GUARD
+// Real-hardware TA capacity guard. Flycast neither enforces nor reports TA
+// capacity (KOS ta_used stays 0 there); a console does: the TA writes every
+// strip into the current bank's vertex (parameter) buffer (~12 B per strip
+// header + 24 B per float-UV vertex without offset colour) and one 4-byte
+// object pointer per touched tile into the OPBs. Overflow drops or corrupts
+// geometry, or halts the render. As dca3 does (rwdc.cpp vertexBufferFree /
+// freeVertexTarget / vertexOverflown), skip whole parts once free space falls
+// below an adaptive reserve and detect overflow per scene. TA_GUARD=2 also
+// declines to present an overflowed scene (the previous image stays shown;
+// game state, logic and inputs are untouched either way).
+constexpr unsigned kGuardVertbuf=RE4DC_TA_VERTBUF_KB*1024U;
+constexpr unsigned kGuardMin=64*1024,kGuardMax=kGuardVertbuf/2,kParamPerHeader=12,kParamPerVertex=24;
+unsigned guard_reserve=kGuardMin,guard_scale=256;   // adaptive reserve; hw/estimate x256
+unsigned guard_sw;                                  // estimated parameter bytes, this scene
+volatile unsigned guard_ta_faults,guard_render_faults; // ASIC error events (interrupt)
+unsigned guard_skips,guard_fault_frames,guard_render_fault_frames,guard_discards;
+unsigned guard_hw_last,guard_hw_peak,guard_sw_last,guard_sw_peak,guard_opb_last;
+asic_evt_handler_entry_t guard_kos[5];
+constexpr std::uint16_t kGuardEvents[5]={ASIC_EVT_PVR_OPB_OUTOFMEM,ASIC_EVT_PVR_TA_INPUT_OVERFLOW,
+    ASIC_EVT_PVR_TA_INPUT_ERR,ASIC_EVT_PVR_ISP_OUTOFMEM,ASIC_EVT_PVR_STRIP_HALT};
+void guard_event(uint32_t code,void* data){
+    const unsigned i=unsigned(reinterpret_cast<std::uintptr_t>(data));
+    if(i<5 && guard_kos[i].hdl)guard_kos[i].hdl(code,guard_kos[i].data); // KOS PVR_RENDER_DBG builds only
+    if(i<3)guard_ta_faults=guard_ta_faults|(1U<<i);else guard_render_faults=guard_render_faults|(1U<<i);
+}
+void install_guard(){
+    // Release KOS leaves these events unhooked and disabled; enable them.
+    for(unsigned i=0;i<5;++i){
+        guard_kos[i]=asic_evt_set_handler(kGuardEvents[i],guard_event,reinterpret_cast<void*>(std::uintptr_t(i)));
+        asic_evt_enable(kGuardEvents[i],ASIC_IRQ_DEFAULT);
+    }
+    re4dc_log("native TA guard: vertbuf=%u reserve=%u..%u discard=%d estimate=%u+%u/vertex\n",
+        kGuardVertbuf,kGuardMin,kGuardMax,RE4DC_TA_GUARD>=2,kParamPerHeader,kParamPerVertex);
+}
+unsigned guard_estimate(){return unsigned((std::uint64_t(guard_sw)*guard_scale)>>8);}
+unsigned guard_hw_free(){
+    const unsigned start=PVR_GET(PVR_TA_VERTBUF_START),pos=PVR_GET(PVR_TA_VERTBUF_POS),end=PVR_GET(PVR_TA_VERTBUF_END);
+    if(end<=start || pos<start)return ~0U; // registers not live (emulator): estimate only
+    return pos<end?end-pos:0;
+}
+// Part admission (reserve): translucent drain parts keep a quarter reserve so
+// the opaque list is what yields first; UI quads are never refused.
+bool guard_admit(bool draining){
+    const unsigned need=draining?guard_reserve/4:guard_reserve;
+    const unsigned est=guard_estimate();
+    const unsigned sw_free=est<kGuardVertbuf?kGuardVertbuf-est:0;
+    if(std::min(sw_free,guard_hw_free())>=need)return true;
+    ++guard_skips;return false;
+}
+void guard_account(unsigned header_slots,unsigned vertex_slots){
+    guard_sw+=header_slots*kParamPerHeader+vertex_slots*kParamPerVertex;
+}
+void guard_scene_begin(){guard_sw=0;guard_ta_faults=0;}
+// Before the last list closes (afterwards KOS may already retarget the TA
+// registers to the next bank). Returns the TA-time fault bits of the scene.
+unsigned guard_scene_end(){
+    const unsigned start=PVR_GET(PVR_TA_VERTBUF_START),pos=PVR_GET(PVR_TA_VERTBUF_POS),end=PVR_GET(PVR_TA_VERTBUF_END);
+    const unsigned opb=PVR_GET(PVR_TA_OPB_POS),opb_end=PVR_GET(PVR_TA_OPB_END),opb_init=PVR_GET(PVR_TA_OPB_INIT);
+    unsigned faults=guard_ta_faults;
+    if(pos>=end)faults|=8;
+    if(opb*4>=opb_end && opb!=opb_init)faults|=16; // dca3 vertexOverflown(); Flycast's OPB_POS differs
+    guard_hw_last=pos>start?pos-start:0;guard_sw_last=guard_sw;guard_opb_last=opb;
+    guard_hw_peak=std::max(guard_hw_peak,guard_hw_last);guard_sw_peak=std::max(guard_sw_peak,guard_sw_last);
+    // Calibrate the estimate on hardware (Flycast reports 0: keep 1.0).
+    if(guard_hw_last && guard_sw && !(faults&8))
+        guard_scale=std::clamp(unsigned((std::uint64_t(guard_hw_last)<<8)/guard_sw),128U,384U);
+    if(faults){++guard_fault_frames;guard_reserve=std::min(guard_reserve+32*1024,kGuardMax);}
+    else if(guard_reserve>kGuardMin+4*1024)guard_reserve-=4*1024;else guard_reserve=kGuardMin;
+    guard_ta_faults=0;
+    return faults;
+}
+// After the render fence: render-time faults of the scene being resolved.
+bool guard_present(bool present,unsigned ta_faults){
+    const int o=irq_disable();const unsigned render=guard_render_faults;guard_render_faults=0;irq_restore(o);
+    if(render)++guard_render_fault_frames;
+    if((ta_faults|render) && present && RE4DC_TA_GUARD>=2){++guard_discards;return false;}
+    return present;
+}
+#endif
+#if RE4DC_PVR_PIPELINE
+// Frame N's render and flip overlap frame N+1's CPU work. The late present/
+// discard decision is unchanged (Render_swap still makes it); a presenter
+// thread performs the same fence + pvr_resolve_frame() the frame owner used
+// to block in. Every later PVR owner step waits for that resolution first:
+// the next scene begin (single TA bank, render_completed must be clear) and,
+// through re4dc_pvr_vram_fence(), any VRAM free or upload. Game threads and
+// the tick order are untouched; the presenter never calls source code.
+volatile unsigned present_submitted,present_resolved,present_failures;
+unsigned present_reported,fence_blocked,fence_timeouts;
+std::uint64_t fence_wait_us;
+void present_report(){
+    const unsigned failures=present_failures;
+    if(failures!=present_reported){
+        present_reported=failures;
+        if(failures&1)re4dc_missing("native stream completion fence failed");
+        if(failures&2)re4dc_missing("native source presentation resolve failed");
+    }
+}
+#if RE4DC_PVR_PIPELINE==2
+// PIPELINE=2: no presenter thread. Needs the KOS async-present patch
+// (pvr_present_async/pvr_present_wait): the decision is recorded at scene
+// finish and applied by the render-done IRQ; the flip happens in the vblank
+// IRQ. With TA_DOUBLEBUF=1 frame N+1's TA input also overlaps frame N's render.
+// Render faults are only known after the decision, so TA_GUARD>=2 discards on
+// TA faults of this scene and render faults of earlier scenes.
+void start_presenter(){
+    re4dc_log("native frame pipeline: KOS async present (IRQ-applied decision, vblank flip) ta=%s\n",RE4DC_TA_DOUBLEBUF?"double-buffered":"single-bank");
+}
+void present_fence(){
+    if(!pvr_present_pending())return;
+    const auto start=timer_us_gettime64();
+    if(pvr_present_wait()<0){++fence_timeouts;present_failures=present_failures|1;}
+    ++fence_blocked;fence_wait_us+=timer_us_gettime64()-start;
+    present_resolved=present_submitted;
+    present_report();
+}
+void present_submit(bool present,unsigned ta_faults){
+#if RE4DC_TA_GUARD
+    present=guard_present(present,ta_faults);
+#else
+    (void)ta_faults;
+#endif
+    present_submitted=present_submitted+1;
+    // One decision is outstanding at a time: frame N's flip normally happened
+    // long before frame N+1 finishes, so this rarely blocks.
+    if(pvr_present_async(present)<0){
+        present_fence();
+        if(pvr_present_async(present)<0){present_failures=present_failures|2;present_report();}
+    }
+}
+#else
+semaphore_t present_request;
+volatile bool present_decision;
+volatile unsigned present_ta_faults;
+alignas(32) unsigned char presenter_stack[4096];
+void* presenter_main(void*){
+    for(;;){
+        sem_wait(&present_request);
+        bool present=present_decision;
+        unsigned failure=0;
+        {
+            PvrWaiter waiter;
+            if(re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready)failure=1;
+            else {
+#if RE4DC_TA_GUARD
+                present=guard_present(present,present_ta_faults);
+#endif
+                if(pvr_resolve_frame(present)<0)failure=2;
+            }
+        }
+        const int o=irq_disable();
+        present_failures=present_failures|failure;present_resolved=present_resolved+1;
+        genwait_wake_all((void*)&present_resolved);
+        irq_restore(o);
+    }
+    return nullptr;
+}
+void start_presenter(){
+    sem_init(&present_request,0);
+    kthread_attr_t a{};
+    a.stack_size=sizeof(presenter_stack);a.stack_ptr=presenter_stack;
+    a.prio=2;a.label="re4dc-present";a.create_detached=true;
+    kthread_t* t=thd_create_ex(&a,presenter_main,nullptr);
+    if(!t)re4dc_missing("native presenter thread create failed");
+    re4dc_log("native frame pipeline: presenter tid=%d prio=2 stack=static:%u\n",t?int(t->tid):-1,unsigned(sizeof(presenter_stack)));
+}
+void present_fence(){
+    if(present_resolved==present_submitted)return;
+    const auto start=timer_us_gettime64();
+    {
+        PvrWaiter waiter;
+        const int o=irq_disable();
+        while(present_resolved!=present_submitted)
+            if(genwait_wait((void*)&present_resolved,"re4dc present fence",250)<0)++fence_timeouts;
+        irq_restore(o);
+    }
+    ++fence_blocked;fence_wait_us+=timer_us_gettime64()-start;
+    present_report();
+}
+void present_submit(bool present,unsigned ta_faults){
+    present_decision=present;present_ta_faults=ta_faults;present_submitted=present_submitted+1;
+    sem_signal(&present_request);
+    // Let the higher-priority presenter reach its render-done wait now, as
+    // OSResumeThread yields to a resumed higher-priority thread.
+    thd_pass();
+}
+#endif
+#endif
+
 #if RE4DC_PVR_STREAM
 // One serial PVR owner, no extra framebuffer or whole-scene packet copy.
 // KOS's opt-in manual flip preserves the source's late presentation decision.
 bool stream_scene,stream_aborted,stream_retire;
 unsigned stream_model_bytes,stream_peak_bytes,stream_discards,stream_black_frames;
+#if RE4DC_TA_DIRECT
+bool direct_open;               // re4dc_model_direct_begin/end: SQ held
+unsigned direct_parts,direct_slots;
+#endif
 pvr_list_t stream_list=PVR_LIST_TR_POLY;
 #if RE4DC_D349_RENDERER_STACK
 pvr_list_t desired_list=PVR_LIST_OP_POLY;
 #endif
 void stream_open() {
+#if RE4DC_PVR_PIPELINE
+    present_fence(); // previous scene flipped/discarded: TA bank and back buffer free
+#endif
     pvr_scene_begin();
+#if RE4DC_TA_GUARD
+    guard_scene_begin();
+#endif
 #if RE4DC_D349_RENDERER_STACK
     stream_list=desired_list;
 #else
@@ -206,17 +509,109 @@ void stream_send(const void* data,unsigned bytes) {
     sq_lock((void*)PVR_TA_INPUT);
     re4dc::render::submit_pvr(data,bytes);
     sq_unlock();
+#if RE4DC_TA_GUARD
+    guard_account(1,bytes/32-1); // every call is one header + its vertices
+#endif
 }
 void stream_close(bool present) {
     RE4DC_PROFILE_SCOPE(PresentFence);
     if(!stream_scene)stream_open();
+#if RE4DC_TA_GUARD
+    const unsigned ta_faults=guard_scene_end();
+#else
+    const unsigned ta_faults=0;
+#endif
+    (void)ta_faults;
     sq_lock((void*)PVR_TA_INPUT);
     if(pvr_list_finish()<0 || pvr_scene_finish()<0)re4dc_missing("native stream finish failed");
     stream_scene=false;
+#if RE4DC_PVR_PIPELINE
+    present_submit(present,ta_faults); // resolved by the presenter; fenced before reuse
+#else
+    {
+#if RE4DC_PVR_FAST_WAKE
+    PvrWaiter waiter;
+#endif
     if(re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready)
         re4dc_missing("native stream completion fence failed");
-    if(pvr_resolve_frame(present)<0)re4dc_missing("native source presentation resolve failed");
+#if RE4DC_TA_GUARD
+    const bool shown=guard_present(present,ta_faults);
+#else
+    const bool shown=present;
+#endif
+    if(pvr_resolve_frame(shown)<0)re4dc_missing("native source presentation resolve failed");
+    }
+#endif
     if(!present)++stream_discards;
+}
+#endif
+#if RE4DC_PERF_HUD
+// On-screen timing for real consoles (a GDEMU/ODE setup has no serial or BBA
+// console, and the RAM log is unreadable there). Untextured TR quads at the
+// end of each presented frame; photograph or film the screen. Bars at 4 px/ms
+// with ticks at 16.7 / 33.3 / 50 ms, value left of each bar (7-segment, in
+// 0.1 ms; TA row in KiB, bar = share of the vertex buffer). Rows, top down:
+//   white   flip-to-flip interval (KOS stats: the displayed frame time)
+//   green   CPU frame period (re4dc_ui_begin to re4dc_ui_begin)
+//   yellow  CPU busy from frame begin to this present
+//   cyan    PVR render time of the last scene (real fill/sort cost on HW)
+//   magenta present wait of the last frame (fence or blocking resolve)
+//   orange  TA parameter bytes of the last scene (red: overflow/fault)
+std::uint64_t hud_begin,hud_begin_prev;
+struct HudBatch { alignas(32) pvr_vertex_t v[128]; unsigned n=1; };
+void hud_flush(HudBatch& b){if(b.n>1)stream_send(b.v,b.n*32);b.n=1;}
+void hud_rect(HudBatch& b,float x,float y,float w,float h,std::uint32_t argb){
+    if(b.n+4>128)hud_flush(b);
+    const float xs[4]={x,x,x+w,x+w},ys[4]={y+h,y,y+h,y};
+    for(unsigned k=0;k<4;++k){
+        auto& v=b.v[b.n++];
+        v.flags=k==3?PVR_CMD_VERTEX_EOL:PVR_CMD_VERTEX;
+        v.x=xs[k];v.y=ys[k];v.z=1.0f;v.u=v.v=0;v.argb=argb;v.oargb=0;
+    }
+}
+void hud_number(HudBatch& b,float x,float y,unsigned value,bool tenths,std::uint32_t argb){
+    static const unsigned char seg[10]={0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f};
+    constexpr float W=7,H=12,T=2,P=10;
+    value=std::min(value,99999U);
+    for(int d=0;d<5;++d){
+        const unsigned digit=value%10;
+        const float dx=x+(4-d)*P;
+        if(d>(tenths?1:0) && value==0)break;           // "0.0" / "0" minimum
+        value/=10;
+        const unsigned m=seg[digit];
+        if(m&1)hud_rect(b,dx,y,W,T,argb);
+        if(m&2)hud_rect(b,dx+W-T,y,T,H/2,argb);
+        if(m&4)hud_rect(b,dx+W-T,y+H/2,T,H/2,argb);
+        if(m&8)hud_rect(b,dx,y+H-T,W,T,argb);
+        if(m&16)hud_rect(b,dx,y+H/2,T,H/2,argb);
+        if(m&32)hud_rect(b,dx,y,T,H/2,argb);
+        if(m&64)hud_rect(b,dx,y+H/2-T/2,W,T,argb);
+        if(d==0 && tenths)hud_rect(b,dx-3,y+H-T,2,T,argb);
+    }
+}
+HudBatch hud_batch; // 4 KiB .bss (PERF_HUD only), not the caller's stack
+void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_bytes,unsigned ta_capacity,bool ta_fault){
+    HudBatch& b=hud_batch;b.n=1;
+    pvr_poly_cxt_t c;pvr_poly_cxt_col(&c,PVR_LIST_TR_POLY);
+    c.gen.culling=PVR_CULLING_NONE;c.depth.comparison=PVR_DEPTHCMP_ALWAYS;c.depth.write=PVR_DEPTHWRITE_DISABLE;
+    pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);
+    std::memcpy(&b.v[0],&header,sizeof(header));
+    const std::uint64_t now=timer_us_gettime64();
+    const unsigned period=hud_begin_prev?unsigned(hud_begin-hud_begin_prev):0,busy=unsigned(now-hud_begin);
+    constexpr float X=40,BX=100,Y=324,R=18,PX=4.0f/1000.0f,MAXW=480;
+    const unsigned us[5]={flip_us,period,busy,render_us,wait_us};
+    const std::uint32_t colors[6]={0xe0ffffffU,0xe040ff40U,0xe0ffff40U,0xe040ffffU,0xe0ff40ffU,ta_fault?0xf0ff2020U:0xe0ffa040U};
+    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,6*R+6,0x90000000U);   // backdrop
+    for(unsigned r=0;r<5;++r){
+        hud_number(b,X,Y+r*R,(us[r]+50)/100,true,colors[r]);
+        hud_rect(b,BX,Y+r*R+2,std::min(MAXW,float(us[r])*PX),8,colors[r]);
+    }
+    const float ta=ta_capacity?std::min(1.0f,float(ta_bytes)/float(ta_capacity)):0.0f;
+    hud_number(b,X,Y+5*R,ta_bytes/1024,false,colors[5]);
+    hud_rect(b,BX,Y+5*R+2,ta*MAXW,8,colors[5]);
+    hud_rect(b,BX+MAXW,Y+5*R,1,12,0xffffffffU);          // 100% of the vertex buffer
+    for(float ms:{16.683f,33.367f,50.05f})hud_rect(b,BX+ms*1000*PX,Y-2,1,5*R,0xffffffffU);
+    hud_flush(b);
 }
 #endif
 
@@ -346,6 +741,11 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     return slot;
 }
 }
+#if RE4DC_PVR_PIPELINE
+// Called by room/texture_package.cpp (PVR_PIPELINE builds) before VRAM is
+// freed or uploaded: it may be referenced by the scene not yet resolved.
+extern "C" void re4dc_pvr_vram_fence(){present_fence();}
+#endif
 extern "C" void re4dc_ui_invalidate_sources(){nsource=0;re4dc_model_reset_draw_plans();}
 extern "C" int re4dc_ui_bind_core(void* archive,unsigned bytes){
     nsource=0;
@@ -434,7 +834,12 @@ extern "C" void re4dc_ui_retire_room(){
     if(stream_scene){stream_aborted=true;stream_retire=true;}
     else
 #endif
+#if RE4DC_PVR_PIPELINE
+    // The presenter owns the last scene until it resolves; then fence as before.
+    if(ready && (present_fence(),re4dc::gpu::quiesce())!=re4dc::gpu::FenceResult::ready)
+#else
     if(ready && re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready)
+#endif
         re4dc_missing("native room retire fence failed");
     // No queued draw may outlive its source room. Shared cached uploads may be
     // reloaded from their stable identities; no archive texels are needed.
@@ -457,7 +862,9 @@ extern "C" void re4dc_ui_init(){
     // Serialized ownership uses one TA bank. This pinned KOS still reserves
     // both banks, so doubling their size costs another 1MiB of actual VRAM.
     // Flycast's zero TA-used register does not qualify physical TA capacity.
-    params.vertex_buf_size=1024*1024;params.vbuf_doublebuf_disabled=1;
+    params.vertex_buf_size=RE4DC_TA_VERTBUF_KB*1024;params.vbuf_doublebuf_disabled=!RE4DC_TA_DOUBLEBUF;
+    if(RE4DC_TA_OPB_BINS==32){params.opb_sizes[PVR_LIST_OP_POLY]=PVR_BINSIZE_32;params.opb_sizes[PVR_LIST_TR_POLY]=PVR_BINSIZE_32;}
+    params.opb_overflow_count=RE4DC_TA_OPB_OVERFLOW;
 #endif
     params.autosort_disabled=1; // source OT is the UI blending order
     ready=pvr_init(&params)==0;
@@ -466,6 +873,19 @@ extern "C" void re4dc_ui_init(){
 #if RE4DC_PVR_STREAM
         if(pvr_set_manual_flip(true)<0)re4dc_missing("native manual presentation init failed");
         re4dc_log("native source stream: enabled, scratch=65536 TA=1048576 single-bank; late hold/retire/black preserved\n");
+#endif
+#if RE4DC_PVR_FAST_WAKE || RE4DC_PVR_PIPELINE
+        install_fast_wake();
+#endif
+#if RE4DC_PVR_PIPELINE
+        start_presenter();
+#endif
+#if RE4DC_TA_GUARD
+        install_guard();
+#endif
+#if RE4DC_TA_GUARD || RE4DC_PERF_HUD || RE4DC_TA_VERTBUF_KB!=1024 || RE4DC_TA_DOUBLEBUF || RE4DC_TA_OPB_BINS!=16 || RE4DC_TA_OPB_OVERFLOW!=3
+        re4dc_log("native VRAM layout: vertbuf=%u KiB x%u banks (%s) opb_bins=%u overflow=%u texture_pool_free=%u\n",
+            unsigned(RE4DC_TA_VERTBUF_KB),2U,RE4DC_TA_DOUBLEBUF?"double-buffered":"single-bank use",unsigned(RE4DC_TA_OPB_BINS),unsigned(RE4DC_TA_OPB_OVERFLOW),(unsigned)pvr_mem_available());
 #endif
         pvr_set_bg_color(0,0,0);
         // Source camera-space units can exceed 10,000. KOS's default 0.0001
@@ -476,6 +896,9 @@ extern "C" void re4dc_ui_init(){
     }
 }
 extern "C" void re4dc_ui_begin(){
+#if RE4DC_PERF_HUD
+    hud_begin_prev=hud_begin;hud_begin=timer_us_gettime64();
+#endif
     re4dc_model_preparation_frame();
 #if RE4DC_D349_RENDERER_STACK
     if(deferred_first)re4dc_missing("source pose queue crossed frame reset");
@@ -488,7 +911,13 @@ extern "C" void re4dc_ui_begin(){
     if(model_diagnostic==1 && frame%120==0)
         re4dc_log("native model DIAGNOSTIC boundary: frame=%u previous_bytes=%u committed_parts=%u invalid=%u resource=%u overflow=%u presented=%u\n",frame,model_used*32,model_parts,model_invalid,model_resource,model_overflow,model_presented);
     nquad=0;model_used=0;++frame;
+#if RE4DC_PVR_PIPELINE
+    // The previous scene may still render/await its flip: do not wait here.
+    // Its fence precedes this frame's scene begin and any VRAM change.
+    frame_ready=ready;
+#else
     frame_ready=ready && re4dc::gpu::quiesce()==re4dc::gpu::FenceResult::ready;
+#endif
     re4dc_prepare_model_assets(); // registration/update work precedes frame submission
     re4dc::profile::begin();
 #if defined(__sh__)
@@ -563,6 +992,29 @@ extern "C" void re4dc_ui_present(){
 #endif
         ++drawn;
     }
+#if RE4DC_PERF_HUD
+    if(!re4dc_vi_black()){
+        pvr_stats_t hud_stats;pvr_get_stats(&hud_stats);
+        const unsigned start=PVR_GET(PVR_TA_VERTBUF_START),pos=PVR_GET(PVR_TA_VERTBUF_POS);
+        unsigned ta_bytes=pos>start?pos-start:0;   // live on hardware, 0 in Flycast
+        bool ta_fault=false;
+#if RE4DC_TA_GUARD
+        static unsigned hud_faults;
+        ta_bytes=std::max(ta_bytes,guard_estimate());
+        ta_fault=guard_fault_frames+guard_render_fault_frames!=hud_faults;hud_faults=guard_fault_frames+guard_render_fault_frames;
+#else
+        ta_bytes=std::max(ta_bytes,stream_model_bytes/32*24);
+#endif
+#if RE4DC_PVR_PIPELINE
+        static std::uint64_t hud_fence;
+        const unsigned wait_us=unsigned(fence_wait_us-hud_fence);hud_fence=fence_wait_us;
+#else
+        const unsigned wait_us=completed_frame.present_wait_us;
+#endif
+        hud_draw(unsigned(hud_stats.frame_last_time/1000),unsigned(hud_stats.rnd_last_time/1000),wait_us,
+                 ta_bytes,RE4DC_TA_VERTBUF_KB*1024U,ta_fault);
+    }
+#endif
 #if RE4DC_PVR_STREAM
     stream_close(true);
     if(stream_model_bytes && model_presented++<3)
@@ -571,6 +1023,23 @@ extern "C" void re4dc_ui_present(){
         pvr_stats_t stats;pvr_get_stats(&stats);
         re4dc_log("native stream: frame=%u model_bytes=%u peak=%u discarded=%u black_frames=%u vram_free=%u textures=%u used=%u loads=%u missing=%u ta_used=%u ta_peak=%u present_us=%llu registration_us=%llu render_us=%llu\n",frame,stream_model_bytes,stream_peak_bytes,stream_discards,stream_black_frames,(unsigned)pvr_mem_available(),kTextureCount,used,loads,missing,(unsigned)stats.vtx_buffer_used,(unsigned)stats.vtx_buffer_used_max,(unsigned long long)(stats.frame_last_time/1000),(unsigned long long)(stats.reg_last_time/1000),(unsigned long long)(stats.rnd_last_time/1000));
     }
+#if RE4DC_PVR_FAST_WAKE || RE4DC_PVR_PIPELINE
+    if(frame%120==0){
+#if RE4DC_PVR_PIPELINE
+        re4dc_log("native pipeline: frame=%u mode=%s submitted=%u resolved=%u fence_blocked=%u fence_wait_us=%llu fence_timeouts=%u failures=%u wake_render=%u wake_vblank=%u\n",
+            frame,RE4DC_PVR_PIPELINE==2?"kos-async":"presenter",present_submitted,present_resolved,fence_blocked,(unsigned long long)fence_wait_us,fence_timeouts,present_failures,wake_renders,wake_vblanks);
+#else
+        re4dc_log("native pipeline: frame=%u mode=fast-wake wake_render=%u wake_vblank=%u\n",frame,wake_renders,wake_vblanks);
+#endif
+    }
+#endif
+#if RE4DC_TA_GUARD
+    if(frame%120==0)re4dc_log("native TA guard: frame=%u hw_param=%u hw_peak=%u est=%u est_peak=%u scale=%u reserve=%u skips=%u ta_fault_frames=%u render_fault_frames=%u discards=%u opb_pos=%08x\n",
+        frame,guard_hw_last,guard_hw_peak,guard_sw_last,guard_sw_peak,guard_scale,guard_reserve,guard_skips,guard_fault_frames,guard_render_fault_frames,guard_discards,guard_opb_last);
+#endif
+#if RE4DC_TA_DIRECT
+    if(frame%120==0)re4dc_log("native direct: frame=%u parts=%u slots=%u\n",frame,direct_parts,direct_slots);
+#endif
 #else
     pvr_list_finish();pvr_scene_finish();
 #endif
@@ -675,6 +1144,12 @@ extern "C" int re4dc_model_packet_reserve(const Re4dcModelPart* p,Re4dcModelPack
     if(p->material_flags&4)reason|=16;
 #endif
     if(p->image.format>=8 && p->image.format!=14)reason|=32;
+#if RE4DC_TA_GUARD && RE4DC_D349_RENDERER_STACK
+    if(!reason && !guard_admit(draining_parts)){
+        // Budget skip, not a state reject: the part is simply not drawn.
+        ++model_capacity_rejects;return 0;
+    }
+#endif
     if(!p->image.pixels)reason|=64;
     if(!p->image.width || !p->image.height || p->image.width>1024 || p->image.height>1024)reason|=128;
     if(reason){
@@ -800,6 +1275,46 @@ extern "C" void re4dc_model_packet_abort(){
     // Previous chunks may already be in TA. Never present an incomplete model:
     // reject further submissions and let the same source owner discard/fence it.
     stream_aborted=true;model_used=0;model_handle=nullptr;
+#endif
+}
+
+extern "C" int re4dc_model_direct_enabled(){return RE4DC_TA_DIRECT;}
+extern "C" int re4dc_model_direct_begin(const Re4dcModelPart* p,Re4dcModelDirect* out){
+#if RE4DC_TA_DIRECT
+    if(direct_open){re4dc_missing("native direct part nested");return 0;}
+    Re4dcModelPacket packet{};
+    // Same qualification, texture bind, pass selection and header as the
+    // packet path; the header lands in the slab, then goes out by store queue.
+    if(!re4dc_model_packet_begin(p,&packet))return 0;
+    if(!stream_scene)stream_open();
+    auto* sq=static_cast<std::uint32_t*>(static_cast<void*>(sq_lock((void*)PVR_TA_INPUT)));
+    const auto* header=reinterpret_cast<const std::uint32_t*>(model_packets+model_used);
+    for(unsigned i=0;i<8;++i)sq[i]=header[i];
+    sq_flush(sq);
+    direct_open=true;
+    model_handle->frame=frame; // the header is in the TA: pinned for this scene
+    ++frame_pvr_calls;frame_pvr_bytes+=32;stream_model_bytes+=32;
+    out->sq=sq+8;out->scratch=packet.vertices;out->scratch_capacity=packet.capacity;
+    out->u_scale=packet.u_scale;out->v_scale=packet.v_scale;
+    return 1;
+#else
+    (void)p;(void)out;return 0;
+#endif
+}
+extern "C" void re4dc_model_direct_end(unsigned vertices){
+#if RE4DC_TA_DIRECT
+    if(!direct_open)return;
+    sq_unlock();direct_open=false;
+    if(vertices>32767)re4dc_missing("native direct part exceeded the store-queue window");
+    ++direct_parts;direct_slots+=vertices;
+#if RE4DC_TA_GUARD
+    guard_account(1,vertices);
+#endif
+    frame_pvr_bytes+=vertices*32;stream_model_bytes+=vertices*32;
+    if(stream_model_bytes>stream_peak_bytes)stream_peak_bytes=stream_model_bytes;
+    model_used=0;
+#else
+    (void)vertices;
 #endif
 }
 

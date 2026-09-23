@@ -8,8 +8,23 @@
 #include <cstring>
 #include <cstdlib>
 
+// Game PVR_PIPELINE=1 lets the PVR render the previous scene while the CPU
+// continues; its frame owner waits for that render before VRAM is freed or
+// overwritten. Other builds (room tool, default game) compile nothing here.
+#ifndef RE4DC_PVR_PIPELINE
+#define RE4DC_PVR_PIPELINE 0
+#endif
+#if RE4DC_PVR_PIPELINE
+extern "C" void re4dc_pvr_vram_fence();
+#endif
+
 namespace re4dc::texture {
 namespace {
+inline void vram_fence() {
+#if RE4DC_PVR_PIPELINE
+    re4dc_pvr_vram_fence();
+#endif
+}
 
 std::uint32_t crc_update(std::uint32_t crc, const std::uint8_t* data, std::size_t size) {
     for(std::size_t i = 0; i < size; ++i) {
@@ -278,6 +293,7 @@ bool Package::upload() {
         error_ = "previous upload did not complete; close and load again";
         return false;
     }
+    vram_fence();
     pvr_textures_ = static_cast<pvr_ptr_t*>(std::calloc(header_->texture_count, sizeof(pvr_ptr_t)));
     if(pvr_textures_ == nullptr) {
         error_ = "texture pointer allocation failed";
@@ -410,6 +426,7 @@ bool Package::release_payload() {
 
 void Package::close() {
     if(pvr_textures_ != nullptr) {
+        vram_fence();
         if(header_ != nullptr) {
             for(std::uint32_t index = 0; index < header_->texture_count; ++index) {
                 // Borrowed pointers are aliases of an owner's allocation;

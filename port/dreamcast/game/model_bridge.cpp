@@ -82,8 +82,15 @@ extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
     p.image=selected;p.uv_offset[0]=scroll_u;p.uv_offset[1]=scroll_v;p.wrap_s=wrap_s;p.wrap_t=wrap_t;
 #if RE4DC_D349_RENDERER_STACK
     p.mask=mask;p.mask_ref=mask_ref;p.mask_same_uv=mask_same_uv;
+#if RE4DC_BRIDGE_LEAN
+    // Borrow the live GX state for this synchronous submit (no 0.5 KiB zero +
+    // copy per part); nothing changes it before re4dc_model_submit returns and
+    // the translucent queue still snapshots its own copy.
+    p.lighting=re4dc_gx_model_lighting_ref();
+#else
     re4dc::render::SourceLighting lighting;
     re4dc_gx_model_lighting(&lighting);p.lighting=&lighting;
+#endif
     const bool nrm8=(d->flags&0x20000000U)!=0;
     p.static_geometry=rigid && m->kindid==2 && !d->shapeOfs && !(info->be_flag&2);
     p.normal_stride=nrm8?(rigid?4:3):(rigid?8:6);p.normal_shift=nrm8?6:14;

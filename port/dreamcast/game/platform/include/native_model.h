@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include "native_ui.h"
 #include "../../../room/source_lighting.hpp"
 // View of a qualified source ModelData part. The source already selected and
@@ -53,6 +54,26 @@ extern "C" void re4dc_model_result(unsigned reason,unsigned input_triangles,unsi
 extern "C" int re4dc_model_packet_streaming();
 extern "C" void re4dc_model_packet_abort();
 
+// Direct TA submission (frame owner knob TA_DIRECT=1; ta_direct.hpp helpers).
+// After re4dc_model_packet_reserve() qualified the part, direct_begin() does
+// packet_begin()'s texture bind, pass/list selection (translucent deferral is
+// unchanged: deferred parts never reach an emitter before the drain) and
+// header build, sends the header straight into the TA and returns with the
+// TA store queues locked. The emitter then writes FINAL vertices to 'sq'
+// (32 bytes per slot, pref after each; nothing can be rolled back, so only
+// qualified strips/clipped output go out) and calls direct_end() with the
+// number of vertex slots written. 'scratch' is the part's private packet
+// slab range (never sent), e.g. for the transform-once meshlet cache. Between
+// begin and end: no texture/file I/O, no yielding, no other TA submission,
+// at most 32768 slots (1 MiB store-queue window). A failure after begin
+// behaves like a streamed packet failure: re4dc_model_packet_abort() then
+// direct_end(). Returns 0 (nothing sent) when disabled or not eligible; the
+// caller keeps its packet path.
+struct Re4dcModelDirect { std::uint32_t* sq; void* scratch; unsigned scratch_capacity; float u_scale,v_scale; };
+extern "C" int re4dc_model_direct_enabled();
+extern "C" int re4dc_model_direct_begin(const Re4dcModelPart*,Re4dcModelDirect*);
+extern "C" void re4dc_model_direct_end(unsigned vertices);
+
 // Source cModel 0/1 selects GX_CULL_FRONT/BACK, not the viewer helper's
 // screen-area values. GXSetCullMode swaps the two hardware bits; with GX's
 // negative viewport Y scale, FRONT rejects positive screen area, BACK negative.
@@ -99,6 +120,9 @@ extern "C" void re4dc_model_retire_draw_plans();
 extern "C" void* re4dc_model_metadata_storage(unsigned* bytes);
 
 extern "C" void re4dc_gx_model_lighting(re4dc::render::SourceLighting*);
+// Live GX channel-0 lighting state (BRIDGE_LEAN=1): parts borrow it for the
+// synchronous submit; the translucent queue snapshots it as before.
+extern "C" const re4dc::render::SourceLighting* re4dc_gx_model_lighting_ref();
 
 // Returns one only when this part has been queued/failed; zero submits now.
 // The source Render() sync boundary drains every borrowed pose before reuse.
