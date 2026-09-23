@@ -18,13 +18,17 @@ from prepare_native_ui import compact_spans, select_upload_only, native_identity
 MAGIC=b'R4MOTBL\0'
 STRIDE=20
 MAX_CLIP=32768
+# Ganado modules link the shared em10.cpp (config/G4BE08/modules.py): same EFF slot0
+# family, FCV/SEQ transport and source motion evaluators as em12 (frontier W1).
+GANADO=('em12.drs','em15.drs')
+SMALL=('em26.drs','em28.drs','em21.drs')
 
 def prepare(source, destination, hot_slots=(), textures=None, keep_motion_resident=False, compact_effects=False):
     source,destination=map(Path,(source,destination))
     name=source.name.lower();file='em/'+name
-    if name not in ('em12.drs','pl00.drs','wep02.drs') or (name!='em12.drs' and not keep_motion_resident):
-        raise ValueError('supported contracts: em12 motion/textures; pl00/wep02 textures only')
-    if compact_effects and name!='em12.drs':raise ValueError('only em12 effect consumers qualified')
+    if name not in GANADO+SMALL+('pl00.drs','wep02.drs') or (name not in GANADO and not keep_motion_resident):
+        raise ValueError('supported contracts: Ganado (em12/em15) motion/textures; em26/em28/em21/pl00/wep02 textures only')
+    if compact_effects and name not in GANADO+SMALL:raise ValueError('only enemy EFF slot0 effect consumers qualified')
     if keep_motion_resident and textures is None and not compact_effects:raise ValueError('no selected compaction')
     if destination.exists():raise FileExistsError(destination)
     hot_slots=set(hot_slots)
@@ -62,14 +66,14 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
         # automatically qualified by this filename extension.
         top_tpl={file+':0#'+str(i) for i,t in enumerate(tags) if t==b'TPL\0'}
         ids=[]
-        if name=='em12.drs':
+        if name in GANADO:
             if tags[0]!=b'EFF\0':raise ValueError('em12 effect family changed')
             eff=offsets[0];ids_at=eff+struct.unpack_from('<I',body,eff+4)[0]
             num_ids=struct.unpack_from('<I',body,ids_at)[0]
             ids=[struct.unpack_from('<H',body,ids_at+4+i*8)[0] for i in range(num_ids)]
         def allowed(ctx):
             if ctx in top_tpl:return True
-            if name=='em12.drs' and ctx.startswith(file+':0#0/tpl'):
+            if name in GANADO and ctx.startswith(file+':0#0/tpl'):
                 i=int(ctx.rsplit('tpl',1)[1]);return i<len(ids) and ids[i]!=0xfe
             return False
         local_palettes=[(o-base,d,c) for o,d,c in palettes if base<=o<base+boundary]
@@ -90,7 +94,7 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
         native=codec.serialise(parsed,'<')
         if native!=body[off:end]:raise ValueError('native FCV differs from qualified archive')
         if not parsed.joints:continue # empty motion is already 32 bytes; keep ordinary
-        if len(native)>MAX_CLIP:raise ValueError('clip exceeds validated em12 cache slot')
+        if len(native)>MAX_CLIP:raise ValueError('clip exceeds validated cache slot')
         prefix=codec.header_size(len(parsed.joints));resident=(prefix+31)&~31
         if resident>=len(native):continue
         crc=zlib.crc32(native)&0xffffffff
@@ -143,7 +147,7 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
             assert out[mapped(off):mapped(end)]==body[off:end]
     if rel:assert out[-64:]==body[-64:]
     packaged=mirror.replace_native_payload(converted,out)
-    report={'contract':source.stem+'-native-textures-v1' if keep_motion_resident else 'em12-source-motion-cache-v2','source_sha256':hashlib.sha256(original).hexdigest(),
+    report={'contract':source.stem+'-native-textures-v1' if keep_motion_resident else source.stem+'-source-motion-cache-v2','source_sha256':hashlib.sha256(original).hexdigest(),
             'original_static_body_bytes':size,'resident_body_bytes':len(out),
             'archive_recovery_bytes':size-len(out),'index_bytes':table_bytes,'header_growth_bytes':header_growth,
             'motion_source_bytes':sum(e['bytes'] for e in entries),'motion_header_bytes':sum(e['resident_bytes'] for e in entries),

@@ -1663,6 +1663,9 @@ FILE_FORMATS = [
     ("debug/roominfo.dat", fmt_roominfo),
     ("rel/*.rel", fmt_rel),
     ("font/*.fnt", fmt_fnt),
+    # Loose chapter-title ID data (r101.cpp r101_Event30_TitleCall: IdTexDataLoad / IdSys.set).
+    ("etc/*/id*.eff", fmt_eff),
+    ("etc/*/*.uwf", fmt_uwf),
     ("*.tpl", fmt_tpl),
 ]
 
@@ -1695,7 +1698,7 @@ def fmt_evd(sw, off, size, ctx):
     if po < 80 or ps < 16 or bo < po+ps or count > size//64:
         raise ValueError('invalid event packet/bin regions')
     sw._check(off+po, ps); sw._check(off+bo, count*64)
-    sizes = {0:16, 3:128, 4:144, 6:64, 9:80, 11:80, 12:80,
+    sizes = {0:16, 3:128, 4:144, 6:64, 9:80, 11:80, 12:80, 13:48,
              14:64, 15:32, 17:32, 26:16, 27:16, 28:64, 32:64}
     pos, end = off+po, off+po+ps
     terminated = False
@@ -1715,6 +1718,10 @@ def fmt_evd(sw, off, size, ctx):
             elif kind == 9:
                 name_at(pos+16,12); name_at(pos+28,12); sw.u32s(pos+40,7)
             elif kind in (15,17): sw.u32s(pos+16,3)
+            elif kind == 13:
+                # ExePacket_Esp (event.cpp): esp.name[0xC] @0x10, s32 type @0x1C,
+                # u8 parts @0x23 (byte, no swap); 0x24..0x2F are never read.
+                name_at(pos+16,12); sw.u32(pos+0x1C)
             if kind == 27:
                 if pos+length != end:
                     raise ValueError('event EndPac does not terminate stream')
