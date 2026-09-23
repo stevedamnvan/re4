@@ -9,7 +9,8 @@
 # 3. those become loud stubs (tools/gen_missing.py -> obj/missing.cpp) and the
 #    final link produces the ELF.
 #
-#   link.sh <target.elf> <opt-flags> <objects...>
+#   [GAME_LDFLAGS=..] link.sh <target.elf> <opt-flags> <objects...>
+# GAME_LDFLAGS (from the Makefile) goes to both links, e.g. --wrap options.
 set -e
 TARGET=$1; OPT=$2; shift 2
 OBJS="$@"
@@ -22,7 +23,7 @@ python3 tools/gen_aliases.py obj/undefined.txt obj/nm-pairs.txt obj/aliases.ld
 # manual aliases (platform/aliases-manual.ld) come first so they win
 cat platform/aliases-manual.ld obj/aliases.ld > obj/aliases-all.ld
 # pass 1: what is still unresolved after the aliases and the libraries
-if ! kos-c++ $OPT -Wl,--unresolved-symbols=ignore-all -o obj/pass1.elf $OBJS obj/aliases-all.ld > obj/pass1.log 2>&1; then
+if ! kos-c++ $OPT ${GAME_LDFLAGS:-} -Wl,--unresolved-symbols=ignore-all -o obj/pass1.elf $OBJS obj/aliases-all.ld > obj/pass1.log 2>&1; then
     cat obj/pass1.log; exit 1
 fi
 sh-elf-nm obj/pass1.elf | grep -E " [Uw] " | awk '{print $2}' | sort -u > obj/missing.txt
@@ -34,5 +35,5 @@ if grep -Eq '^_st[0-9]+_[0-9]+_(prolog|epilog)$' obj/missing.txt; then
 fi
 python3 tools/gen_missing.py obj/missing.txt obj/missing.cpp
 kos-c++ $KOS_CFLAGS $OPT -Iplatform/include -c obj/missing.cpp -o obj/missing.o
-kos-c++ $OPT -o $TARGET $OBJS obj/missing.o obj/aliases-all.ld
+kos-c++ $OPT ${GAME_LDFLAGS:-} -o $TARGET $OBJS obj/missing.o obj/aliases-all.ld
 sh-elf-size $TARGET

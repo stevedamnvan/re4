@@ -164,10 +164,13 @@ $(MODULES_MK): Makefile tools/gen_modules.py $(ROOT)/config/G4BE08/modules.py $(
 	@mkdir -p $(OBJDIR)
 	python3 tools/gen_modules.py $(ROOT)/config/G4BE08/modules $(ROOT) $(OBJDIR) $@ $(MODULES)
 include $(MODULES_MK)
+# D367 W10: platform/gdrom_mount.cpp wraps cdrom_read_toc so /cd mounts track 3
+# of a GD-ROM (a GDI on GDEMU, tools/d367/mkgdi.sh). CD-R images are unaffected.
+GAME_LDFLAGS += -Wl,--wrap=cdrom_read_toc
 
 $(TARGET): $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a $(OBJS) $(GAME30_LINK_INPUTS) tools/link.sh tools/gen_aliases.py tools/gen_missing.py platform/aliases-manual.ld
 	@if [ "$(PVR_STREAM)" = 1 ]; then test "$$($(KOS_CC_BASE)/bin/$(KOS_CC_PREFIX)-nm -g --defined-only $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a | grep -Ec ' T _pvr_(set_manual_flip|resolve_frame)$$')" -eq 2 || { echo 'PVR_STREAM requires the pinned manual-flip KOS patch' >&2; exit 1; }; fi
-	bash tools/link.sh $(TARGET) "$(GAME_OPT)" $(OBJS) $(GAME30_LINK_INPUTS)
+	GAME_LDFLAGS='$(GAME_LDFLAGS)' bash tools/link.sh $(TARGET) "$(GAME_OPT)" $(OBJS) $(GAME30_LINK_INPUTS)
 
 # Undefined-symbol inventory over every gameplay unit, REL modules included.
 census: $(CENSUS_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)

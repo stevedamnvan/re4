@@ -9,6 +9,8 @@
 # area, so KOS never sees it and every fs_open("/cd/...") returns -1 even
 # though the same image boots: the bootstrap reads the high density track
 # directly. A CD-R image keeps the one data track where KOS looks for it.
+# D367 W10: the game now wraps cdrom_read_toc (game/platform/gdrom_mount.cpp),
+# so the GDEMU image is a GDI built by mkgdi.sh from the same inputs.
 set -euo pipefail
 ELF="$1"
 DATA="$2"

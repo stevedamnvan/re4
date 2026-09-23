@@ -5,6 +5,8 @@
 # MIRROR, FIXTURES_SRC and KEYED are private (locally extracted game data); defaults are
 # the original D367 workstation paths. TEXDIRS overlays *.re4tex files onto /cd/dc/tex/
 # (e.g. the PS2 tree bark replacing its GC source key).
+# GDI=1 also writes the GDEMU image (mkgdi.sh) from the same tree to GDI_OUT
+# (default <disc-dir>/gdi; put it on /mnt/d when WSL's host drive is short).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 build=${1:?usage: stage.sh <build-dir> <disc-dir>}
@@ -25,6 +27,12 @@ for d in ${TEXDIRS:-}; do
   for f in "$d"/*.re4tex; do rm -f "$fixtures/tex/$(basename "$f")"; cp "$f" "$fixtures/tex/"; done
 done
 bash "$here/mkdisc-hardlink.sh" "$build/re4dc-game.elf" "${MIRROR:-/root/probe/d362-mirror}" "$out" "$fixtures"
+if [ -n "${GDI:-}" ]; then
+  gdi=${GDI_OUT:-$out/gdi}
+  KOS_TOOLS_BASE=${KOS_TOOLS_BASE:-$RE4DC_KOS_BASE} \
+    bash "$here/mkgdi.sh" "$build/re4dc-game.elf" "${MIRROR:-/root/probe/d362-mirror}" "$gdi" "$fixtures"
+  (cd "$gdi" && sha256sum disc.gdi IP.BIN track0[123].*) | tee "$gdi/gdi.sha256"
+fi
 bash "$here/syms.sh" "$build"
 "$KOS_CC_BASE/bin/sh-elf-nm" -C "$build/re4dc-game.elf" > "$build/symbols-demangled.txt"
 sha256sum "$out/disc.bin" | tee "$out/disc.sha256"

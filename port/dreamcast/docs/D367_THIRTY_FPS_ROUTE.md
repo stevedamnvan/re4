@@ -266,7 +266,7 @@ run in it; "r101 works" commits are the separate room viewer.
 | W7 | r101 events with FMV presentation | In progress (PS2 FMV, ROUTE_MOVIES=1) |
 | W8 | r101 -> r103 | Not started |
 | W9 | r101/r103 scenery packages | In progress (converter generalised to r101/r103; drops ~2.05 MB of GC geometry from heap 4) |
-| W10 | GDEMU image | Not started |
+| W10 | GDEMU image | Done in Flycast. `tools/d367/mkgdi.sh` (`GDI=1` in stage.sh) builds a three-track GDI from the staged tree, and the game's `cdrom_read_toc` wrap mounts `/cd` from track 3. The LF GDI boots title -> r100 the same way game.cue does (evidence `gdemu-a` vs `gdemu-a-cue`). Track 3 is 632 MB, 61% of the 1,032 MB high-density area. The route adds about 39 MB of archives and 76 MB of FMV. Not yet booted on hardware |
 | W11 | Inventory backing and retry | Not started |
 | W12 | Audio (music and sound effects) | Backend committed (79d3252, AICA_AUDIO=1): GC sequencer + SFX engine on the AICA, ~0.2 ms/frame, fixes the continue hang. Next: offline bank conversion (5.3 s load-time CPU today), fixed per-room AICA layout, st002/st008 streams |
 
