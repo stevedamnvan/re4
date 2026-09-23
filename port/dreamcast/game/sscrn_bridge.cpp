@@ -352,7 +352,8 @@ extern "C" void re4dc_subscreen_swap_close(SubScreenWork* wk)
 namespace {
 struct Fixture {
     bool loaded;
-    unsigned die_after, die_count, dies;    // "die <frames> <count>"
+    unsigned die_after, die_count, dies;    // "die <frames> <count> [room]"
+    unsigned die_room;                      // hex room id (0: any room), e.g. 101
     int life_value;                         // "life <value> <frames>" (once, first room)
     unsigned life_after;
     bool life_done;
@@ -375,11 +376,12 @@ void load_fixture()
     for (char* line = text; line && *line;) {
         char* next = strchr(line, '\n');
         if (next) *next++ = 0;
-        unsigned a = 0, b = 0;
+        unsigned a = 0, b = 0, r = 0;
         int v = 0;
-        if (sscanf(line, "die %u %u", &a, &b) == 2) {
+        if (sscanf(line, "die %u %u %x", &a, &b, &r) >= 2) {
             fx.die_after = a;
             fx.die_count = b;
+            fx.die_room = r;
         } else if (sscanf(line, "life %d %u", &v, &b) == 2) {
             fx.life_value = v;
             fx.life_after = b;
@@ -388,7 +390,8 @@ void load_fixture()
         }
         line = next;
     }
-    re4dc_log("w11 fixture: die after=%u count=%u life=%d after=%u done=%u\n", fx.die_after, fx.die_count,
+    re4dc_log("w11 fixture: die after=%u count=%u room=%03x life=%d after=%u done=%u\n", fx.die_after, fx.die_count,
+              fx.die_room,
               fx.life_value, fx.life_after, fx.done_events);
 }
 
@@ -477,6 +480,7 @@ extern "C" int re4dc_w11_room_poll(unsigned generation)
         pG->pl_life = u16(fx.life_value);
     }
     if (fx.die_count && fx.dies < fx.die_count && !fx.death_frame && fx.room_frames >= fx.die_after &&
+        (!fx.die_room || unsigned(pG->room_id) == fx.die_room) &&
         !SubScreenWk.type && s16(pG->pl_life) > 0) {
         ++fx.dies;
         census("die");
