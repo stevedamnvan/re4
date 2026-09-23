@@ -253,7 +253,7 @@ run in it; "r101 works" commits are the separate room viewer.
 | W9 | r101/r103 scenery packages | In progress (converter generalised to r101/r103; drops ~2.05 MB of GC geometry from heap 4) |
 | W10 | GDEMU image | Not started |
 | W11 | Inventory backing and retry | Not started |
-| W12 | Audio (music and sound effects) | In progress (AICA SFX + music) |
+| W12 | Audio (music and sound effects) | Backend committed (79d3252, AICA_AUDIO=1): GC sequencer + SFX engine on the AICA, ~0.2 ms/frame, fixes the continue hang. Next: offline bank conversion (5.3 s load-time CPU today), fixed per-room AICA layout, st002/st008 streams |
 
 ## Working rules carried forward
 
