@@ -198,8 +198,8 @@ console calibrate them.
 | 9 | PS2 trees | -2.5 ms work, heap +370 KB | worst views 61.7k -> 35.7k corners | Done; tooling committed (7a7036a) |
 | 10 | Async present (PVR_PIPELINE=2, private KOS) | removes part of ~19 ms pacing waste | overlaps CPU and render | Done: LF, adopted as default (neutral in Flycast) |
 | 11 | Actors pass 2: static room objects, whole-part LOD, 16-bit UV | ~18 -> ~8 | ~16 -> 3-5 | In progress |
-| 12 | Game CPU: SH-4 matrix kernels, PS alias links, room index, rot cache | ~-6 | more (call overhead, cache) | Code proven; Flycast validation running |
-| 13 | FP 6B (contract-off + FDLIBM), then O2 on hot objects | ~0 to -2 | -1 to -3 | Validation running |
+| 12 | Game CPU: SH-4 matrix kernels, rotation cache, -O2 on hot objects | game-side 13.9 -> 9.7 (wall 116.8 -> 100.1) | logic 25.8/tick on hardware (model); target ~15 | Done (6e79b70), STRICT. Next: bit-exact faster math, visual-only sims off the tick |
+| 13 | FP 6B (contract-off + FDLIBM; render-only objects exempt) | ~0 | ~0 | Done (6e79b70), user-approved float-only drift; new STRICT baseline |
 | 14 | Memory-copy audit (~15 ms) | -7.5 (COPY_LEAN) | more (cache thrash) | Done (de03f28); validating on LF |
 | 15 | GC render front-end removal (objTrans, light setup, normal matrices, draw-plan walk) + direct TA meshes | -6.4 (FRONT_LEAN) -3.6 (MESH_DIRECT) | similar | Done (de03f28); validating on LF |
 | 16 | UI VRAM diet -> 2 MiB vertex bank | 0 | required: r100 needs ~1,031 KB of TA params per frame, overflowing 1024 KB | Done (700e2d0, UI_VRAM=1 + TA_VERTBUF_KB=2048 + tex-vq3) |
