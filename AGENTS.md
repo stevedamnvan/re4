@@ -52,6 +52,13 @@ assignment: Astra locks architecture/handoff, then GPT-6 Sol at Max implements.
 This does not authorize additional agents. Assigned parallel work needs isolated
 ownership and an exclusive emulator window.
 
+Astra decides architecture; Sol executes the approved architecture. Follow the
+[Astra/Max escalation rule](port/dreamcast/docs/R100_NATIVE_CUTOVER_GOAL.md#astramax-escalation-rule)
+when new evidence invalidates a contract or requires a new budget/architecture.
+Preserve evidence and hand off before designing a replacement. Ordinary bugs,
+compatible format extensions and tuning stay with Sol. Every resolution must
+be written into the durable handoff before Sol resumes implementation.
+
 Guard shared PowerPC behavior when changing recovered source; use its existing
 comparison procedure where affected. Keep incomplete required conversions and
 module bindings explicitly rejected. Required native REL entry points cannot

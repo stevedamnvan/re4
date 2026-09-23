@@ -129,28 +129,19 @@ review under the asset policy instead of quietly altering camera or gameplay.
 The next task remains the dependency needed for the boot-forward playable slice,
 not the next letter in a graphics experiment series.
 
-## SH4ZAM reuse decision (2026-09-22)
+## SH4ZAM target-backend candidate (2026-09-22)
 
-SH4ZAM can save implementation time on residual native kernels; it does not
-supply source resource lifetimes or D349 local-index preparation. Current native
-transforms already use KOS mat_trans_nodiv/FTRV, and KOS pvr_prim already uses
-store queues. No SH4ZAM dependency is linked or newly installed by this review.
-The shared selected-light evaluator still has scalar distance/normalization/dot
-work. After the native cutover is measured, prefer a pinned mature implementation
-over writing new assembly if the measured residual stage justifies it.
+The user has now authorized SH4ZAM qualification during package-v4/static cutover,
+superseding the earlier defer-all-until-after-cutover recommendation. Follow
+[the active goal](R100_NATIVE_CUTOVER_GOAL.md#approved-package-v4-and-target-kernel-qualification).
+Compare D349 control versus pinned SH4ZAM batch XMTRX/positive-depth reciprocal,
+equivalent clipping interpolation and remaining aligned copies. Compare compact
+AoS with split/aligned package storage on bytes, transform and packet cost.
+Do not import the DMA example's frame owner, OBJ loader, broad fast-math policy,
+buffer reservation or compiler requirements into the game. No toolchain upgrade.
+Dynamic-light vector math and actor matrix blend follow static cutover.
 
-| Mechanism | Existing insertion point | Qualification |
-| --- | --- | --- |
-| shz_inv_sqrtf, dot/magnitude helpers | source_lighting.cpp prepared evaluator | Preserve zero-distance, attenuation, channel and selected-light semantics; bound numerical/color error against reference and measure full candidate. |
-| Reciprocal helpers | native_model.cpp projection | Only if residual projection is material; respect signed camera depth, near clipping and finite/depth accuracy. Positive-only FSRRA forms cannot receive arbitrary signed z. |
-| memcpy32 / SQ copy helpers, PVR examples | Existing packet copy/submission | Only if measured transport matters; the D354-era OP/PT/TR submission was about 10 ms. Preserve alignment, locking, buffer ownership and matrix registers; XMTRX variants can clobber the loaded transform. |
-
-Primary references:[SH4ZAM](https://sh4zam.com/),
-[scalar API](https://sh4zam.com/shz__scalar_8h.html),
-[memory API](https://sh4zam.com/shz__mem_8h.html),
-[implementation and MIT license](https://github.com/gyrovorbis/sh4zam),
-[native PVR examples](https://github.com/dfchil/sh4zam_pvr).
-At the 2026-09-22 inspection the website advertised 0.9.0 and GCC 16 tuning; the pinned project
-uses GCC 15.2. Pin the exact revision, retain notices and verify that compiler/API
-combination before adoption. Do not silently upgrade the shared SDK or infer that
-GCC 16 is a hard requirement. No FPS saving is claimed by this source review.
+References: [SH4ZAM source and MIT license](https://github.com/gyrovorbis/sh4zam),
+[PVR DMA example](https://github.com/gyrovorbis/sh4zam/tree/master/example/pvr_dma).
+The exact pin and targeted files are recorded in `room/sh4zam.lock.json`.
+No backend is promoted by source inspection or a file-size result.

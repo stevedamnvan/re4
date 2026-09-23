@@ -844,7 +844,253 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+
+# v4 is a storage extension of the existing v3 topology/bake pipeline. It never
+# reconstructs triangles, welds positions, or changes strip order. Historical
+# OBJ -> v3 conversion stays byte-identical and remains the default until target
+# layout/quality acceptance. Inputs to this step are qualified D353-style bakes.
+COMPACT_VERSION = 4
+FLAG_PRELIT = 1 << 1
+COMPACT_EXTENSION = struct.Struct("<8I")
+COMPACT_VERTEX = struct.Struct("<3fHHI")
+COMPACT_ATTRIBUTE = struct.Struct("<HHI")
+COMPACT_POSITION = struct.Struct("<4f")
+COMPACT_GROUP = struct.Struct("<IHH6f")
+COMPACT_BATCH = struct.Struct("<9I4f")
+COMPACT_IDENTITY = struct.Struct("<BBHHH")  # owner, common, work, BIN, reserved
+COMPACT_INDEX = struct.Struct("<H")
+COMPACT_UV_ENCODING = 1  # per-batch float bias/scale + unsigned normalized 16-bit
+
+
+def _f32(x: float) -> float:
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def compact_prelit_package(
+    data: bytes, source_names: list[str], layout: str = "aos20",
+    max_uv_error: float = 0.5 / 1024.0,
+) -> tuple[bytes, dict[str, object]]:
+    """Repack certified v3 prelit geometry; source_names is original OBJ order.
+
+    This CPU-only converter does not certify live source ownership or a bake's
+    dynamic-light eligibility. The CLI additionally verifies the bake provenance.
+    No debug name is used as a runtime resource key: owner/work/BIN is explicit.
+    """
+    if layout not in ("aos20", "split24"):
+        raise ValueError("unknown compact vertex layout")
+    if not math.isfinite(max_uv_error) or max_uv_error <= 0:
+        raise ValueError("UV error bound must be finite and positive")
+    if len(data) < HEADER.size:
+        raise ValueError("truncated v3 header")
+    h = list(HEADER.unpack_from(data))
+    if (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]) != (
+        MAGIC, 3, 128, 32, 4, 64, 96, 28
+    ) or h[23] != FLAG_SOURCE_GROUP_METADATA | FLAG_PRELIT:
+        raise ValueError("compact conversion requires a source-mapped v3 prelit bake")
+    if zlib.crc32(data[h[2]:]) & 0xFFFFFFFF != h[22]:
+        raise ValueError("v3 CRC mismatch")
+    source_offset = h[19] + h[9] * 4
+    sections = [
+        ("materials", h[15], h[10]*64), ("groups", h[16], h[11]*96),
+        ("batches", h[17], h[12]*28), ("vertices", h[18], h[8]*32),
+        ("triangle_indices", h[19], h[9]*4),
+        ("source_groups", source_offset, h[11]*76),
+        ("primitives", h[20], h[13]*8), ("strip_indices", h[21], h[14]*4),
+    ]
+    end = 128
+    for name, start, size in sections:
+        if start != end or start + size > len(data):
+            raise ValueError("noncanonical/truncated v3 section: " + name)
+        end = start + size
+    if end != len(data):
+        raise ValueError("unexpected trailing v3 bytes")
+    vertices = [VERTEX.unpack_from(data, h[18]+i*32) for i in range(h[8])]
+    if any(not all(math.isfinite(x) for x in v) or
+           any(c < 0 or c > 1 for c in v[3:6]) for v in vertices):
+        raise ValueError("nonfinite vertex or invalid prelit RGB")
+    triangles = struct.unpack_from(f"<{h[9]}I", data, h[19])
+    strip_indices = struct.unpack_from(f"<{h[14]}I", data, h[21])
+    primitives = [PRIMITIVE.unpack_from(data, h[20]+i*8) for i in range(h[13])]
+    if any(n < 3 or t != n-2 or f+n > len(strip_indices)
+           for f,n,t in primitives):
+        raise ValueError("invalid v3 primitive")
+    if any(i >= len(vertices) for i in (*triangles, *strip_indices)):
+        raise ValueError("v3 vertex index out of range")
+    identity_records: list[bytes] = []
+    identity_ids: dict[bytes, int] = {}
+    identity_manifest = []
+    group_blob = bytearray(); batch_blob = bytearray()
+    vertex_blob = bytearray(); attribute_blob = bytearray()
+    triangle_blob = bytearray(); primitive_blob = bytearray(); strip_blob = bytearray()
+    groups = [GROUP.unpack_from(data,h[16]+i*96) for i in range(h[11])]
+    batches = [BATCH.unpack_from(data,h[17]+i*28) for i in range(h[12])]
+    used_batches = 0; used_primitives = 0; used_triangles = 0; used_strips = 0
+    vertex_count = 0; total_triangles = 0; maximum_batch = 0; uv_error = 0.0
+    for gi, group in enumerate(groups):
+        raw_name, first_batch, batch_count, *bounds = group
+        name = raw_name.split(b"\0")[0].decode("ascii")
+        cell = re.fullmatch(r"source_(\d+)_(?:cell_-?\d+_-?\d+|unpartitioned)", name)
+        if cell:
+            ordinal = int(cell[1])
+            if ordinal >= len(source_names):
+                raise ValueError("source group ordinal exceeds identity map")
+            source_name = source_names[ordinal]
+        elif name in source_names:
+            source_name = name
+        else:
+            raise ValueError("source identity not recoverable: " + name)
+        match = SOURCE_OBJECT_NAME.fullmatch(source_name)
+        if not match:
+            raise ValueError("invalid original source identity: " + source_name)
+        prefix, work, smx, bin_index, common = match.groups()
+        owner = 255 if prefix == "MAINSCENARIO" else (
+            int(prefix[5:]) if re.fullmatch(r"FILE_\d+", prefix) else -1)
+        if not (0 <= owner <= 255 and 0 <= int(work) <= 65535 and
+                0 <= int(bin_index) <= 65535 and 0 <= int(smx) <= 255):
+            raise ValueError("source identity exceeds compact fields")
+        if prefix != "MAINSCENARIO" and owner == 255:
+            raise ValueError("block owner collides with main owner")
+        src = data[source_offset+gi*76:source_offset+(gi+1)*76]
+        if src[4] != int(smx):
+            raise ValueError("source identity/SMX mismatch")
+        record = src + COMPACT_IDENTITY.pack(owner,bool(common),int(work),int(bin_index),0)
+        if record not in identity_ids:
+            identity_ids[record] = len(identity_records)
+            identity_records.append(record)
+            identity_manifest.append(dict(source=source_name,owner=owner,work=int(work),bin=int(bin_index),common=bool(common)))
+        source_id = identity_ids[record]
+        if source_id > 65535 or batch_count > 65535 or first_batch != used_batches:
+            raise ValueError("group count/identity exceeds compact range")
+        if first_batch + batch_count > len(batches):
+            raise ValueError("group batch range out of bounds")
+        group_blob.extend(COMPACT_GROUP.pack(first_batch,batch_count,source_id,*bounds))
+        for bi in range(first_batch,first_batch+batch_count):
+            mat, fi, ni, bg, flags, fp, np = batches[bi]
+            if bg != gi or mat >= h[10] or flags & ~3 or fp != used_primitives:
+                raise ValueError("invalid source batch identity/flags/order")
+            if fp+np > len(primitives) or fi+ni > len(triangles):
+                raise ValueError("invalid source batch range")
+            resident = bool(flags & BATCH_TRIANGLES_RESIDENT)
+            if resident:
+                if not ni or ni%3 or fi != used_triangles:
+                    raise ValueError("invalid resident triangle range")
+            elif ni or fi or not np or not flags & BATCH_STRIP_ORDER_PRESERVED:
+                raise ValueError("strip-only batch lacks source order proof")
+            ids = {}; ordered = []
+            def local(index):
+                if index not in ids:
+                    ids[index] = len(ordered); ordered.append(index)
+                return ids[index]
+            # Keep packet visitation order for contiguous transforms. No hot-loop map.
+            for f,n,t in primitives[fp:fp+np]:
+                if f != used_strips:
+                    raise ValueError("noncanonical primitive index range")
+                primitive_blob.extend(PRIMITIVE.pack(len(strip_blob)//2,n,t))
+                for index in strip_indices[f:f+n]:
+                    value = local(index)
+                    if value > 65535: raise ValueError("batch needs legal-boundary splitting before uint16 conversion")
+                    strip_blob.extend(COMPACT_INDEX.pack(value))
+                used_strips += n
+            new_fi = len(triangle_blob)//2 if resident else 0
+            for index in triangles[fi:fi+ni]:
+                value = local(index)
+                if value > 65535: raise ValueError("batch needs legal-boundary splitting before uint16 conversion")
+                triangle_blob.extend(COMPACT_INDEX.pack(value))
+            if not ordered: raise ValueError("empty native batch")
+            bias = [_f32(min(vertices[i][axis] for i in ordered)) for axis in (6,7)]
+            scale = [_f32((max(vertices[i][axis] for i in ordered)-bias[a])/65535.0)
+                     for a,axis in enumerate((6,7))]
+            for index in ordered:
+                v = vertices[index]; q = []
+                for a in range(2):
+                    value = round((v[6+a]-bias[a])/scale[a]) if scale[a] else 0
+                    value = max(0,min(65535,value)); q.append(value)
+                    decoded = _f32(bias[a]+_f32(value*scale[a]))
+                    uv_error = max(uv_error,abs(decoded-v[6+a]))
+                # Same truncation and float multiplication as D349 shade_color.
+                c = [int(_f32(x*255.0)) for x in v[3:6]]
+                color = 0xff000000 | c[0]<<16 | c[1]<<8 | c[2]
+                if layout == "aos20":
+                    vertex_blob.extend(COMPACT_VERTEX.pack(*v[:3],*q,color))
+                else:
+                    vertex_blob.extend(COMPACT_POSITION.pack(*v[:3],1.0))
+                    attribute_blob.extend(COMPACT_ATTRIBUTE.pack(*q,color))
+            batch_blob.extend(COMPACT_BATCH.pack(mat,new_fi,ni,gi,flags,fp,np,
+                vertex_count,len(ordered),*bias,*scale))
+            vertex_count += len(ordered); maximum_batch = max(maximum_batch,len(ordered))
+            total_triangles += ni//3 if resident else sum(t for f,n,t in primitives[fp:fp+np])
+            used_batches += 1; used_primitives += np; used_triangles += ni
+    if (used_batches,used_primitives,used_triangles,used_strips,total_triangles) != (h[12],h[13],h[9],h[14],h[30]):
+        raise ValueError("unowned records or triangle total mismatch")
+    if uv_error > max_uv_error:
+        raise ValueError(f"compact UV error {uv_error:g} exceeds {max_uv_error:g}")
+    result = bytearray(HEADER.size+COMPACT_EXTENSION.size)
+    offsets = {}; sizes = {}; padding = 0
+    blobs = [('materials',data[h[15]:h[15]+h[10]*64]),('groups',group_blob),
+        ('batches',batch_blob),('vertices',vertex_blob),('attributes',attribute_blob),
+        ('triangle_indices',triangle_blob),('source_groups',b''.join(identity_records)),
+        ('primitives',primitive_blob),('strip_indices',strip_blob)]
+    for name, blob in blobs:
+        pad = (-len(result))%32; padding += pad; result.extend(bytes(pad))
+        offsets[name] = len(result); sizes[name] = len(blob); result.extend(blob)
+    h[1:8] = [4,160,20 if layout=='aos20' else 16,2,64,32,52]
+    h[8] = vertex_count
+    h[15:22] = [offsets[n] for n in ('materials','groups','batches','vertices','triangle_indices','primitives','strip_indices')]
+    h[22] = zlib.crc32(result[160:]) & 0xffffffff
+    result[:128] = HEADER.pack(*h)
+    result[128:160] = COMPACT_EXTENSION.pack(1 if layout=='aos20' else 2,
+        offsets['attributes'],offsets['source_groups'],len(identity_records),84,
+        COMPACT_UV_ENCODING,1,0)
+    before = {name:size for name,offset,size in sections};before['header']=128
+    after = dict(sizes,header=160,padding=padding)
+    assert sum(before.values()) == len(data) and sum(after.values()) == len(result)
+    return bytes(result),dict(format='re4dc-room',version=4,layout=layout,
+        source_sha256=sha256_bytes(data),package_sha256=sha256_bytes(result),
+        package_bytes=len(result),sections_before=before,sections_after=after,
+        source_vertices=len(vertices),vertices=vertex_count,
+        duplicated_local_vertices=vertex_count-len(vertices),max_batch_vertices=maximum_batch,
+        batches=h[12],groups=h[11],source_identities=identity_manifest,
+        uv_encoding='per-batch affine unorm16',max_uv_error=uv_error,
+        max_uv_error_texels_at_1024=uv_error*1024,position_encoding='unchanged float32 XYZ',
+        color_encoding='D349 shade_color float32 truncation to opaque ARGB8888',
+        runtime_static_normal_transforms=0,runtime_static_light_evaluations=0,
+        runtime_source_corner_remaps=0,
+        limits='Encoded package candidate, not runtime source-heap recovery or visual/gameplay acceptance')
+
+
+def compact_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description='Version the existing qualified prelit room package')
+    parser.add_argument('input',type=pathlib.Path)
+    parser.add_argument('output',type=pathlib.Path)
+    parser.add_argument('--compact-prelit',action='store_true',required=True)
+    parser.add_argument('--layout',choices=('aos20','split24'),default='aos20')
+    parser.add_argument('--source-obj',type=pathlib.Path,required=True)
+    parser.add_argument('--reference-manifest',type=pathlib.Path,required=True)
+    parser.add_argument('--bake-manifest',type=pathlib.Path,required=True)
+    args = parser.parse_args(argv)
+    data = args.input.read_bytes(); reference=json.loads(args.reference_manifest.read_text())
+    bake=json.loads(args.bake_manifest.read_text())
+    if (bake.get('candidate_sha256') != sha256_bytes(data) or
+        bake.get('reference_sha256') != reference.get('package_sha256') or
+        bake.get('camera_relative_selected') is not False or
+        bake.get('max_shared_color_difference',1) > 1.0/255.0 or
+        reference.get('source_sha256') != sha256_bytes(args.source_obj.read_bytes())):
+        raise ValueError('bake/reference/OBJ identity or lighting qualification mismatch')
+    names = parse_obj(args.source_obj)['group_order']
+    package,manifest=compact_prelit_package(data,names,args.layout)
+    manifest['reference_sha256']=reference['package_sha256']
+    manifest['bake_manifest_sha256']=sha256_bytes(args.bake_manifest.read_bytes())
+    args.output.parent.mkdir(parents=True,exist_ok=True)
+    args.output.write_bytes(package)
+    args.output.with_suffix(args.output.suffix+'.json').write_text(json.dumps(manifest,indent=2)+'\n')
+    print(json.dumps({k:v for k,v in manifest.items() if k!='source_identities'},sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--compact-prelit" in argv:
+        return compact_main(argv)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=pathlib.Path, help="private exported room OBJ")
     parser.add_argument("output", type=pathlib.Path, help="private Dreamcast room package")
@@ -853,7 +1099,7 @@ def main(argv: list[str] | None = None) -> int:
         "--keep-triangle-indices",
         action="store_true",
         help="store every batch's triangle range as well as its strips, which "
-             "is the accepted layout, for comparison",
+             "provides the retained-index comparison layout",
     )
     parser.add_argument(
         "--smx", type=pathlib.Path,

@@ -131,6 +131,54 @@ static_assert(sizeof(Batch) == 28);
 static_assert(sizeof(Primitive) == 8);
 static_assert(sizeof(SourceGroup) == 76);
 
+
+// v4 prelit storage candidates. No runtime expansion into v3 vertices.
+// Prefix Header is unchanged; its strides/offsets describe the selected layout.
+inline constexpr std::uint32_t kCompactVersion = 4;
+inline constexpr std::uint32_t kFlagPrelit = 1U << 1U;
+enum class StaticLayout : std::uint32_t { AoS20 = 1, Split24 = 2 };
+struct CompactHeader {
+    Header base;
+    StaticLayout layout;
+    std::uint32_t attribute_offset;
+    std::uint32_t source_offset;
+    std::uint32_t source_count;
+    std::uint32_t source_stride;
+    std::uint32_t uv_encoding; // 1 = bias + uint16 * scale, per batch
+    std::uint32_t bake_policy; // 1 = qualified static/world bake, no view lights
+    std::uint32_t reserved;
+};
+struct CompactVertex {
+    float x,y,z;
+    std::uint16_t u,v;
+    std::uint32_t argb;
+};
+struct CompactPosition { float x,y,z,w; }; // w is validated as 1.0f
+struct CompactAttribute { std::uint16_t u,v; std::uint32_t argb; };
+struct CompactGroup {
+    std::uint32_t first_batch;
+    std::uint16_t batch_count, source;
+    float bounds_min[3], bounds_max[3];
+};
+struct CompactBatch {
+    Batch draw;
+    std::uint32_t first_vertex, vertex_count;
+    float uv_bias[2], uv_scale[2];
+};
+struct CompactSource {
+    SourceGroup state;
+    std::uint8_t owner; // 0xff = main scenario; otherwise source block number
+    std::uint8_t common;
+    std::uint16_t work, bin, reserved;
+};
+static_assert(sizeof(CompactHeader)==160);
+static_assert(sizeof(CompactVertex)==20);
+static_assert(sizeof(CompactPosition)==16);
+static_assert(sizeof(CompactAttribute)==8);
+static_assert(sizeof(CompactGroup)==32);
+static_assert(sizeof(CompactBatch)==52);
+static_assert(sizeof(CompactSource)==84);
+
 class Package {
 public:
     Package() = default;
@@ -143,6 +191,17 @@ public:
     void close();
 
     const Header& header() const { return *header_; }
+    bool compact() const { return header_ && header_->version==kCompactVersion; }
+    const CompactHeader* compact_header() const;
+    const CompactGroup* compact_groups() const;
+    const CompactBatch* compact_batches() const;
+    const CompactSource* compact_sources() const;
+    const CompactVertex* compact_vertices() const;
+    const CompactPosition* compact_positions() const;
+    const CompactAttribute* compact_attributes() const;
+    const std::uint16_t* local_indices() const;
+    const std::uint16_t* local_primitive_indices() const;
+    // Legacy typed accessors return nullptr for v4, never a mis-strided view.
     const Material* materials() const;
     const Group* groups() const;
     const Batch* batches() const;
@@ -158,6 +217,7 @@ private:
                      std::uint32_t stride) const;
 
     bool validate();
+    bool validate_compact();
 
     file_t file_ = FILEHND_INVALID;
     const std::uint8_t* data_ = nullptr;

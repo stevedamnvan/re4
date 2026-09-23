@@ -3,6 +3,7 @@
 #include <fcntl.h>
 
 #include <cstring>
+#include <cmath>
 
 // [0] is the check that is running, [1] how far through it. Read by the host
 // capture, which has no other view of a load that has not reached a frame yet.
@@ -79,7 +80,11 @@ bool Package::adopt(const std::uint8_t* data, std::size_t size) {
 // The body of open() as it stood, unchanged, so both paths accept and
 // reject exactly the same packages.
 bool Package::validate() {
+    if(reinterpret_cast<std::uintptr_t>(data_) % alignof(Header)) {
+        error_="unaligned package backing"; close(); return false;
+    }
     header_ = reinterpret_cast<const Header*>(data_);
+    if(header_->version==kCompactVersion) return validate_compact();
     if(std::memcmp(header_->magic, kMagic, sizeof(kMagic)) != 0 ||
        header_->version != kVersion || header_->header_size != sizeof(Header)) {
         error_ = "magic, version, or header size mismatch";
@@ -235,18 +240,22 @@ const Material* Package::materials() const {
 }
 
 const Group* Package::groups() const {
+    if(compact()) return nullptr;
     return reinterpret_cast<const Group*>(data_ + header_->group_offset);
 }
 
 const Batch* Package::batches() const {
+    if(compact()) return nullptr;
     return reinterpret_cast<const Batch*>(data_ + header_->batch_offset);
 }
 
 const Vertex* Package::vertices() const {
+    if(compact()) return nullptr;
     return reinterpret_cast<const Vertex*>(data_ + header_->vertex_offset);
 }
 
 const std::uint32_t* Package::indices() const {
+    if(compact()) return nullptr;
     return reinterpret_cast<const std::uint32_t*>(data_ + header_->index_offset);
 }
 
@@ -256,17 +265,170 @@ const Primitive* Package::primitives() const {
 }
 
 const std::uint32_t* Package::primitive_indices() const {
+    if(compact()) return nullptr;
     return reinterpret_cast<const std::uint32_t*>(
         data_ + header_->primitive_index_offset);
 }
 
 const SourceGroup* Package::source_groups() const {
+    if(compact()) return nullptr;
     if((header_->flags & kFlagSourceGroupMetadata) == 0U) {
         return nullptr;
     }
     const std::uint32_t offset =
         header_->index_offset + header_->index_count * header_->index_stride;
     return reinterpret_cast<const SourceGroup*>(data_ + offset);
+}
+
+
+bool Package::validate_compact() {
+    const auto fail=[&](const char* reason) { error_=reason; close(); return false; };
+    // Direct split vec4 reads require aligned backing, not merely aligned
+    // relative section offsets. Arena/ROM-disk callers already provide this.
+    if(reinterpret_cast<std::uintptr_t>(data_) % 16U)
+        return fail("v4 backing must be 16-byte aligned");
+    if(size_<sizeof(CompactHeader) || std::memcmp(header_->magic,kMagic,8) ||
+       header_->header_size!=sizeof(CompactHeader)) return fail("v4 header mismatch");
+    const auto& h=*reinterpret_cast<const CompactHeader*>(data_);
+    const auto& b=h.base;
+    const bool split=h.layout==StaticLayout::Split24;
+    if((h.layout!=StaticLayout::AoS20 && !split) || h.uv_encoding!=1 ||
+       h.bake_policy!=1 || h.reserved || h.source_stride!=sizeof(CompactSource) ||
+       b.flags!=(kFlagSourceGroupMetadata|kFlagPrelit) ||
+       b.vertex_stride!=(split?sizeof(CompactPosition):sizeof(CompactVertex)) ||
+       b.index_stride!=2 || b.material_stride!=sizeof(Material) ||
+       b.group_stride!=sizeof(CompactGroup) || b.batch_stride!=sizeof(CompactBatch) ||
+       !b.vertex_count || !b.group_count || !b.batch_count ||
+       !b.material_count || !h.source_count || h.source_count>65536)
+        return fail("v4 layout/stride/count mismatch");
+    std::uint64_t end=sizeof(CompactHeader);
+    const auto section=[&](std::uint32_t offset,std::uint32_t count,std::uint32_t stride) {
+        const std::uint64_t expected=(end+31U)&~std::uint64_t(31U);
+        if(offset!=expected || !range_valid(offset,count,stride)) return false;
+        for(std::uint64_t i=end;i<expected;++i) if(data_[i]) return false;
+        end=expected+static_cast<std::uint64_t>(count)*stride;return true;
+    };
+    if(!section(b.material_offset,b.material_count,sizeof(Material)) ||
+       !section(b.group_offset,b.group_count,sizeof(CompactGroup)) ||
+       !section(b.batch_offset,b.batch_count,sizeof(CompactBatch)) ||
+       !section(b.vertex_offset,b.vertex_count,b.vertex_stride) ||
+       !section(h.attribute_offset,split?b.vertex_count:0,sizeof(CompactAttribute)) ||
+       !section(b.index_offset,b.index_count,2) ||
+       !section(h.source_offset,h.source_count,sizeof(CompactSource)) ||
+       !section(b.primitive_offset,b.primitive_count,sizeof(Primitive)) ||
+       !section(b.primitive_index_offset,b.primitive_index_count,2) || end!=size_)
+        return fail("v4 section alignment/range mismatch");
+    if(crc32(data_+b.header_size,size_-b.header_size)!=b.payload_crc32)
+        return fail("payload CRC mismatch");
+    const auto bounds_ok=[](const float* lo,const float* hi) {
+        for(unsigned a=0;a<3;++a) if(!std::isfinite(lo[a]) ||
+            !std::isfinite(hi[a]) || lo[a]>hi[a]) return false;
+        return true;
+    };
+    if(!bounds_ok(b.bounds_min,b.bounds_max)) return fail("v4 invalid room bounds");
+    for(std::uint32_t i=0;i<b.material_count;++i)
+        if(!std::memchr(materials()[i].name,0,64)) return fail("v4 unterminated material identity");
+    const auto* sources=compact_sources();
+    for(std::uint32_t i=0;i<h.source_count;++i) {
+        const auto& src=sources[i];
+        if(src.common>1 || src.reserved || src.state.cull_mode>3 ||
+           (src.state.metadata_flags & ~kSourceGroupHasLightVolume))
+            return fail("v4 invalid source metadata");
+        // SourceGroup's 15 floats are contiguous but are separate C++ arrays.
+        for(float f:src.state.light_center) if(!std::isfinite(f)) return fail("v4 nonfinite light volume");
+        for(float f:src.state.light_size) if(!std::isfinite(f)) return fail("v4 nonfinite light volume");
+        for(float f:src.state.inverse_rotation) if(!std::isfinite(f)) return fail("v4 nonfinite light volume");
+    }
+    const auto* groups=compact_groups();const auto* batches=compact_batches();
+    const auto* prims=primitives();const auto* tri=local_indices();
+    const auto* indices=local_primitive_indices();
+    std::uint64_t bc=0,vc=0,pc=0,ic=0,sc=0,tc=0;
+    for(std::uint32_t gi=0;gi<b.group_count;++gi) {
+        const auto& group=groups[gi];
+        if(group.source>=h.source_count || !group.batch_count ||
+           group.first_batch!=bc || bc+group.batch_count>b.batch_count ||
+           !bounds_ok(group.bounds_min,group.bounds_max)) return fail("v4 invalid group");
+        for(std::uint32_t k=0;k<group.batch_count;++k,++bc) {
+            const auto& batch=batches[bc];const auto& draw=batch.draw;
+            if(draw.group!=gi || draw.material>=b.material_count ||
+               (draw.flags & ~kBatchFlagMask) || batch.first_vertex!=vc ||
+               !batch.vertex_count || batch.vertex_count>65536 ||
+               vc+batch.vertex_count>b.vertex_count || draw.first_primitive!=pc ||
+               pc+draw.primitive_count>b.primitive_count)
+                return fail("v4 invalid batch");
+            for(unsigned a=0;a<2;++a)
+                if(!std::isfinite(batch.uv_bias[a]) || !std::isfinite(batch.uv_scale[a]) ||
+                   batch.uv_scale[a]<0 || !std::isfinite(batch.uv_bias[a]+65535.0f*batch.uv_scale[a]))
+                    return fail("v4 invalid UV transform");
+            const bool resident=draw.flags&kBatchTrianglesResident;
+            if(resident) {
+                if(draw.first_index!=ic || !draw.index_count || draw.index_count%3 ||
+                   ic+draw.index_count>b.index_count) return fail("v4 invalid triangles");
+                for(std::uint32_t j=0;j<draw.index_count;++j,++ic)
+                    if(tri[ic]>=batch.vertex_count) return fail("v4 triangle local index out of range");
+                tc+=draw.index_count/3;
+            } else if(draw.first_index || draw.index_count || !draw.primitive_count ||
+                      !(draw.flags&kBatchStripOrderPreserved)) return fail("v4 strips lack order proof");
+            for(std::uint32_t j=0;j<draw.primitive_count;++j,++pc) {
+                const auto& p=prims[pc];
+                if(p.first_vertex!=sc || p.vertex_count<3 ||
+                   p.triangle_count!=p.vertex_count-2 || sc+p.vertex_count>b.primitive_index_count)
+                    return fail("v4 invalid primitive");
+                for(std::uint32_t t=0;t<p.vertex_count;++t,++sc)
+                    if(indices[sc]>=batch.vertex_count) return fail("v4 strip local index out of range");
+                if(!resident) tc+=p.triangle_count;
+            }
+            vc+=batch.vertex_count;
+        }
+    }
+    if(bc!=b.batch_count || vc!=b.vertex_count || pc!=b.primitive_count ||
+       ic!=b.index_count || sc!=b.primitive_index_count || tc!=b.triangle_count)
+        return fail("v4 unowned records/count mismatch");
+    for(std::uint32_t i=0;i<b.vertex_count;++i) {
+        float x,y,z;std::uint32_t color;
+        if(split) {
+            const auto& v=compact_positions()[i];x=v.x;y=v.y;z=v.z;
+            if(v.w!=1.0f) return fail("v4 position w must be one");
+            color=compact_attributes()[i].argb;
+        } else {
+            const auto& v=compact_vertices()[i];x=v.x;y=v.y;z=v.z;color=v.argb;
+        }
+        if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z)||color>>24!=255)
+            return fail("v4 invalid vertex");
+    }
+    error_=nullptr;return true;
+}
+
+const CompactHeader* Package::compact_header() const {
+    return compact()?reinterpret_cast<const CompactHeader*>(data_):nullptr;
+}
+const CompactGroup* Package::compact_groups() const {
+    return compact()?reinterpret_cast<const CompactGroup*>(data_+header_->group_offset):nullptr;
+}
+const CompactBatch* Package::compact_batches() const {
+    return compact()?reinterpret_cast<const CompactBatch*>(data_+header_->batch_offset):nullptr;
+}
+const CompactSource* Package::compact_sources() const {
+    const auto* h=compact_header();
+    return h?reinterpret_cast<const CompactSource*>(data_+h->source_offset):nullptr;
+}
+const CompactVertex* Package::compact_vertices() const {
+    const auto* h=compact_header();return h && h->layout==StaticLayout::AoS20?
+        reinterpret_cast<const CompactVertex*>(data_+header_->vertex_offset):nullptr;
+}
+const CompactPosition* Package::compact_positions() const {
+    const auto* h=compact_header();return h && h->layout==StaticLayout::Split24?
+        reinterpret_cast<const CompactPosition*>(data_+header_->vertex_offset):nullptr;
+}
+const CompactAttribute* Package::compact_attributes() const {
+    const auto* h=compact_header();return h && h->layout==StaticLayout::Split24?
+        reinterpret_cast<const CompactAttribute*>(data_+h->attribute_offset):nullptr;
+}
+const std::uint16_t* Package::local_indices() const {
+    return compact()?reinterpret_cast<const std::uint16_t*>(data_+header_->index_offset):nullptr;
+}
+const std::uint16_t* Package::local_primitive_indices() const {
+    return compact()?reinterpret_cast<const std::uint16_t*>(data_+header_->primitive_index_offset):nullptr;
 }
 
 } // namespace re4dc::room

@@ -8,10 +8,19 @@ Complete [the r100 native static cutover](port/dreamcast/docs/R100_NATIVE_CUTOVE
 in `re4dc-game.elf`. The app goal was reset to this milestone on 2026-09-22.
 The broader normal-menu -> r100 -> r101 -> r103 playable objective remains open.
 
-**Implementation assignee: GPT-6 Sol, Max reasoning.** Astra's assignment ends
-with the architecture/instruction checkpoint and handoff. Continue implementation
-under the locked contract, through the integrated build, checks and measurements.
-A first adapter, host test pass or extra plan does not complete the milestone.
+**Implementation assignee: GPT-6 Sol / Max.** Continue the accepted four-owner bounded
+[D349 slice/source-block qualification](port/dreamcast/docs/R4_R100_SOURCE_BLOCK_BUDGET.md).
+The 14,577,304-byte all-block conversion is not the target representation or proof
+of architectural failure. Reuse existing selection/partition and source block
+ownership; continue implementation if bounded native packages fit that lifetime.
+Follow the [escalation rule](port/dreamcast/docs/R100_NATIVE_CUTOVER_GOAL.md#astramax-escalation-rule)
+only on demonstrated contract/budget failure or a need for different architecture.
+The user-approved next format work is `.re4room` v4: prelit float XYZ with compact UV/color,
+16-bit local indices and a measured AoS-versus-split SH-4 layout comparison.
+SH4ZAM is a pinned optional backend candidate; keep D349 as control and GCC15.2/KOS
+unchanged. See the goal document for the exact scope.
+The persistent goal remains active; passing an isolated adapter or host test
+does not complete it.
 
 Recovered GameCube source is the simulation/state authority. Productionize the
 existing D349 preparation/converter -> `.re4room` -> native renderer pipeline.
@@ -57,6 +66,23 @@ Extend existing SourceGroup identity for source instance/owner state; adapt the
 proven native room submission and actual backing retirement together. Keep an
 explicit dynamic/unconverted fallback list. Static cutover acceptance comes
 before native actor-package integration, then r101/r103.
+
+## Latest bounded checkpoint: D364
+
+[Package-v4/SH4ZAM qualification](port/dreamcast/docs/R4_ROOM_PACKAGE_V4_CHECKPOINT.md)
+now exists for the exact four accepted owner packages. AoS20 totals 1,299,298
+bytes versus v3 1,992,824; Split24 is 1,478,690. Flycast CPU fixture p50 totals:
+v3 prelit 35.293 ms; AoS/D349 47.486 ms; Split/D349 47.935 ms. SH4ZAM's
+transform/reciprocal did not win; it remains optional, default math stays D349.
+These are preparation/packet fixture times, not game FPS or a whole-frame win.
+
+The leading storage candidate is AoS20, pending moving visual/source binding
+acceptance. No v4 package has been activated in re4dc-game.elf or source backing
+reclaimed. The [four-owner budget](port/dreamcast/docs/R4_R100_SOURCE_BLOCK_BUDGET.md)
+prices a remaining known-span shortfall; follow it rather than increasing budgets
+or assuming file savings are source-heap savings. Preserve source readers,
+generation/rebase/retire boundaries and the single frame owner. Continue the
+cutover; do not return to cache tuning or treat this fixture as room acceptance.
 
 ## Working paths and reproduction
 

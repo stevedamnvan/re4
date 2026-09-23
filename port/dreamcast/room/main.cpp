@@ -19,6 +19,7 @@
 #include "character_package.hpp"
 #include "collision_package.hpp"
 #include "room_package.hpp"
+#include <type_traits>
 #include "room_storage.hpp"
 #include "gpu_lifecycle.hpp"
 #include "pvr_geometry.hpp"
@@ -6580,6 +6581,13 @@ bool load_room_resource(PackageType& package, const RoomResourceId& id) {
                     id.label, id.archive, id.tag,
                     static_cast<unsigned>(id.ordinal), package.error());
         return false;
+    }
+    if constexpr(std::is_same_v<PackageType,re4dc::room::Package>) {
+        if(package.compact()) {
+            std::printf("re4dc-room: legacy room target requires v3; use the qualified native cutover adapter for v4\n");
+            package.close();
+            return false;
+        }
     }
     g_re4dc_demo_telemetry.flags = 0x10000042U;
     g_room_lifecycle.validate_us +=

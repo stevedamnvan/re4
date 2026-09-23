@@ -1,7 +1,8 @@
 # Active persistent architecture goal: productionize D349 for r100
 
-User-directed architecture, 2026-09-22. Status: implementation in progress; no
-native static cutover acceptance yet. Current primary reference is D362
+User-directed architecture, 2026-09-22. Status: source-block budget qualification
+and implementation in progress; no native static cutover acceptance yet.
+Current primary reference is D362
 62414dc39feccc949af4b3ed29053be9fde4d5fc; preserve all newer/inherited work.
 Historical optimized renderer: 5f42caa634c0e6124c48842e21570033738adfda (D349).
 The app persistent goal was reset to this r100 milestone on 2026-09-22. This
@@ -75,6 +76,45 @@ and runtime source/native corner remapping. Strips/batches/material IDs are
 prepared offline. Source visibility/activation and transforms stay live. Explicitly
 handle changing/camera-relative lighting; never conceal it in a fixed bake.
 
+## Accepted residency basis
+
+The four reproduced packages MAINSCENARIO, FILE_00, FILE_01 and FILE_02 are the
+accepted current cutover residency basis. Continue these exact owner-aligned
+packages, price source backing replacement, and qualify v4 on target. Do not
+return to the all-block monolith or invent finer streaming unless measured
+source ownership requires it. PS2 geometry/material substitutions enter where
+these measured packages remain too expensive after v4 or materially reduce
+runtime work. The historical spatial subset is not complete r100 acceptance;
+remaining source-controlled content remains an explicit fallback.
+
+## Approved package-v4 and target-kernel qualification
+
+Extend the existing `.re4room` contract, retaining a selectable historical v3
+reader/build. The production static candidate keeps float XYZ, compact UV and
+packed prelit RGB (20-byte AoS target), 16-bit batch-local indices, and only
+useful resident identity/bounds metadata. Remove diagnostic names only after
+preserving their source owner/work/BIN mapping. Do not quantize positions in
+this pass. Count duplicated local vertices, padding, metadata and scratch, not
+just the nominal vertex-stride reduction.
+
+Compare 20-byte AoS with a split/aligned XYZ + UV/color representation using
+the actual SH-4 preparation/packet path. Select on resident bytes + transform
+CPU + packet CPU; do not lock the default from file size alone. Preserve the
+D349 renderer/control. SH4ZAM is an authorized, measured target-backend
+candidate, not a new renderer. Inspect/pin its current implementation and PVR
+DMA example. Initial candidates: batch XYZ through XMTRX, positive-depth
+`shz_invf_fsrra`, equivalent near-plane interpolation, and aligned remaining
+packet/header copies. Preserve clipping, error bounds, XMTRX state, DMA/SQ
+ownership and the existing frame owner. Do not replace a proven mechanism
+merely because SH4ZAM also provides it. Keep GCC 15.2 and pinned KOS unchanged.
+After static cutover, evaluate vector normalization/dot for residual dynamic
+lighting and `shz_xmtrx_blend` for native actor skinning. These are later bounded
+backend candidates; current source pose/animation authority is unchanged.
+
+Record package sections, SH-4/compiler/emulator identities, numerical error and
+timings separately from game-frame acceptance. A CPU fixture does not establish
+GPU throughput, physical-hardware cache cost or recovered-game heap recovery.
+
 ## Definitive visual input policy
 
 GameCube recovered source = behavior/state authority.
@@ -130,6 +170,51 @@ remain secondary until the complete static cutover's residual work is measured.
 Separate Flycast evidence from physical hardware; static cutover alone does not
 accept the full encounter or three rooms. Dynamic visual-package cutover follows,
 then r101/r103, preserving existing stage-audit/gameplay/audio/residency backlogs.
+
+## Astra/Max escalation rule
+
+Astra decides architecture. Sol executes architecture. Sol escalates to
+**GPT-6 Astra / Max** when new evidence invalidates or materially changes the
+approved architecture, including any of these conditions:
+
+- The D349-derived representation cannot fit measured RAM, VRAM or loading peaks.
+- Replacing source render backing exposes an unknown consumer or lifetime that
+  may break, or existing D349/native mechanisms appear unsuitable and a
+  replacement is being considered.
+- Required source state/semantics cannot be represented by the native package,
+  or source object identity cannot safely control the converted representation.
+- PS2 geometry, lighting or animation correspondence conflicts with GameCube
+  behavior, or actor conversion requires changing skeleton/pose authority.
+- Measured performance materially contradicts the architectural model.
+- Meeting the target appears to require a new renderer, package format, cache,
+  streaming architecture or ownership model, or materially increasing a locked
+  memory budget.
+- A proposed change would alter gameplay, collision, AI, progression or events.
+
+Ordinary bugs, converter implementation details, compatible format extensions,
+tests, room conversion and performance tuning within the established contract
+remain Sol work. Do not escalate merely because implementation is difficult.
+
+At a trigger, preserve the working candidate/evidence and do not invent the
+replacement. Record the precise blocker, affected source/native contract,
+measured evidence, memory/performance implications, investigated existing
+mechanisms and 2-3 viable options if known. Commit safe completed work when
+appropriate. Produce a handoff headed exactly:
+
+**ASTRA/MAX ARCHITECTURE ESCALATION REQUIRED**
+
+Use the supported model handoff to GPT-6 Astra / Max; if unavailable, stop and
+request the operator switch models. Astra resolves the question, records the
+decision in this durable goal/handoff, and hands implementation back to
+GPT-6 Sol / Max. A queued model change is not evidence the decision is resolved.
+
+Current qualification: [D349 slices and source-block budget](R4_R100_SOURCE_BLOCK_BUDGET.md).
+The 14,577,304-byte monolithic conversion is not the target representation and
+does not trigger escalation by itself. Reconstruct the existing D349 source/
+spatial slices and map them to the source block create/retire lifetime. Continue
+in Sol/Max if those owners can directly hold bounded native packages. Escalate
+only if a different residency/ownership architecture is required or the measured
+active set cannot fit after replacing corresponding source render backing.
 
 ## Anti-reinvention rule (carry across compactions and future agents)
 
