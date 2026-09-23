@@ -104,6 +104,16 @@ $(OBJDIR)/platform/%.o: platform/%.cpp
 	@mkdir -p $(dir $@)
 	kos-c++ $(KOS_CFLAGS) $(PLATFORM_CPPFLAGS) -MMD -MP -c $< -o $@
 
+# Nothing uses C++ exceptions or RTTI; their tables are ~362 KB of image, which
+# lets the 13 MiB arena request fit (D367: source heap +256 KiB, KOS +~100 KB).
+# FP instruction streams are unchanged in all 1,155 FP functions (fmac pairing).
+NO_EH ?= 0
+ifeq ($(NO_EH),1)
+NO_EH_FLAGS = -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-threadsafe-statics
+GAME_CPPFLAGS += $(NO_EH_FLAGS)
+PLATFORM_CPPFLAGS += $(NO_EH_FLAGS)
+SDK_CFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
+endif
 platform/sdk/gen/%.c: $(ROOT)/src/lib/%.c platform/sdk/strip_cw_asm.py
 	@mkdir -p $(dir $@)
 	python3 platform/sdk/strip_cw_asm.py $< $@
@@ -331,3 +341,22 @@ $(NATIVE_STATIC_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-static
 $(NATIVE_STATIC_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/native-static.h
 $(OBJDIR)/platform/native_static.o: $(OBJDIR)/d349-stack.h ../room/room_package.hpp ../room/static_room_prepare.hpp ../room/instanced_mesh.hpp
 $(OBJDIR)/platform/native_static.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/d349-stack.h
+
+# Non-scenery parts through platform/native_actor.cpp. Its ~14 KiB of -O2 code
+# comes out of the source heap after the arena; build with NO_EH=1 to fund it.
+ifeq ($(NATIVE_ACTOR),1)
+ifneq ($(D349_RENDERER_STACK),1)
+$(error NATIVE_ACTOR requires the D349_RENDERER_STACK=1 packet/deferral owner)
+endif
+$(OBJDIR)/platform/native_actor.o: PLATFORM_CPPFLAGS += -O2 -include $(OBJDIR)/d349-stack.h
+$(OBJDIR)/platform/native_actor.o: $(OBJDIR)/d349-stack.h ../room/pvr_geometry.hpp platform/include/native_actor.hpp platform/include/native_model.h
+endif
+.PHONY: native-actor-force
+$(OBJDIR)/native-actor.h: native-actor-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_NATIVE_ACTOR %s\n' '$(NATIVE_ACTOR)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_model.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/native-actor.h
+$(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-actor.h
+$(OBJDIR)/model_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/native-actor.h
