@@ -1,5 +1,11 @@
 # RE4 Dreamcast working handoff
 
+> **Isolated D366 experiment — paused, rejected candidate.** This worktree is
+> `/root/work/re4-file01-v4-reduction`, not the primary recovered-game checkout.
+> Read [the D366 result](port/dreamcast/docs/R4_FILE01_PROTECTED_REDUCTION_CHECKPOINT.md).
+> Do not promote its assets or resume work until the operator resumes the task.
+> Primary authority remains `/root/work/re4-dreamcast/CLAUDE.md`.
+
 Updated 2026-09-23. Project rules: [AGENTS.md](AGENTS.md).
 
 ## Active persistent goal and model handoff

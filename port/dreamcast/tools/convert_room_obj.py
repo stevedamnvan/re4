@@ -283,7 +283,7 @@ def _obj_index(value: str, count: int, kind: str, line_no: int) -> int:
     return result
 
 
-def parse_obj(path: pathlib.Path) -> dict[str, object]:
+def parse_obj(path: pathlib.Path, *, retain_source_indices: bool = False) -> dict[str, object]:
     positions: list[tuple[float, float, float]] = []
     normals: list[tuple[float, float, float]] = []
     texcoords: list[tuple[float, float]] = []
@@ -393,6 +393,7 @@ def parse_obj(path: pathlib.Path) -> dict[str, object]:
         raise ValueError("OBJ has no renderable faces")
 
     return {
+        **({"vertex_source_indices": list(vertex_map)} if retain_source_indices else {}),
         "positions": len(positions),
         "normals": len(normals),
         "texcoords": len(texcoords),
