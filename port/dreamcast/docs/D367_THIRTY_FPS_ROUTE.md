@@ -164,7 +164,11 @@ Not worth porting:
 - AoS20 (already in our static path).
 
 Worth porting (with estimated hardware savings):
-1. prepared per-model records instead of the GC front end (-8 to -12);
+1. prepared per-model records instead of the GC front end (-8 to -12).
+   - **v1 landed as FRONT_NATIVE=1 (c881fba): -4.1 hw ms** (129.0 -> 124.9; band -3.7 to -4.6). ModelRender draws from only the state the bridge reads.
+   - Proof: FRONT_NATIVE=2 compares every model part bit-exactly (0 mismatches over 349,713 parts); the logic trace is STRICT.
+   - Ceiling: -11.8 if the whole model front end goes. Left for v2: per-TPL texture objects (~0.9), bridge build, and the HUD unitTrans O(n^2) scan (0.46).
+   - Finding: effects are never drawn on DC. EspCommonTrans ends in a no-op GXCallDisplayList stub, so its ~1.5-2 hw ms is dead work. EFFECT_LEAN will skip it; native effect billboards are a separate, costed user decision.
 2. one straight per-part emission loop instead of the packet/defer layer (-5 to -6);
 3. precompiled HUD headers (~-1.5);
 4. a small grouped render hot path (-1 to -2);
@@ -187,6 +191,12 @@ User decisions (2026-09-23):
 - **Approved:** shorter fog/draw distance, ~43 m -> 20-30 m ("most of the game is outdoors"). It must never hide an enemy within engagement range; trials pick the distance.
 - **Approved, "more drastic":** Ganado crowd rules. Near 2-3 full detail; mid tier about 1/4 vertices, rigid parts, skinned every other frame; far tier a few hundred triangles, skinned every 3rd-4th frame. Leon always full; threats are never culled.
 - **Open:** visual-only simulations (cloth, pendulum, some particles) at half rate.
+- **Enemy/object census (aligned):**
+  - Take the SAFE cuts: r103 corpses and the r100 gore object off via the JP path (CUT_GORE); effect and decal caps; no foot shadows; car and police props static.
+  - Cap concurrent active Ganados in r101 (ACT_CAP, N=4/6/8 trials, ~12 hw ms estimate). Parked Ganados stay alive for every counter; engaged or visible threats are never parked.
+  - Never cut: the r100 s03 Ganado; ESL entries 3/4/5 and 0x25; any r101 initial Ganado; the r101 kill/timer/wave logic; linked breakables.
+  - Don't remove wave members: phantom kills (5 per wave) would shorten the fight.
+  - Found alongside: with 10 Ganados on screen, texture_package.cpp costs 71.5 ms/frame in Flycast. It goes to the texture-hitch fix (preload per room, O(1) handles).
 
 ## Asset decisions
 
