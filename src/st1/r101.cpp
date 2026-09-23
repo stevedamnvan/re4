@@ -120,6 +120,29 @@ extern "C" void Evt_R101S30_Func(Event* e);
 #define R101_ROUTE_MOVIES 0
 #endif
 #if R101_ROUTE_MOVIES
+// Heap 4 (frontier W4 L1): the source grows the em26/em15 module buffers in place to the
+// evd size (EmReadSearch's size argument) so the event can later be swapped into them.
+// When the event's movie is on disc the movie presents it and the evd is never loaded,
+// so the module keeps its own size. No media: the source reservation is kept (logged).
+// Indices: 0 = s00 (em26), 1 = s21 (em15), 2 = s30 (em15).
+static u8 r101MovieOwns[3];
+static u32 r101EventReserve(int slot, unsigned id, u32 evdSize)
+{
+    r101MovieOwns[slot] = re4dc_movie_available(id) ? 1 : 0;
+    if (!r101MovieOwns[slot]) {
+        OSReport("route movie %05x: no media, source event reservation %u kept\n", id, evdSize);
+        return evdSize;
+    }
+    OSReport("route movie %05x: owns event, reservation %u released\n", id, evdSize);
+    return 0;
+}
+#define R101_EVENT_RESERVE(slot, id, size) r101EventReserve((slot), (id), (size))
+#define R101_MOVIE_OWNS(slot) (r101MovieOwns[slot] != 0)
+#else
+#define R101_EVENT_RESERVE(slot, id, size) (size)
+#define R101_MOVIE_OWNS(slot) 0
+#endif
+#if R101_ROUTE_MOVIES
 // r101_Event20's per-frame hook: cut 0xA frame 0x20 breaks window 0. PS2
 // r101s21.evd camera cuts put cut 10 at picture 603, so the hook is 635.
 static int r101MovieS21Break;
@@ -236,7 +259,7 @@ void R101Init()
             SceAtDataSet_exec(0x13, SCE_LEVEL10, 0, (TaskFunc) r101_callGanadoVoice, 0, 1);
             PSet(r101_work->evt00, DC.setData(EvtMgr.NameChange("evd/r101s00.evd")));
             r101_work->evt00->setCommand(CMND_ARAM_LOAD, 0, 0);
-            EmReadSearch(0x26, 0, r101_work->evt00->m_size);
+            EmReadSearch(0x26, 0, R101_EVENT_RESERVE(0, 0x10100, r101_work->evt00->m_size));
             SceAtDataSet_exec(7, SCE_LEVEL10, 0, (TaskFunc) r101_Event00, 0, 1);
         } else {
             SceExec(0x12, (TaskFunc) r101_checkEmNum, 0, 0, SCE_PRIO_DEF_2, 0);
@@ -247,10 +270,15 @@ void R101Init()
         if (RsfCheck(G_ROOM_ID, 8) == 0) {
             PSet(r101_work->evt21, DC.setData(EvtMgr.NameChange("evd/r101s21.evd")));
             r101_work->evt21->setCommand(CMND_ARAM_LOAD, 0, 0);
-            if (r101_work->evt21->m_size > r101_work->evt30->m_size) {
-                EmReadSearch(0x15, 0, r101_work->evt21->m_size);
-            } else {
-                EmReadSearch(0x15, 0, r101_work->evt30->m_size);
+            {
+                u32 s21 = R101_EVENT_RESERVE(1, 0x10121, r101_work->evt21->m_size);
+                u32 s30 = R101_EVENT_RESERVE(2, 0x10130, r101_work->evt30->m_size);
+
+                if (s21 > s30) {
+                    EmReadSearch(0x15, 0, s21);
+                } else {
+                    EmReadSearch(0x15, 0, s30);
+                }
             }
             if (getRoomEtcWindow(0, &win, 1)) {
                 ((cEmWindow*) win)->SetEnableDamage(0);
@@ -519,7 +547,7 @@ static void r101_Event30()
     SceSleep(2);
     m = SearchEmModule(0x15);
     if (fail != 1) {
-        if (r101_work->evt30->m_size > m->size) {
+        if (r101_work->evt30->m_size > m->size && !R101_MOVIE_OWNS(2)) {
             // COMPILER-DIFF: frame layout -- codeless use that keeps the 8-byte slot allocated
             // (an unreferenced aggregate gets no slot; the original's use is not in the bytes).
             asm("" : "=m"(unused));
@@ -528,8 +556,11 @@ static void r101_Event30()
             EspDataRelease(0x10, 0, 1);
             InitModule(m);
 #if R101_ROUTE_MOVIES
-            if (RouteMoviePlay(0x10130, ROUTE_MOVIE_SND_EVENT, (RouteEvtFunc) Evt_R101S30_Func, 0) ==
-                RE4DC_MOVIE_UNHANDLED)
+            int movie = RouteMoviePlay(0x10130, ROUTE_MOVIE_SND_EVENT, (RouteEvtFunc) Evt_R101S30_Func, 0);
+            if (movie == RE4DC_MOVIE_UNHANDLED && R101_MOVIE_OWNS(2) && r101_work->evt30->m_size > m->size) {
+                // Media vanished after room entry: no buffer holds the evd (source error path).
+                pLog->err(0, 0, "r101_Event30 exec error");
+            } else if (movie == RE4DC_MOVIE_UNHANDLED)
 #endif
             {
             r101_work->evt30->setCommand(CMND_MRAM_LOAD, 0, 1);
@@ -1034,6 +1065,9 @@ static void r101_Event00()
         r101_setEmSuspend(1);
 #if R101_ROUTE_MOVIES
         if (RouteMoviePlay(0x10100, ROUTE_MOVIE_SND_EVENT, 0, 0) != RE4DC_MOVIE_UNHANDLED) {
+        } else if (R101_MOVIE_OWNS(0) && r101_work->evt00->m_size > SearchEmModule(0x26)->size) {
+            // Media vanished after room entry: no buffer holds the evd (as r101_Event30's guard).
+            pLog->err(0, 0, "r101_Event00 exec error");
         } else
 #endif
         if (r101_work->evt00->waitLoadOk() == 1) {
