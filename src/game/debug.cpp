@@ -427,6 +427,22 @@ static inline void KeyTypeSet(int v) { CamDbg.m_key_type = v; }   // the SCR sto
 #define CFG_ON(p) (strncmp(p, "ON", 2) == 0)
 #define CFG_OFF3(p) (strncmp(p, "OFF", 3) == 0)
 
+#if defined(RE4DC_RELEASE_FLAGS) && RE4DC_RELEASE_FLAGS
+// D367 RELEASE_FLAGS (default off): the debug-disc boot turns the on-screen debug displays on.
+// 1: heap / process bar / primitive buffer / data controller overlay off (Debug_flg[2] 0x40000000,
+//    as config.txt "PROCESS_BAR OFF" does); 2: also the pad monitor (0x8000); 3: also debug_mode 0.
+static void re4dcReleaseFlags()
+{
+    BitOff(pG->Debug_flg[2], 0x40000000);
+#if RE4DC_RELEASE_FLAGS >= 2
+    BitOff(pG->Debug_flg[2], 0x8000);
+#endif
+#if RE4DC_RELEASE_FLAGS >= 3
+    pG->debug_mode = 0;
+#endif
+}
+#endif
+
 // Boot: reads "debug/config.txt" from disc and applies its [KEY] value lines (USER, BRIGHTNESS,
 // STAGE, ROOM, JUMP_POINT, PRINT_PAGE, PLAYER, BGM, SE, SCENARIO, ...) into pG (start room,
 // debug flags, player type, sound switches) for the debug build's direct room start.
@@ -450,6 +466,9 @@ void ConfigSet()
     req = DvdReadN("debug/config.txt", buf, 0, 0, 0, 0x11, __FILE__, __LINE__);
     if (Dvd.ReadCheck(req, &size, 0, 0) < 0) {
         Mem_free(buf);
+#if defined(RE4DC_RELEASE_FLAGS) && RE4DC_RELEASE_FLAGS
+        re4dcReleaseFlags();
+#endif
         return;
     }
     p = buf;
@@ -695,6 +714,9 @@ void ConfigSet()
     }
     Mem_free(buf);
     PlMode = 3;
+#if defined(RE4DC_RELEASE_FLAGS) && RE4DC_RELEASE_FLAGS
+    re4dcReleaseFlags();
+#endif
 }
 
 // Config parser: 1 when the text at *p is the token `sym` (up to `]` or whitespace); advances
