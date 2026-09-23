@@ -21,6 +21,7 @@
 # adds bgm/aica_str.dat (the disc streams), tools/aica_banks.py disc, for AICA_AUDIO=1
 # images (the silent audio_stub.cpp never reads either). AICA_CACHE (private, default
 # /root/probe/d367-aica-cache) keeps the conversions: ~25 s the first time, ~2 s after.
+# EFFECT_SPRITES=1 builds get the effect texture packages (tex_fx.sh) first in TEXDIRS.
 # ASSETS=<dir> sources <dir>/stage.env from the asset pipeline (tools/d367/assets.sh; its
 # MESHDIR/MESHROOMS/TEXDIRS/ROOMFILES/KEYED); variables set explicitly still win.
 # UI_OVERRIDES=<dir> (private) replaces source UI images with edited PNGs named and placed
@@ -62,6 +63,14 @@ done
 # images then fit only as VQ (README.md: tex-vq3). Flycast without it: 1,884 upload failures.
 ta_kb=$(grep -o 'TA_VERTBUF_KB=[0-9]*' "$build/candidate.txt" 2>/dev/null | head -1 | cut -d= -f2 || true)
 vq_overlay=
+# EFFECT_SPRITES=1 builds draw effect sprites from their TPL images: stage the effect texture
+# packages first in TEXDIRS (tex_fx.sh; FX_CACHE, private, default /root/probe/d367-fx-cache,
+# is generated once from RE4DATA), so the VQ overlay and later directories still win.
+if grep -q 'EFFECT_SPRITES=1' "$build/candidate.txt" 2>/dev/null; then
+  fx=${FX_CACHE:-/root/probe/d367-fx-cache}
+  bash "$here/tex_fx.sh" "$fx"
+  TEXDIRS="$fx ${TEXDIRS:-}"
+fi
 for d in ${TEXDIRS:-}; do if [ -e "$d/vq-native-ui-report.json" ]; then vq_overlay=$d; fi; done
 if [ "${ta_kb:-1024}" -gt 1024 ] && [ -z "$vq_overlay" ]; then
   echo "stage.sh: WARNING: TA_VERTBUF_KB=$ta_kb build staged without a VQ texture overlay in TEXDIRS (README.md: tex-vq3)" >&2

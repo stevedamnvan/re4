@@ -116,6 +116,19 @@ unchanged. `vq-native-ui-report.json` lists every image with its PSNR; the expec
 is 55 images, 9,994,240 -> 1,361,920 bytes. The overlay is required only by the 2 MiB TA
 recipe; the default-flag build ignores it.
 
+## Effect sprites (`EFFECT_LEAN=1 EFFECT_SPRITES=1`, effects30.mk)
+
+Muzzle flash (weapon owners 0x34-0x4f), the shot's core effects (owner 0) and blood (EM10,
+owner 0x10) are drawn as native PVR sprites in OT order (the deferred translucent queue); a
+sprite that finds no queue room is dropped, never the frame. Their TPL images have no
+packages in the base texture set, so `stage.sh` runs `tex_fx.sh` for any build whose
+candidate.txt has `EFFECT_SPRITES=1`: 552 packages from etc/core.das, em/em10.drs and
+em/wep00-09.drs (pinned list, `prepare_native_ui.py`, ~10 s once), cached in `FX_CACHE`
+(private, default /root/probe/d367-fx-cache, source `RE4DATA`, default /root/re4data) and
+staged FIRST in TEXDIRS so the VQ overlay and the PS2 bark still win. No manual step.
+r100 fight (a0a32aa): hw 133.3 -> 134.1 ms (+0.8, for effects that were not drawn before),
+STRICT; the run log line is `native effect sprites: queued= direct= missing= dropped=`.
+
 ## Asset pipeline (assets.sh)
 
 `tools/d367/assets.sh` generates a room's asset set from formulas instead of hand-tuned
