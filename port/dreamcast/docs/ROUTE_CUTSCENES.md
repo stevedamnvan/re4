@@ -102,6 +102,17 @@ about 0.21 MB/s from disc (GDEMU target 1.5-3 MB/s). The player stages about
 8 KB, strip 4.5 KB), plus 256 KB VRAM and 16 KB AICA RAM; everything returns
 at the terminal. r100's entry event has 311 KB of source heap free.
 
+## Source hang detector
+
+`postVSyncCallback` -> `haltExecCheck` (main.cpp) HALTs when 3600 vsyncs (60 s) pass without a
+presented game frame. A movie owns the frame, so r120 s00 (66.5 s) tripped it at
+main.cpp(548). The HALT's store to 0x11111111 was harmless log spam on the software UYVY path
+(cutscenes-c9/c12 log ~5,200 HALT lines and play on); with the PVR YUV converter
+(`ROUTE_MOVIE_YUV=1`, b50cfa3) it wedges the player, and the game stops ~60 s into the intro
+(m1-intro-w10-r0). The player now zeroes `vsync_cnt` for every presented picture: a picture
+counts as a presented frame. Timing only (frame pacing and the interrupt task resume); the
+detector stays armed outside movies.
+
 ## Known gaps
 
 - PS2 evd `Mes` packets (subtitles) are not shown; r101 s30's chapter-title overlay is not drawn.

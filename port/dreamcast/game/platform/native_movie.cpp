@@ -53,6 +53,9 @@ extern "C" void re4dc_fixture_state(const char* name,int a,int b) __attribute__(
 static void movie_state(int a,int b){if(re4dc_fixture_state)re4dc_fixture_state("movie",a,b);}
 extern "C" int re4dc_ui_movie_open(unsigned width, unsigned height);
 extern "C" int re4dc_ui_movie_present_now();
+// main.cpp: vsyncs since the last presented game frame. postVSyncCallback -> haltExecCheck
+// halts the game after 3600 (60 s) without one; a movie owns the frame and presents instead.
+extern volatile int vsync_cnt;
 extern "C" unsigned re4dc_pad_movie_buttons();
 extern "C" unsigned long re4dc_vi_retrace_count(void);
 extern "C" int re4dc_ui_movie_upload_begin();
@@ -352,6 +355,11 @@ bool show(plm_frame_t* f,unsigned index,unsigned now,RouteMoviePictureTick tick)
     auto dt=timer_us_gettime64()-t;m.sum_present+=dt;if(dt>m.max_present)m.max_present=dt;
     if(m.shown){const unsigned gap=now-m.last_submit;if(gap==2)++m.cadence2;else ++m.cadence_other;if(gap>m.max_gap)m.max_gap=gap;}
     m.last_submit=now;++m.shown;
+    // A presented picture is a presented frame for the source hang detector: without this, a
+    // movie over 60 s (r120 s00, 66.5 s) halts at main.cpp(548), whose store to 0x11111111
+    // then lands in the TA FIFO area and wedges the YUV converter. Timing only: vsync_cnt
+    // paces the frame loop and the interrupt task resume, never game state.
+    vsync_cnt=0;
     if(m.shown==1){movie_state(1,(int)(m.id&0xffff));
         re4dc_log("route movie first picture: id=%05x latency_us=%llu\n",m.id,timer_us_gettime64()-m.entered);}
     if(tick)tick(index);
