@@ -159,20 +159,34 @@ def faces_of(obj, fi):
     return (tuple(c[0] for c in corners), t if None not in t else None, n if None not in n else None)
 
 
-def ps2_models(ps2, inst):
-    """-> {PS2 BIN: dict(v (local), faces, lo, hi)}, report."""
+def ps2_models(ps2, inst, trees=TREES):
+    """-> {PS2 BIN: dict(v (local), faces, lo, hi)}, report. A BIN placed once
+    cannot choose its Euler order; it takes the order most multi-instance BINs
+    agree on."""
     gfaces = defaultdict(list)
     for fi, g in enumerate(ps2["face_groups"]):
         gfaces[g].append(faces_of(ps2, fi))
     groups = {}
     for gi, name in enumerate(ps2["groups"]):
         m = re.match(r"PS2SCENARIO#SMD_(\d+)#SMX_\d+#TYPE_\w+#BIN_(\d+)#", name)
-        if m and int(m.group(2)) in TREES:
+        if m and int(m.group(2)) in trees:
             groups.setdefault(int(m.group(2)), []).append((int(m.group(1)), gi))
     models, report = {}, {}
+    agreed = Counter()
+    for b, gl in groups.items():
+        if len(gl) > 1:
+            def spread(order):
+                locs = [local([ps2["v"][v] for v in sorted({v for f in gfaces[gi] for v in f[0]})], inst[smd], order)
+                        for smd, gi in gl[:6]]
+                n = min(len(l) for l in locs)
+                return sum(math.dist(locs[0][i], l[i]) for l in locs[1:] for i in range(n))
+            agreed[min(("".join(p) for p in itertools.permutations("xyz")), key=spread)] += 1
     for b, gl in sorted(groups.items()):
         best = None
-        for order in ("".join(p) for p in itertools.permutations("xyz")):
+        orders = ["".join(p) for p in itertools.permutations("xyz")]
+        if len(gl) == 1 and agreed:
+            orders = [agreed.most_common(1)[0][0]]
+        for order in orders:
             locs = []
             for smd, gi in gl[:6]:
                 vs = sorted({v for f in gfaces[gi] for v in f[0]})
@@ -217,6 +231,51 @@ def gc_votes(gc, inst):
     return votes
 
 
+def room_votes(smd, inst, gc_bins):
+    """Any room (--room): pair every placement of the GC BINs with the nearest
+    PS2 tree instance by placement position (x/z, <= NEAREST_MM) -> {bin: Counter(PS2 BIN)}."""
+    votes = defaultdict(Counter)
+    for p in smd.used():
+        if p["common"] or p["bin"] not in gc_bins:
+            continue
+        near = min((math.hypot(i["position"][0] - p["pos"][0], i["position"][2] - p["pos"][2]), i["bin"])
+                   for i in inst.values())
+        if near[0] <= NEAREST_MM:
+            votes[p["bin"]][near[1]] += 1
+    return votes
+
+
+def room_colocated(smd, inst, gc_bins, within=100.0):
+    """GC BINs whose placements carry PS2 tree instances at the same position
+    (<= within source units; PS2 may split one tree into several BINs) ->
+    {bin: (sorted PS2 BINs, placements that agree)} when at least half agree.
+    Those PS2 meshes are already in the GC BIN's model space: no fit."""
+    sets = defaultdict(Counter)
+    total = Counter()
+    for p in smd.used():
+        if p["common"] or p["bin"] not in gc_bins:
+            continue
+        total[p["bin"]] += 1
+        here = tuple(sorted({i["bin"] for i in inst.values() if math.dist(i["position"], p["pos"]) <= within}))
+        if here:
+            sets[p["bin"]][here] += 1
+    out = {}
+    for b, c in sets.items():
+        pick, n = c.most_common(1)[0]
+        if 2 * n >= total[b]:
+            out[b] = (list(pick), n)
+    return out
+
+
+def bin_list(spec):
+    """"1,4-6" -> [1, 4, 5, 6]"""
+    out = []
+    for r in spec.split(","):
+        lo, _, hi = r.partition("-")
+        out += range(int(lo), int(hi or lo) + 1)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out", type=Path)
@@ -226,6 +285,11 @@ def main():
     ap.add_argument("--gc-obj", type=Path, help="GC placed-instance OBJ (default: <export>/R100.allparts.obj)")
     ap.add_argument("--dc-uv", action="store_true", help="UVs for the transposed DC bark (ps2_tree_texture.py)")
     ap.add_argument("--groves", metavar="B[,B]=PS2BIN", help="one PS2 tree per GC trunk in these BINs")
+    ap.add_argument("--room", type=Path, metavar="ROOM",
+                    help="any room: GC tree BINs from this room's SMD (.das, decoded archive or SMD; "
+                         "room_smd.py), paired with PS2 trees by placement position; writes MAINSCENARIO_<b>.obj")
+    ap.add_argument("--gc-bins", help="GC tree BINs to replace (default: COMMON 0-10 of r100; required with --room)")
+    ap.add_argument("--ps2-bins", help="PS2 tree BINs of --ps2-obj (default: r100_004 139-147)")
     a = ap.parse_args()
     idx = a.ps2_idx or a.ps2_obj.with_name(a.ps2_obj.name[:-len(".obj")] + ".idx_ps2_smd")
     gc_obj = a.gc_obj or a.export / "R100.allparts.obj"
@@ -233,14 +297,31 @@ def main():
     if a.groves:
         spec, model = a.groves.split("=")
         groves = {int(x): int(model) for x in spec.split(",")}
+    if a.room and not a.gc_bins:
+        ap.error("--room needs --gc-bins")
+    trees = bin_list(a.ps2_bins) if a.ps2_bins else TREES
+    gc_bins = bin_list(a.gc_bins) if a.gc_bins else list(range(11))
     a.out.mkdir(parents=True, exist_ok=True)
-    inst = {n: i for n, i in read_idx(idx).items() if i["bin"] in TREES}
+    inst = {n: i for n, i in read_idx(idx).items() if i["bin"] in trees}
     ps2 = crb.parse_obj(a.ps2_obj)
-    models, model_report = ps2_models(ps2, inst)
-    report = dict(models=model_report, mapping={}, dc_uv=a.dc_uv)
-    votes = gc_votes(crb.parse_obj(gc_obj), inst)
-    for b in range(11):
-        src = crb.parse_bin((a.export / DIRS["COMMON"] / ("%04d.BIN" % b)).read_bytes())
+    models, model_report = ps2_models(ps2, inst, trees)
+    report = dict(models=model_report, mapping={}, dc_uv=a.dc_uv, room=str(a.room) if a.room else None)
+    if a.room:
+        import room_smd
+        smd = room_smd.Smd(*room_smd.load_smd(a.room))
+        room_bins = smd.bins()
+        votes = room_votes(smd, inst, gc_bins)
+        colocated = room_colocated(smd, inst, gc_bins)
+        owner = crb.owner_name(0xFF)
+    else:
+        votes = gc_votes(crb.parse_obj(gc_obj), inst)
+        colocated = {}
+        owner = "COMMON"
+    for b in gc_bins:
+        if a.room:
+            src = crb.parse_bin(room_bins[b])
+        else:
+            src = crb.parse_bin((a.export / DIRS["COMMON"] / ("%04d.BIN" % b)).read_bytes())
         used = {k[0] for p in src["parts"] for s in p["strips"] for k in s} | \
                {k[0] for p in src["parts"] for t in p["loose"] for k in t}
         glo = [min(src["positions"][i][x] for i in used) for x in range(3)]
@@ -257,13 +338,24 @@ def main():
             pick, how = groves[b], "grove: one PS2 BIN %d per GC trunk" % groves[b]
         m = models[pick]
         mc = [(m["lo"][0] + m["hi"][0]) / 2, m["lo"][1], (m["lo"][2] + m["hi"][2]) / 2]
-        if b in groves:
+        if b in colocated and b not in groves:
+            # Same placement as the GC tree: the PS2 BIN(s) are already in its model space.
+            same, agree = colocated[b]
+            v, faces = [], []
+            for pb in same:
+                faces += [(tuple(k + len(v) for k in f[0]), f[1], f[2]) for f in models[pb]["faces"]]
+                v += models[pb]["v"]
+            m = dict(v=v, faces=faces)
+            pick, how, mc = "+".join(map(str, same)), "same placement (%d of %d) as PS2 BIN %s, no fit" % (
+                agree, sum(votes[b].values()), "+".join(map(str, same))), [0.0, 0.0, 0.0]
+            places = [([0.0, 0.0, 0.0], 1.0, 0.0)]
+        elif b in groves:
             places = [(base, height / (m["hi"][1] - m["lo"][1]), math.radians(97.0 * k))
                       for k, (base, height) in enumerate(gc_trunks(src))]
         else:
             places = [([(glo[0] + ghi[0]) / 2, glo[1], (glo[2] + ghi[2]) / 2], ge[1] / (m["hi"][1] - m["lo"][1]), 0.0)]
-        lines = ["# PS2 r100_004 BIN %d fitted into GC COMMON/%d model space (%d placement(s), scale %s)" % (
-            pick, b, len(places), ",".join("%.3f" % p[1] for p in places))]
+        lines = ["# PS2 %s BIN %s fitted into GC %s/%d model space (%d placement(s), scale %s)" % (
+            a.ps2_obj.name.split(".")[0], pick, owner, b, len(places), ",".join("%.3f" % p[1] for p in places))]
         for base, sc, yaw in places:
             cy, sy = math.cos(yaw), math.sin(yaw)
             for p in m["v"]:
@@ -284,18 +376,18 @@ def main():
             for n in vns:
                 x, y, z = ps2["vn"][n]
                 lines.append("vn %.6f %.6f %.6f" % (cy * x + sy * z, y, -sy * x + cy * z))
-        lines += ["g part_0", "usemtl p0_t0_ps2bin%d" % pick]
+        lines += ["g part_0", "usemtl p0_t0_ps2bin%s" % pick]
         for k in range(len(places)):
             vo, no = k * len(m["v"]), k * len(vns)
             for v, t, n in m["faces"]:
                 lines.append("f " + " ".join("%d/%s/%s" % (v[j] + 1 + vo, vti[t[j]] if t else "",
                                                            vni[n[j]] + no if n else "") for j in range(3)))
-        (a.out / ("COMMON_%d.obj" % b)).write_text("\n".join(lines).replace("//\n", "\n") + "\n")
+        (a.out / ("%s_%d.obj" % (owner, b))).write_text("\n".join(lines).replace("//\n", "\n") + "\n")
         report["mapping"][b] = dict(ps2_bin=pick, how=how, gc_extent=[round(x) for x in ge],
                                     scale=round(places[0][1], 3), placements=len(places),
                                     ps2_tris=len(m["faces"]) * len(places))
-        print("GC COMMON/%d ext %s -> PS2 BIN %d x%d (%d tris) scale %.3f  [%s]" % (
-            b, [round(x) for x in ge], pick, len(places), len(m["faces"]) * len(places), places[0][1], how))
+        print("GC %s/%d ext %s -> PS2 BIN %s x%d (%d tris) scale %.3f  [%s]" % (
+            owner, b, [round(x) for x in ge], pick, len(places), len(m["faces"]) * len(places), places[0][1], how))
     (a.out / "ps2-trees.json").write_text(json.dumps(report, indent=1))
 
 

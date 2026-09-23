@@ -472,12 +472,15 @@ struct Draw : Emitter {
 // the part's live source modelview. setObj records object -> mesh in its
 // owner's table (inside the owner's allocation); the room's common BIN set is
 // a seventh view owned with the room.
-constexpr unsigned kMeshViews=kViews+1,kCommonView=kViews,kEntries=128;
+// The table holds one entry per placement: 4 per packaged BIN (r101: 209
+// placements of 81 BINs, r103: 286 of 119), a power of two from 128 to 1024.
+constexpr unsigned kMeshViews=kViews+1,kCommonView=kViews,kEntries=128,kEntriesMax=1024;
+unsigned entries_for(unsigned meshes){unsigned n=kEntries;while(n<4U*meshes && n<kEntriesMax)n<<=1;return n;}
 struct MeshEntry { const void* object; std::uint16_t mesh; std::uint8_t common,used; };
 struct MeshView {
     re4dc::room::MeshPackage package;
     unsigned char* storage=nullptr; unsigned bytes=0;
-    MeshEntry* entries=nullptr; // owner views only
+    MeshEntry* entries=nullptr; unsigned capacity=0; // owner views only
     const std::uint32_t* lut=nullptr; // ARGB1555 -> 8888 halves, same allocation
     unsigned room=0; bool attempted=false;
 };
@@ -491,7 +494,7 @@ constexpr unsigned kLutBytes=0;
 void retire(MeshView& v){
     v.package.close();
     if(v.storage){re4dc_static_free(v.storage);stats.package_bytes-=v.bytes;--stats.owners_open;}
-    v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.lut=nullptr;v.attempted=false;v.room=0;
+    v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.capacity=0;v.lut=nullptr;v.attempted=false;v.room=0;
 }
 
 bool open(MeshView& v,unsigned index,unsigned room){
@@ -506,11 +509,19 @@ bool open(MeshView& v,unsigned index,unsigned room){
     if(file==FILEHND_INVALID){++stats.open_failures;re4dc_log("native mesh: %s missing\n",path);return false;}
     const unsigned size=unsigned(fs_total(file));
     const unsigned package_bytes=(size+31U)&~31U;
-    const unsigned table=index==kCommonView?0U:kEntries*unsigned(sizeof(MeshEntry));
+    // Header first: the placement table is sized from its mesh count.
+    re4dc::room::MeshHeader head{};
+    const bool headed=size>=sizeof(head) && fs_read(file,&head,sizeof(head))==ssize_t(sizeof(head));
+    const unsigned capacity=index==kCommonView?0U:entries_for(headed?head.mesh_count:0U);
+    const unsigned table=capacity*unsigned(sizeof(MeshEntry));
     stats.heap_before=re4dc_static_heap_free();
-    auto* storage=static_cast<unsigned char*>(re4dc_static_alloc(package_bytes+table+kLutBytes));
-    if(!storage)++stats.alloc_rejects;
-    else if(fs_read(file,storage,size)!=ssize_t(size)){re4dc_static_free(storage);storage=nullptr;}
+    auto* storage=headed?static_cast<unsigned char*>(re4dc_static_alloc(package_bytes+table+kLutBytes)):nullptr;
+    const ssize_t rest=ssize_t(size-sizeof(head));
+    if(!storage){if(headed)++stats.alloc_rejects;}
+    else{
+        std::memcpy(storage,&head,sizeof(head));
+        if(fs_read(file,storage+sizeof(head),rest)!=rest){re4dc_static_free(storage);storage=nullptr;}
+    }
     fs_close(file);
     stats.heap_after=re4dc_static_heap_free();
     if(!storage){re4dc_log("native mesh: %s not loaded (size=%u heap=%d)\n",path,size,stats.heap_before);return false;}
@@ -519,7 +530,7 @@ bool open(MeshView& v,unsigned index,unsigned room){
         re4dc_static_free(storage);++stats.open_failures;return false;
     }
     v.storage=storage;v.bytes=package_bytes+table+kLutBytes;
-    if(table){v.entries=reinterpret_cast<MeshEntry*>(storage+package_bytes);std::memset(v.entries,0,table);}
+    if(table){v.entries=reinterpret_cast<MeshEntry*>(storage+package_bytes);v.capacity=capacity;std::memset(v.entries,0,table);}
 #if RE4DC_MESH_FASTPATH
     auto* lut=reinterpret_cast<std::uint32_t*>(storage+package_bytes+table);
     re4dc::vp::build_lut(lut);v.lut=lut;
@@ -527,18 +538,20 @@ bool open(MeshView& v,unsigned index,unsigned room){
     ++stats.owners_open;stats.package_bytes+=v.bytes;
     const struct mallinfo kos=mallinfo();
     const auto& h=v.package.header();
-    re4dc_log("native mesh: %s bytes=%u version=%u meshes=%u parts=%u meshlets=%u vertices=%u heap4=%d->%d kos_free=%d\n",
+    re4dc_log("native mesh: %s bytes=%u version=%u meshes=%u parts=%u meshlets=%u vertices=%u heap4=%d->%d kos_free=%d entries=%u\n",
         path,v.bytes,h.version,h.mesh_count,h.part_count,h.meshlet_count,h.vertex_count,
-        stats.heap_before,stats.heap_after,kos.fordblks);
+        stats.heap_before,stats.heap_after,kos.fordblks,v.capacity);
     return true;
 }
 
-unsigned entry_slot(const void* object){return unsigned(reinterpret_cast<std::uintptr_t>(object)>>4)%kEntries;}
+unsigned entry_slot(const void* object,unsigned capacity){
+    return unsigned(reinterpret_cast<std::uintptr_t>(object)>>4)&(capacity-1U);}
 const MeshEntry* find_entry(const void* object,unsigned& owner){
     for(unsigned i=0;i<kViews;++i){
         const MeshView& v=mesh_views[i];
         if(!v.entries)continue;
-        for(unsigned k=0,s=entry_slot(object);k<kEntries;++k,s=(s+1)%kEntries){
+        const unsigned n=v.capacity;
+        for(unsigned k=0,s=entry_slot(object,n);k<n;++k,s=(s+1)&(n-1U)){
             const MeshEntry& e=v.entries[s];
             if(!e.used)break;
             if(e.object==object){owner=i;return &e;}
@@ -561,7 +574,8 @@ void bind_mesh(const void* object,unsigned room,int block,unsigned bin,unsigned 
         if(stats.bind_misses<=48)re4dc_log("native mesh: bind miss view=%u bin=%u common=%u\n",index,bin,common);
         return;
     }
-    for(unsigned k=0,s=entry_slot(object);k<kEntries;++k,s=(s+1)%kEntries){
+    const unsigned n=owner.capacity;
+    for(unsigned k=0,s=entry_slot(object,n);k<n;++k,s=(s+1)&(n-1U)){
         MeshEntry& e=owner.entries[s];
         if(e.used && e.object!=object)continue;
         e={object,std::uint16_t(mesh),std::uint8_t(common!=0),1};++stats.binds;return;
@@ -849,7 +863,7 @@ extern "C" int re4dc_static_mesh_lit(const void* object,unsigned vertices,unsign
     const MeshView& v=e->common?mesh_views[kCommonView]:mesh_views[owner];
     if(!v.package.valid() || e->mesh>=v.package.header().mesh_count)return 0;
     const auto& mesh=v.package.meshes()[e->mesh];
-    if(mesh.source_vertices!=vertices || mesh.source_parts!=parts || !mesh.part_count)return 0;
+    if(!v.package.source_identity(e->mesh,vertices,parts) || !mesh.part_count)return 0;
     const auto* list=v.package.parts()+mesh.first_part;
     for(unsigned i=0;i<mesh.part_count;++i)if(!list[i].reserved)return 0;
     return 1;
@@ -1008,8 +1022,10 @@ int mesh_submit(const Re4dcModelPart& p){
     if(data){std::memcpy(&vertices,data+0x38,2);std::memcpy(&parts,data+0x1A,2);}
 #endif
     const std::uintptr_t offset=data?reinterpret_cast<std::uintptr_t>(p.part)-reinterpret_cast<std::uintptr_t>(first_part(data)):~std::uintptr_t(0);
-    const auto* part=(data && vertices==mesh.source_vertices && parts==mesh.source_parts && offset<0x100000U)?
-        v.package.part(e->mesh,std::uint32_t(offset),p.stream_bytes):nullptr;
+    // Source layout, or a room archive that released this BIN's GX payload
+    // (instanced_mesh.hpp source_part; such a part has no GX fallback).
+    const auto* part=(data && offset<0x100000U)?
+        v.package.source_part(e->mesh,vertices,parts,std::uint32_t(offset),p.stream_bytes):nullptr;
     if(!part){
         ++stats.key_misses;
         if(stats.key_misses<=32)re4dc_log("native mesh: part mismatch bin=%u common=%u vertices=%u/%u parts=%u/%u offset=%u size=%u\n",

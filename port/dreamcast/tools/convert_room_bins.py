@@ -874,12 +874,79 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
     return blob, summary
 
 
+# ---- Any room (--smd) --------------------------------------------------------
+class _Blob:
+    """A BIN held in memory, read like a NNNN.BIN path."""
+    def __init__(self, data, name):
+        self.data, self.name = data, name
+
+    def read_bytes(self):
+        return self.data
+
+    def __str__(self):
+        return self.name
+
+
+def _room_smd():
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import room_smd
+    return room_smd
+
+
+def smd_entries(source, owner):
+    """Room SMD (room_smd.load_smd: .das, decoded tagged archive or SMD) ->
+    dict(entries for convert()/convert_lod(), scales {bin: largest placement
+    |scale|}, kept {bin: reason}). Only render-qualified BINs (single node,
+    rigid, no shape table: the model bridge's static_geometry test) become
+    meshes; the others keep the source GX path."""
+    room_smd = _room_smd()
+    smd, e = room_smd.load_smd(source)
+    if e != ">":
+        raise ValueError("%s: --smd needs source byte order (.das, decoded archive or source SMD)" % source)
+    s = room_smd.Smd(smd, e)
+    entries, kept = [], {}
+    for b, data in sorted(s.bins().items()):
+        why = room_smd.releasable(data, e)
+        if why in room_smd.RENDER_UNQUALIFIED:
+            kept[b] = why
+            continue
+        entries.append((owner, False, b, _Blob(data, "%s:BIN%d" % (source, b))))
+    scales = {int(k.split(":")[1]): v for k, v in s.scales(owner).items()}
+    return dict(entries=entries, scales=scales, kept=kept)
+
+
+def release_identities(entries, summary):
+    """BINs whose every source part is in the package and whose room-archive
+    copy may drop its GX render payload (room_smd.py release), with the source
+    identity that step checks before it replaces a BIN by its stub."""
+    room_smd = _room_smd()
+    packaged = {(r["owner"], r["bin"]) for r in summary["meshes_detail"]}
+    out = []
+    for owner, common, b, path in entries:
+        if common or (owner, b) not in packaged:
+            continue
+        data = path.read_bytes()
+        if room_smd.releasable(data, ">"):
+            continue
+        lay = room_smd.bin_layout(data, ">")
+        heads = room_smd.part_headers(data, ">", lay)
+        out.append(dict(bin=b, vertices=lay["nv"], parts=lay["nd"], part_offsets=[o for o, _ in heads],
+                        part_sizes=[z for _, z in heads], source_bytes=len(data),
+                        resident_bytes=len(room_smd.release_bin(data, ">"))))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out", type=Path)
     ap.add_argument("--owner", type=lambda s: int(s, 0), required=True,
                     help="0xff main scenario, 0xfe common, otherwise source block number")
-    ap.add_argument("--bins", type=Path, required=True, help="directory of NNNN.BIN files")
+    ap.add_argument("--bins", type=Path, help="directory of NNNN.BIN files")
+    ap.add_argument("--smd", type=Path, metavar="ROOM",
+                    help="any room: its local BINs from the SMD of a room .das, decoded tagged archive or SMD "
+                         "(tools/room_smd.py), placement scales included; the summary's \"release\" lists the "
+                         "BINs whose GX payload the room archive may drop (room_smd.py release)")
     ap.add_argument("--common", action="store_true", help="BINs are the room's common (shared) set")
     ap.add_argument("--color-policy", choices=["vertex"], default="vertex")
     ap.add_argument("--color-scale", type=float, default=1.0)
@@ -911,9 +978,12 @@ def main():
                     help="multiply the stored level errors of these BINs (e.g. 0xfe:0-10=0.375: the common "
                          "trees switch at 8 px when MESH_LOD_PX=3); repeatable")
     a = ap.parse_args()
-    entries = [(a.owner, a.common, int(p.stem), p) for p in sorted(a.bins.glob("*.BIN"))]
+    if (a.bins is None) == (a.smd is None):
+        ap.error("give exactly one of --bins and --smd")
+    room = smd_entries(a.smd, a.owner) if a.smd else None
+    entries = room["entries"] if room else [(a.owner, a.common, int(p.stem), p) for p in sorted(a.bins.glob("*.BIN"))]
     if a.lod:
-        scales = {}
+        scales = {(a.owner, b): s for b, s in room["scales"].items()} if room else {}
         if a.scales:
             for k, v in json.loads(a.scales.read_text()).items():
                 o, b = k.split(":")
@@ -948,6 +1018,8 @@ def main():
                    cell=a.cell, min_fill=a.min_fill,
                    sha256=hashlib.sha256(blob).hexdigest(),
                    meaning="instanced native prelit meshes; colour is authored CLR0 times color_scale (placeholder)")
+    if room:
+        summary.update(smd=str(a.smd), gx_kept=room["kept"], release=release_identities(entries, summary))
     if a.lod:
         summary.update(lod_px=a.lod_px, lod_eps=a.lod_eps, lod_cluster=a.lod_cluster, lod_cluster_tris=a.lod_cluster_tris,
                        lod_min_gain=a.lod_min_gain, lod_max_levels=a.lod_max_levels, lod_bias=a.lod_bias,

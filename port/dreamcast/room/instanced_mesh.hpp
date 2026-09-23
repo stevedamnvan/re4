@@ -178,6 +178,25 @@ public:
         }
         return nullptr;
     }
+    // A released source BIN (tools/room_smd.py release: the room archive keeps
+    // the header, nVtx = kReleasedVertices box corners and every part header in
+    // order with no GX stream) is matched by part index: part k sits at offset
+    // 32*k with size 0. Only meshes that carry every source part qualify.
+    static constexpr unsigned kReleasedVertices=2;
+    bool source_identity(unsigned m,unsigned vertices,unsigned part_total)const{
+        const auto& r=meshes()[m];
+        return part_total==r.source_parts &&
+               (vertices==r.source_vertices || (vertices==kReleasedVertices && r.part_count==r.source_parts));
+    }
+    // Part of mesh m for a live source identity (vertices, part count, part
+    // header offset from the first part header, stream size); nullptr otherwise.
+    const MeshPart* source_part(unsigned m,unsigned vertices,unsigned part_total,std::uint32_t offset,std::uint32_t size)const{
+        const auto& r=meshes()[m];
+        if(!source_identity(m,vertices,part_total))return nullptr;
+        if(vertices==r.source_vertices)return part(m,offset,size);
+        if(size || (offset&31U) || offset/32U>=r.part_count)return nullptr;
+        return &parts()[r.first_part+offset/32U];
+    }
 private:
     template<class T> const T* at(std::uint32_t offset)const{return reinterpret_cast<const T*>(data_+offset);}
     static bool section(std::uint32_t offset,std::uint32_t count,std::uint32_t stride,std::uint32_t size,std::uint32_t head){

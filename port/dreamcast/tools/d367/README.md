@@ -31,6 +31,35 @@ converter (`tools/convert_room_bins.py --lod ...`).
 Add `PC_SAMPLER=1 PC_SAMPLER_BYTES=8192` for the PC-sampling profiler, when that knob is
 present in the tree.
 
+## Any room: r101, r103 (W9)
+
+The same package recipe as r100 (instanced meshes, LOD at `MESH_LOD_PX=3`, fog to the
+source far plane), read straight from the room SMD. Every render-qualified local BIN is
+packaged. r101 and r103 have no common placements, so they have no COMMON package.
+
+```
+# packages (private data; st1/<room>.das from the route mirror's iso-src)
+python3 tools/convert_room_bins.py <pkg>/MAINSCENARIO.re4mesh --owner 0xff --smd st1/r101.das \
+  --lod --lod-min-gain 0.4 --lod-max-levels 4 --lod-eps 24,48,96,192,384 \
+  [--lod-substitute <trees> --lod-bias 0xff:13-16=0.375]
+# PS2 trees paired by placement (r101: GC 13-16 <- PS2 81+82, 78, 79, 80; GC bark kept)
+python3 tools/ps2_trees.py <trees> --room st1/r101.das --gc-bins 13-16 --ps2-bins 78-82 \
+  --ps2-obj <PS2 r101_004.scenario.obj> --dc-uv
+# release: the packaged BINs' GX payload leaves the prepared room archive (.dar and .arc)
+python3 tools/room_smd.py release <room>.dar <pkg>/MAINSCENARIO.re4mesh.json <released>.dar
+python3 tools/room_smd.py release <room>.arc <pkg>/MAINSCENARIO.re4mesh.json <released>.arc
+# stage
+MESHROOMS="r101=<pkg>" ROOMFILES="st1/r101.dar=<released>.dar st1/r101.arc=<released>.arc" \
+  bash port/dreamcast/tools/d367/stage.sh /path/build-<name> /path/disc-<name>
+```
+
+`tools/room_smd.py` holds the release contract. A released BIN keeps its header, part
+headers (stream size 0), CLR0, and a 2-vertex box, so bounds and the part walk are
+unchanged. The runtime matches its parts by index. A released archive needs its package
+and `NATIVE_MESH=1`: a released part never falls back to GX. The prepared room's NTR
+texture index is rebased. `tests/test_room_smd.py` covers this, plus r101/r103 when
+`RE4DC_ROUTE_DAS_DIR` holds the route .das files.
+
 ## GDEMU image (W10)
 
 `GDI=1 GDI_OUT=/mnt/d/... stage.sh ...` also writes a GDI from the same tree through
