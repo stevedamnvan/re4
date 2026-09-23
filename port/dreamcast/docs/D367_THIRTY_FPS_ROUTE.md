@@ -125,6 +125,42 @@ Remaining work in LC is about 98 ms. It rounds up to 7 vblanks.
   decimation of static BINs and comparison renders. Its collapse and far-LOD
   output lost to the converter's own QEM LOD.
 
+## Performance plan status (updated 2026-09-23)
+
+Flycast ms are for r100, frames 2401-2520. The "work" figure excludes vblank
+idle. Hardware figures are estimates until the projection model and the
+console calibrate them.
+
+| # | Item | Flycast effect | Hardware effect (est.) | Status |
+|---|---|---|---|---|
+| 1 | Instanced per-BIN scenery, source-to-native static path | 1390 -> 559 | large | Done (5dd04d3, ed9393c) |
+| 2 | Remove per-vertex libcalls | 559 -> 434 | similar | Done (e62cc4b) |
+| 3 | NO_EH; also frees 360 KB for heap 4 | 434 -> 409 | small | Done (f10ed71) |
+| 4 | Meshlet fast path + dense actor path | 409 -> 234 | large | Done (02d5a0f, bfa1452) |
+| 5 | Spatial meshlet packages | 234 -> 217 | medium | Done (e62cc4b option) |
+| 6 | PVR pipeline, fast wake, lean bridge | 217 -> 200 | overlaps render on hardware | Done (a1db43d) |
+| 7 | Scenery LOD + source fog + far cull | 200 -> 150 | scenery ~9-11 ms | Done (64b25dd) |
+| 8 | Fast actor path + deferred skinning | 150 -> 117 (actors 51 -> 18) | actors ~16 ms | Done (4fa839d) |
+| 9 | PS2 trees | -2.5 ms work, heap +370 KB | worst views 61.7k -> 35.7k corners | Done, staged data (ps2-blender) |
+| 10 | Async present (PVR_PIPELINE=2, private KOS) | removes part of ~19 ms pacing waste | overlaps CPU and render | Building (LF) |
+| 11 | Actors pass 2: static room objects, whole-part LOD, 16-bit UV | ~18 -> ~8 | ~16 -> 3-5 | In progress |
+| 12 | Game CPU: SH-4 matrix kernels, PS alias links, room index, rot cache | ~-6 | more (call overhead, cache) | Code proven; Flycast validation running |
+| 13 | FP 6B (contract-off + FDLIBM), then O2 on hot objects | ~0 to -2 | -1 to -3 | Validation running |
+| 14 | Memory-copy audit (~15 ms) | -8 to -12 | more (cache thrash) | In progress |
+| 15 | GC render front-end removal (objTrans ~13, EspTrans ~3, light setup, GX stubs) | -10 to -15 | similar | In progress (same agent as 14) |
+| 16 | UI VRAM diet -> 1.5-2 MiB vertex banks | 0 | required so hardware doesn't overflow | In progress |
+| 17 | Hardware projection model (pairing + I/D-cache simulation) | - | ranks items 18-21 | In progress |
+| 18 | pref / OC-RAM transform cache / fsrra in render code | ~0 in Flycast | est. several ms | Waiting on #17 ranking |
+| 19 | I-cache hot/cold code layout | ~0 in Flycast | potentially large (8 KB IC, large code) | Waiting on #17 |
+| 20 | Tree impostors beyond ~8 m | modelled scenery 16 -> 12 | -2 to -3 | Not started (needs a textured-quad path) |
+| 21 | Lighter near-camera FILE_01 houses | ~8 of 16 ms modelled scenery | -2 to -4 | Open: PS2 gives no gain; needs custom meshes |
+| 22 | Bytes-based TA guard + 32-byte limits (Sega rules) | 0 | correctness | After #16 |
+| - | Costs being added: music + SFX, FMV decode (cutscenes only) | +1-3 ms in gameplay | +1-3 ms | Audio and cutscene agents |
+
+**Projection.** Items 10-15 take Flycast work from ~96 ms to about 55-65 ms
+(15-18 fps), which clears the ~15 fps console gate. Items 17-21 target the
+rest of the way to 33 ms on hardware.
+
 ## Plan to 30 fps
 
 Steps are ordered by expected frame-time gain.
