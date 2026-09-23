@@ -162,3 +162,18 @@ transition peak remain open.
 The native reader additionally rejects misaligned v4 backing (v3 retains its
 4-byte contract); that guard was host-tested after the timed snapshots. It adds
 no per-frame work. Measured kernel/fixture sources are pinned in evidence.
+
+## Source-range qualification after the layout decision
+
+AoS20 is frozen as the leading layout by the current user roadmap. Subsequent
+work extended this same reader with cold-path `resolve_source(owner, work, bin,
+common)` rather than another registry/cache. The existing four files remain
+byte-identical and pass lookup/close/re-adopt checks. Duplicate owner/work,
+conflicting BIN/common and noncontiguous child groups reject qualification.
+This prevents a repeated SMX ID from selecting the wrong native source object.
+
+The caller must re-resolve under its existing owner generation after load/move/
+retire; the reader owns no game lifetime. No recovered source hook is activated
+yet, and no actual source allocation has been reduced. See the four-owner budget
+for the FILE_01 decomposition and remaining source/texture connection costs.
+This work adds no layout or SH4ZAM timing arm and leaves the D364 results intact.

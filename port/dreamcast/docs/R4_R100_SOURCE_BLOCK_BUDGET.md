@@ -113,3 +113,79 @@ the exact original converter commands and hashes. D362 RAM SHA256:
 32d363cd666f1e5516a2dacd0868c467e18a11f0e64d74023d33f1ee424ac0c5.
 No full reference/native scene was installed alongside the recovered game.
 No new source loader or streamer was introduced.
+
+## FILE_01 decomposition after D364
+
+The source-range integration check accepts the existing four AoS20 files without
+regeneration: 58 distinct source owners/works, 1,093 child groups. The same reader
+now resolves owner/work/BIN/common into an existing contiguous group range at
+registration time. It rejects ambiguous owner/work identities or interleaved/
+orphan groups; no geometry, registry or source-heap allocation is added. Source
+owner generation still controls validity. Close/re-adopt tests cover relocation;
+the recovered-game create/move/retire hooks have not yet called this interface.
+
+FILE_01 contains 50 selected instances, 468 groups, 751 batches, 35,831 native
+batch vertices and 24,983 triangles. Its exact 1,000,874 bytes decompose as:
+
+| Encoded section | Bytes |
+|---|---:|
+| Float XYZ | 429,972 |
+| Compact UV | 143,324 |
+| Packed prelit color | 143,324 |
+| Runtime normal array | 0 |
+| Triangle indices | 54,858 |
+| Strip indices | 89,450 |
+| Primitive records | 78,968 |
+| Group bounds/ranges | 14,976 |
+| Batch metadata | 39,052 |
+| Source identities/state | 4,200 |
+| Material bindings | 2,496 |
+| Header/alignment | 254 |
+
+The largest instance contributions, excluding shared material/header overhead,
+are work 13/local BIN17 (104,470 B), work 31/local BIN1 (97,536 B), work 71/common
+BIN10 (89,026 B), work 24/local BIN28 (83,508 B), work 76/common BIN3 (67,618 B),
+and work 20/local BIN24 (66,408 B). These identify the exact reduction inputs,
+not permission to remove entire source objects. Their source ownership, pivots,
+visibility/activation, collision and event behavior remain unchanged.
+
+If every FILE_01 group is drawn, the existing source-order policy constructs
+29,634 native-strip vertex records and 27,429 triangle-fallback vertex records:
+1,826,016 packet-vertex bytes before headers. This is an unculled encoded-work
+count, **not measured bytes/frame or visible CPU cost**. D349's historical view
+culled work; do not compare this total directly to its ~0.97 MB/frame.
+
+D362 RAM verifies source block 1 is opening-state MRAM/CREATE at 530,208 B.
+The previously identified 349,168 B source span opportunity remains conditional;
+there is still no actual heap recovery. Model bounds/relocation/preparation and
+other remaining readers must be adapted before dropping positions/normals/GX.
+Native world-space package bounds are not automatically source-local bounds.
+
+Texture payload is external to `.re4room`. Joining the original common SMD TPL
+through existing image/pair identity functions resolves 35 of the 39 referenced
+materials to existing native files: 2,371,584 payload bytes and 5,040 header/
+descriptor bytes, shared with other objects/owners. Those files are native
+twiddled 16-bit, including six soft-alpha and one binary-alpha materials; no VQ
+payload is present in this resolved subset. This is referenced catalog cost,
+not actual peak VRAM, extra source heap, or complete source pass classification.
+The historical `native-ui-report.json` alone omits these room identities; its
+absence is not a missing-file diagnosis. No texture conversion was repeated.
+
+The exact combined native identities for ROOM_MATERIAL_016, _027, _028 and _029
+are absent from the selected texture folder. Keep them explicit until current
+source material/mask selection and compatibility are qualified; do not silently
+render without their alpha or count their cost as zero. Source-driven material
+animation/selection remains a required connection, not frozen historical state.
+
+Existing D353 `inventory-v3` and geometry correspondence records already cover
+r100 PS2 assets. They include cabin candidates but do not qualify all PS2 RGB,
+rigid32 or event-switched records. Continue from that work for these costly
+FILE_01 instances; do not repeat the rejected r101 stove pilot or full inventory.
+
+Private evidence: `/root/probe/d365-r100-cutover/owner-binding-cost.json` and
+`file01-material-cost.json`, with original source/package/texture hashes. The
+initial incomplete-catalog attempt is retained and excluded. Host reader checks
+pass all four existing files; eight synthetic reader tests and ten existing
+converter tests pass. The reader compiles with pinned SH-4 GCC15.2/KOS under
+`-Werror`; object text grows 544 B (7,906 -> 8,450), BSS stays 8 B. This is not
+a linked-game RAM measurement. The current source-driven ELF remains unchanged.

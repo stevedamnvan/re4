@@ -179,6 +179,13 @@ static_assert(sizeof(CompactGroup)==32);
 static_assert(sizeof(CompactBatch)==52);
 static_assert(sizeof(CompactSource)==84);
 
+// Load/registration-time source selection. Indices, not borrowed pointers or
+// another owner registry. The caller's existing owner generation determines
+// validity and must resolve again after replacement/rebase/retirement.
+struct CompactSourceRange {
+    std::uint32_t source, first_group, group_count;
+};
+
 class Package {
 public:
     Package() = default;
@@ -196,6 +203,12 @@ public:
     const CompactGroup* compact_groups() const;
     const CompactBatch* compact_batches() const;
     const CompactSource* compact_sources() const;
+    // Source SMD owner/work identifies the placed object, including repeated
+    // SMX IDs; BIN/common must also match. Cold-path lookup, never per corner.
+    // No allocation, source GX parse, geometry copy or retained pointer.
+    bool resolve_source(std::uint8_t owner, std::uint16_t work,
+                        std::uint16_t bin, bool common,
+                        CompactSourceRange& range) const;
     const CompactVertex* compact_vertices() const;
     const CompactPosition* compact_positions() const;
     const CompactAttribute* compact_attributes() const;

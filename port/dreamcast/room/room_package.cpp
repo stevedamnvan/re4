@@ -334,6 +334,12 @@ bool Package::validate_compact() {
         if(src.common>1 || src.reserved || src.state.cull_mode>3 ||
            (src.state.metadata_flags & ~kSourceGroupHasLightVolume))
             return fail("v4 invalid source metadata");
+        // A source work has one authoritative model binding. Different BIN,
+        // common or material/light metadata cannot create a second native
+        // registration for the same object and draw it twice.
+        for(std::uint32_t j=0;j<i;++j)
+            if(src.owner==sources[j].owner && src.work==sources[j].work)
+                return fail("v4 duplicate source owner/work");
         // SourceGroup's 15 floats are contiguous but are separate C++ arrays.
         for(float f:src.state.light_center) if(!std::isfinite(f)) return fail("v4 nonfinite light volume");
         for(float f:src.state.light_size) if(!std::isfinite(f)) return fail("v4 nonfinite light volume");
@@ -343,11 +349,19 @@ bool Package::validate_compact() {
     const auto* prims=primitives();const auto* tri=local_indices();
     const auto* indices=local_primitive_indices();
     std::uint64_t bc=0,vc=0,pc=0,ic=0,sc=0,tc=0;
+    std::uint32_t source=0;
     for(std::uint32_t gi=0;gi<b.group_count;++gi) {
         const auto& group=groups[gi];
         if(group.source>=h.source_count || !group.batch_count ||
            group.first_batch!=bc || bc+group.batch_count>b.batch_count ||
            !bounds_ok(group.bounds_min,group.bounds_max)) return fail("v4 invalid group");
+        // The existing converter emits each object's child groups together,
+        // in first-use source order. Require this before returning one range;
+        // interleaved alpha work must not be silently reordered by the reader.
+        if(gi==0 ? group.source!=0 :
+            (group.source!=source && group.source!=source+1))
+            return fail("v4 noncontiguous source groups");
+        source=group.source;
         for(std::uint32_t k=0;k<group.batch_count;++k,++bc) {
             const auto& batch=batches[bc];const auto& draw=batch.draw;
             if(draw.group!=gi || draw.material>=b.material_count ||
@@ -382,7 +396,8 @@ bool Package::validate_compact() {
         }
     }
     if(bc!=b.batch_count || vc!=b.vertex_count || pc!=b.primitive_count ||
-       ic!=b.index_count || sc!=b.primitive_index_count || tc!=b.triangle_count)
+       ic!=b.index_count || sc!=b.primitive_index_count || tc!=b.triangle_count ||
+       source+1!=h.source_count)
         return fail("v4 unowned records/count mismatch");
     for(std::uint32_t i=0;i<b.vertex_count;++i) {
         float x,y,z;std::uint32_t color;
@@ -412,6 +427,27 @@ const CompactSource* Package::compact_sources() const {
     const auto* h=compact_header();
     return h?reinterpret_cast<const CompactSource*>(data_+h->source_offset):nullptr;
 }
+bool Package::resolve_source(std::uint8_t owner,std::uint16_t work,
+    std::uint16_t bin,bool common,CompactSourceRange& range) const {
+    range={};
+    const auto* h=compact_header();
+    if(!h) return false;
+    const auto* sources=compact_sources();
+    for(std::uint32_t i=0;i<h->source_count;++i) {
+        const auto& s=sources[i];
+        if(s.owner!=owner || s.work!=work) continue;
+        if(s.bin!=bin || bool(s.common)!=common) return false;
+        const auto* groups=compact_groups();
+        std::uint32_t first=0;
+        while(first<header_->group_count && groups[first].source!=i) ++first;
+        if(first==header_->group_count) return false;
+        std::uint32_t end=first+1;
+        while(end<header_->group_count && groups[end].source==i) ++end;
+        range={i,first,end-first};return true;
+    }
+    return false;
+}
+
 const CompactVertex* Package::compact_vertices() const {
     const auto* h=compact_header();return h && h->layout==StaticLayout::AoS20?
         reinterpret_cast<const CompactVertex*>(data_+header_->vertex_offset):nullptr;

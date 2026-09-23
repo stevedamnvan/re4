@@ -919,6 +919,8 @@ def compact_prelit_package(
     identity_records: list[bytes] = []
     identity_ids: dict[bytes, int] = {}
     identity_manifest = []
+    identity_by_owner_work = {}
+    previous_source_id = None
     group_blob = bytearray(); batch_blob = bytearray()
     vertex_blob = bytearray(); attribute_blob = bytearray()
     triangle_blob = bytearray(); primitive_blob = bytearray(); strip_blob = bytearray()
@@ -954,11 +956,19 @@ def compact_prelit_package(
         if src[4] != int(smx):
             raise ValueError("source identity/SMX mismatch")
         record = src + COMPACT_IDENTITY.pack(owner,bool(common),int(work),int(bin_index),0)
+        key = (owner, int(work))
+        if key in identity_by_owner_work and identity_by_owner_work[key] != record:
+            raise ValueError("conflicting source owner/work binding")
+        identity_by_owner_work[key] = record
         if record not in identity_ids:
             identity_ids[record] = len(identity_records)
             identity_records.append(record)
             identity_manifest.append(dict(source=source_name,owner=owner,work=int(work),bin=int(bin_index),common=bool(common)))
         source_id = identity_ids[record]
+        if previous_source_id is not None and source_id not in (
+                previous_source_id, previous_source_id + 1):
+            raise ValueError("interleaved source groups require explicit source ordering")
+        previous_source_id = source_id
         if source_id > 65535 or batch_count > 65535 or first_batch != used_batches:
             raise ValueError("group count/identity exceeds compact range")
         if first_batch + batch_count > len(batches):

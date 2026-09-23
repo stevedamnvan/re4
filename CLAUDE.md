@@ -92,6 +92,15 @@ savings with source-heap savings. Preserve source readers,
 generation/rebase/retire boundaries and the single frame owner. Continue the
 cutover; do not return to cache tuning or treat this fixture as room acceptance.
 
+The source-range reader now qualifies all four unchanged AoS20 packages against
+owner/work/BIN/common identity (58 source instances / 1,093 child groups), with
+no extra registry/allocation. The game hooks are still pending. FILE_01's exact
+cost and material coverage are in the budget's latest decomposition; private
+evidence is `/root/probe/d365-r100-cutover`. Four combined texture/mask identities
+remain unqualified in the selected folder. Preserve their fallback explicitly.
+Continue actual source binding/backing replacement and the authorized FILE_01
+candidate, not layout/math tuning; no whole-game saving is claimed yet.
+
 ## Working paths and reproduction
 
 | Purpose | Path |

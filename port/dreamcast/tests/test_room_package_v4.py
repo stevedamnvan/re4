@@ -70,8 +70,32 @@ int main(int argc,char**argv){
   re4dc::room::Package p;
   if(!p.adopt(b.data()+offset,b.size()-offset)){std::puts(p.error());return 1;}
   if(p.compact() && (p.vertices()||p.indices()||p.groups()||p.batches()||p.source_groups()||p.primitive_indices()))return 2;
-  std::printf("%u %u\n",p.header().version,p.header().vertex_count);
-  p.close();if(p.compact()||p.compact_vertices())return 2;
+  re4dc::room::CompactSourceRange range{99,99,99};
+  unsigned groups=0;
+  if(p.compact()) {
+    for(unsigned i=0;i<p.compact_header()->source_count;++i) {
+      const auto& s=p.compact_sources()[i];
+      if(!p.resolve_source(s.owner,s.work,s.bin,s.common,range) ||
+         range.source!=i || range.first_group!=groups || !range.group_count)return 4;
+      for(unsigned g=0;g<range.group_count;++g)
+        if(p.compact_groups()[range.first_group+g].source!=i)return 5;
+      groups+=range.group_count;
+      if(p.resolve_source(s.owner,s.work,s.bin^1,s.common,range) || range.group_count ||
+         p.resolve_source(s.owner,s.work,s.bin,!s.common,range) || range.group_count)return 6;
+    }
+    if(groups!=p.header().group_count)return 7;
+  } else if(p.resolve_source(1,1,2,false,range) || range.group_count)return 8;
+  std::printf("%u %u groups=%u\n",p.header().version,p.header().vertex_count,groups);
+  p.close();if(p.compact()||p.compact_vertices() ||
+      p.resolve_source(1,1,2,false,range) || range.group_count)return 2;
+  // Re-adoption at a different aligned address must resolve by offsets; there
+  // are no persistent source pointers/cached ranges inside the package reader.
+  std::vector<unsigned char> moved(b);
+  if(!p.adopt(moved.data()+offset,moved.size()-offset))return 9;
+  if(p.compact()) {
+    const auto& s=p.compact_sources()[0];
+    if(!p.resolve_source(s.owner,s.work,s.bin,s.common,range) || range.source!=0)return 10;
+  }
   return 0;
 }
 """)
@@ -137,6 +161,35 @@ int main(int argc,char**argv){
         b=bytearray(data);struct.pack_into('<H',b,h[16]+6,3);self.read(crc(b),False)
         b=bytearray(data);struct.pack_into('<I',b,h[17]+28,1);self.read(crc(b),False)
         b=bytearray(data);struct.pack_into('<I',b,72,160);self.read(bytes(b),False)
+    def test_source_registration_requires_unambiguous_contiguous_owner_work(self):
+        # Reused SMX ID and repeated BIN across owners are legitimate source
+        # instances; owner/work, not either shared field, distinguishes them.
+        names=[NAME,NAME.replace('SMD_1','SMD_2').replace('BIN_2','BIN_3'),
+               NAME.replace('FILE_01','FILE_02')]
+        obj=OBJ+''.join('\ng '+n+'\nusemtl real_texture_identity\nf 1/1/1 2/2/1 3/3/1\n' for n in names[1:])
+        with tempfile.TemporaryDirectory() as d:
+            path=pathlib.Path(d)/'objects.obj';path.write_text(obj)
+            raw,_=C.build_package(C.parse_obj(path),
+                {n:C.SourceGroupData(0xffffffff,4,0,3,2,0) for n in names})
+        raw=bytearray(raw);struct.pack_into('<I',raw,96,3)
+        data,_=C.compact_prelit_package(bytes(raw),names);self.read(data,True)
+        h=C.HEADER.unpack_from(data);ex=C.COMPACT_EXTENSION.unpack_from(data,128)
+        b=bytearray(data)
+        # Same owner/work with a different BIN must not publish two bindings.
+        struct.pack_into('<H',b,ex[2]+84+78,1);self.read(crc(b),False)
+        b=bytearray(data);struct.pack_into('<H',b,h[16]+32+6,0)
+        self.read(crc(b),False) # an orphan/skipped source is not silently lost
+        b=bytearray(data);struct.pack_into('<H',b,h[16]+64+6,0)
+        self.read(crc(b),False) # interleaving must not reorder alpha work
+        conflicting=[names[0],names[1].replace('SMD_2','SMD_1'),names[2]]
+        # The converter's source name lookup must see the same renamed source
+        # records too, so update the v3 diagnostic group name in this fixture.
+        bad=bytearray(raw);rh=C.HEADER.unpack_from(bad)
+        bad[rh[16]+96:rh[16]+160]=conflicting[1].encode().ljust(64,b'\0')
+        bad=crc(bad)
+        with self.assertRaisesRegex(ValueError,'conflicting source owner/work'):
+            C.compact_prelit_package(bad,conflicting)
+
     def test_unqualified_bake_identity_and_precision_rejected(self):
         b=bytearray(fixture());struct.pack_into('<I',b,96,1)
         with self.assertRaises(ValueError):C.compact_prelit_package(bytes(b),[NAME])
