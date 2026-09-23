@@ -2,7 +2,7 @@
 
 
 This directory contains the native SH-4/KallistiOS target. The GameCube build is
-the behavioral and authored-presentation authority; Dreamcast-native data,
+the behavior/state authority; GC and PS2 provide candidate visual inputs. Dreamcast-native data,
 precomputation, visibility, math, texture, and PVR paths determine how that work
 runs on the target.
 
@@ -24,60 +24,28 @@ shared implementation instructions, current working folders and backlog routing.
 
 ## Current status
 
-D358 retains one **unpromoted integrated D349 renderer candidate** behind
-`D349_RENDERER_STACK=1`. Source-backed span admission now ranks the complete
-registered workload within the existing 8 KiB. Source heap, 12 KiB preparation
-workspace and 64 KiB native slab do not grow.
+The active milestone is [the r100 native static cutover](docs/R100_NATIVE_CUTOVER_GOAL.md):
+source-authoritative simulation drives production D349 native room packages and
+renderer. The generic live GX/ModelPart bridge is fallback for unconverted
+content. GC and PS2 are first-class offline visual inputs; D353 prelighting and
+the existing converter/package/texture/lifecycle mechanisms are reused.
 
-The full D358v2 A/B has78 matching recorded source snapshots/ticks
-2387-2464, zero measured frame/queue drops, native allocation/texture
-failures and post-warm-up uploads. Source free remains66,592B and queue high-water
-25,536 is below26,624B. B final presentation remains consistent with the accepted
-candidate; no new gameplay or hardware acceptance is implied.
+D361's 128 KiB retained preparation reduced matched render p50 from ~1,563 to
+~1,368 ms. D362 (`62414dc`) recovered **34,016 source-heap bytes** through exact
+UV sharing, with **116,704 bytes free/largest** and no material CPU gain.
+D362 render p50/p95 is **1,368.093 / 1,370.801 ms**; page-flip p50/p95 is
+**1,389.602 / 1,406.282 ms**. [Evidence and limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md).
+D362 closes lossless scavenging; the next deliverable replaces expensive static
+render backing and runtime work, not another bridge cache or spare-KiB hunt.
 
-Performance remains **unaccepted**: instrumented render p50/p95
-A1,211.301/1,213.904ms,
-B1,972.755/1,974.568ms; presentation p50
-A1,236.963/B2,006.830ms.
-Dense position coverage rises 12.95%->34.09%, but actual transform/light work
-barely falls. Existing fallback already reuses values, and dense domain resets
-can lose longer-lived hits. Attribute incremental reuse in the existing fixture
-before further admission/lifetime changes. Historical static-light provenance is
-also still missing; FTRV/direct strips/cull/packet mechanisms are already present.
-Do not repeat their implementation or grow per-corner metadata. No SH4ZAM is linked.
-[Current measurements and limits](docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d358---global-admission-and-remaining-reuse-gap-2026-09-22).
+Source-driven menu, room, Leon and HUD presentation exist at 640x480. The native
+static cutover, responsive complete encounter, gameplay audio, inventory,
+transitions/retry and physical hardware remain unaccepted. Preserve the current
+source-facing correction, live state and single PVR owner. Historical D349's
+~49-58 ms CPU result is a smaller-workload reference, not current recovered FPS.
 
-The user accepts B's current presentation as accurate for now. Preserve it while
-fixing preparation reuse. The settled opening fixture does not qualify responsive
-encounter play, audio, transitions/retry or physical hardware.
-
-The historical D349/`5f42caa` reference remains isolated and preserved: 48.880 ms
-early CPU median, 57.559 ms whole trace and 55.158 ms mean presentation interval
-(~18.13 FPS), with matching original assets. These are the old room workload,
-not current recovered-game FPS. Preserve its visual strengths and the newer
-source-facing correction. [Reference evidence](docs/R4_R100_REFERENCE_RECOVERY_CHECKPOINT.md).
-
-D346 replaces the timing-dependent native task handoff with counted dispatch
-and resume signals using the existing semaphores. A faster diagnostic exposed a
-live window scenario wrongly marked finished; it now advances through the house
-approach and qualified s03/s20 preloads. The 3D-enabled 240-second run preserves
-visible source title/menu, room, Leon and HUD at 640x480. This remains diagnostic
-presentation, not full/manual encounter, material/lighting or audio acceptance.
-
-Required block/em12 allocations retain 2,921,856 / 1,806,336 free bytes. The
-visible run finishes with 66,592 free/largest; the farther diagnostic reaches
-43,232. D346 recovers **zero additional heap**. Hot motion stays cached at
-952,768 bytes with no later reloads. Event-borrow preflight now rejects a bad
-destination/load/immutable transport before unregistering Ganado effects; actual
-activation and writable snapshots remain unimplemented. The straight approach
-fixture stops at collision before that new rejection is exercised on target.
-
-Source masks/no-image materials, lighting, event activation, audio/inventory,
-manual combat, transitions/retry and hardware acceptance remain open. Simpler
-water stays an unimplemented selectable quality candidate, with no measured
-saving or verified PS2 equivalence.
-
-See [D346](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d346-counted-task-handoff-and-event-borrow-preflight); retain [D345](docs/R4_EVENT_ENEMY_CHECKPOINT.md#d345-source-alpha-and-nested-handoff) as the previous presentation reference.
+The documentation checkpoint does not promote inherited uncommitted source or
+asset changes. Exact working paths and the active goal are in [CLAUDE.md](../../CLAUDE.md).
 
 ### Retained integration checkpoints
 

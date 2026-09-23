@@ -1,87 +1,27 @@
 # RE4 Dreamcast: boot-forward playable integration
 
-**Future gated phase, authorized 2026-09-22:**
-[PS2-inspired Dreamcast visual profile](PS2_INSPIRED_DREAMCAST_PROFILE.md).
-After historical prepare-once/reuse-many integration, substantial elimination of
-accidental repeated work/lifetime defects and measurement of residual CPU/RAM/PVR
-cost, visual representation may change substantially while GameCube source
-behavior and room semantics remain authoritative. PS2 is a lower-spec reference
-and optional visual source; offline Dreamcast-native assets are the final form.
-Do not start substitutions to hide unresolved renderer integration bugs. The
-brief preserves the candidate compromises, hardware gate and qualification costs;
-this is not an immediate competing task or a change to the three-room objective.
+## Active execution: D349 .re4room production cutover (2026-09-22)
 
-D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
-through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap
-free rises **169,600 bytes** at the required block and Ganado body allocations,
-to 2,921,856 / 1,806,336 bytes. After initialization, 20 backed slots (19 live)
-use 72,384 bytes including metadata, versus 213,184 for the original array.
+The app persistent goal is the complete r100 static native cutover in
+`re4dc-game.elf`; [R100_NATIVE_CUTOVER_GOAL.md](R100_NATIVE_CUTOVER_GOAL.md) is its
+architecture and acceptance contract. The larger normal-menu/r100/r101/r103
+playable objective remains open. Implementation is assigned to GPT-6 Sol at Max
+after Astra's architecture/instruction checkpoint.
 
-The bounded run now has **no source allocation failures**, and all five required
-crows have validated 24-part chains. Final free/largest source heap is 66,592
-bytes. Existing conversion prepares the missing crow packages; the observed
-128x128 body texture uploads into 32,768 VRAM bytes. Neither archive sizes nor
-motion residency change. This establishes initialization progress, not complete
-encounter fit, visual equivalence, working audio or manual play.
+Recovered GC simulation/state drives the existing D349 converter -> native
+package -> renderer pipeline. Extend source-object bindings and budgeted package
+storage; replace adapted source render-only backing. The live GX/ModelPart path
+is fallback for unconverted/dynamic content. GC and PS2 are first-class offline
+visual inputs now, including qualified prelighting. D362 ends lossless scavenging.
+Do not resume bridge-cache/admission tuning or postpone this cutover behind a
+perfect GC rendering representation. Preserve the existing source/frame owners.
 
-Keep the selectable candidate; the default remains contiguous backing. Continue
-source event activation and native presentation: the diagnostic renderer still
-rejects material flag 0x04 and a source part with no image. Do not clear those
-checks without implementing their source semantics. Hot motion remains cached;
-mutable event snapshots, lighting, audio/inventory, combat, transitions/retry
-and physical-hardware acceptance remain open. Simpler water is still an
-unimplemented visual candidate, with no claimed saving or verified PS2 match.
-
-See [D344](R4_EVENT_ENEMY_CHECKPOINT.md#d344-stable-enemy-work-pages).
-
-
-### Previous D340 checkpoint
-
-D340 adds selectable `EVENT_FILES=1` backing for qualified immutable EVD
-preloads. It reuses `le_mirror` qualification, the native DVD root, existing
-64 KiB storage reader, and source `cDataUnit` ownership. Source compaction moves
-the file reference without allocating a whole-event scratch buffer. Actual
-installation validates each payload chunk into the caller's final allocation;
-mutable parking/swaps are explicitly rejected, not silently restored from disc.
-
-A 450-second reference run reproduces the 694,560 /669,248 /309,632-byte
-compaction failures with 41,472 bytes free. The kept candidate completes all
-three moves without these failures. Four preparations read 372 metadata bytes,
-zero EVD payload bytes, with worst observed preparation wait 16,384 us. No event
-installation occurs in this run; that transport is host-tested, not yet exercised
-by target event activation. The rejected full-preload-read variant took up to
-18,228,242 us. These are emulator integration observations, not an FPS benchmark.
-
-Required block/enemy allocation points remain 2,582,048 /1,466,528 free. Later
-heap free and largest block both remain 41,472: **zero additional heap recovered**.
-The change avoids failed scratch demands rather than freeing previously allocated
-storage. No new payload arena or VRAM allocation; ELF text/data/BSS are
-2,295,200 /76,836 /673,048 (+2,896 text, +32 BSS versus D339). The 540-byte
-compiler-reported transfer stack excludes callees and is not a total stack peak.
-
-Source title/menu and diagnostic room output remain visible. Delivered UP at
-retrace 9011 moves Leon from approximately (-99,692,-454,-1,344) to
-(-94,864,-123,-3,059); R at 21025 exercises the source aim path. These are
-scripted controller observations, not manual encounter acceptance. Source frame
-1483 is reached; the capture stops at its 450-second deadline, not a game crash.
-Materials/lighting, event activation and mutable snapshots, full audio, inventory,
-combat, transitions/retry, performance and hardware acceptance remain open.
-Simpler water remains a selectable, unimplemented candidate.
-See [D340](R4_EVENT_ENEMY_CHECKPOINT.md#d340-qualified-immutable-event-backing).
-
-D339's part-local position cache and D338's source cull correction remain.
-D339's prior matched-frame emulator interval median was 1,437.144 ms; D340
-does not supersede that with a controlled performance comparison. Do not repeat
-the cache, strip/chunk or cull work, or mistake the unlit diagnostic backend for
-the complete accepted cabin presentation.
-
-
-Updated 2026-09-22. **This is the authoritative execution plan.** It supersedes
-previous instructions to finish or optimize an isolated scene before integrating
-the game. [REALTIME_PATH.md](REALTIME_PATH.md) is the supporting performance and
-validation policy. [R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md) is the
-supporting resource and alternative-render-asset policy. Historical checkpoint
-letters do not schedule the next task.
+Acceptance is one integrated candidate against D361/D362: coverage and explicit
+fallback identities, zero converted-static GX decode/normal/light/remap work,
+actual backing/metadata/overlap costs, matched state and reviewed visuals, full
+CPU/PVR/presentation distributions. Dynamic native actor packages follow, then
+r101/r103. Required event/audio/inventory/transition work remains in this backlog.
+The goal document contains the anti-reinvention rule and the exact reuse chain.
 
 ## Active milestone: main menu and first three playable rooms
 
@@ -90,8 +30,8 @@ and controllable source-derived title/main menu, New Game, and the first three
 rooms of the original opening progression in one manually playable session.
 Include required pause/inventory interactions, combat and events where present,
 audio/HUD, both forward room transitions, death/retry and relevant menu return.
-Verify the actual room IDs, entry state and exit conditions from source/data;
-the current configured room-120 fixture does not establish the original sequence.
+The source/data route is r100 -> r101 -> r103; retain its actual entry state and
+exit conditions. Room120 is cinematic staging, not a playable-room shortcut.
 
 **Cutscene presentation is deferred for this milestone by explicit user request.**
 Use the source skip/completion path when available. Preserve required script
@@ -121,58 +61,10 @@ the same source authority, implementation loop and evidence requirements.
 | Cinematic presentation, later opening chapter/Disc 1 | Explicitly deferred beyond this milestone; retain existing plans and checkpoint history. |
 | Physical Dreamcast validation | Separate final hardware gate; continue useful Flycast implementation when hardware is unavailable. |
 
-For each of the three room IDs once verified, record entry/exit source evidence,
+For each verified room ID (r100/r101/r103), record entry/exit source evidence,
 required systems, stub/unimplemented hits, manual gameplay results, transition
-and retry results, exact build/assets and capture location. Keep missing entries
-open rather than assigning guessed IDs or declaring completion from compilation.
-
-## Historical D314 presentation and D315 stack correction
-
-D314 is the first verified source-to-native warning/main-menu presentation;
-[its checkpoint](R4_SOURCE_UI_CONNECTION_CHECKPOINT.md) pins corrected captures
-and input evidence. D315 repairs the native task-stack underrun and the same
-New Game fixture returns to r100's required block/enemy allocation failures.
-See [D315](R4_SUBSCREEN_BOOT_CHECKPOINT.md) for stack/memory costs and precise
-subscreen dependencies. Preload control flow is restored; ARAM storage, archive
-qualification and Sscrn binding still prevent inventory acceptance. Continue
-source-selected native resource ownership and visible output without dropping
-content. D320/D322/D324 subsequently reclaim selected source backing as recorded above;
-3D/audio/manual play stay open.
-
-## Historical D312-D313 boot frontier (D312 integration / D313 storage candidate, 2026-09-21)
-
-D312 qualifies required EVD/FCV variants and binds native em12 using the existing
-module mechanism. The R100Em constructor alias passes its SH-4 layout check.
-The replay reaches authored room check tasks, but R100Init fails enemy creation:
-4,006,016 bytes requested with 409,152 free. Earlier the required block-model
-pool also fails: 1,126,272 requested with 419,456 free. Repeated enemy loads see
-343,552 free. This is incomplete initialization, not a playable room.
-
-Next: account for and adapt the actual block/enemy/resource working set without
-removing required geometry, animation, effects or gameplay capacity. Use native
-resource ownership and existing mechanisms; preserve qualified loader semantics.
-See [R4_EVENT_ENEMY_CHECKPOINT.md](R4_EVENT_ENEMY_CHECKPOINT.md). The required
-D312 mirror manifest passes; r101 still rejects unsupported EVS. GX/audio stubs,
-ID/effect errors and module reload/reset behavior remain open.
-
-D313 adds selectable compact native-module descriptors through the existing
-mirror/binder: 46,464 live heap bytes recovered, em12 demand reduced by 428,288.
-Both block/enemy allocations still fail. See
-[R4_STATIC_MODULE_STORAGE_CHECKPOINT.md](R4_STATIC_MODULE_STORAGE_CHECKPOINT.md).
-Next connect bounded resource ownership based on the source-active texture set;
-retaining all images as 16-bit native textures would exceed VRAM. Preserve source
-metadata, CPU users and the existing accepted viewer reference.
-
-D303's source-derived first-play opening skip still reaches r100 through normal
-stage initialization; r120 is cinematic staging, not a playable room. Its D302
-qualified transport remains a separate reference. D304/D305 extend the existing
-mirror rather than adding a decoder or loading system. See
-[R4_ROOM_ENDIAN_CHECKPOINT.md](R4_ROOM_ENDIAN_CHECKPOINT.md) for exact identities,
-coverage limits and tests. No visible menu, completed room, manual play, audio
-output, performance or physical-hardware acceptance is implied by these logs.
-
-After first-room manual acceptance, package the proven approach as an Astra
-light skill according to AGENTS.md; keep the three-room goal and wider backlogs.
+and retry results, exact build/assets and capture location. Keep missing gameplay results
+open; a verified source route does not prove native completion.
 
 ## Integration correction: reuse the whole available implementation
 
@@ -182,12 +74,9 @@ This changes task selection, not the menu/three-room objective or fidelity rules
 Whole qualified room archives already load; the fragmentation is in subsystem
 integration. Do not confuse conversion progress with renderer/resource readiness.
 
-The next implementation unit is the recovered game's resource-to-render path.
-Before editing it, make one bounded source-to-native dependency/ownership map
-for the current opening route, then implement against that map. Use current code
-and accepted artifacts; do not reconstruct completed mechanisms or audit the
-entire game's source as a new prerequisite. Keep focused checks inside the slice,
-but choose the slice by the combined gameplay, memory and presentation result.
+The active implementation unit is the native static cutover, not another
+resource inventory. Reuse the existing source/owner mapping and the D349
+converter, package, renderer and lifecycle beneath live recovered state.
 
 | Existing implementation to reuse | Connection still required |
 |---|---|
@@ -211,14 +100,14 @@ do not require every remaining source subsystem to run headlessly before wiring
 native graphics/audio. Keep missing data conversions explicit and resume normal
 boot/New Game progression in the same target; no separate replacement game.
 
-## Opening-route evidence (partial; third room and exit gates open)
+## Opening-route evidence (source route known; native traversal open)
 
 | Position | Room | Entry/progression evidence | Required exit / acceptance |
 |---|---|---|---|
 | Cinematic staging; not counted | r120 | `src/st1/r120.cpp::R120Event` first-play skip/completion reaches r100; D303 implements persistent effects. | Presentation skipped; required gameplay effects retained. |
 | First playable room | r100 | Source r120 jump, normal stage/load entry verified in D305/D306. | Authored AEV door targets r101; event/unlock conditions and manual completion remain unverified. |
 | Next connected room | r101 | r100 AEV destination is r101; gameplay qualification remains open. | Verify normal entry, required village combat/events and onward exit. |
-| Third playable room | Unresolved | Trace matching opening event/door data, not numerical order. | Record ID and required completion/transition conditions once verified. |
+| Third playable room | r103 | r101 AEV area2 targets r103 after the bell-event door denial is removed; see the first-stage audit addendum. | Required gameplay, exits, re-entry and native traversal remain open. |
 
 ## Binding correction
 
@@ -359,7 +248,8 @@ is rebuilt, and "find every PS2 tool" is not a project of its own. The policy
 for using the output is in
 [R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md); the PS2 track runs
 in an isolated worktree with private generated-asset and evidence directories,
-bounded to representative cases, and never interrupts boot-forward integration.
+bounded to assigned work. Its qualified outputs may feed the active native
+cutover; they are not confined to a perpetual side experiment.
 
 ## Development fixtures: the recovered debug tooling
 
@@ -538,7 +428,8 @@ Distinguish resident resources, active objects, and submitted geometry. Verify
 source display/part/event rules and necessary set dressing. Do not invent an
 occlusion/PVS system because a view is expensive, mistake a light mask for a
 visibility mask, or assume every exported alternate is concurrently displayed.
-A broad source view is legitimate and must not be narrowed to claim a win.
+Preserve the source camera. Authorized visual draw-distance/LOD changes must be
+explicit and reviewed under the visual profile; they cannot change gameplay activation.
 
 Use the existing Leon implementation with the appropriate source state,
 independently of missing village enemies. Player, enemy, HUD, camera, and
@@ -558,11 +449,11 @@ peaks, untenable loading, or frame costs that prevent useful playtesting. Defer
 speculative micro-tuning until representative gameplay identifies the cost.
 
 [REALTIME_PATH.md](REALTIME_PATH.md) defines reproducible timing and acceptance.
-[R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md) authorizes a bounded
-parallel experiment using compatible lower-detail GameCube assets and extracted
-PS2 render assets. The old prohibition on any PS2 asset entering a private
-candidate is superseded. Start with equivalent village environment content and
-one representative enemy, not a campaign-wide asset database.
+[R4_ASSET_RESIDENCY_PLAN.md](R4_ASSET_RESIDENCY_PLAN.md) covers actual ownership
+and budget. [The visual profile](PS2_INSPIRED_DREAMCAST_PROFILE.md) authorizes GC
+and PS2 candidate inputs inside the native conversion pipeline. Static r100
+replacement is current primary work; it is not limited to an isolated tiny prop
+or deferred until the live bridge is perfected. Reuse completed side work.
 
 GameCube behavior/collision/progression stays authoritative. PS2 geometry,
 textures, or prelit render attributes are candidate presentation inputs, not a

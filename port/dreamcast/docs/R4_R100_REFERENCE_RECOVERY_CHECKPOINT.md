@@ -1,5 +1,10 @@
 # D349: recovered r100 renderer performance reference
 
+Historical evidence and reusable implementation reference. Current execution is
+[the r100 native-package cutover](R100_NATIVE_CUTOVER_GOAL.md); older next-task,
+bridge-tuning and PS2/prelighting gate language here is superseded. Retain the
+recorded measurements and failure findings; do not treat them as a new roadmap.
+
 2026-09-22. Historical source: `5f42caa634c0e6124c48842e21570033738adfda`.
 Primary recovered-game HEAD at recovery: `961c51ef3e2ee51b2fd583cd213a0302705bccb7`,
 with its existing uncommitted integration overlay preserved. No reset, downgrade,

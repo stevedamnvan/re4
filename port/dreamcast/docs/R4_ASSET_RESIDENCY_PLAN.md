@@ -1,115 +1,13 @@
 # R4: resource lifetimes and render-asset adaptation for playable RE4
 
-D344 keeps all 60 source enemy work slots but allocates stable two-slot pages
-through the existing `parts_bridge` owner. With `ENEMY_DEMAND=1`, source heap
-free rises **169,600 bytes** at the required block and Ganado body allocations,
-to 2,921,856 / 1,806,336 bytes. After initialization, 20 backed slots (19 live)
-use 72,384 bytes including metadata, versus 213,184 for the original array.
+Current execution is the [r100 native cutover](R100_NATIVE_CUTOVER_GOAL.md),
+using D361/D362 as measured controls. Replace qualified render backing through
+the existing native package pipeline. GC and PS2 are first-class visual inputs;
+D362 ends standalone lossless scavenging. Older numbers below are dated evidence.
 
-The bounded run now has **no source allocation failures**, and all five required
-crows have validated 24-part chains. Final free/largest source heap is 66,592
-bytes. Existing conversion prepares the missing crow packages; the observed
-128x128 body texture uploads into 32,768 VRAM bytes. Neither archive sizes nor
-motion residency change. This establishes initialization progress, not complete
-encounter fit, visual equivalence, working audio or manual play.
-
-Keep the selectable candidate; the default remains contiguous backing. Continue
-source event activation and native presentation: the diagnostic renderer still
-rejects material flag 0x04 and a source part with no image. Do not clear those
-checks without implementing their source semantics. Hot motion remains cached;
-mutable event snapshots, lighting, audio/inventory, combat, transitions/retry
-and physical-hardware acceptance remain open. Simpler water is still an
-unimplemented visual candidate, with no claimed saving or verified PS2 match.
-
-See [D344](R4_EVENT_ENEMY_CHECKPOINT.md#d344-stable-enemy-work-pages).
-
-
-### Previous D340 checkpoint
-
-D340 adds selectable `EVENT_FILES=1` backing for qualified immutable EVD
-preloads. It reuses `le_mirror` qualification, the native DVD root, existing
-64 KiB storage reader, and source `cDataUnit` ownership. Source compaction moves
-the file reference without allocating a whole-event scratch buffer. Actual
-installation validates each payload chunk into the caller's final allocation;
-mutable parking/swaps are explicitly rejected, not silently restored from disc.
-
-A 450-second reference run reproduces the 694,560 /669,248 /309,632-byte
-compaction failures with 41,472 bytes free. The kept candidate completes all
-three moves without these failures. Four preparations read 372 metadata bytes,
-zero EVD payload bytes, with worst observed preparation wait 16,384 us. No event
-installation occurs in this run; that transport is host-tested, not yet exercised
-by target event activation. The rejected full-preload-read variant took up to
-18,228,242 us. These are emulator integration observations, not an FPS benchmark.
-
-Required block/enemy allocation points remain 2,582,048 /1,466,528 free. Later
-heap free and largest block both remain 41,472: **zero additional heap recovered**.
-The change avoids failed scratch demands rather than freeing previously allocated
-storage. No new payload arena or VRAM allocation; ELF text/data/BSS are
-2,295,200 /76,836 /673,048 (+2,896 text, +32 BSS versus D339). The 540-byte
-compiler-reported transfer stack excludes callees and is not a total stack peak.
-
-Source title/menu and diagnostic room output remain visible. Delivered UP at
-retrace 9011 moves Leon from approximately (-99,692,-454,-1,344) to
-(-94,864,-123,-3,059); R at 21025 exercises the source aim path. These are
-scripted controller observations, not manual encounter acceptance. Source frame
-1483 is reached; the capture stops at its 450-second deadline, not a game crash.
-Materials/lighting, event activation and mutable snapshots, full audio, inventory,
-combat, transitions/retry, performance and hardware acceptance remain open.
-Simpler water remains a selectable, unimplemented candidate.
-See [D340](R4_EVENT_ENEMY_CHECKPOINT.md#d340-qualified-immutable-event-backing).
-
-D339's part-local position cache and D338's source cull correction remain.
-D339's prior matched-frame emulator interval median was 1,437.144 ms; D340
-does not supersede that with a controlled performance comparison. Do not repeat
-the cache, strip/chunk or cull work, or mistake the unlit diagnostic backend for
-the complete accepted cabin presentation.
-
-
-Updated 2026-09-22; accepted integration reference D324; experiment D340. Historical budgets below
-retain their named checkpoints. This supports PLAYABLE_PATH and REALTIME_PATH;
-it is not a competing prerequisite roadmap.
-
-### Where the remaining memory can come from
-
-D332 leaves 2,582,048 after the required block and 1,466,528 after the enemy
-body: +305,184 at both early points. As objects are constructed, the saving falls
-to 137,856 before water and 121,920 at the later snapshot. Full room-model parts
-and collision allocations now succeed, leaving 41,472 free. D333 retains this
-initialization working set; event/ARAM/audio, moving combat and transition peaks
-are not priced as complete. Keep the still-incomplete motion response/concurrency
-audit. D333 resolves scheduler ownership and exposes ARAM compaction scratch requests.
-These do not justify removing hot motions or lowering object capacity. Largest-block/whole-encounter
-peaks and full cache-budget growth remain required after execution advances.
-
-User steering: evaluate simpler native water when worthwhile, alongside exact
-right-sizing of the source target. Keep the original selectable, measure real
-allocation and rendering costs, preserve collision/events and review appearance.
-PS2 water is a comparison candidate, not a verified current implementation.
-
-| Existing measured backing | Bytes | Proposed lever and acceptance limit |
-|---|---:|---|
-| Source ModInfoMgr backing |134,400 including allocator|D330 preserves460 logical slots;63,968 at prefetch (205 live),68,736 at the later failed-room snapshot (224 live).16-slot pages and stable pointers; unallocated slots are free, not dummy records. |
-| Source PartsMgr backing | 618,400 including allocator | D329 preserves1,310 slots but uses176,544 for319 live parts/198 runs at the prefetch frontier:441,856 sustained recovery. Metadata5,376 and per-run overhead/alignment included. D330 later grows to224,448 before failures; no full-encounter peak or FPS acceptance. |
-| em12 FCV bank (153 source entries) | 1,823,552 | D325 externalizes145 entries /1,702,176 unique transport bytes, retaining headers/events. Main body drops1,670,272, but provisional hot+reserve costs1,007,936 plus metadata/allocator costs: roughly645,984 net at conservative capacity bound.75-clip profile incomplete; full-bank prefetch costs more than reference. Close source repeated-use/response/concurrency set before promotion; no tiny cache assumption. |
-| em12 selected nonpalette/nonmip texture backing | 482,816 | D326 removes these payloads directly, retaining1,184 token bytes and480 index bytes. Combined body request drops481,152; texture-only drops481,120 including extra header growth. Embedded EFM6,144 bytes stay resident.36 native packages total1,869,824 VRAM payload bytes if all resident; no simultaneous-world fit or visual acceptance claimed. This saving is already included above. |
-| em12 EST records and sequence alignment | 566,304 original | D328 replaces these with 243,168 resident packed/raw bytes and a 1,984-byte borrowed index: net321,152 actual source-heap recovery. All records remain. New binding/statics cost96 BSS bytes; one300-byte local decode scratch, up to four nested. No effect I/O/cache; in-game effect appearance/lifecycle remains unqualified. This saving is already included above. |
-| Remaining r100 base-level source texels | 968,736 | Existing D313 inventory1,830,048 minus D320 removed861,312; not a fresh inventory or all safe-to-remove bytes. Primarily pending mip/palette/unreviewed families. Preserve actual mip/filter/alpha/CPU semantics and native compact VRAM representation; shared cache has finite capacity. |
-| pl00/wep02 fixed-reservation slack | 295,648 | Recovered in D327 for this selectable source fixture. Fixed-region pre-transfer guard rejects oversized alternate assets and later parts. Other costumes/weapons are not qualified by this budget. |
-| pl00/wep02 source base textures | 247,808 original | D327 externalizes 209,920 + 7,168 texel bytes, retaining identity metadata: net backing reduction 215,552. Weapon mip texels 30,720 remain. Together with fixed slack this yields 511,200 actual heap bytes, already counted above. Native shared-VRAM and visible actor qualification remain required. |
-
-The motion working set is the main architectural lever. Existing zlib pricing
-saves437,440 on disc only and key-block dedup is low yield; neither is a runtime
-solution. Do not delete unused-in-one-capture clips or replace source animation.
-Motion preparation must consume one qualified representation per active clip,
-with bounded installation and measured simultaneous pins. General campaign
-streaming is unnecessary for proving this encounter's working set.
-
-The Blender candidate selected shared room BIN0..10 because their actual room
-archive backing is529,344 bytes (an impossible-delete ceiling). Enemy meshes
-are415,040 total; the inspected PS2 top-level set is slightly larger. Neither
-can close the gap. Replacing block0 alone also frees no pool because blocks1/2/3
-set the1,126,272 maximum. Keep the isolated experiment secondary and selectable;
-never count a small repack file or rejected appearance as source-heap recovery.
+Earlier allocation checkpoints and obsolete next-task text remain in the
+[D362 plan snapshot](https://github.com/stevedamnvan/re4/blob/62414dc39feccc949af4b3ed29053be9fde4d5fc/port/dreamcast/docs/R4_ASSET_RESIDENCY_PLAN.md)
+and their named checkpoint files. They are historical evidence, not execution order.
 
 ## Current decision
 
@@ -119,13 +17,11 @@ and compatible PS2 render assets as measured candidate representations, rather
 than insisting on the largest GameCube mesh in every context or cutting game
 behavior to satisfy a diagnostic scene budget.
 
-The previous rule that the PS2 disc is only an oracle and no PS2 asset may enter
-a package is **superseded for private candidate builds**. Extraction, conversion,
-and one bounded comparison experiment are authorized. A materially different
-presentation is not automatically accepted: retain the GameCube reference,
-report visual differences, and obtain explicit review/user acceptance before
-making a fidelity tradeoff the default. No copyrighted game assets are committed
-or redistributed; work from locally supplied private images.
+GC and PS2 assets are first-class visual inputs to the existing offline native
+pipeline. Qualify expensive alternatives during the r100 cutover, without first
+perfecting every GC-derived asset. Record actual target cost and visual/behavioral
+compatibility; retain original references and quality review for default changes.
+Private source/derived assets remain outside Git.
 
 ## Three authorities with distinct roles
 
@@ -286,17 +182,13 @@ then reuse the existing ownership/reader/upload/retirement code. Use authored
 relationships and conservatively derived target policy where source assumptions
 do not fit; do not pretend the source supplied a target-specific streaming plan.
 
-## Bounded GameCube/PS2 render-asset experiment
+## GameCube/PS2 inputs to the native pipeline
 
-Run this as a secondary, isolated task. It must not block the main boot-forward
-integration path or expand into a campaign-wide extraction database.
-
-The immediate assigned experiment is one equivalent static environment object
-or small group: geometry, UVs, textures, authored vertex colors or normals,
-materials and original instance transforms/identities. Characters, full-room
-substitution and movie mapping remain later or separately assigned work. The
-Astra light helper uses `/root/work/re4-ps2-experiment` and private extraction,
-build/evidence paths; it does not edit the primary checkout/shared assets.
+The active static r100 cutover may use qualified GC or PS2 visual inputs through
+the existing converter/package contract. A separate asset worker uses an isolated
+worktree and owns only its assigned conversion/quality work; primary integration
+remains source driven. Native actor meshes follow their source-pose interface.
+No campaign-wide extraction database or second rendering architecture is needed.
 
 Completed isolated diagnostic (2026-09-21): branch `experiment/ps2-asset`,
 commit `14dd633`, report `port/dreamcast/docs/PS2_COMPLETE_ASSET_EXPERIMENT.md`
@@ -330,15 +222,15 @@ lighting twice to prelit geometry. Retain selectable GC assets; measure total
 memory/rendering cost and appearance differences, not polygon count alone.
 Do not overlap timed runs; coordinate the single host capture window.
 
-Broader backlog categories (not the current assignment): room/environment meshes, character/enemy model variants,
+Authorized representation categories, scoped by the active cutover: room/environment meshes, character/enemy model variants,
 texture resolutions/formats, vertex/prelit colour, materials/pass reductions,
 collision representation (for comparison only), effect simplifications, UI
 representations, audio encodings and prerecorded cinematics. Preserve original
 assets alongside every alternative so the comparison is reversible; select per
 validated resource, and do not match assets by filename alone.
 
-1. **Pick equivalent content.** Start with one corresponding static environment
-   object or small group. Inspect available GameCube gameplay/LOD
+1. **Qualify correspondence.** Use the existing source identities for the
+   selected costly static asset set. Inspect available GameCube gameplay/LOD
    variants and their selectors first or alongside PS2. Do not assume the current
    converted mesh is the required quality tier in every source situation.
 2. **Extract from supplied private images.** Preserve manifests, source build,
@@ -426,23 +318,17 @@ audio/video representation. The GameCube Sofdec implementation (`sofdec.cpp`,
 `mwPly*`) is source evidence for semantics and timing; its ARAM assumptions are
 not copied onto the Dreamcast.
 
-### Bounded scope and the shape of a result
+### Scope and decision
 
-The current task is bounded to that one static environment comparison. Report
-exact correspondence, interpretation/compatibility checks, selectable build
-identity, paired costs, appearance differences, keep/reject recommendation and
-limits. Later character and cinematic studies need separate assignment; the
-tool inventory above does not authorize them automatically. Do not build a
-campaign-wide database or another renderer to answer this question.
+Complete the selected r100 static representation through the actual loaded
+allocation and renderer. Small fixtures may validate a contract; they do not
+replace full cutover coverage or justify a second scene. Character packages and
+r101/r103 follow as specified by the active goal. Retain the completed movie,
+water and Blender work as reusable evidence, not prerequisites or new campaigns.
 
-Allow a hybrid result: suitable GameCube variants, retained high-detail player
-assets, selected PS2 environment/enemy representations, and native Dreamcast
-textures. Select per validated resource, not by blanket platform preference.
-PS2-derived geometry is a potential fidelity trade, not a pure lossless
-optimization. Report exact benefits and visual costs; stop a nonpaying candidate.
-Explicit review/user acceptance is required before promoting material visual
-changes. Do not further reduce texture resolution merely because an old plan
-assumed it was the only available lever.
+Use a hybrid of qualified GC/PS2/custom visual inputs where measured target cost
+supports it. Record intentional differences and review quality before default
+promotion; asset file size alone is not performance or recovered memory.
 
 ## Texture formats and sharing
 
@@ -476,5 +362,5 @@ The previous PS2-oracle-only policy, D4 estimates, R4 deliverable ordering and
 historical measurement ledger remain accessible in the
 [pre-amendment R4 plan](https://github.com/stevedamnvan/re4/blob/b7d29e3fe9ba58b807ef2146776b09caf1acbaea/port/dreamcast/docs/R4_ASSET_RESIDENCY_PLAN.md).
 Separate checkpoint evidence and source-audit documents are unchanged. Their
-obsolete restrictions are not a reason to stop boot-forward integration or this
-bounded private asset experiment.
+obsolete restrictions do not postpone the active native cutover or its
+authorized GC/PS2 visual-input selection.

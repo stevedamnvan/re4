@@ -1,5 +1,10 @@
 # Native renderer integration checkpoints: D350-D359
 
+Historical evidence and reusable implementation reference. Current execution is
+[the r100 native-package cutover](R100_NATIVE_CUTOVER_GOAL.md); older next-task,
+bridge-tuning and PS2/prelighting gate language here is superseded. Retain the
+recorded measurements and failure findings; do not treat them as a new roadmap.
+
 Updated 2026-09-22. Base HEAD `ed9165bc7069232df840aba5a70150166b21989b`
 plus the recorded inherited integration overlay. No historical gameplay, pose,
 camera or facing state was imported. Both selectors default off.

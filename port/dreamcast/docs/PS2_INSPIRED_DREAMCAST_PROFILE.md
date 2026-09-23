@@ -1,73 +1,27 @@
 # PS2-inspired Dreamcast visual profile
 
-Authorized by the user, 2026-09-22. **The bounded r100 static-render replacement
-is now active by explicit user correction after D362.** Finish the measured UV
-candidate, then replace qualified source-owned static normals/lighting using the
-existing baking/conversion machinery and compare to D361~1.368s. Do not require
-another lossless optimization campaign or further cache tuning first. Actors
-remain dynamic; source ownership/gameplay and explicit dynamic/camera-light
-handling remain mandatory. This scoped activation supersedes earlier "do not
-start prelighting" text below for this candidate only. The remaining catalogue
-and hardware/gameplay acceptance gates are unchanged.
-This extends the existing playable/performance/residency backlogs. It does not
-replace the current renderer integration or the menu-plus-three-room objective.
+Active user authorization, 2026-09-22. The current implementation unit and
+acceptance contract are [the r100 native cutover](R100_NATIVE_CUTOVER_GOAL.md).
+This document defines visual choices; it is not a second roadmap.
 
-## Authority and current priority
+## Authority and active scope
 
-The preferred hierarchy is:
+GameCube recovered source is behavior/state authority. GC and PS2 assets are
+first-class candidate visual inputs. The final runtime representation is the
+existing Dreamcast-native package/renderer pipeline.
 
-1. **GameCube source = behavioral/fidelity authority.** Gameplay, AI, collision,
-   camera, animation decisions, events, inventory/progression, required objects
-   and room semantics remain source-controlled.
-2. **PS2 = lower-spec compromise reference / optional visual source.** Its assets
-   and presentation provide candidates, not a replacement gameplay engine or
-   proof of lower Dreamcast cost.
-3. **Dreamcast-native asset = final optimized representation.** Offline conversion
-   and the existing native backend determine target layout and execution.
+The r100 static phase is active now. Qualify GC-derived baking, verified PS2
+COLOR/geometry/artwork and custom native representations during conversion of
+costly assets. There is no requirement to finish a perfect live GX bridge or
+every GC-derived mesh before considering PS2. D353's GC bake is the existing
+reference/fallback; PS2 RGB transfer still needs matched correspondence.
 
-After the historical optimized r100 renderer's prepare-once/reuse-many
-architecture is correctly integrated and the remaining Dreamcast hardware cost
-is measured, the project is explicitly authorized to adopt a PS2-inspired /
-Dreamcast-specific visual profile to reach the performance target. Visual
-representation may change substantially. This is broader authorization than
-requiring every candidate to be visually equivalent to GameCube rendering.
-
-**Current priority remains the complete historical optimized renderer integration
-and elimination of accidental repeated CPU work.** Keep the full default-off
-D349 stack as the acceptance unit. Preserve source pose, current selected lights,
-normal matrices, material/channel state, camera and ownership while completing
-shared preparation. Do not start fixed lighting, prelighting, asset replacement,
-water or effects work merely because this brief exists.
-
-## Explicit activation gate
-
-**Do not begin PS2-derived asset/effect substitution merely to hide an unresolved
-renderer integration bug. Activate this phase after repeated-work/lifetime issues
-are substantially eliminated and the residual CPU/RAM/PVR costs are measured.**
-
-Before activation, the checkpoint must identify:
-
-- The integrated renderer baseline, executable, source overlay, assets,
-  configuration, fixture and evidence. Preserve the accepted Dreamcast reference
-  and original GameCube behavior as separate authorities.
-- Preparation reuse coverage and remaining justified work: references versus
-  unique position/normal/lit inputs; selected-light preparation; part/pass reuse;
-  batch capacity/retirements; packet packing, flushes and fallback counts.
-- Remaining renderer correctness or lifetime defects and why they are not being
-  concealed by a lower-detail candidate. Account for queues, warm-up uploads,
-  allocation failures, dropped/discarded frames and source-state/tick matching.
-- Residual CPU stages, actual presentation intervals, PVR work, source and native
-  RAM, VRAM/AICA and loading/transition peaks. Do not add overlapping CPU/GPU spans
-  or treat file size as resident cost. Keep profiler overhead explicit.
-- What ran in Flycast and what ran on stock Dreamcast hardware. Emulator timing
-  is not physical-hardware acceptance. If hardware is unavailable, record that
-  gate as open; continue the current integration and other already-authorized
-  work without claiming the hardware measurement was completed.
-
-No arbitrary date, historical FPS number or completion of the entire campaign
-opens the gate. Record its evidence and decision in the existing checkpoint and
-handoff before starting this phase. Earlier isolated candidate evidence remains
-available; its existence is neither automatic activation nor default promotion.
+Keep current source gameplay, object/owner state, camera, current pose and
+required material/lighting dependencies. A lower-cost representation must not
+conceal missing source-system integration or a lifetime defect. That is a
+correctness boundary, not a gate postponing authorized static replacement.
+Dynamic actor packages follow the static cutover and consume the GC skeleton/
+pose/animation decisions; movies, water and effects use the existing scoped work.
 
 ## Authorized candidate compromises
 
@@ -140,6 +94,7 @@ owned scripts, synthetic tests, asset-free manifests and decisions.
   repeat inventories or assume an old candidate was accepted. The local Blender
   optimization skill remains available after residency is stable.
 
-This authorization is durable project direction. Future resumptions must retain
-both the activation gate and the three-level authority hierarchy; do not reduce
-it to either "GameCube visuals must remain identical" or "use PS2 to hide bugs."
+Detailed acceptance and the anti-reinvention rule live in the cutover goal.
+Earlier future-only activation wording is superseded and remains in Git history;
+no additional permission or per-subcomponent target promotion is required to
+implement the authorized complete candidate.
