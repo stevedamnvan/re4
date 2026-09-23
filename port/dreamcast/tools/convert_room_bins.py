@@ -225,8 +225,12 @@ def oct12(n):
     return qx | (qy << 6)
 
 
-def convert(entries, color_scale):
-    """entries: [(owner, common, bin, path)] -> package bytes, report."""
+def convert(entries, color_scale, cell=0.0, min_fill=64):
+    """entries: [(owner, common, bin, path)] -> package bytes, report.
+
+    cell > 0 builds spatial meshlets: triangles are restripped per model-space
+    cell and, once it holds min_fill corners, a meshlet closes rather than span
+    more than cell units on any axis."""
     meshes, parts, meshlets, vertices, index_bytes = [], [], [], [], bytearray()
     palette, palette_index = [], {}
     report = []
@@ -245,10 +249,22 @@ def convert(entries, color_scale):
         first_part = len(parts)
         mesh_tris = mesh_strips = 0
         for part in src["parts"]:
-            strips = [list(s) for s in part["strips"]]
-            if part["loose"]:
-                strips.extend(stripify([tuple(t) for t in part["loose"]]))
-            chunks = [c for s in strips for c in split_strip(s) if len(c) >= 3]
+            if cell:
+                # Spatial meshlets: restrip each model-space cell's triangles so a
+                # meshlet's bounds describe a compact region the runtime can cull.
+                tris = [t for s in part["strips"] for t in strip_triangles(s)]
+                tris += [tuple(t) for t in part["loose"]]
+                cells = {}
+                for t in tris:
+                    key = tuple(int(sum(pos[k[0]][a] for k in t) / 3 // cell) for a in range(3))
+                    cells.setdefault(key, []).append(t)
+                groups = [stripify(cells[key]) for key in sorted(cells)]
+            else:
+                strips = [list(s) for s in part["strips"]]
+                if part["loose"]:
+                    strips.extend(stripify([tuple(t) for t in part["loose"]]))
+                groups = [strips]
+            chunks = [c for g in groups for s in g for c in split_strip(s) if len(c) >= 3]
             uvs = [src["uv"](k[2]) for c in chunks for k in c]
             if uvs:
                 ulo = [f32(min(u[a] for u in uvs)) for a in range(2)]
@@ -270,10 +286,18 @@ def convert(entries, color_scale):
 
             for chunk in chunks:
                 fresh = [k for k in dict.fromkeys(chunk) if current is None or k not in current["local"]]
-                if current is None or len(current["keys"]) + len(fresh) > MAX_MESHLET_VERTICES:
+                clo = [min(pos[k[0]][a] for k in chunk) for a in range(3)]
+                chi = [max(pos[k[0]][a] for k in chunk) for a in range(3)]
+                # Large terrain triangles alone exceed a cell; a minimum fill keeps
+                # them from becoming 28-byte meshlets of a few corners each.
+                spread = current is not None and cell and len(current["keys"]) >= min_fill and \
+                    max(max(chi[a], current["hi"][a]) - min(clo[a], current["lo"][a]) for a in range(3)) > cell
+                if current is None or spread or len(current["keys"]) + len(fresh) > MAX_MESHLET_VERTICES:
                     close()
                     current = dict(first_vertex=len(vertices), first_index=len(index_bytes), keys=[], local={},
-                                   strips=0)
+                                   strips=0, lo=clo, hi=chi)
+                current["lo"] = [min(clo[a], current["lo"][a]) for a in range(3)]
+                current["hi"] = [max(chi[a], current["hi"][a]) for a in range(3)]
                 for k in dict.fromkeys(chunk):
                     if k in current["local"]:
                         continue
@@ -345,11 +369,16 @@ def main():
     ap.add_argument("--common", action="store_true", help="BINs are the room's common (shared) set")
     ap.add_argument("--color-policy", choices=["vertex"], default="vertex")
     ap.add_argument("--color-scale", type=float, default=1.0)
+    ap.add_argument("--cell", type=float, default=0.0,
+                    help="spatial meshlet cell in model units (source mm); 0 keeps source strip order")
+    ap.add_argument("--min-fill", type=int, default=64,
+                    help="corners a spatial meshlet holds before the cell extent may close it")
     a = ap.parse_args()
     entries = [(a.owner, a.common, int(p.stem), p) for p in sorted(a.bins.glob("*.BIN"))]
-    blob, summary = convert(entries, a.color_scale)
+    blob, summary = convert(entries, a.color_scale, a.cell, a.min_fill)
     a.out.write_bytes(blob)
     summary.update(format="R4IM", version=VERSION, color_policy=a.color_policy, color_scale=a.color_scale,
+                   cell=a.cell, min_fill=a.min_fill,
                    sha256=hashlib.sha256(blob).hexdigest(),
                    meaning="instanced native prelit meshes; colour is authored CLR0 times color_scale (placeholder)")
     Path(str(a.out) + ".json").write_text(json.dumps(summary, indent=1))

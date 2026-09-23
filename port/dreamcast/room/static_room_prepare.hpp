@@ -28,7 +28,7 @@ inline DirectStripVertex prepare_static_vertex(const StaticCorner& in,
     const room::CompactBatch& batch, float depth_bias) {
     float x=in.x,y=in.y,z=in.z,w=1.0f;
     mat_trans_nodiv(x,y,z,w);
-    const float inverse=(w>0.0f && std::isfinite(w))?1.0f/w:0.0f;
+    const float inverse=(w>0.0f && is_finite(w))?1.0f/w:0.0f;
     return {w-depth_bias,x*inverse,y*inverse,inverse,
         batch.uv_bias[0]+static_cast<float>(in.u)*batch.uv_scale[0],
         batch.uv_bias[1]+static_cast<float>(in.v)*batch.uv_scale[1],in.argb,0U};

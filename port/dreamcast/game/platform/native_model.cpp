@@ -180,8 +180,13 @@ PreparedModelBatch* acquire_batch(const Re4dcModelPart& p){
 }
 #endif
 unsigned be16(const unsigned char* p){return (unsigned(p[0])<<8)|p[1];}
-short s16(const unsigned char* p){short v;std::memcpy(&v,p,2);return v;}
-unsigned u16(const unsigned char* p){unsigned short v;std::memcpy(&v,p,2);return v;}
+// Native-order halfwords. A 2-byte memcpy from an unaligned pointer is a libcall
+// on SH (move-by-pieces ratio 2), four per UV corner in the D367 profile.
+static_assert(__BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__);
+unsigned u16(const unsigned char* p){return unsigned(p[0])|(unsigned(p[1])<<8);}
+short s16(const unsigned char* p){return short(u16(p));}
+// 2^-shift without the ldexpf/scalbnf libcalls (shift < 127).
+float pow2_neg(unsigned shift){return __builtin_bit_cast(float,(127U-shift)<<23);}
 bool ram(const void* p,unsigned bytes){
 #if defined(__sh__)
     auto a=(std::uintptr_t)p;
@@ -335,7 +340,7 @@ struct Builder {
             float z=m[8]*a+m[9]*b+m[10]*c+m[11];
 #endif
             ++work_stats.position_transforms;
-            if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z))return false;
+            if(!re4dc::render::is_finite(x)||!re4dc::render::is_finite(y)||!re4dc::render::is_finite(z))return false;
             v.position.world_x=x;v.position.world_y=y;v.position.world_z=z;v.position.depth=-z;
             // Behind/near vertices are clipped before projection is consumed.
             if(z!=0)project(x,y,z,&projection);
@@ -377,7 +382,7 @@ struct Builder {
                 if(normal_hit){nx=shared_normal->value[0];ny=shared_normal->value[1];nz=shared_normal->value[2];++preparation_stats.normal_hits;}
                 else {
                 const auto* normal=p.normals+ni*p.normal_stride;
-                const float factor=std::ldexp(1.f,-int(p.normal_shift));
+                const float factor=pow2_neg(p.normal_shift);
                 float n[3];for(unsigned i=0;i<3;++i)
                     n[i]=(p.normal_shift==6?float(static_cast<signed char>(normal[i])):float(s16(normal+i*2)))*factor;
                 const auto* m=p.lighting->normal_matrix;
@@ -389,11 +394,11 @@ struct Builder {
                 }
                 const unsigned char white[]={255,255,255,255};
                 const auto* color=(p.lighting->ambient_vertex || p.lighting->material_vertex)?p.colors+ci*4:white;
-                unsigned color_value;std::memcpy(&color_value,color,4);
+                const unsigned color_value=u16(color)|(u16(color+2)<<16);
                 auto* value=light_room_vertex(static_context,vi,ni,color_value);
                 if(value && value->generation==static_context->generation && value->position==vi &&
                    value->normal==ni && value->color==color_value){
-                    std::memcpy(rgb,value->rgb,3*sizeof(float));++work_stats.static_light_hits;
+                    rgb[0]=value->rgb[0];rgb[1]=value->rgb[1];rgb[2]=value->rgb[2];++work_stats.static_light_hits;
                 }else {
                 re4dc::reuse_audit::light();
                 re4dc::render::evaluate_prepared_source_lighting(
@@ -402,7 +407,7 @@ struct Builder {
 
                 work_stats.light_evaluations+=(batch?batch->lights:lights).count;
                     if(value){value->generation=static_context->generation;value->position=vi;value->normal=ni;
-                        value->color=color_value;std::memcpy(value->rgb,rgb,3*sizeof(float));++work_stats.static_light_misses;}
+                        value->color=color_value;value->rgb[0]=rgb[0];value->rgb[1]=rgb[1];value->rgb[2]=rgb[2];++work_stats.static_light_misses;}
                 }
                 if(shared_shade){shared_shade->serial=shade_serial;
                     if(retain_shade){retained->position=vi;retained->color=shade_color;}
@@ -656,7 +661,7 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     if(p->cull==3){re4dc_model_result(0,0,0);return;}
     ++work_stats.part_preparations;
     Builder b{*p,{},projection,{near,far,640,480,project,nullptr},0,0,
-              (p->flags&0x80000000U)?8U:6U,std::ldexp(1.0f,-int(p->shift))};
+              (p->flags&0x80000000U)?8U:6U,pow2_neg(p->shift)};
     b.clip.context=&b.projection;
 #if RE4DC_D349_RENDERER_STACK
     if(p->lighting){

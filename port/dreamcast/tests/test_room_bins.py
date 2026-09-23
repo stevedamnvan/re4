@@ -70,14 +70,14 @@ def fixture(pad=0):
                      positions, normals, colors, uvs, pad=pad)
 
 
-def package(bins):
+def package(bins, cell=0.0):
     with tempfile.TemporaryDirectory() as d:
         entries = []
         for n, data in enumerate(bins):
             p = pathlib.Path(d) / f'{n:04d}.BIN'
             p.write_bytes(data)
             entries.append((1, False, n, p))
-        return C.convert(entries, 1.0)[0]
+        return C.convert(entries, 1.0, cell, 16)[0]
 
 
 def decode(blob):
@@ -217,6 +217,22 @@ int main(int,char** argv){
         self.assertGreater(len(lets), 2)
         self.assertTrue(all(l[3] <= 256 for l in lets))
         self.assertEqual(triangles(blob), expected(data, blob))
+
+    def test_spatial_meshlets_keep_triangles_and_bound_extent(self):
+        count = 700
+        positions = [(i * 0.25, (i & 1) * 1.0, 0.0) for i in range(count)]
+        uvs = [(i / 64, i & 1) for i in range(count)]
+        strip = [(i, 0, 0, i) for i in range(count)]
+        data = synth_bin([(1, [(0x98, strip)])], positions, [(0, 0, 1)], [(255, 255, 255, 255)], uvs)
+        cell = 8.0
+        blob = package([data], cell)
+        self.assertEqual(self.read(blob), 'ok 0 1')
+        self.assertEqual(triangles(blob), expected(data, blob))
+        _, meshes, _, lets, *_ = decode(blob)
+        self.assertGreater(len(lets), len(decode(package([data]))[3]))
+        step = meshes[0][11]
+        # One cell's restripped run (<= cell plus a triangle) closes each meshlet.
+        self.assertTrue(all((l[8] - l[5]) * step <= cell + 1.0 for l in lets))
 
     def test_reader_rejects_bad_indices_state_and_encoding(self):
         blob = bytearray(package([fixture()]))

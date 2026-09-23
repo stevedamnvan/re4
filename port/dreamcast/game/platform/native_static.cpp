@@ -220,11 +220,12 @@ struct Emitter {
         return {in.x,in.y,in.z,in.u,in.v,in.argb};
     }
     // Packages index a palette; lit meshes (palette==nullptr) store ARGB1555.
-    static std::uint32_t argb1555(std::uint16_t c){
+    [[gnu::always_inline]] static std::uint32_t argb1555(std::uint16_t c){
         const std::uint32_t r=(c>>10)&31U,g=(c>>5)&31U,b=c&31U;
         return ((c&0x8000U)?0xff000000U:0U)|(((r<<3)|(r>>2))<<16)|(((g<<3)|(g>>2))<<8)|((b<<3)|(b>>2));
     }
-    re4dc::render::StaticCorner corner(const re4dc::room::CompactVertex12& in)const{
+    // Per corner: this unit is -Os, which otherwise keeps the decode out of line.
+    [[gnu::always_inline]] re4dc::render::StaticCorner corner(const re4dc::room::CompactVertex12& in)const{
         return {float(in.x),float(in.y),float(in.z),in.u,in.v,palette?palette[in.color]:argb1555(in.color)};
     }
     void clip_vertex(const re4dc::render::StaticCorner& in,const re4dc::room::CompactBatch& batch,
@@ -647,7 +648,7 @@ int mesh_submit(const Re4dcModelPart& p){
     if(p.cull==3)return 1;
     if(p.projection[0]!=0 || p.viewport[2]<=0 || p.viewport[3]<=0)return 0;
     const float near=p.projection[6]/(p.projection[5]-1),far=p.projection[6]/p.projection[5];
-    if(!std::isfinite(near)||!std::isfinite(far)||near<=0||far<=near)return 0;
+    if(!re4dc::render::is_finite(near)||!re4dc::render::is_finite(far)||near<=0||far<=near)return 0;
     // Queued translucent parts replay through this function in pass order.
     if(re4dc_model_defer_part(drawn))return 1;
     MeshDraw d{{*drawn,{},near,far},v.package,*part};
@@ -711,7 +712,7 @@ extern "C" int re4dc_static_submit(const Re4dcModelPart* part){
     if(p.cull==3){b.drawn|=bit;return 1;}
     if(p.projection[0]!=0 || p.viewport[2]<=0 || p.viewport[3]<=0){b.fallback|=bit;return 0;}
     const float near=p.projection[6]/(p.projection[5]-1),far=p.projection[6]/p.projection[5];
-    if(!std::isfinite(near)||!std::isfinite(far)||near<=0||far<=near){b.fallback|=bit;return 0;}
+    if(!re4dc::render::is_finite(near)||!re4dc::render::is_finite(far)||near<=0||far<=near){b.fallback|=bit;return 0;}
     // Queued translucent parts replay through this function in pass order.
     if(re4dc_model_defer_part(drawn))return 1;
 

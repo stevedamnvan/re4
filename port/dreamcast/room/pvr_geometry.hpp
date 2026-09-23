@@ -8,6 +8,11 @@
 #include <dc/pvr.h>
 #include "native_draw_plan.hpp"
 namespace re4dc::render {
+// std::isfinite lowers to an __unordsf2 libcall on SH4 (D367 profile: ~30 ms
+// per frame in the vertex loops). The exponent test is the same predicate.
+inline bool is_finite(float value){
+    return (__builtin_bit_cast(std::uint32_t,value)&0x7f800000U)!=0x7f800000U;
+}
 struct ProjectedVertex {
     float x;
     float y;
