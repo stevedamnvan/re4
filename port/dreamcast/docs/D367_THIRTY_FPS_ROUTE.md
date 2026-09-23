@@ -98,6 +98,7 @@ drawn. Kamui never overflows.
 | LE | 117-119 | PS2 "groves" variant. 6% more TA data; a few more background trunks; the visual gain is negligible. Rejected by the frame-time rule. |
 | LF | 117 | LD + async present (PVR_PIPELINE=2, KOS patch `kos-804b319-async-present`). Work ~96 ms plus ~6 ms fence wait still lands on the 100 ms+ vblank step, so Flycast shows no change. **Adopted as the default**: the better architecture (CPU no longer waits on render), per the user's rule. |
 | FE | 100 | LD + frontend30 (COPY_LEAN, FRONT_LEAN, MESH_DIRECT+TA_DIRECT+NATIVE_ACTOR_DIRECT; de03f28): work 95.9 -> 79.9 ms, one vblank step fewer. The logic trace is STRICT. Being re-validated on LF. |
+| LG | 100 | LF + frontend30 + printf pass (f52746a). Hardware model: **158.1 -> 131.3 ms** (-26.8); Flycast work 95.8 -> 78.9. STRICT; safe under async present. Game30 knobs not yet included (integration run LH pending). |
 
 Remaining work in LC is about 98 ms. It rounds up to 7 vblanks.
 
