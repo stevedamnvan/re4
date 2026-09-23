@@ -646,6 +646,12 @@ void OSSetArenaLo(void* lo) { g_arenaLo = lo; }
 void OSSetArenaHi(void* hi) { g_arenaHi = hi; }
 
 // ---------------------------------------------------------------- misc OS
+#ifndef RE4DC_IO_PROBE
+#define RE4DC_IO_PROBE 0
+#endif
+#if RE4DC_IO_PROBE
+extern "C" void re4dc_ioprobe_run(void);
+#endif
 void OSInit(void)
 {
     static int done;
@@ -668,6 +674,9 @@ void OSInit(void)
     re4dc_log("OSInit: arena %08lx-%08lx (%lu KB)\n", re4dc_mem.arena_lo, re4dc_mem.arena_hi,
               (re4dc_mem.arena_hi - re4dc_mem.arena_lo) / 1024);
     re4dc_pcs_start();  // PC_SAMPLER=1 only; empty inline otherwise
+#if RE4DC_IO_PROBE
+    re4dc_ioprobe_run();  // no-op unless /cd/dc/ioprobe.txt exists
+#endif
 }
 
 void OSInitAlarm(void) {}

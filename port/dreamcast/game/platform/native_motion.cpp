@@ -3,6 +3,13 @@
 #include "native_motion.h"
 #include "re4dc_platform.h"
 #include "../../room/room_storage.hpp"
+#ifndef RE4DC_IO_PROBE
+#define RE4DC_IO_PROBE 0
+#endif
+#if RE4DC_IO_PROBE
+// Total time spent in motion-key misses (read + check + relocate); room-entry telemetry.
+extern "C" { unsigned long long re4dc_motion_wait_total_us; }
+#endif
 #include <kos.h>
 #include <kos/net.h>
 #include <kos/mutex.h>
@@ -144,6 +151,9 @@ unsigned* load(Binding& b,unsigned i) {
         s.data=data;s.used=++stamp;b.resident+=bytes;stats.resident_bytes+=bytes;
         if(stats.resident_bytes>stats.peak_cache_bytes)stats.peak_cache_bytes=stats.resident_bytes;
         ++stats.loads;const auto wait=timer_us_gettime64()-started;
+#if RE4DC_IO_PROBE
+        re4dc_motion_wait_total_us+=wait;
+#endif
         if(wait>stats.worst_wait_us)stats.worst_wait_us=wait;
     }
     return reinterpret_cast<unsigned*>(s.data+prefix(s.data)-4*s.data[2]);

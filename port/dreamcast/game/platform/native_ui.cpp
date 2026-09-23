@@ -726,6 +726,12 @@ void hud_number(HudBatch& b,float x,float y,unsigned value,bool tenths,std::uint
     }
 }
 HudBatch hud_batch; // 4 KiB .bss (PERF_HUD only), not the caller's stack
+#ifndef RE4DC_IO_PROBE
+#define RE4DC_IO_PROBE 0
+#endif
+#if RE4DC_IO_PROBE
+extern "C" int re4dc_ioprobe_hud(unsigned v[4]);
+#endif
 void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_bytes,unsigned ta_capacity,bool ta_fault){
     HudBatch& b=hud_batch;b.n=1;
     pvr_poly_cxt_t c;pvr_poly_cxt_col(&c,PVR_LIST_TR_POLY);
@@ -737,7 +743,7 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     constexpr float X=40,BX=100,Y=324,R=18,PX=4.0f/1000.0f,MAXW=480;
     const unsigned us[5]={flip_us,period,busy,render_us,wait_us};
     const std::uint32_t colors[6]={0xe0ffffffU,0xe040ff40U,0xe0ffff40U,0xe040ffffU,0xe0ff40ffU,ta_fault?0xf0ff2020U:0xe0ffa040U};
-    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,6*R+6,0x90000000U);   // backdrop
+    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,(6+RE4DC_IO_PROBE)*R+6,0x90000000U);   // backdrop
     for(unsigned r=0;r<5;++r){
         hud_number(b,X,Y+r*R,(us[r]+50)/100,true,colors[r]);
         hud_rect(b,BX,Y+r*R+2,std::min(MAXW,float(us[r])*PX),8,colors[r]);
@@ -747,6 +753,12 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     hud_rect(b,BX,Y+5*R+2,ta*MAXW,8,colors[5]);
     hud_rect(b,BX+MAXW,Y+5*R,1,12,0xffffffffU);          // 100% of the vertex buffer
     for(float ms:{16.683f,33.367f,50.05f})hud_rect(b,BX+ms*1000*PX,Y-2,1,5*R,0xffffffffU);
+#if RE4DC_IO_PROBE
+    // IO probe row (lilac): sequential KB/s, cold 32 KiB p95 (0.1 ms), stream underruns
+    // under load, worst underrun deficit (0.1 ms). Blank until the probe has run.
+    unsigned io[4];
+    if(re4dc_ioprobe_hud(io))for(unsigned k=0;k<4;++k)hud_number(b,X+k*60,Y+6*R,io[k],k==1||k==3,0xe0c0a0ffU);
+#endif
     hud_flush(b);
 }
 #endif

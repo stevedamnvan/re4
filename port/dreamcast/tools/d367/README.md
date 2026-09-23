@@ -171,3 +171,24 @@ texture index is rebased. `tests/test_room_smd.py` covers this, plus r101/r103 w
   with the host cc). `SECTOR=2048` writes `.iso` tracks. Either way the user data is
   2048-byte MODE1.
 - To test in Flycast, boot `disc.gdi` (evidence `gdemu-a`; control `gdemu-a-cue`).
+
+### Disc IO probe and door-load telemetry (`IO_PROBE=1`, default 0)
+
+Diagnostic builds only; the default image does not change.
+
+- `MOTION_FAST_READ=1` (default 0): motion keys are read whole into their aligned
+  residency block (98 -> 0.18 ms per key in Flycast).
+- `IO_PROBE=1` adds `platform/io_probe.cpp`, which runs timed disc reads at the end of
+  OSInit when the fixture `ioprobe.txt` (staged as `/cd/dc/ioprobe.txt`) exists, e.g.
+  `seq=8 cold=48 opens=50`. Results go to `ioprobe:` log lines, the `re4dc_ioprobe`
+  struct, VMU LCD pages and a PERF_HUD row.
+  - The stream phases `idle=N load=N` default to 0 (off): in Flycast they faulted or reset
+    the guest in 4 of 6 runs. Pass them only for diagnosis.
+- With the room cycle fixture (`roomcycle.txt`, `door 3 300`) each room entry logs one
+  `iotime: door` and one `iotime: steady` line: wall time, game frames, source DVD
+  blocking and motion-key waits. Read them with
+  `tr -d '\0' < run-output.txt | grep -a "iotime: door"`.
+- `platform/io_wrap.cpp` links `--wrap=fs_read,fs_open,thd_sleep,genwait_wait` and prints
+  `iowrap:` lines with each `iotime` line: blocking time by file path, by caller (return
+  address, symbolize with `symbols-demangled.txt`), by KOS wait kind and thread, and per
+  thread.

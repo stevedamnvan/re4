@@ -144,6 +144,31 @@ $(OBJDIR)/motion-read.h: motion-read-force
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_motion.o: $(OBJDIR)/motion-read.h
 $(OBJDIR)/platform/native_motion.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/motion-read.h
+# D367 disc I/O probe (W10). IO_PROBE=1 (default off; the default image does not change):
+# platform/io_probe.cpp runs timed disc reads at boot when /cd/dc/ioprobe.txt exists
+# (sequential, cold, open/close, motion keys, seek sweep, a paced 225 KB/s stream alone and
+# under a bulk loader) and shows them in the log ring, the re4dc_ioprobe struct, VMU pages
+# and a PERF_HUD row. The room cycle fixture also gets room-entry telemetry ("iotime:"
+# lines: wall time, source DVD and motion-key blocking).
+IO_PROBE ?= 0
+ifneq ($(IO_PROBE),1)
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/io_probe.o $(OBJDIR)/platform/io_wrap.o,$(PLATFORM_OBJS))
+else
+# Diagnostic wraps (platform/io_wrap.cpp): time every blocking read, open, sleep and KOS wait
+# by file, caller and thread for the "iowrap:" room-entry lines.
+GAME_LDFLAGS += -Wl,--wrap=fs_read -Wl,--wrap=fs_open -Wl,--wrap=thd_sleep -Wl,--wrap=genwait_wait
+endif
+.PHONY: io-probe-force
+$(OBJDIR)/io-probe.h: io-probe-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_IO_PROBE %s\n' '$(IO_PROBE)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+IO_PROBE_OBJS = $(addprefix $(OBJDIR)/platform/,dvd.o native_motion.o os.o native_ui.o io_probe.o)
+$(IO_PROBE_OBJS): $(OBJDIR)/io-probe.h
+$(IO_PROBE_OBJS): PLATFORM_CPPFLAGS += -include $(OBJDIR)/io-probe.h
+$(OBJDIR)/ui_bridge.o: $(OBJDIR)/io-probe.h
+$(OBJDIR)/ui_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/io-probe.h
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 # Route cutscenes (default off): PS2 prerecorded movies present source events
 # (/cd/dc/movie/*.seq, docs/ROUTE_CUTSCENES.md). Default images carry none of it.

@@ -168,6 +168,62 @@ void audit(int phase){
 }
 }
 
+#if RE4DC_IO_PROBE
+// IO_PROBE: room-entry telemetry for the room cycle fixture. At the door request the DVD
+// blocking counters (dvd.cpp), the motion-key wait total (native_motion.cpp) and, with
+// DISC_ASYNC, the disc service counters are reset. On the first in-room frame one "iotime:"
+// line reports the wall time and game frames of the transition, the time the game spent
+// blocked in source DVD reads and in motion-key reads, and the bytes; the rest of the wall
+// time is CPU. After 240 in-room frames a second line reports the same for steady play.
+#include <kos/timer.h>
+extern "C" void re4dc_dvd_block_stats(unsigned* n, unsigned long long* total_us, unsigned* worst_us, int reset);
+extern "C" unsigned long long re4dc_motion_wait_total_us;
+extern "C" unsigned re4dc_ui_frame();
+extern "C" void re4dc_iowrap_reset(void);                          // io_wrap.cpp
+extern "C" void re4dc_iowrap_report(const char* what, unsigned cycle);
+#include "native_motion.h"
+namespace {
+struct IoCycle { unsigned no; const char* mode; unsigned long long t0, t_enter; unsigned f0; bool pending, steady; Re4dcMotionStats m0; unsigned uf0; };
+IoCycle io_cycle{};
+void io_reset(){
+    unsigned a,b;unsigned long long t;
+    re4dc_dvd_block_stats(&a,&t,&b,1);
+    re4dc_motion_wait_total_us=0;
+    re4dc_motion_get_stats(&io_cycle.m0);
+    io_cycle.uf0=re4dc_ui_frame();
+    re4dc_iowrap_reset();
+}
+void io_report(const char* what,unsigned long long wall){
+    unsigned bn,bw;unsigned long long bt;
+    re4dc_dvd_block_stats(&bn,&bt,&bw,1);
+    Re4dcMotionStats m;re4dc_motion_get_stats(&m);
+    re4dc_log("iotime: %s cycle=%u mode=%s wall_us=%llu enter_us=%llu game_frames=%u dvd_block n=%u total_us=%llu "
+              "worst_us=%u motion loads=%u kb=%llu wait_us=%llu worst_wait_us=%llu ui_frames=%u-%u\n",what,io_cycle.no,io_cycle.mode,wall,
+              io_cycle.t_enter>io_cycle.t0?io_cycle.t_enter-io_cycle.t0:0ULL,unsigned(pG->Frame_cnt-io_cycle.f0),bn,bt,bw,
+              m.loads-io_cycle.m0.loads,(m.bytes_read-io_cycle.m0.bytes_read)/1024,re4dc_motion_wait_total_us,m.worst_wait_us,io_cycle.uf0,re4dc_ui_frame());
+    re4dc_iowrap_report(what,io_cycle.no);
+    io_reset();
+}
+void io_cycle_begin(unsigned no,const char* mode){
+    io_cycle.no=no;io_cycle.mode=mode;io_cycle.t0=timer_us_gettime64();io_cycle.t_enter=0;
+    io_cycle.f0=unsigned(pG->Frame_cnt);io_cycle.pending=true;io_cycle.steady=false;
+    io_reset();
+}
+void io_cycle_enter(){ if(io_cycle.pending && !io_cycle.t_enter)io_cycle.t_enter=timer_us_gettime64(); }
+void io_cycle_frame(unsigned frames_in_room){
+    if(!io_cycle.pending)return;
+    if(frames_in_room==1){
+        const unsigned long long t=timer_us_gettime64();
+        io_report("door",t>io_cycle.t0?t-io_cycle.t0:0ULL);
+        io_cycle.t0=timer_us_gettime64();io_cycle.t_enter=0;io_cycle.f0=unsigned(pG->Frame_cnt);io_cycle.steady=true;
+    } else if(io_cycle.steady && frames_in_room==241){
+        const unsigned long long t=timer_us_gettime64();
+        io_report("steady",t>io_cycle.t0?t-io_cycle.t0:0ULL);
+        io_cycle.pending=false;
+    }
+}
+}
+#endif
 // StageSet entry (src/game/stage.cpp): the old room is over and every heap
 // is still in place. Idempotent; gameRoomMemInit retires again for the paths
 // that do not pass through StageSet (ending) and for the first room.
@@ -185,6 +241,9 @@ extern "C" void re4dc_room_leave(){
 
 // gameRoomMemInit after the source replaced heap 4: a new room heap exists.
 extern "C" void re4dc_room_enter(){
+#if RE4DC_IO_PROBE
+    io_cycle_enter();
+#endif
     re4dc_room4_open();
     room_frames=0;steady_logged=false;
     audit(0);
@@ -223,6 +282,9 @@ extern "C" int re4dc_room_cycle_poll(){
     unsigned generation,cells,bytes,stale,refused;
     if(!re4dc_room4_state(&generation,&cells,&bytes,&stale,&refused))return 0;
     ++room_frames;
+#if RE4DC_IO_PROBE
+    io_cycle_frame(room_frames);
+#endif
     if(!cycle.loaded)load_cycle();
     if(!cycle.mode || !pPL || (pG->Status_flg[1]&0x10000000))return 0;
     if(room_frames<cycle.frames)return 0;
@@ -233,6 +295,9 @@ extern "C" int re4dc_room_cycle_poll(){
         cycle.anchored=true;cycle.pos=pPL->pos;cycle.y=pPL->ang.y;cycle.point=pG->Part;
     }
     ++cycle.done;
+#if RE4DC_IO_PROBE
+    io_cycle_begin(cycle.done,kCycleMode[cycle.mode-1]);
+#endif
     if(cycle.mode==3){
         re4dc_log("room cycle: reload %u/%u room=%03x via GameContinue\n",cycle.done,cycle.count,unsigned(pG->room_id));
         GameContinue(1);

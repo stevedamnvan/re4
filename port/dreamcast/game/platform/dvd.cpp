@@ -10,6 +10,9 @@
 
 #include "re4dc_platform.h"
 #include "native_io.h"
+#ifndef RE4DC_IO_PROBE
+#define RE4DC_IO_PROBE 0
+#endif
 
 namespace {
 void* dvd_step_owner;
@@ -27,7 +30,8 @@ extern "C" void* re4dc_dvd_step_begin(){
     void* token=re4dc_io_begin();
     if(!dvd_step_owner){dvd_step_owner=token;dvd_step_thread=thd_current;}
     ++dvd_step_depth;
-    irq_restore(irq);return token;
+    irq_restore(irq);
+    return token;
 }
 extern "C" void re4dc_dvd_step_end(void* token){
     const int irq=irq_disable();
@@ -88,6 +92,23 @@ static s32 g_entrySize[MAX_ENTRIES];  // -1: not on the disc
 static int g_entryCount;
 static DVDDiskID g_diskId = {{'G', '4', 'B', 'E'}, {'0', '8'}, 0, 0, 0, 0, {0}};
 static const char* g_root = "/cd/";
+
+#if RE4DC_IO_PROBE
+// Time a game thread spent blocked on a source DVD read (the whole synchronous read, or
+// with DISC_ASYNC the wait for an overlapped read to land). Door-transition telemetry.
+static unsigned g_blockN, g_blockWorst;
+static unsigned long long g_blockTotal;
+static void note_block(unsigned long long us)
+{
+    ++g_blockN; g_blockTotal += us; if (us > g_blockWorst) g_blockWorst = (unsigned) us;
+}
+extern "C" void re4dc_dvd_block_stats(unsigned* n, unsigned long long* total_us, unsigned* worst_us, int reset)
+{
+    *n = g_blockN; *total_us = g_blockTotal; *worst_us = g_blockWorst;
+    if (reset) { g_blockN = 0; g_blockTotal = 0; g_blockWorst = 0; }
+}
+#endif
+
 
 static void normalise(const char* in, char* out, size_t n)
 {
@@ -190,6 +211,9 @@ s32 DVDReadAsyncPrio(DVDFileInfo* fi, void* addr, s32 length, s32 offset, DVDCal
     fi->cb.currTransferSize = (u32) length;
     fi->cb.transferredSize = 0;
     fi->callback = callback;
+#if RE4DC_IO_PROBE
+    const unsigned long long io_t0 = timer_us_gettime64();
+#endif
     s32 result = DVD_RESULT_FATAL;
     file_t f = fs_open(full, O_RDONLY);
     if (f >= 0) {
@@ -211,6 +235,9 @@ s32 DVDReadAsyncPrio(DVDFileInfo* fi, void* addr, s32 length, s32 offset, DVDCal
     } else {
         re4dc_log("DVDReadAsyncPrio: open failed %s\n", full);
     }
+#if RE4DC_IO_PROBE
+    { const unsigned long long io_t1 = timer_us_gettime64(); note_block(io_t1 > io_t0 ? io_t1 - io_t0 : 0); }
+#endif
     fi->cb.transferredSize = result > 0 ? (u32) result : 0;
     fi->cb.state = DVD_STATE_END;
     if (callback) {
@@ -237,7 +264,10 @@ int DVDCancelAsync(DVDCommandBlock* block, DVDCBCallback callback)
     return 1;
 }
 
-s32 DVDCancelAll(void) { return 0; }
+s32 DVDCancelAll(void)
+{
+    return 0;
+}
 
 DVDDiskID* DVDGetCurrentDiskID(void) { return &g_diskId; }
 
