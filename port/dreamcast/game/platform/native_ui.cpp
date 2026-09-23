@@ -132,6 +132,14 @@ struct Source { Re4dcUiImage image{}; Key key{}; };
 // bytes from the optional source-key lookup cache, not the game heap/queue.
 // An uncached source descriptor still resolves through its existing owner table.
 Entry entries[kTextureCount]; Source sources[kSourceCount]; unsigned nsource;
+// EFFECT_SPRITES=1 (effects30.mk; default off = previous image): native effect sprites
+// (re4dc_effect_sprite below).
+#ifndef RE4DC_EFFECT_SPRITES
+#define RE4DC_EFFECT_SPRITES 0
+#endif
+#if RE4DC_EFFECT_SPRITES
+unsigned fx_frame=~0U,fx_count,fx_queued,fx_direct,fx_missing,fx_dropped,fx_capped,fx_culled,fx_peak;
+#endif
 // TEX_RESIDENT deliberately exceeds this bound: TEX_SLOTS-80 more entries (x sizeof(Entry)).
 static_assert(RE4DC_TEX_RESIDENT || sizeof(entries)+sizeof(sources)<=64*sizeof(Entry)+256*sizeof(Source));
 #if RE4DC_UI_HANDLES
@@ -1625,6 +1633,9 @@ extern "C" void re4dc_ui_present(){
 #if RE4DC_UI_VRAM
     if(frame%120==0) re4dc_log("native UI VRAM: frame=%u budget=%u used=%u free=%u rejects=%u retries=%u evicted=%u\n",frame,vram_budget,used,(unsigned)pvr_mem_available(),vram_rejects,vram_retries,reclaimed);
 #endif
+#if RE4DC_EFFECT_SPRITES
+    if(frame%120==0) re4dc_log("native effect sprites: frame=%u queued=%u direct=%u missing=%u dropped=%u capped=%u culled=%u peak=%u\n",frame,fx_queued,fx_direct,fx_missing,fx_dropped,fx_capped,fx_culled,fx_peak);
+#endif
 #if RE4DC_UI_HANDLES
     if(frame%120==0) re4dc_log("native UI handles: frame=%u hits=%u misses=%u bypass=%u\n",frame,handle_hits,handle_misses,handle_bypass);
 #endif
@@ -2054,6 +2065,78 @@ extern "C" int re4dc_model_defer_part(const Re4dcModelPart* p){
     (void)p;return 0;
 #endif
 }
+#if RE4DC_EFFECT_SPRITES
+#if !RE4DC_D349_RENDERER_STACK || !RE4DC_PVR_STREAM
+#error EFFECT_SPRITES needs the D349 renderer stack and PVR_STREAM (deferred translucent queue)
+#endif
+#ifndef RE4DC_EFFECT_SPRITE_MAX
+#define RE4DC_EFFECT_SPRITE_MAX 64
+#endif
+#include <dc/pvr/pvr_misc.h>
+namespace {
+// A queued sprite: a DeferredPart whose lighting is this tag, then its 96-byte packet
+// (header + textured sprite body). The drain sends it in OT order between model parts.
+DeferredLighting* const kSpriteTag=reinterpret_cast<DeferredLighting*>(1);
+constexpr unsigned kSpriteNode=(sizeof(DeferredPart)+31)&~31U,kSpritePacket=sizeof(pvr_poly_hdr_t)+sizeof(pvr_sprite_txr_t);
+void fx_packet(const Re4dcEffectSprite& s,Entry* e,unsigned char* out){
+    const auto& t=e->package.textures()[0];
+    pvr_sprite_cxt_t c;pvr_sprite_cxt_txr(&c,PVR_LIST_TR_POLY,re4dc::texture::pvr_format(t),t.width,t.height,
+                                          e->package.pvr_texture(0),PVR_FILTER_BILINEAR);
+    c.gen.culling=PVR_CULLING_NONE;
+    c.depth.comparison=s.screen?PVR_DEPTHCMP_ALWAYS:PVR_DEPTHCMP_GEQUAL;c.depth.write=PVR_DEPTHWRITE_DISABLE;
+    c.blend.src=(pvr_blend_mode_t)s.src;c.blend.dst=(pvr_blend_mode_t)s.dst;
+    c.txr.env=PVR_TXRENV_MODULATEALPHA;c.txr.uv_clamp=PVR_UVCLAMP_UV;
+#if RE4DC_NATIVE_FOG
+    c.gen.fog_type=s.screen?PVR_FOG_DISABLE:PVR_FOG_TABLE; // table: native_static.cpp re4dc_fog_frame
+#endif
+    auto* h=reinterpret_cast<pvr_poly_hdr_t*>(out);
+    pvr_sprite_compile(h,&c);h->argb=s.color;h->oargb=0;
+    auto* b=reinterpret_cast<pvr_sprite_txr_t*>(out+sizeof(pvr_poly_hdr_t));
+    const float su=float(s.image.width)/t.width,sv=float(s.image.height)/t.height;
+    b->flags=PVR_CMD_VERTEX_EOL;
+    b->ax=s.x[0];b->ay=s.y[0];b->az=s.z[0];b->bx=s.x[1];b->by=s.y[1];b->bz=s.z[1];
+    b->cx=s.x[2];b->cy=s.y[2];b->cz=s.z[2];b->dx=s.x[3];b->dy=s.y[3];b->dummy=0;
+    b->auv=PVR_PACK_16BIT_UV(s.u[0]*su,s.v[0]*sv);b->buv=PVR_PACK_16BIT_UV(s.u[1]*su,s.v[1]*sv);
+    b->cuv=PVR_PACK_16BIT_UV(s.u[2]*su,s.v[2]*sv);
+}
+}
+// EFFECT_SPRITES (effects30.mk): one effect sprite from EspCommonTrans. Never aborts the
+// frame: without texture, over the per-frame cap or without queue room the sprite is dropped.
+extern "C" int re4dc_effect_sprite(const Re4dcEffectSprite* s){
+    if(!frame_ready || stream_aborted || draining_parts)return 0;
+    if(fx_frame!=frame){fx_frame=frame;fx_count=0;}
+    if((s->color>>24)==0){++fx_culled;return 0;}
+    for(unsigned i=0;i<4;++i)if(!std::isfinite(s->x[i]) || !std::isfinite(s->y[i]) || !std::isfinite(s->z[i])){++fx_culled;return 0;}
+    if(fx_count>=RE4DC_EFFECT_SPRITE_MAX){++fx_capped;return 0;}
+#if RE4DC_UI_HANDLES
+    Entry* e=resolve(s->image,nullptr,true);
+#else
+    Entry* e=load(s->image);
+#endif
+    if(!e){++fx_missing;return 0;}
+    if(source_draws_finished){
+        alignas(32) unsigned char packet[kSpritePacket];fx_packet(*s,e,packet);
+        stream_select(PVR_LIST_TR_POLY);stream_send(packet,kSpritePacket);
+        ++fx_direct;++fx_count;return 1;
+    }
+    const unsigned required=kSpriteNode+kSpritePacket,margin=8192;
+    unsigned char* storage=frame_storage;unsigned* top=&deferred_top;
+    if(required+margin>deferred_top || deferred_top-required-margin<std::max(8192U,nquad*unsigned(sizeof(Re4dcUiQuad)))){
+        if(!deferred_spill){deferred_spill=static_cast<unsigned char*>(re4dc_model_deferred_storage(&deferred_spill_capacity));deferred_spill_top=deferred_spill_capacity;}
+        // The spill tail holds only model snapshots and sprites (no UI lane): no margin.
+        if(!deferred_spill || required>deferred_spill_top){++fx_dropped;return 0;}
+        storage=deferred_spill;top=&deferred_spill_top;
+    }
+    *top-=required;
+    auto* node=new(storage+*top) DeferredPart{};node->lighting=kSpriteTag;
+    fx_packet(*s,e,storage+*top+kSpriteNode);
+    if(deferred_last)deferred_last->next=node;else deferred_first=node;
+    deferred_last=node;++deferred_count;++fx_queued;++fx_count;
+    fx_peak=std::max(fx_peak,fx_count);
+    frame_queue_peak=std::max(frame_queue_peak,unsigned(sizeof(frame_storage))-deferred_top+deferred_spill_capacity-deferred_spill_top);
+    return 1;
+}
+#endif
 extern "C" void re4dc_model_finish_source_draws(){
     RE4DC_PROFILE_SCOPE(TranslucentDrain);
 #if RE4DC_D349_RENDERER_STACK
@@ -2064,6 +2147,12 @@ extern "C" void re4dc_model_finish_source_draws(){
     // A future qualified PT material must also budget/enable that list.
     stream_select(PVR_LIST_TR_POLY);draining_list=PVR_LIST_TR_POLY;
     while(deferred_first && !stream_aborted){
+#if RE4DC_EFFECT_SPRITES
+        if(deferred_first->lighting==kSpriteTag){
+            const auto* packet=reinterpret_cast<const unsigned char*>(deferred_first)+kSpriteNode;
+            deferred_first=deferred_first->next;stream_send(packet,kSpritePacket);continue;
+        }
+#endif
         // Copy the small view before I/O can yield. Retirement clears the queue
         // and aborts this same frame; it never frees an in-flight PVR texture.
         Re4dcModelPart view=restore_view(deferred_first);

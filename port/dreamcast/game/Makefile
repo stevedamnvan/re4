@@ -653,3 +653,5 @@ include frontend30.mk
 include subscreen.mk
 # D367 safe cuts (FX_LEAN; default off: no effect).
 include safecuts.mk
+# D367 effects30 (EFFECT_LEAN, EFFECT_SPRITES; default off: no effect).
+include effects30.mk

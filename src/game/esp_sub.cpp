@@ -42,6 +42,108 @@ extern f32 ZFAR;
 
 #define DEG2RAD (3.14f / 180.0f)
 
+#ifndef RE4DC_EFFECT_LEAN
+#define RE4DC_EFFECT_LEAN 0
+#endif
+#ifndef RE4DC_EFFECT_SPRITES
+#define RE4DC_EFFECT_SPRITES 0
+#endif
+#if RE4DC_EFFECT_SPRITES
+// D367 EFFECT_SPRITES (effects30.mk): the approved effect classes as native PVR sprites. Reads
+// game state only (m_Mat, the texture work, ChannelSet's colour, the current GX projection).
+#include "native_ui.h"
+extern "C" void GXGetProjectionv(f32*);
+extern "C" void GXGetViewportv(f32*);
+static GXColor s_effect_col; // ChannelSet's final material colour (GXSetChanMatColor)
+static int EspSpriteEligible(cEsp* esp)
+{
+    const u32 owner = esp->info.owner;
+    if (!(owner == 0 || owner == 0x10 || (owner >= 0x34 && owner <= 0x4F))) {
+        return 0; // muzzle flash (WEPxx), the shot's core effects, blood (EM10)
+    }
+    if ((esp->m_Tool_flg & (0x4000 | 0x10000)) || (esp->m_Flg & 0x10) || esp->xA4 != 1) {
+        return 0; // mask stage, texture-render target, Esp1b spline, non-blend modes
+    }
+    return 1;
+}
+static void EspSpriteEmit(cEsp* esp)
+{
+    // GX blend factors 0..7 (ZERO ONE DSTCLR/SRCCLR INVxCLR SRCA INVSRCA DSTA INVDSTA) have the
+    // PVR_BLEND_* values 0..7 (PVR "DESTCOLOR" is the other colour on either side).
+    // Local corners of g_EspCommonDisplayList in PVR sprite order A(0,1) B(1,1) C(1,0) D(0,0).
+    static const f32 cx[4] = {0.0f, 1.0f, 1.0f, 0.0f}, cy[4] = {1.0f, 1.0f, 0.0f, 0.0f};
+    static const f32 cu[4] = {0.0f, 1.0f, 1.0f, 0.0f}, cv[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+    EspTexWk* tw = &g_pEspSys->Esp_tex_tbl[esp->m_Tex_id];
+    if (tw->Owner == 0xD2 || !tw->pTpl || esp->m_Ptn_no >= tw->pTpl->numDescriptors) {
+        return;
+    }
+    const TEXDescriptor* td = TEXGet(tw->pTpl, esp->m_Ptn_no);
+    const TEXHeader* th = td->textureHeader;
+    Re4dcEffectSprite s;
+    s.image.pixels = th->data;
+    s.image.palette = NULL;
+    s.image.width = th->width;
+    s.image.height = th->height;
+    s.image.format = th->format;
+    s.image.palette_format = 0xffffffffU;
+    s.image.palette_bytes = 0;
+    if (td->CLUTHeader) {
+        s.image.palette = td->CLUTHeader->data;
+        s.image.palette_format = td->CLUTHeader->format;
+        s.image.palette_bytes = td->CLUTHeader->numEntries * 2;
+    }
+    f32 P[7], V[6];
+    GXGetProjectionv(P);
+    GXGetViewportv(V);
+    if (V[2] <= 0.0f || V[3] <= 0.0f) {
+        return;
+    }
+    const int ortho = P[0] != 0.0f;
+    const f32 near_d = ortho ? 0.0f : P[6] / (P[5] - 1.0f), far_d = ortho ? 0.0f : P[6] / P[5];
+    const Mtx& m = esp->m_Mat;
+    for (int i = 0; i < 4; ++i) {
+        const f32 x = m[0][0] * cx[i] + m[0][1] * cy[i] + m[0][2] + m[0][3];
+        const f32 y = m[1][0] * cx[i] + m[1][1] * cy[i] + m[1][2] + m[1][3];
+        const f32 z = m[2][0] * cx[i] + m[2][1] * cy[i] + m[2][2] + m[2][3];
+        f32 px, py, inv;
+        if (ortho) {
+            px = P[1] * x + P[2];
+            py = P[3] * y + P[4];
+            inv = 1.0f;
+        } else {
+            if (-z < near_d || -z > far_d) {
+                return; // near/far crossing: drop, never clip
+            }
+            inv = 1.0f / -z;
+            px = (P[1] * x + P[2] * z) * inv;
+            py = (P[3] * y + P[4] * z) * inv;
+        }
+        s.x[i] = (V[2] * 0.5f * px + V[0] + V[2] * 0.5f) * 640.0f / V[2];
+        s.y[i] = (-V[3] * 0.5f * py + V[1] + V[3] * 0.5f) * 480.0f / V[3];
+        s.z[i] = inv;
+        s.u[i] = tw->mtx[0][0] * cu[i] + tw->mtx[0][1] * cv[i] + tw->mtx[0][3];
+        s.v[i] = tw->mtx[1][0] * cu[i] + tw->mtx[1][1] * cv[i] + tw->mtx[1][3];
+    }
+    u32 r = s_effect_col.r, g = s_effect_col.g, b = s_effect_col.b, a = s_effect_col.a;
+    if (!(esp->m_Tool_flg & 0x40)) {
+        if (esp->m_Tool_flg & 0x80) { // TEV colour scale 4
+            r = r * 4 > 255 ? 255 : r * 4;
+            g = g * 4 > 255 ? 255 : g * 4;
+            b = b * 4 > 255 ? 255 : b * 4;
+        }
+        if (esp->m_Tool_flg & 0x20000) { // TEV alpha scale 4
+            a = a * 4 > 255 ? 255 : a * 4;
+        }
+    }
+    s.color = (a << 24) | (r << 16) | (g << 8) | b;
+    s.src = esp->xA5 & 7;
+    s.dst = esp->xA6 & 7;
+    s.screen = ortho;
+    s.pad = 0;
+    re4dc_effect_sprite(&s);
+}
+#endif
+
 // The pulled effect is kept in a one-member struct: the original reloads the pointer from its
 // stack slot after every store through it (a struct-member slot aliases the member stores).
 struct EspPtr {
@@ -111,7 +213,9 @@ void EspCommonTrans(cEsp* esp)
         EspCommonTransNega(esp, 2);
         return;
     }
+#if !RE4DC_EFFECT_LEAN
     GXSetBlendMode(esp->xA4, esp->xA5, esp->xA6, esp->xA7);
+#endif
     if (OtGetPrevKind() != 8) {
         if (ESP_PARTS_SCREEN(esp)) {
             Mtx44 proj;
@@ -127,9 +231,12 @@ void EspCommonTrans(cEsp* esp)
             s_tex_no = -1;
             return;
         }
+#if !RE4DC_EFFECT_LEAN
         EspTexSet(esp->m_Tex_id, esp->m_Ptn_no);
+#endif
         s_tex_no = esp->m_Tex_id;
         s_ptn_no = esp->m_Ptn_no;
+#if !RE4DC_EFFECT_LEAN
         esp->CommonStateSet();
         GXClearVtxDesc();
         GXSetVtxDesc(9, 1);
@@ -138,6 +245,7 @@ void EspCommonTrans(cEsp* esp)
         GXSetVtxAttrFmt(0, 9, 1, 1, 0);
         GXSetVtxAttrFmt(0, 0xA, 0, 1, 0);
         GXSetVtxAttrFmt(0, 0xD, 1, 1, 0);
+#endif
     } else {
         if (ESP_PARTS_SCREEN(esp)) {
             if (s_proj_type != 0) {
@@ -160,7 +268,9 @@ void EspCommonTrans(cEsp* esp)
             }
         }
         if (s_tex_no != esp->m_Tex_id || s_ptn_no != esp->m_Ptn_no) {
+#if !RE4DC_EFFECT_LEAN
             EspTexSet(esp->m_Tex_id, esp->m_Ptn_no);
+#endif
             s_ptn_no = esp->m_Ptn_no;
         }
         s_tex_no = esp->m_Tex_id;
@@ -285,17 +395,27 @@ void EspCommonTrans(cEsp* esp)
         PSMTXConcat(esp->parent->mat, esp->m_Mat, esp->m_Mat);
         PSMTXConcat(pG->Cam.v_mat, esp->m_Mat, esp->m_Mat);
     }
+#if RE4DC_EFFECT_SPRITES
+    if (EspSpriteEligible(esp)) {
+        EspSpriteEmit(esp);
+    }
+#endif
     PSMTXInverse(esp->m_Mat, inv);
     PSMTXTranspose(inv, inv);
     GXLoadNrmMtxImm(inv, 0);
+#if !RE4DC_EFFECT_LEAN
     GXLoadPosMtxImm(esp->m_Mat, 0);
     GXSetCurrentMtx(0);
+#endif
     if (esp->m_Tool_flg & 0x4000) {
         int no = esp->m_MaskTex_id;
         EspTexWk* tw = EspGetTexWk(no, 1);
         if (tw->Owner == 0xD2) {
             pLog->err(0, 0, "ESP : Mask_TexId[%x] no data", no);
         } else {
+#if RE4DC_EFFECT_LEAN
+            GXSetTevColorOp(1, 0, 0, 0, 1, 0); // the only state the native side reads (TEV scale)
+#else
             GXTexObj tex;
             GXTlutObj tlut;
             GXTexObj* pTex = &tex;
@@ -324,8 +444,12 @@ void EspCommonTrans(cEsp* esp)
             } else {
                 GXSetTevAlphaOp(1, 0, 0, 0, 1, 0);
             }
+#endif
         }
     }
+#if RE4DC_EFFECT_LEAN
+    return; // alpha update / Z / dst alpha / alpha compare set and reset, and the draw: GX sinks
+#endif
     {
         // The flag word is read into a local for the first test only: with two plain reads the
         // pre-cse jump threading merges the compares; the original kept one compare in cr7.
@@ -1001,19 +1125,25 @@ int cEsp::ChannelSet()
     cEspSystem* sys = g_pEspSys;
 
     if (m_Tool_flg & 0x40) {
+#if !RE4DC_EFFECT_LEAN
         GXSetTevOp(0, 0);
         GXSetTevColorIn(0, 0xF, 8, 0xA, 0xF);
+#endif
         GXSetTevColorOp(0, 0, 0, 2, 1, 0);
         commonEspLightSet(sys->lightList.p, sys->lightList.num);
     } else {
+#if !RE4DC_EFFECT_LEAN
         GXSetTevOp(0, 0);
+#endif
         if (m_Tool_flg & 0x80) {
             GXSetTevColorOp(0, 0, 0, 2, 1, 0);
         }
+#if !RE4DC_EFFECT_LEAN
         if (m_Tool_flg & 0x20000) {
             GXSetTevAlphaOp(0, 0, 0, 2, 1, 0);
         }
         GXSetNumChans(1);
+#endif
         GXSetChanCtrl(4, 0, 0, 0, 0, 0, 2);
     }
     if (m_Flg & 1) {
@@ -1065,6 +1195,9 @@ int cEsp::ChannelSet()
         }
     }
     GXSetChanMatColor(4, col);
+#if RE4DC_EFFECT_SPRITES
+    s_effect_col = col;
+#endif
     {
         int ret = 0;
         if (col.a != 0) {

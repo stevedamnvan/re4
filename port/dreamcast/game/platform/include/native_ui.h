@@ -10,7 +10,16 @@ struct Re4dcUiQuad {
     float xy[8], uv[8];
     unsigned color, blend, masked;
 };
+// EFFECT_SPRITES (effects30.mk): one projected effect sprite. Corners A,B,C,D in PVR
+// sprite order (A-B-C clockwise, D opposite B), screen x/y in 640x480 and z = 1/w.
+struct Re4dcEffectSprite {
+    Re4dcUiImage image;
+    float x[4], y[4], z[4], u[4], v[4];
+    unsigned color;                      // ARGB, material colour after TEV scale
+    unsigned char src, dst, screen, pad; // PVR blend factors; screen: depth always, no fog
+};
 extern "C" {
+int re4dc_effect_sprite(const Re4dcEffectSprite*);
 void re4dc_ui_init();
 void re4dc_ui_begin();
 void re4dc_ui_present();
