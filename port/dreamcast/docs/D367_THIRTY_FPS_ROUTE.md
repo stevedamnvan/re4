@@ -168,7 +168,7 @@ Worth porting (with estimated hardware savings):
 2. one straight per-part emission loop instead of the packet/defer layer (-5 to -6);
 3. precompiled HUD headers (~-1.5);
 4. a small grouped render hot path (-1 to -2);
-5. a per-frame transformed-vertex cache for scenery (~-1.5, unmeasured).
+5. ~~a per-frame transformed-vertex cache for scenery~~: measured at 0. The transform-once meshlets (02d5a0f) already realise it (24.4% of corners saved), and repeats across draws use different matrices. What's left is a converter-side position/attribute split, ~-0.5 to -0.8 ms, unmeasured.
 
 ## 20 fps hardware budget (2026-09-23)
 
