@@ -159,7 +159,10 @@ Game logic is a fixed 30 Hz tick: one update per frame (main.cpp, 2 vsyncs), wit
 | UI / texture cache | 12.3 | ~2 (O(1) handles) |
 | Copies + TA + KOS | 16.6 | ~7.5 |
 
-Open for user decision: fog far plane ~43 m -> 25-30 m; distant Ganados skinned at half rate; visual-only simulations (cloth, pendulum, some particles) at half rate.
+User decisions (2026-09-23):
+- **Approved:** shorter fog/draw distance, ~43 m -> 20-30 m ("most of the game is outdoors"). It must never hide an enemy within engagement range; trials pick the distance.
+- **Approved, "more drastic":** Ganado crowd rules. Near 2-3 full detail; mid tier about 1/4 vertices, rigid parts, skinned every other frame; far tier a few hundred triangles, skinned every 3rd-4th frame. Leon always full; threats are never culled.
+- **Open:** visual-only simulations (cloth, pendulum, some particles) at half rate.
 
 ## Asset decisions
 
@@ -266,7 +269,7 @@ run in it; "r101 works" commits are the separate room viewer.
 | W7 | r101 events with FMV presentation | In progress (PS2 FMV, ROUTE_MOVIES=1) |
 | W8 | r101 -> r103 | Not started |
 | W9 | r101/r103 scenery packages | In progress (converter generalised to r101/r103; drops ~2.05 MB of GC geometry from heap 4) |
-| W10 | GDEMU image | Done in Flycast. `tools/d367/mkgdi.sh` (`GDI=1` in stage.sh) builds a three-track GDI from the staged tree, and the game's `cdrom_read_toc` wrap mounts `/cd` from track 3. The LF GDI boots title -> r100 the same way game.cue does (evidence `gdemu-a` vs `gdemu-a-cue`). Track 3 is 632 MB, 61% of the 1,032 MB high-density area. The route adds about 39 MB of archives and 76 MB of FMV. Not yet booted on hardware |
+| W10 | GDEMU image | Done (93a03e3): GDI boots title -> r100 in Flycast; HD-area mount wrap; 61% of HD area used. Next: IO probe (VMU/HUD) and async prioritised disc reads (all reads block today) |
 | W11 | Inventory backing and retry | Not started |
 | W12 | Audio (music and sound effects) | Backend committed (79d3252, AICA_AUDIO=1): GC sequencer + SFX engine on the AICA, ~0.2 ms/frame, fixes the continue hang. Next: offline bank conversion (5.3 s load-time CPU today), fixed per-room AICA layout, st002/st008 streams |
 
