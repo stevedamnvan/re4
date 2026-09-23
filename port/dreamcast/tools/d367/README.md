@@ -21,8 +21,8 @@ Capture with `port/dreamcast/tools/flycast-harness/` (see its README).
 
 | Name | ms/frame | EXTRA_MAKE |
 |---|---|---|
-| LD (current best) | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=1 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1` |
-| LF | measuring | LD with `PVR_PIPELINE=2`, built against a KOS with the async-present patch (`RE4DC_KOS_BASE=<patched kos>`) |
+| LD | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=1 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1` |
+| LF (default) | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1`. Async present; `build.sh` selects `/root/work/kos-re4dc-d367` (see `patches/README.md`). Neutral in Flycast; adopted because it stops the CPU waiting on render. |
 
 LD packages: the scenery30 LOD packages with the PS2 tree substitution (`MESHDIR`), and
 the PS2 bark texture overlay (`TEXDIRS`). The generation steps are documented with the

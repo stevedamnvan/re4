@@ -1,12 +1,14 @@
 #!/bin/bash
 # D367 recovered-game build: the D361/D362 ELF flag set plus the native static/mesh
 # renderer. usage: [OWNERS=0x7F STATIC=1 MESH=1 EXTRA_MAKE="..."] build.sh <dest-dir>
-# Candidate flag sets are listed in README.md (LD is the current best).
+# Candidate flag sets are listed in README.md (LF is the current default).
 set -euo pipefail
 REPO=${REPO:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}
 cd "$REPO"
 if pgrep -f "^make .*-C port/dreamcast/game" >/dev/null; then echo "another game build is running" >&2; exit 1; fi
-export RE4DC_KOS_BASE=${RE4DC_KOS_BASE:-/root/work/kos-re4dc-d336}
+# PVR_PIPELINE=2 needs the async-present KOS (patches/README.md); other sets keep d336.
+case " ${EXTRA_MAKE:-} " in *" PVR_PIPELINE=2 "*) kos_default=/root/work/kos-re4dc-d367 ;; *) kos_default=/root/work/kos-re4dc-d336 ;; esac
+export RE4DC_KOS_BASE=${RE4DC_KOS_BASE:-$kos_default}
 source port/dreamcast/kos-env.sh
 dest=${1:?usage: build.sh <dest-dir>}
 mkdir -p "$dest"

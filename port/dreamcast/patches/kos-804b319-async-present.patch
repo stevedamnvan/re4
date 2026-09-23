@@ -1,0 +1,107 @@
+--- a/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c	2026-09-22 00:58:08.649032233 -0400
++++ b/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c	2026-09-23 09:44:43.928023540 -0400
+@@ -35,7 +35,8 @@
+ int pvr_resolve_frame(bool present) {
+     int result = 0;
+     irq_disable_scoped();
+-    if(!pvr_manual_flip || !pvr_state.valid || pvr_state.ta_busy ||
++    if(!pvr_manual_flip || !pvr_state.valid ||
++       (pvr_state.ta_busy && !pvr_state.vbuf_doublebuf) ||
+        pvr_state.render_busy || !pvr_state.render_completed)
+         return -1;
+     if(present) {
+@@ -147,6 +148,56 @@
+     }
+ }
+ 
++/* Non-blocking presentation for a manual-flip owner (RE4DC D367 pipeline).
++   Record the late present/discard decision for the scene just finished; it
++   applies as soon as that scene's render completes (at once if it already
++   has). present: the next vblank flips it. discard: the completed buffer is
++   dropped and a queued (double-buffered) scene may start rendering. Returns
++   -1 outside manual mode or while the previous decision is still pending
++   (call pvr_present_wait() first). */
++static int pvr_pending_decision = -1;
++
++static void pvr_apply_decision(int present) {
++    if(present) {
++        pvr_flip_allowed = true;
++    }
++    else {
++        pvr_state.render_completed = 0;
++        genwait_wake_all((void *)&pvr_state.render_completed);
++        /* From thread context the next vblank starts a queued scene. */
++        if(irq_inside_int())
++            pvr_render_lists();
++    }
++}
++
++int pvr_present_async(bool present) {
++    irq_disable_scoped();
++    if(!pvr_manual_flip || !pvr_state.valid || pvr_pending_decision >= 0 ||
++       pvr_flip_allowed)
++        return -1;
++    if(pvr_state.render_completed && !pvr_state.render_busy)
++        pvr_apply_decision(present);
++    else
++        pvr_pending_decision = present;
++    return 0;
++}
++
++int pvr_present_pending(void) {
++    return pvr_pending_decision >= 0 || pvr_flip_allowed;
++}
++
++/* Block until the last pvr_present_async() decision took effect (flipped or
++   discarded); that scene's render is then complete. */
++int pvr_present_wait(void) {
++    irq_disable_scoped();
++    while(pvr_pending_decision >= 0 || pvr_flip_allowed) {
++        if(genwait_wait((void *)&pvr_state.render_completed,
++                        "PVR present wait", 100) < 0)
++            return -1;
++    }
++    return 0;
++}
++
+ void pvr_vblank_handler(uint32_t code, void *data) {
+     (void)code;
+     (void)data;
+@@ -168,6 +219,7 @@
+         pvr_state.render_completed = 0;
+         pvr_flip_allowed = false;
+         genwait_wake_all((void *)&pvr_state.render_completed);
++        thd_schedule(true);
+     }
+ 
+     // We may have a pending render, that couldn't be done as the previous
+@@ -202,6 +254,12 @@
+             pvr_sync_stats(PVR_SYNC_RNDDONE);
+ 
+             genwait_wake_all((void *)&pvr_state.render_busy);
++            if(pvr_pending_decision >= 0 && pvr_state.render_completed) {
++                int decision = pvr_pending_decision;
++                pvr_pending_decision = -1;
++                pvr_apply_decision(decision);
++            }
++            thd_schedule(true);
+             break;
+     }
+ 
+--- a/kernel/arch/dreamcast/include/dc/pvr.h	2026-09-22 00:58:08.649032233 -0400
++++ b/kernel/arch/dreamcast/include/dc/pvr.h	2026-09-23 09:44:43.928023540 -0400
+@@ -1081,6 +1081,14 @@
+     for the vblank flip; false discards it without changing the displayed buffer.
+     Return 0 on success, -1 for invalid state or timeout. No queued next scene. */
+ int pvr_resolve_frame(bool present);
++/** Non-blocking late decision for the scene just finished (manual flip):
++    applied when its render completes; present flips at the next vblank,
++    discard drops it. -1 while the previous decision is pending. */
++int pvr_present_async(bool present);
++/** Nonzero while a pvr_present_async() decision has not taken effect. */
++int pvr_present_pending(void);
++/** Wait until the last decision took effect (flipped or discarded). */
++int pvr_present_wait(void);
+ 
+ 
+ /** \brief   Block the caller until the PVR system is ready for another frame to

@@ -27,12 +27,32 @@ the completed buffer hidden. Source hold, black and resource-retirement behavior
 are tested separately. See the D336 checkpoint for actual capacity and fidelity
 limits; in particular Flycast zero TA-usage values do not prove hardware fit.
 
+## Async present (D367)
+
+`kos-804b319-async-present.patch` applies on top of the manual-flip patch at the same
+KOS commit. It adds `pvr_present_async()` / `pvr_present_wait()` /
+`pvr_present_pending()`: the frame owner records its present or discard decision at scene
+submit, and the render-done IRQ carries it out. The CPU no longer blocks on render
+completion before starting the next frame. It is required only by the opt-in game
+`PVR_PIPELINE=2` (the D367 default recipe). Use its own worktree; do not patch the d336 one:
+
+```bash
+git -C /root/work/kos worktree add --detach /root/work/kos-re4dc-d367 804b3195ebd1a06a27cc2b3a5eacf7a2429040a3
+git -C /root/work/kos-re4dc-d367 apply "$PWD/port/dreamcast/patches/kos-804b319-manual-flip.patch"
+git -C /root/work/kos-re4dc-d367 apply "$PWD/port/dreamcast/patches/kos-804b319-async-present.patch"
+RE4DC_KOS_BASE=/root/work/kos-re4dc-d367 bash -c 'source port/dreamcast/kos-env.sh && make -C "$KOS_BASE" -j8'
+```
+
+`port/dreamcast/tools/d367/build.sh` selects `/root/work/kos-re4dc-d367` automatically when
+`EXTRA_MAKE` contains `PVR_PIPELINE=2` (unless `RE4DC_KOS_BASE` is set). Check that the library
+defines `_pvr_present_async`, `_pvr_present_wait` and `_pvr_present_pending`.
+
 Run focused checks in `port/dreamcast/tests`:
 `python3 -m unittest test_native_stream test_native_model test_pvr_geometry test_native_ui`.
 
 KallistiOS is copyright 1997-2024 KallistiOS Contributors, including Megan Potter,
 Lawrence Sebald and the contributors identified in upstream `AUTHORS` and source
-notices. The modified `pvr_irq.c` retains Megan Potter's 2002/2004 notice. This
-patch is provided under the same [KOS License](LICENSE.KOS); keep that notice and
+notices. The modified `pvr_irq.c` (both patches) retains Megan Potter's 2002/2004 notice. These
+patches are provided under the same [KOS License](LICENSE.KOS); keep that notice and
 license with redistributed source or binary documentation. Upstream pinned
 [AUTHORS](https://github.com/KallistiOS/KallistiOS/blob/804b3195ebd1a06a27cc2b3a5eacf7a2429040a3/AUTHORS).
