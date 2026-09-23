@@ -4,6 +4,9 @@
 #ifndef RE4DC_MODEL_DRAW_PLANS
 #define RE4DC_MODEL_DRAW_PLANS 0
 #endif
+#ifndef RE4DC_FRONT_LEAN
+#define RE4DC_FRONT_LEAN 0 // obj/frontend30.h (D367 frontend30)
+#endif
 #if RE4DC_MODEL_DRAW_PLANS
 #include "../../room/room_storage.hpp"
 #include <cstdlib>
@@ -150,6 +153,14 @@ static const re4dc::render::NativeDrawPlan* acquire_plan(const Re4dcModelPart* p
     return entry->plan;
 }
 extern "C" void re4dc_model_assets_changed(){assets_dirty=true;local_admission_dirty=true;}
+#if RE4DC_FRONT_LEAN
+// model_asset_bridge.cpp: 1 when a registration walk over an unchanged OT
+// would install nothing and change no admission state (no pending reset,
+// asset change or local admission, table allocated, no update or lease open).
+extern "C" int re4dc_model_asset_update_idle(){
+    return entries && !assets_dirty && !local_admission_dirty && !reset_pending && !asset_update_active && !leases;
+}
+#endif
 extern "C" int re4dc_model_begin_asset_update(){
     if(asset_update_active || leases || reset_pending)return 0;
     asset_update_active=true;
@@ -279,6 +290,9 @@ extern "C" const re4dc::render::DrawPlanBounds* re4dc_model_acquired_bounds(){re
 extern "C" const re4dc::render::DrawLocalPlan* re4dc_model_acquired_locals(){return acquired_locals;}
 extern "C" const Re4dcDrawPlanStats* re4dc_model_draw_plan_stats(){return &stats;}
 #else
+#if RE4DC_FRONT_LEAN
+extern "C" int re4dc_model_asset_update_idle(){return 0;}
+#endif
 extern "C" void re4dc_model_assets_changed(){}
 extern "C" int re4dc_model_begin_asset_update(){return 0;}
 extern "C" void re4dc_model_finish_asset_update(){}

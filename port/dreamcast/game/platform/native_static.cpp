@@ -72,6 +72,31 @@
 #ifndef RE4DC_FOG_BACKGROUND
 #define RE4DC_FOG_BACKGROUND 1 // background colour follows the fog colour while fog is on
 #endif
+// D367 frontend30 (obj/frontend30.h; all default off = previous image).
+// COPY_LEAN: no zero-fill of clip scratch written before it is read, one
+// XMTRX load per mesh part, and no lighting snapshot for deferred parts that
+// are already lit. MESH_DIRECT: mesh strips go to the TA through the store
+// queues (re4dc_model_direct_begin, TA_DIRECT=1) instead of slab + pvr_prim.
+#ifndef RE4DC_COPY_LEAN
+#define RE4DC_COPY_LEAN 0
+#endif
+#ifndef RE4DC_FRONT_LEAN
+#define RE4DC_FRONT_LEAN 0
+#endif
+#ifndef RE4DC_MESH_DIRECT
+#define RE4DC_MESH_DIRECT 0
+#endif
+#if RE4DC_MESH_DIRECT
+#if !RE4DC_NATIVE_MESH || !RE4DC_MESH_FASTPATH
+#error MESH_DIRECT extends the NATIVE_MESH fast path
+#endif
+#include "ta_direct.hpp"
+#endif
+#if RE4DC_COPY_LEAN
+#include <new>
+// native_ui.cpp: the translucent queue without a lighting snapshot.
+extern "C" int re4dc_model_defer_part_unlit(const Re4dcModelPart*);
+#endif
 
 namespace {
 using re4dc::room::Package;
@@ -233,8 +258,29 @@ struct Emitter {
         y=(-v[3]*.5f*(p[3]*y+p[4]*z)*inv+v[1]+v[3]*.5f)*480.f/v[3];
         z=inv;
     }
+#if RE4DC_MESH_DIRECT
+    // Store-queue sink (MeshDraw only): the header goes to the TA at bind(),
+    // strips follow as they are accepted; the slab range is staging for the
+    // clipper and the transform cache only. Nothing can be rolled back once
+    // bound, so later failures abort the frame (submitted).
+    bool direct=false; std::uint32_t* sq=nullptr; unsigned slots=0;
+    void end_direct(){if(sq){re4dc_model_direct_end(slots);sq=nullptr;}}
+    void put(unsigned n){sq=re4dc_ta_put(sq,dst+used,n);slots+=n;}
+#endif
     bool bind(){
         if(bound)return true;
+#if RE4DC_MESH_DIRECT
+        if(direct){
+            Re4dcModelDirect out{};
+            if(!re4dc_model_direct_begin(&p,&out))return false;
+            sq=out.sq;submitted=true;
+            packet.vertices=out.scratch;packet.capacity=out.scratch_capacity;
+            packet.u_scale=out.u_scale;packet.v_scale=out.v_scale;
+            dst=static_cast<pvr_vertex_t*>(out.scratch);bound=true;limit=out.scratch_capacity;
+            load_screen(mvq,p.projection,p.viewport); // binding may yield
+            return true;
+        }
+#endif
         if(!re4dc_model_packet_begin(&p,&packet))return false;
         dst=static_cast<pvr_vertex_t*>(packet.vertices);bound=true;limit=packet.capacity;
         load_screen(mvq,p.projection,p.viewport); // binding may yield
@@ -267,7 +313,12 @@ struct Emitter {
         float x=mvq[0]*in.x+mvq[1]*in.y+mvq[2]*in.z+mvq[3];
         float y=mvq[4]*in.x+mvq[5]*in.y+mvq[6]*in.z+mvq[7];
         float z=mvq[8]*in.x+mvq[9]*in.y+mvq[10]*in.z+mvq[11];
-        out={};out.position.world_x=x;out.position.world_y=y;out.position.world_z=z;out.position.depth=-z;
+#if RE4DC_COPY_LEAN
+        out.offset_color=0; // every other field is assigned below (no 52-byte memset per corner)
+#else
+        out={};
+#endif
+        out.position.world_x=x;out.position.world_y=y;out.position.world_z=z;out.position.depth=-z;
         if(z!=0)project(x,y,z,this);
         out.position.x=x;out.position.y=y;out.position.z=z;
         out.u=u(batch.uv_bias[0]+float(in.u)*batch.uv_scale[0]);
@@ -295,6 +346,9 @@ struct Emitter {
             stats.vertices+=count;
             if(ready){
                 if(outside)++stats.strips_culled;
+#if RE4DC_MESH_DIRECT
+                else if(sq){put(count);output+=count-2;++stats.strips;}
+#endif
                 else {used+=count;output+=count-2;++stats.strips;}
                 return 1;
             }
@@ -319,6 +373,9 @@ struct Emitter {
             }
             if(limit-used<6 && !flush())return submitted?-1:0;
             const unsigned emitted=re4dc::render::clip_projected_triangle(tri,dst+used,p.cull,clip,nullptr,alphas);
+#if RE4DC_MESH_DIRECT
+            if(sq){if(emitted)put(emitted*3);output+=emitted;stats.triangles_clipped+=emitted;continue;}
+#endif
             used+=emitted*3;output+=emitted;stats.triangles_clipped+=emitted;
         }
         return 1;
@@ -589,6 +646,9 @@ struct MeshDraw : Emitter {
             }else {
                 stats.vertices+=n;
                 if(c.all&screen)++stats.strips_culled;
+#if RE4DC_MESH_DIRECT
+                else if(sq){sq=vp::emit_sq(sq,cache,s,n);slots+=n;output+=n-2;++stats.strips;}
+#endif
                 else {
                     if(n>limit-used && !flush())return submitted?-1:0;
                     vp::emit(dst+used,cache,s,n);
@@ -737,6 +797,28 @@ extern "C" void re4dc_static_retire_all(){
 #endif
 }
 extern "C" const Re4dcStaticStats* re4dc_static_stats(){return &stats;}
+#if RE4DC_FRONT_LEAN
+// 1 when 'object' is bound to a native mesh whose source identity matches
+// (vertices, display lists) and every part of it is already lit (light_part
+// ran): the mesh then never reads source lighting again (trans.cpp).
+extern "C" int re4dc_static_mesh_lit(const void* object,unsigned vertices,unsigned parts){
+#if RE4DC_NATIVE_MESH
+    if(!stats.owners_open)return 0;
+    unsigned owner=0;
+    const MeshEntry* e=find_entry(object,owner);
+    if(!e)return 0;
+    const MeshView& v=e->common?mesh_views[kCommonView]:mesh_views[owner];
+    if(!v.package.valid() || e->mesh>=v.package.header().mesh_count)return 0;
+    const auto& mesh=v.package.meshes()[e->mesh];
+    if(mesh.source_vertices!=vertices || mesh.source_parts!=parts || !mesh.part_count)return 0;
+    const auto* list=v.package.parts()+mesh.first_part;
+    for(unsigned i=0;i<mesh.part_count;++i)if(!list[i].reserved)return 0;
+    return 1;
+#else
+    (void)object;(void)vertices;(void)parts;return 0;
+#endif
+}
+#endif
 
 #if RE4DC_NATIVE_FOG
 namespace {
@@ -844,6 +926,18 @@ void log_stats(unsigned frame){
 // Source ModelData identity words read from the live BIN (cModelInfo::pData at
 // 0x0C; nVtx 0x38, displist_num 0x1A and the relocated pParts 0x1C after the
 // load-time byte-order mirror).
+#if RE4DC_COPY_LEAN
+// Same words as below as aligned loads (cModelInfo/ModelData are 4-aligned);
+// a 2/4-byte memcpy through char* is a libcall on SH-4.
+typedef const unsigned char* __attribute__((may_alias)) AliasPtr;
+typedef std::uint16_t __attribute__((may_alias)) AliasHalf;
+const unsigned char* model_data(const Re4dcModelPart& p){
+    return *reinterpret_cast<const AliasPtr*>(static_cast<const unsigned char*>(p.info)+0x0C);
+}
+const unsigned char* first_part(const unsigned char* data){
+    return *reinterpret_cast<const AliasPtr*>(data+0x1C);
+}
+#else
 const unsigned char* model_data(const Re4dcModelPart& p){
     const unsigned char* data;
     std::memcpy(&data,static_cast<const unsigned char*>(p.info)+0x0C,sizeof(data));
@@ -854,6 +948,7 @@ const unsigned char* first_part(const unsigned char* data){
     std::memcpy(&parts,data+0x1C,sizeof(parts));
     return parts;
 }
+#endif
 int mesh_submit(const Re4dcModelPart& p){
     if(!p.static_geometry || !p.info || !p.part || !stats.owners_open)return 0;
     unsigned owner=0;
@@ -868,7 +963,11 @@ int mesh_submit(const Re4dcModelPart& p){
     const auto& mesh=v.package.meshes()[e->mesh];
     const unsigned char* data=model_data(p);
     std::uint16_t vertices=0,parts=0;
+#if RE4DC_COPY_LEAN
+    if(data){vertices=*reinterpret_cast<const AliasHalf*>(data+0x38);parts=*reinterpret_cast<const AliasHalf*>(data+0x1A);}
+#else
     if(data){std::memcpy(&vertices,data+0x38,2);std::memcpy(&parts,data+0x1A,2);}
+#endif
     const std::uintptr_t offset=data?reinterpret_cast<std::uintptr_t>(p.part)-reinterpret_cast<std::uintptr_t>(first_part(data)):~std::uintptr_t(0);
     const auto* part=(data && vertices==mesh.source_vertices && parts==mesh.source_parts && offset<0x100000U)?
         v.package.part(e->mesh,std::uint32_t(offset),p.stream_bytes):nullptr;
@@ -880,10 +979,21 @@ int mesh_submit(const Re4dcModelPart& p){
     }
     // Before any deferral: p.lighting points at the bridge's stack copy.
     // The package lives in this view's writable heap-4 allocation.
-    if(!part->reserved)light_part(v,mesh,const_cast<re4dc::room::MeshPart&>(*part),p);
+    if(!part->reserved){
+#if RE4DC_COPY_LEAN
+        // Queued parts replay without a lighting snapshot (they were lit when
+        // queued); only a package reopened within the frame arrives here unlit.
+        if(!p.lighting)return 1;
+#endif
+        light_part(v,mesh,const_cast<re4dc::room::MeshPart&>(*part),p);
+    }
     // Source vertex alpha: the mesh palette carries the authored CLR0 alpha, so
     // translucent vertex-alpha parts draw natively (and defer like any other).
+#if RE4DC_COPY_LEAN
+    union OpaqueCopy { Re4dcModelPart part; OpaqueCopy(){} } opaque; // built only when used
+#else
     Re4dcModelPart opaque;
+#endif
     const Re4dcModelPart* drawn=&p;
     bool vertex_alpha=false;
     if(p.alpha_state&256){
@@ -891,7 +1001,11 @@ int mesh_submit(const Re4dcModelPart& p){
         const bool alpha_unused=p.blend==0 && !(p.material_flags&4) && p.mask_ref>255;
         if(low<255 && !alpha_unused){vertex_alpha=true;++stats.vertex_alpha;}
         else {
+#if RE4DC_COPY_LEAN
+            new(&opaque.part) Re4dcModelPart(p);opaque.part.alpha_state=255;drawn=&opaque.part;
+#else
             opaque=p;opaque.alpha_state=255;drawn=&opaque;
+#endif
             if(low<255)++stats.vertex_alpha_unused;else ++stats.vertex_opaque;
         }
     }
@@ -900,10 +1014,18 @@ int mesh_submit(const Re4dcModelPart& p){
     const float near=p.projection[6]/(p.projection[5]-1),far=p.projection[6]/p.projection[5];
     if(!re4dc::render::is_finite(near)||!re4dc::render::is_finite(far)||near<=0||far<=near)return 0;
     // Queued translucent parts replay through this function in pass order.
+#if RE4DC_COPY_LEAN
+    // The part is lit (above): a replay never reads its lighting again.
+    if(re4dc_model_defer_part_unlit(drawn))return 1;
+#else
     if(re4dc_model_defer_part(drawn))return 1;
+#endif
     MeshDraw d{{*drawn,{},near,far},v.package,*part,v.lut};
     d.alpha=(drawn->alpha_state&255U)<<24;d.vertex_alpha=vertex_alpha;
     d.cull_far=far;
+#if RE4DC_MESH_DIRECT
+    d.direct=true;
+#endif
 #if RE4DC_NATIVE_FOG
     {
         const float view_far=fog_now.far; // source View._zfar, noted by model_bridge.cpp
@@ -930,9 +1052,17 @@ int mesh_submit(const Re4dcModelPart& p){
     const float grid[12]={mesh.step[0],0,0,mesh.origin[0], 0,mesh.step[1],0,mesh.origin[1],
                           0,0,mesh.step[2],mesh.origin[2]};
     concat(drawn->modelview,grid,d.mvq);
+#if RE4DC_COPY_LEAN
+    // MeshDraw reads mvq only, and bind() loads XMTRX before its first use
+    // (culled parts never need it): no mv copy, no second matrix build.
+#else
     std::memcpy(d.mv,d.mvq,sizeof(d.mv));
     load_screen(d.mvq,p.projection,p.viewport);
+#endif
     const int result=d.run();
+#if RE4DC_MESH_DIRECT
+    d.end_direct(); // before any abort: releases the store queues
+#endif
     if(result>0){++stats.parts_native;return 1;}
     if(result<0){re4dc_model_packet_abort();++stats.aborts;return 1;}
     ++stats.parts_fallback;return 0;

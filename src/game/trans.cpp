@@ -126,6 +126,63 @@ struct Weight {
 #define PSQ_L_U8_TO(dst, p) ((dst) = (f32) *(const u8*) (p))
 #endif
 
+// D367 frontend30 FRONT_LEAN (obj/frontend30.h; default off = previous image). Scenery whose
+// every drawn info is a static native mesh that is already lit (native_static.cpp light_part runs
+// once per mesh part) never reads the GX light objects, light list or normal matrix again, and a
+// model whose every info is rigid never reads the skinning palette. Those inputs are render-only:
+// LightInfo.pLight feeds LightSetModel / shadow-cast light counts / debug views, the normal matrix
+// feeds GXLoadNrmMtxImm, pG->mtxPalette feeds MakeWeightPalette of the same call. Gameplay
+// (collision, AI, events, sound) reads none of them (determinism trace gate: LOGIC_TRACE=1).
+#ifndef RE4DC_FRONT_LEAN
+#define RE4DC_FRONT_LEAN 0
+#endif
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+extern "C" int re4dc_static_mesh_lit(const void* object, unsigned vertices, unsigned parts);
+#define FRONT_LEAN_LIGHTS 1   // skip light selection / GX light objects / normal matrix
+#define FRONT_LEAN_WEIGHTS 2  // skip the skinning palette (calcWeightMat)
+static int g_leanRender;   // ModelRender -> commonModelTrans: FRONT_LEAN_LIGHTS for this model
+static int g_leanWeights;  // ModelTrans -> commonScreenMatSub: FRONT_LEAN_WEIGHTS for this model
+static cModel* g_leanSkipped[128];  // setModel2 skipped by the last Trans() (their lists were cleared)
+static u32 g_leanSkippedNum;
+static int frontLean(cModel* m)
+{
+    int drawn = 0;
+    int rigidAll = 1;
+    cModelInfo* info;
+
+    if (m->kindid != 2 || m->pShadowModelInfo != 0) {
+        return 0;
+    }
+    for (info = m->pModelInfo; info != 0; info = info->pList) {
+        ModelData* d = info->pData;
+        int rigid;
+
+        if (PTR_INVALID(info) || PTR_INVALID(d)) {
+            return 0;
+        }
+        rigid = (m->be_flag & 0x4000) ||
+                (d->weight_palette_num <= 1 && d->weight_ext_num <= 0xFF && !(info->be_flag & 2) && d->nParts == 1);
+        if (!rigid) {
+            rigidAll = 0;
+        }
+        if (!(info->be_flag & 8)) {
+            continue;
+        }
+        // Exactly the bridge's static_geometry test (model_bridge.cpp): only such parts reach the
+        // native mesh path; anything else is drawn with source lighting.
+        if (!rigid || d->shapeOfs || (info->be_flag & 2) ||
+            !re4dc_static_mesh_lit(m, d->nVtx, d->displist_num)) {
+            return 0;
+        }
+        drawn = 1;
+    }
+    if (!drawn) {
+        return 0;
+    }
+    return FRONT_LEAN_LIGHTS | (rigidAll ? FRONT_LEAN_WEIGHTS : 0);
+}
+#endif
+
 // Bit test as 0 / 1 (matching helper).
 static inline int isBit(u32 f, u32 b)
 {
@@ -388,6 +445,9 @@ void Trans()
     void (*func)(cModel*);
     cUnit* u;
 
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+    g_leanSkippedNum = 0;
+#endif
     if (!(pG->Disp_flg & 0x04000000)) {
         EspTrans();
     }
@@ -648,7 +708,16 @@ void ModelTrans(cModel* m)
         ret |= 0xFFFF;
     }
     if (ret != 0xFFFF) {
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+        const int lean = frontLean(m);
+        int screen;
+        g_leanWeights = lean & FRONT_LEAN_WEIGHTS;
+        screen = commonScreenMat(m);
+        g_leanWeights = 0;
+        if (screen == 0) {
+#else
         if (commonScreenMat(m) == 0) {
+#endif
             DeleteOtData(ot, (u16) ret);
             if (m->ot_type == 7) {
                 DeleteOtData(ot2, (u16) ret2);
@@ -656,6 +725,15 @@ void ModelTrans(cModel* m)
         }
         if (m->kindid == 0) {
             lightSetEm(m);
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+        } else if ((lean & FRONT_LEAN_LIGHTS) && (m->be_flag & 3) == 3 && !(pG->Disp_flg & 0x08000000) &&
+                   g_leanSkippedNum < sizeof(g_leanSkipped) / sizeof(g_leanSkipped[0])) {
+            // lightSetObj() for kindid 2 without the light search: the list only feeds GX light
+            // objects the lit native mesh never reads. Cleared, so nothing can follow a stale
+            // light pointer; ModelRender recomputes it if the model stops qualifying.
+            memclr_asm(m->LightInfo.pLight, sizeof(m->LightInfo.pLight));
+            g_leanSkipped[g_leanSkippedNum++] = m;
+#endif
         } else {
             lightSetObj(m);
         }
@@ -729,6 +807,10 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
 {
 #if defined(__sh__)
     unsigned dc_stamp=re4dc_model_source_stamp();
+#endif
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+    // Every info of this model takes the rigid 'continue' below: nothing reads the palette.
+    if (!g_leanWeights)
 #endif
     calcWeightMat(m);
 #if defined(__sh__)
@@ -1121,6 +1203,19 @@ void ModelRender(cModel* m)
         GXSetChanAmbColor(4, col64);
         GXSetChanMatColor(4, *(GXColor*) m->pModelInfo->color);
     } else {
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+        // Still lit natively: the cleared list gives LightSetModel's black-light path (channel,
+        // ambient and material state unchanged). Otherwise restore a list Trans() skipped.
+        g_leanRender = frontLean(m) & FRONT_LEAN_LIGHTS;
+        if (!g_leanRender) {
+            for (u32 k = 0; k < g_leanSkippedNum; k++) {
+                if (g_leanSkipped[k] == m) {
+                    LightMgr.setModel2(m);
+                    break;
+                }
+            }
+        }
+#endif
         LightSetModel(m);
     }
     if (modeltransalphaupdate) {
@@ -1128,6 +1223,9 @@ void ModelRender(cModel* m)
         GXSetDstAlpha(1, 0);
     }
     commonModelTrans(m, m->pModelInfo, pG->Cam.v_mat, 0);
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+    g_leanRender = 0;
+#endif
     if (modeltransalphaupdate) {
         GXSetAlphaUpdate(0);
         GXSetDstAlpha(0, 0);
@@ -1241,10 +1339,23 @@ void commonModelTrans(cModel* m, cModelInfo* info, Mtx viewMat, int flag)
         }
         mat0 = m->mat;
         PSMTXConcat(viewMat, pm, mv);
+#if RE4DC_FRONT_LEAN && defined(__sh__)
+        // The normal matrix only lights; a lit native mesh never reads it. 'inv' is rebuilt by
+        // PSMTXScale below before its other use.
+        if (!g_leanRender) {
+            PSMTXInverse(mv, inv);
+            PSMTXTranspose(inv, nrm);
+        }
+        GXLoadPosMtxImm(mv, 0);
+        if (!g_leanRender) {
+            GXLoadNrmMtxImm(nrm, 0);
+        }
+#else
         PSMTXInverse(mv, inv);
         PSMTXTranspose(inv, nrm);
         GXLoadPosMtxImm(mv, 0);
         GXLoadNrmMtxImm(nrm, 0);
+#endif
         GXSetCurrentMtx(0);
         tex = d->pTex;
         GXClearVtxDesc();

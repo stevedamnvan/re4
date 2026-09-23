@@ -13,6 +13,24 @@
 #include "re4dc_platform.h"
 #include "native_ui.h"
 extern "C" void re4dc_model_finish_source_draws();
+// D367 frontend30 COPY_LEAN (obj/frontend30.h; default off = previous image):
+// the GX state getters/light objects copy aligned words instead of calling
+// memcpy (a libcall at these sizes on SH-4; D367 LD ~0.9 ms/frame).
+#ifndef RE4DC_COPY_LEAN
+#define RE4DC_COPY_LEAN 0
+#endif
+#if RE4DC_COPY_LEAN
+typedef std::uint32_t __attribute__((may_alias)) GxWord;
+static inline void gx_words(void* to, const void* from, unsigned bytes)
+{
+    GxWord* d = (GxWord*) to;
+    const GxWord* s = (const GxWord*) from;
+    for (unsigned i = 0; i < bytes / 4; ++i) d[i] = s[i];
+}
+#define GX_COPY(d, s, n) gx_words((d), (s), (n))
+#else
+#define GX_COPY(d, s, n) memcpy((d), (s), (n))
+#endif
 
 typedef signed char s8;
 typedef unsigned char u8;
@@ -46,7 +64,7 @@ static unsigned g_model_alpha=255, g_model_alpha_source;
 #if RE4DC_D349_RENDERER_STACK
 static re4dc::render::SourceLighting g_lighting;
 static void light_floats(GXLightObj* l,unsigned offset,float a,float b,float c){
-    const float values[]={a,b,c};memcpy(l->w+offset,values,sizeof(values));
+    const float values[]={a,b,c};GX_COPY(l->w+offset,values,sizeof(values));
 }
 #endif
 extern "C" {
@@ -106,7 +124,7 @@ void GXPeekZ(u16 x, u16 y, u32* z) { (void) x; (void) y; *z = 0xFFFFFF; }
 
 void GXSetViewport(f32 l, f32 t, f32 w, f32 h, f32 n, f32 f) { g_viewport[0] = l; g_viewport[1] = t; g_viewport[2] = w; g_viewport[3] = h; g_viewport[4] = n; g_viewport[5] = f; }
 void GXSetViewportJitter(f32 l, f32 t, f32 w, f32 h, f32 n, f32 f, u32 field) { (void) field; GXSetViewport(l, t, w, h, n, f); }
-void GXGetViewportv(f32* vp) { memcpy(vp, g_viewport, sizeof(g_viewport)); }
+void GXGetViewportv(f32* vp) { GX_COPY(vp, g_viewport, sizeof(g_viewport)); }
 void GXSetScissor(u32 l, u32 t, u32 w, u32 h) { (void) l; (void) t; (void) w; (void) h; }
 void GXSetProjection(const f32 mtx[4][4], int type)
 {
@@ -124,7 +142,7 @@ void GXSetProjection(const f32 mtx[4][4], int type)
         g_projection[4] = mtx[1][3];
     }
 }
-void GXGetProjectionv(f32* p) { memcpy(p, g_projection, sizeof(g_projection)); }
+void GXGetProjectionv(f32* p) { GX_COPY(p, g_projection, sizeof(g_projection)); }
 
 // The SDK's GXProject: model-view transform, then the compact projection and
 // viewport, as the game's screen-position helpers expect (HUD, targets, text).
@@ -155,7 +173,7 @@ void GXProject(f32 x, f32 y, f32 z, const f32 mtx[3][4], const f32* pm, const f3
 void GXLoadPosMtxImm(const f32 mtx[3][4], u32 id) { (void) mtx; (void) id; }
 void GXLoadNrmMtxImm(const f32 mtx[3][4], u32 id) {
 #if RE4DC_D349_RENDERER_STACK
-    if(id==0)memcpy(g_lighting.normal_matrix,mtx,sizeof(g_lighting.normal_matrix));
+    if(id==0)GX_COPY(g_lighting.normal_matrix,mtx,sizeof(g_lighting.normal_matrix));
 #endif
     (void)mtx;(void)id;
 }
@@ -292,8 +310,8 @@ void GXLoadLightObjImm(GXLightObj* l,u32 id){
     if(!id || (id&(id-1)) || id>128)return;
     unsigned slot=0;while((1U<<slot)!=id)++slot;
     auto& out=g_lighting.lights[slot];
-    memcpy(out.a,l->w+4,12);memcpy(out.k,l->w+7,12);
-    memcpy(out.position,l->w+10,12);memcpy(out.direction,l->w+13,12);
+    GX_COPY(out.a,l->w+4,12);GX_COPY(out.k,l->w+7,12);
+    GX_COPY(out.position,l->w+10,12);GX_COPY(out.direction,l->w+13,12);
     for(unsigned i=0;i<4;++i)out.color[i]=l->w[3]>>(24-i*8);
 }
 #else

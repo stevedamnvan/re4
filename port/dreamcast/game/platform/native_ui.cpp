@@ -32,6 +32,12 @@
 #ifndef RE4DC_PERF_HUD
 #define RE4DC_PERF_HUD 0
 #endif
+// D367 frontend30 (obj/frontend30.h; default off = previous image): staging
+// without libcall compares/copies or redundant zero-fills, one-pass view
+// diffs, indexed texture-key lookups (same keys, same first match).
+#ifndef RE4DC_COPY_LEAN
+#define RE4DC_COPY_LEAN 0
+#endif
 // VRAM layout (defaults = the previous image: 1 MiB, one bank used, 16-word bins).
 #ifndef RE4DC_TA_VERTBUF_KB
 #define RE4DC_TA_VERTBUF_KB 1024
@@ -161,6 +167,55 @@ unsigned deferred_light_bytes(const SourceLighting&){return sizeof(DeferredLight
 unsigned deferred_set_bytes(const SourceLighting& s){
     return sizeof(DeferredLightSet)+__builtin_popcount(selected_mask(s))*sizeof(SourceLight);
 }
+#if RE4DC_COPY_LEAN
+// Same equality, stores and restores as below, as aligned word loops: the
+// memcmp()/memcpy() calls were libcalls (D367 LD: memcmp 1.1 ms/frame from
+// these compares). Records are 4-byte aligned and word-sized (static_asserts).
+typedef unsigned __attribute__((may_alias)) LightWord;
+static_assert(sizeof(SourceLight)%4==0 && light_parameter_bytes%4==0 && light_parameters%4==0);
+static_assert(sizeof(DeferredLightSet)%4==0 && sizeof(DeferredLighting)%4==0);
+inline bool same_words(const void* a,const void* b,unsigned bytes){
+    const auto* x=static_cast<const LightWord*>(a);const auto* y=static_cast<const LightWord*>(b);
+    for(unsigned i=0;i<bytes/4;++i)if(x[i]!=y[i])return false;
+    return true;
+}
+inline void copy_words(void* to,const void* from,unsigned bytes){
+    auto* x=static_cast<LightWord*>(to);const auto* y=static_cast<const LightWord*>(from);
+    for(unsigned i=0;i<bytes/4;++i)x[i]=y[i];
+}
+bool same_light_set(const DeferredLightSet* stored,const SourceLighting& source){
+    if(stored->mask!=selected_mask(source))return false;
+    auto* data=reinterpret_cast<const unsigned char*>(stored+1);
+    for(unsigned i=0;i<8;++i)if(stored->mask&(1U<<i)){
+        if(!same_words(data,&source.lights[i],sizeof(SourceLight)))return false;
+        data+=sizeof(SourceLight);
+    }
+    return true;
+}
+bool same_lighting(const DeferredLighting* stored,const SourceLighting& source){
+    return same_words(stored+1,reinterpret_cast<const unsigned char*>(&source)+light_parameters,light_parameter_bytes)
+        && same_light_set(stored->lights,source);
+}
+void store_light_set(DeferredLightSet* stored,const SourceLighting& source){
+    stored->mask=selected_mask(source);
+    auto* data=reinterpret_cast<unsigned char*>(stored+1);
+    for(unsigned i=0;i<8;++i)if(stored->mask&(1U<<i)){
+        copy_words(data,&source.lights[i],sizeof(SourceLight));data+=sizeof(SourceLight);
+    }
+}
+void store_lighting(DeferredLighting* stored,const SourceLighting& source){
+    copy_words(stored+1,reinterpret_cast<const unsigned char*>(&source)+light_parameters,light_parameter_bytes);
+}
+// Into a default-constructed SourceLighting (unselected lights stay zero, as
+// restore_lighting()): no second 0.5 KiB zero-fill and whole-struct copy.
+void restore_lighting_into(const DeferredLighting* stored,SourceLighting& source){
+    copy_words(reinterpret_cast<unsigned char*>(&source)+light_parameters,stored+1,light_parameter_bytes);
+    auto* data=reinterpret_cast<const unsigned char*>(stored->lights+1);
+    for(unsigned i=0;i<8;++i)if(stored->lights->mask&(1U<<i)){
+        copy_words(&source.lights[i],data,sizeof(SourceLight));data+=sizeof(SourceLight);
+    }
+}
+#else
 bool same_light_set(const DeferredLightSet* stored,const SourceLighting& source){
     if(stored->mask!=selected_mask(source))return false;
     auto* data=reinterpret_cast<const unsigned char*>(stored+1);
@@ -193,6 +248,7 @@ SourceLighting restore_lighting(const DeferredLighting* stored){
     }
     return source;
 }
+#endif
 DeferredPart* deferred_first=nullptr;DeferredPart* deferred_last=nullptr;
 unsigned deferred_top=sizeof(frame_storage),deferred_peak=0,deferred_count=0,deferred_drops=0;
 unsigned char* deferred_spill=nullptr;unsigned deferred_spill_top=0,deferred_spill_capacity=0;
@@ -632,6 +688,21 @@ unsigned image_size(const Re4dcUiImage& i) {
     }
     return ((i.width+bw-1)/bw)*((i.height+bh-1)/bh)*bytes;
 }
+#if RE4DC_COPY_LEAN
+// The same reflected CRC-32 (0xEDB88320), four bits per table step instead of
+// one per loop pass: identical keys (package file names) at ~1/4 the work.
+constexpr unsigned kCrcNibble[16]={0x00000000U,0x1db71064U,0x3b6e20c8U,0x26d930acU,0x76dc4190U,0x6b6b51f4U,
+    0x4db26158U,0x5005713cU,0xedb88320U,0xf00f9344U,0xd6d6a3e8U,0xcb61b38cU,0x9b64c2b0U,0x86d3d2d4U,0xa00ae278U,0xbdbdf21cU};
+void hash_bytes(Key& k,const void* ptr,unsigned size) {
+    const auto* p=(const unsigned char*)ptr;
+    unsigned crc=k.crc,fnv=k.fnv;
+    for(unsigned i=0;i<size;++i) {
+        fnv=(fnv^p[i])*16777619U;crc^=p[i];
+        crc=(crc>>4)^kCrcNibble[crc&15U];crc=(crc>>4)^kCrcNibble[crc&15U];
+    }
+    k.crc=crc;k.fnv=fnv;
+}
+#else
 void hash_bytes(Key& k,const void* ptr,unsigned size) {
     const auto* p=(const unsigned char*)ptr;
     for(unsigned i=0;i<size;++i) {
@@ -639,10 +710,23 @@ void hash_bytes(Key& k,const void* ptr,unsigned size) {
         for(unsigned b=0;b<8;++b) k.crc=(k.crc>>1)^(0xedb88320U & (0U-(k.crc&1)));
     }
 }
+#endif
 bool same_image(const Re4dcUiImage& a,const Re4dcUiImage& b) {
     return a.pixels==b.pixels && a.palette==b.palette && a.width==b.width && a.height==b.height &&
            a.format==b.format && a.palette_format==b.palette_format && a.palette_bytes==b.palette_bytes;
 }
+#if RE4DC_COPY_LEAN
+// Direct-mapped hints into sources[] / entries[] (index+1, 0 empty). A hint is
+// used only after the full equality test; a miss falls back to the original
+// scan. sources[] and valid entries[] never hold duplicates (both are appended
+// only after a failed scan), so the hinted match is the scan's first match.
+unsigned char source_hint[128],entry_hint[128];
+inline unsigned source_slot(const Re4dcUiImage& i){
+    const unsigned a=unsigned(reinterpret_cast<std::uintptr_t>(i.pixels))^unsigned(reinterpret_cast<std::uintptr_t>(i.palette));
+    return ((a>>5)^(a>>12)^i.format)&127U;
+}
+static_assert(kSourceCount<255 && kTextureCount<255);
+#endif
 int external_image_key(const Re4dcUiImage& image,Key& external) {
     int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
     if(!native)native=core_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
@@ -662,12 +746,25 @@ bool image_key(const Re4dcUiImage& image,Key& key) {
     // existing fast path. No cache entries or extra allocation are introduced.
     if(indexed)native=external_image_key(image,external);
     if(native<0){re4dc_log("native source identity: incompatible palette rejected\n");return false;}
+#if RE4DC_COPY_LEAN
+    const unsigned hint=source_slot(image);
+    if(!native){
+        const unsigned h=source_hint[hint];
+        if(h && h<=nsource && same_image(sources[h-1].image,image)){key=sources[h-1].key;return true;}
+        for(unsigned n=0;n<nsource;++n) if(same_image(sources[n].image,image)) {source_hint[hint]=(unsigned char)(n+1);key=sources[n].key;return true;}
+    }
+#else
     if(!native)for(unsigned n=0;n<nsource;++n) if(same_image(sources[n].image,image)) {key=sources[n].key;return true;}
+#endif
     if(!indexed)native=external_image_key(image,external);
     if(native<0){re4dc_log("native source identity: incompatible descriptor rejected\n");return false;}
     if(native) {
         if(identity_hits++<3)re4dc_log("native source identity: %08x-%08x (no source-texel hash)\n",external.crc,external.fnv);
+#if RE4DC_COPY_LEAN
+        if(!indexed && nsource<kSourceCount){source_hint[hint]=(unsigned char)(nsource+1);sources[nsource++]={image,external};}
+#else
         if(!indexed && nsource<kSourceCount)sources[nsource++]={image,external};
+#endif
         key=external;return true;
     }
     const unsigned metadata[]={image.width,image.height,image.format,image.palette_format,image.palette_bytes};
@@ -675,7 +772,11 @@ bool image_key(const Re4dcUiImage& image,Key& key) {
     hash_bytes(key,image.pixels,image_size(image));
     if(image.palette_bytes) hash_bytes(key,image.palette,image.palette_bytes);
     key.crc=~key.crc;
+#if RE4DC_COPY_LEAN
+    if(nsource<kSourceCount){source_hint[hint]=(unsigned char)(nsource+1);sources[nsource++]={image,key};}
+#else
     if(nsource<kSourceCount) sources[nsource++]={image,key};
+#endif
     return true;
 }
 #if RE4DC_D349_RENDERER_STACK
@@ -699,7 +800,16 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     RE4DC_PROFILE_SCOPE(TextureResolve);RE4DC_PROFILE_COUNT(TextureLookups,1);
     if(!image.pixels || !image_size(image) || !image.width || !image.height || image.width>1024 || image.height>1024) return nullptr;
     Key key{};if(prepared_key)key=*prepared_key;else if(!image_key(image,key))return nullptr;
+#if RE4DC_COPY_LEAN
+    const unsigned hint=(key.crc^(key.crc>>7)^key.fnv)&127U;
+    if(const unsigned h=entry_hint[hint]){
+        Entry& e=entries[h-1];
+        if(e.valid && e.key==key){if(pin)e.frame=frame;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
+    }
+    for(auto& e:entries) if(e.valid && e.key==key) {entry_hint[hint]=(unsigned char)(&e-entries+1);if(pin)e.frame=frame;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
+#else
     for(auto& e:entries) if(e.valid && e.key==key) {if(pin)e.frame=frame;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
+#endif
     Entry* slot=nullptr;
     for(auto& e:entries) if(!e.valid){slot=&e;break;}
     if(!slot) for(auto& e:entries) if(e.frame!=frame && (!slot || e.frame<slot->frame)) slot=&e;
@@ -1333,8 +1443,81 @@ extern "C" void re4dc_model_direct_end(unsigned vertices){
 #endif
 }
 
+#if RE4DC_COPY_LEAN && RE4DC_D349_RENDERER_STACK
+namespace {
+// re4dc_model_defer_part() below with 'source' as the lighting to snapshot
+// (nullptr: none) and the same queue layout and admission. The view diff is
+// taken once into stack scratch (it was walked twice: size, then fill) and a
+// found lighting record supplies its own light set (no second list scan).
+int defer_part(const Re4dcModelPart* p,const SourceLighting* source){
+    if(draining_parts)return 0;
+    if(source_draws_finished){RE4DC_PROFILE_COUNT(DirectTR,1);return 0;}
+    if(select_model_pass(p)==PVR_LIST_OP_POLY){RE4DC_PROFILE_COUNT(DirectOP,1);return 0;}
+    RE4DC_PROFILE_SCOPE(TranslucentEnqueue);
+    if(!frame_ready || stream_aborted)return 1;
+    DeferredLighting* lighting=nullptr;
+    if(source)for(auto* l=deferred_lights;l;l=l->next)
+        if(same_lighting(l,*source)){lighting=l;break;}
+    DeferredLightSet* light_set=lighting?const_cast<DeferredLightSet*>(lighting->lights):nullptr;
+    if(source && !lighting)for(auto* l=deferred_light_sets;l;l=l->next)
+        if(same_light_set(l,*source)){light_set=l;break;}
+    const unsigned set_bytes=source && !light_set?(deferred_set_bytes(*source)+31)&~31U:0;
+    const unsigned state_bytes=source && !lighting?(deferred_light_bytes(*source)+31)&~31U:0;
+    Re4dcModelPart view=*p;view.lighting=nullptr; // separately snapshotted below
+    const bool had_basis=deferred_basis!=nullptr;
+    unsigned masks[kViewMasks],values[kViewWords];
+    const unsigned basis_bytes=had_basis?0:(sizeof(Re4dcModelPart)+31)&~31U;
+    const unsigned words=had_basis?view_words(view,*deferred_basis,masks,values):0;
+    const unsigned bytes=(sizeof(DeferredPart)+4*words+31)&~31U;
+    const unsigned required=bytes+state_bytes+basis_bytes+set_bytes;
+    RE4DC_PROFILE_COUNT(ViewBytes,bytes);RE4DC_PROFILE_COUNT(LightSetBytes,set_bytes);
+    RE4DC_PROFILE_COUNT(LightStateBytes,state_bytes);RE4DC_PROFILE_COUNT(BasisBytes,basis_bytes);
+    if(p->material_flags&4){RE4DC_PROFILE_COUNT(DeferredMasked,1);RE4DC_PROFILE_COUNT(MaskedBytes,required);}
+    else if(p->depth_mode){RE4DC_PROFILE_COUNT(DeferredDepth,1);RE4DC_PROFILE_COUNT(DepthBytes,required);}
+    else {RE4DC_PROFILE_COUNT(DeferredBlend,1);RE4DC_PROFILE_COUNT(BlendBytes,required);}
+    RE4DC_PROFILE_HIGH(QueueCapacity,sizeof(frame_storage)-8192+kModelDeferredSpillBytes);
+    unsigned char* storage=frame_storage;unsigned* top=&deferred_top;
+    if(required>deferred_top || deferred_top-required<std::max(8192U,nquad*unsigned(sizeof(Re4dcUiQuad)))){
+        if(!deferred_spill){deferred_spill=static_cast<unsigned char*>(re4dc_model_deferred_storage(&deferred_spill_capacity));deferred_spill_top=deferred_spill_capacity;}
+        if(!deferred_spill || required>deferred_spill_top){
+            ++deferred_drops;++frame_queue_drops;stream_aborted=true;re4dc_model_result(3,0,0);return 1;
+        }
+        storage=deferred_spill;top=&deferred_spill_top;
+    }
+    if(basis_bytes){*top-=basis_bytes;deferred_basis=new(storage+*top) Re4dcModelPart(view);}
+    if(set_bytes){
+        *top-=set_bytes;light_set=new(storage+*top) DeferredLightSet{};
+        store_light_set(light_set,*source);light_set->next=deferred_light_sets;deferred_light_sets=light_set;
+    }
+    if(state_bytes){
+        *top-=state_bytes;lighting=new(storage+*top) DeferredLighting{};
+        lighting->lights=light_set;store_lighting(lighting,*source);lighting->next=deferred_lights;deferred_lights=lighting;
+    }
+    *top-=bytes;
+    auto* node=new(storage+*top) DeferredPart{};
+    if(had_basis){
+        for(unsigned m=0;m<kViewMasks;++m)node->changed[m]=masks[m];
+        auto* out=reinterpret_cast<unsigned*>(node+1);
+        for(unsigned i=0;i<words;++i)out[i]=values[i];
+    } // else: the basis is this view, no differing words (changed[] stays zero)
+    node->lighting=lighting;
+    if(deferred_last)deferred_last->next=node;else deferred_first=node;
+    deferred_last=node;++deferred_count;
+    deferred_peak=std::max(deferred_peak,unsigned(sizeof(frame_storage))-deferred_top+deferred_spill_capacity-deferred_spill_top);
+    frame_queue_peak=std::max(frame_queue_peak,unsigned(sizeof(frame_storage))-deferred_top+deferred_spill_capacity-deferred_spill_top);
+    RE4DC_PROFILE_HIGH(QueuePeak,frame_queue_peak);
+    return 1;
+}
+}
+// Lit native scenery (native_static.cpp): the replay never reads lighting.
+extern "C" int re4dc_model_defer_part_unlit(const Re4dcModelPart* p){return defer_part(p,nullptr);}
+#elif RE4DC_COPY_LEAN
+extern "C" int re4dc_model_defer_part_unlit(const Re4dcModelPart*){return 0;}
+#endif
 extern "C" int re4dc_model_defer_part(const Re4dcModelPart* p){
-#if RE4DC_D349_RENDERER_STACK
+#if RE4DC_COPY_LEAN && RE4DC_D349_RENDERER_STACK
+    return defer_part(p,p->lighting);
+#elif RE4DC_D349_RENDERER_STACK
     if(draining_parts)return 0;
     if(source_draws_finished){RE4DC_PROFILE_COUNT(DirectTR,1);return 0;}
     if(select_model_pass(p)==PVR_LIST_OP_POLY){RE4DC_PROFILE_COUNT(DirectOP,1);return 0;}
@@ -1410,9 +1593,16 @@ extern "C" void re4dc_model_finish_source_draws(){
         Re4dcModelPart view=restore_view(deferred_first);
         const auto* saved_lighting=deferred_first->lighting;
         deferred_first=deferred_first->next;
+#if RE4DC_COPY_LEAN
+        if(saved_lighting){
+            SourceLighting lighting;restore_lighting_into(saved_lighting,lighting);
+            view.lighting=&lighting;re4dc_model_submit(&view);
+        }else re4dc_model_submit(&view);
+#else
         SourceLighting lighting{};
         if(saved_lighting){lighting=restore_lighting(saved_lighting);view.lighting=&lighting;}
         re4dc_model_submit(&view);
+#endif
     }
     draining_parts=false;source_draws_finished=true;reset_deferred();
 #endif

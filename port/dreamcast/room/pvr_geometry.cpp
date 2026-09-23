@@ -3,11 +3,24 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+// D367 frontend30 (game obj/frontend30.h; default off = previous image).
+#ifndef RE4DC_COPY_LEAN
+#define RE4DC_COPY_LEAN 0
+#endif
 namespace re4dc::render {
 void begin_pvr_packet(pvr_vertex_t* commands, std::uint32_t& command_count,
                       const pvr_poly_hdr_t& header) {
     static_assert(sizeof(pvr_vertex_t) == sizeof(pvr_poly_hdr_t));
+#if RE4DC_COPY_LEAN
+    // Eight aligned words (both 32-byte PVR commands); a 32-byte memcpy is a
+    // libcall on SH-4 at this unit's alignment knowledge.
+    typedef std::uint32_t __attribute__((may_alias)) Word;
+    const Word* from = reinterpret_cast<const Word*>(&header);
+    Word* to = reinterpret_cast<Word*>(commands);
+    for(unsigned i = 0; i < 8; ++i) to[i] = from[i];
+#else
     std::memcpy(commands, &header, sizeof(header));
+#endif
     command_count = 1U;
 }
 
@@ -54,8 +67,15 @@ std::uint32_t clip_projected_triangle(const RenderVertex* source,
                                        std::uint8_t cull_mode,
                                        const ClipParameters& parameters,
                                        ClipStats* stats, const float* alpha) {
+#if RE4DC_COPY_LEAN
+    // Entries [0, clipped_count) are written before any read; the zero-fill
+    // was a 208-byte memset per clipped triangle (D367 LD: ~1.1 ms/frame).
+    RenderVertex clipped[4];
+    float clipped_alpha[4]; // read only where written (alpha != nullptr)
+#else
     RenderVertex clipped[4]{};
     float clipped_alpha[4]{}; // optional source alpha, no growth of room vertex caches
+#endif
     unsigned clipped_count = 0;
     unsigned inside_count = 0;
     for(unsigned corner = 0; corner < 3; ++corner) {
