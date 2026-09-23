@@ -138,9 +138,9 @@ fi
 PCSA=()
 if [ -n "$PCS" ] && [ -f "$PCS" ] && [ -f "$PCS_SYMBOLIZE" ]; then
   F=${COUNT}
-  python3 "$PCS_SYMBOLIZE" --elf "$ELF" --pcs "$PCS" --frames "$F" --csv "$P/pcs-all.csv" >/dev/null
-  python3 "$PCS_SYMBOLIZE" --elf "$ELF" --pcs "$PCS" --frames "$F" --tid 1 --csv "$P/pcs-tid1.csv" >/dev/null
-  python3 "$PCS_SYMBOLIZE" --elf "$ELF" --pcs "$PCS" --frames "$F" --tid 12 --csv "$P/pcs-tid12.csv" >/dev/null
+  python3 "$PCS_SYMBOLIZE" --elf "$ELF" --pcs "$PCS" --frames "$F" --top 1000000 --csv "$P/pcs-all.csv" >/dev/null
+  python3 "$PCS_SYMBOLIZE" --elf "$ELF" --pcs "$PCS" --frames "$F" --tid 1 --top 1000000 --csv "$P/pcs-tid1.csv" >/dev/null
+  python3 "$PCS_SYMBOLIZE" --elf "$ELF" --pcs "$PCS" --frames "$F" --tid 12 --top 1000000 --csv "$P/pcs-tid12.csv" >/dev/null
   PCSA=(--pcs-csv "$P/pcs-all.csv" --pcs-tid1 "$P/pcs-tid1.csv" --pcs-tid12 "$P/pcs-tid12.csv")
 else
   PCSA=(--pcs-tid1 "$HWM_TID1" --pcs-tid12 "$HWM_TID12")
