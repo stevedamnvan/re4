@@ -104,7 +104,29 @@ NAME_AREA = [
 ]
 
 
+EXTRA_NAME, EXTRA_FILE = [], []
+
+
+def load_area_rules(path):
+    """TSV lines 'regex<TAB>area' (function name) or 'file:regex<TAB>area' (source file)."""
+    for line in open(path):
+        line = line.rstrip('\n')
+        if not line.strip() or line.startswith('#'):
+            continue
+        rx, a = line.split('\t')[:2]
+        if rx.startswith('file:'):
+            EXTRA_FILE.append((rx[5:], a))
+        else:
+            EXTRA_NAME.append((rx, a))
+
+
 def area_of(name, fname):
+    for rx, a in EXTRA_NAME:
+        if re.search(rx, name):
+            return a
+    for rx, a in EXTRA_FILE:
+        if re.search(rx, fname or ''):
+            return a
     for rx, a in NAME_AREA:
         if re.search(rx, name):
             return a
@@ -138,7 +160,10 @@ def main():
     ap.add_argument('--counts'); ap.add_argument('--count-frames', type=int, default=120)
     ap.add_argument('--out', default='.')
     ap.add_argument('--top', type=int, default=60)
+    ap.add_argument('--area-rules', help='TSV regex<TAB>area checked before the built-in rules')
     a = ap.parse_args()
+    if a.area_rules:
+        load_area_rules(a.area_rules)
     syms = Syms(a.elf)
     base, bsum = load_sim(a.sim)
     nfr = bsum['frames']

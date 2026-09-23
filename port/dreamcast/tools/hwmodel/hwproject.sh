@@ -17,6 +17,11 @@
 # Options:
 #   --name N         evidence dir suffix (default: basename of the input)
 #   --disc FILE      disc.bin for a build dir
+#   --elf FILE       ELF when it is not <input>/re4dc-game.elf (e.g. a D349 room reference.elf)
+#   --frameaddr HEX  physical address of a guest word stored once per frame with the frame number;
+#                    needed when there is no syms.txt (non-PC_SAMPLER builds)
+#   --area-rules F   extra function->area rules for hwreport (TSV: regex<TAB>area; 'file:regex' matches
+#                    the source file), checked before the built-in D367 rules
 #   --count A:B      counted frames (default 2401:2520)
 #   --trace A:B:S    traced frames (default 2401:2520:8 = 15 frames, ~0.9 GB)
 #   --ref DIR        reference hwproject output dir to diff against (default $HWM_REF)
@@ -39,21 +44,24 @@ HWM_TID12=${HWM_TID12:-/root/probe/d367-agents/hwmodel/data/ld-pcs-func-tid12.cs
 PCS_SYMBOLIZE=${PCS_SYMBOLIZE:-/root/probe/d367-agents/profiler/host/pcs_symbolize.py}
 PS=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
 
-NAME= DISC= COUNT=2401:2520 TRACE=2401:2520:8 REF=$HWM_REF PCS= KEEP=0 DROP=0 JOBS=4 IN=
+NAME= DISC= COUNT=2401:2520 TRACE=2401:2520:8 REF=$HWM_REF PCS= KEEP=0 DROP=0 JOBS=4 IN= ELFIN= FRAMEADDR= AREARULES=
 while [ $# -gt 0 ]; do
   case $1 in
     --name) NAME=$2; shift ;; --disc) DISC=$2; shift ;; --count) COUNT=$2; shift ;;
     --trace) TRACE=$2; shift ;; --ref) REF=$2; shift ;; --pcs) PCS=$2; shift ;;
+    --elf) ELFIN=$2; shift ;; --frameaddr) FRAMEADDR=$2; shift ;; --area-rules) AREARULES=$2; shift ;;
     --keep-disc) KEEP=1 ;; --drop-traces) DROP=1 ;; --jobs) JOBS=$2; shift ;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) IN=$1 ;;
   esac; shift
 done
-[ -n "$IN" ] || { sed -n '2,33p' "$0"; exit 2; }
+[ -n "$IN" ] || { sed -n '2,39p' "$0"; exit 2; }
 winp() { case $1 in [A-Za-z]:\\*|[A-Za-z]:/*) wslpath -u "$1" ;; *) echo "$1" ;; esac; }
 IN=$(cd "$(winp "$IN")" && pwd)
 [ -z "$DISC" ] || DISC=$(winp "$DISC")
 [ -z "$PCS" ] || PCS=$(winp "$PCS")
+[ -z "$ELFIN" ] || ELFIN=$(winp "$ELFIN")
+[ -z "$AREARULES" ] || AREARULES=$(cd "$(dirname "$(winp "$AREARULES")")" && pwd)/$(basename "$AREARULES")
 
 # hwsim binary (built on demand next to a cache of the source hash)
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/hwmodel; mkdir -p "$CACHE"
@@ -63,12 +71,12 @@ SUM=$(md5sum "$HERE/hwsim.c" | cut -c1-12); HWSIM=$CACHE/hwsim-$SUM
 if ls "$IN"/trace/trace-*.bin >/dev/null 2>&1; then
   E=$IN; echo "[reusing traces in $E/trace]"
 else
-  for f in re4dc-game.elf syms.txt; do
-    [ -f "$IN/$f" ] || [ -f "$IN/build/$f" ] || { echo "no $f in $IN" >&2; exit 1; }
-  done
-  SRC=$IN; [ -f "$IN/re4dc-game.elf" ] || SRC=$IN/build
+  SRC=$IN; [ -f "$IN/re4dc-game.elf" ] || [ -n "$ELFIN" ] || SRC=$IN/build
+  [ -n "$ELFIN" ] || ELFIN=$SRC/re4dc-game.elf
+  [ -f "$ELFIN" ] || { echo "no ELF ($ELFIN); pass --elf" >&2; exit 1; }
+  [ -f "$SRC/syms.txt" ] || [ -n "$FRAMEADDR" ] || { echo "no syms.txt in $SRC: pass --frameaddr" >&2; exit 1; }
   if [ -z "$DISC" ]; then
-    for d in "$IN/disc-output/disc.bin" "$IN/disc/disc.bin" "$IN/../disc/disc.bin"; do
+    for d in "$IN/disc-output/disc.bin" "$IN/disc/disc.bin" "$IN/../disc/disc.bin" "$IN/disc.bin"; do
       [ -f "$d" ] && { DISC=$d; break; }
     done
   fi
@@ -82,9 +90,11 @@ else
   [ "$FREE" -gt "$NEED" ] || { echo "only ${FREE} MB free on $HWM_EVROOT; need ~$((NFR * 70 + 100)) MB and to keep ${HWM_MINFREE_MB} MB free" >&2; exit 1; }
   mkdir -p "$E/disc-output" "$HWM_DISCS"
   cp -r "$HWM_BIN"/. "$E"/
-  for f in re4dc-game.elf syms.txt elf.sha256 head.txt candidate.txt size.txt; do
+  for f in syms.txt elf.sha256 head.txt candidate.txt size.txt; do
     [ -f "$SRC/$f" ] && cp "$SRC/$f" "$E/"
   done
+  cp "$ELFIN" "$E/re4dc-game.elf"
+  FA=(); [ -z "$FRAMEADDR" ] || FA=(-FrameAddr "$FRAMEADDR")
   DB=$HWM_DISCS/hwmodel-$NAME.bin; DC=$HWM_DISCS/hwmodel-$NAME.cue
   cp "$DISC" "$DB"
   sha256sum "$DB" | sed "s#  .*#  disc.bin#" > "$E/disc-output/disc.sha256"
@@ -96,7 +106,7 @@ else
   echo "[tracing $NFR frames in $E; ~6 min for 2401:2520:8]"
   T0=$(date +%s)
   "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$E/hwtrace-run.ps1")" -Out trace -Cue "$(wslpath -w "$DC")" \
-        -Count "$COUNT" -Trace "$TRACE" </dev/null | tr -d '\r'
+        "${FA[@]}" -Count "$COUNT" -Trace "$TRACE" </dev/null | tr -d '\r'
   echo "[trace run $(( $(date +%s) - T0 )) s]"
   [ "$KEEP" = 1 ] || rm -f "$DB" "$DC"
   N=$(ls "$E"/trace/trace-*.bin 2>/dev/null | wc -l)
@@ -138,7 +148,7 @@ fi
 CNT=(); [ -f "$E/trace/counts.bin" ] && CNT=(--counts "$E/trace/counts.bin" --count-frames \
   "$(echo "$COUNT" | awk -F: '{print $2-$1+1}')")
 python3 "$HERE/hwreport.py" --elf "$ELF" --sim "$P/nominal" --whatif low="$P/low" --whatif high="$P/high" \
-  --whatif nodma="$P/nodma" "${PCSA[@]}" "${CNT[@]}" --out "$P/rep" --top 30 > "$P/report.txt"
+  --whatif nodma="$P/nodma" "${PCSA[@]}" ${AREARULES:+--area-rules "$AREARULES"} "${CNT[@]}" --out "$P/rep" --top 30 > "$P/report.txt"
 python3 "$HERE/hwcompare.py" --cand "$P" --ref "$REF" --trace-log "$E/trace/hwtrace.log" | tee "$P/projection.txt"
 echo "[full report: $P/report.txt; tables: $P/rep/]"
 if [ "$DROP" = 1 ]; then

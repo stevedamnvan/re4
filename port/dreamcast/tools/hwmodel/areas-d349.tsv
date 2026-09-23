@@ -1,0 +1,7 @@
+# hwreport --area-rules for the D349 r100 room target (5f42caa, port/dreamcast/room/main.cpp, LTO)
+project_character|build_character_|draw_character|sample_character_point|sample_player_point|transform_source_normal|source_actor_light_selection|compile_character_headers	actors
+accumulate_source_lighting	actors
+submit_room_strips|cached_room_entry|clip_projected_triangle|transform_triangle|source_group_light_selection|prepare_room_|compile_room_material	scenery
+source_hud_	ui
+update_enemy|move_enemy|resolve_actor_walls|find_floor|collision|segment_blocked|nearest_visible_route|correct_source_camera|source_camera_wall|player_offset_to_world|read_input|discard_input|input_service|source_random	game-logic
+^render_scene|^main$	game-render-side
