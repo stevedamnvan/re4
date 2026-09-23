@@ -364,6 +364,20 @@ NATIVE_STATIC_OWNERS ?= 1
 # NATIVE_MESH=1 draws instanced per-BIN meshes (<owner>.re4mesh, COMMON.re4mesh)
 # instead of placement-baked packages; owner mask bit 6 is the room's common set.
 NATIVE_MESH ?= 0
+# MESH_LOD=1 also accepts R4IM v2 packages (convert_room_bins.py --lod) and draws,
+# per visible cluster, the coarsest level within MESH_LOD_PX projected pixels.
+MESH_LOD ?= 0
+MESH_LOD_PX ?= 3
+# NATIVE_FOG=1: GXSetFog -> PVR table fog on model headers, ramped to 100% at the
+# source View far plane, which also rejects scenery clusters/meshlets beyond it.
+# FOG_FAR (source units, 0 = off) pulls that far plane in when it is shorter.
+NATIVE_FOG ?= 0
+FOG_FAR ?= 0
+ifeq ($(NATIVE_FOG),1)
+ifneq ($(NATIVE_STATIC),1)
+$(error NATIVE_FOG requires NATIVE_STATIC=1 (platform/native_static.cpp owns the fog state))
+endif
+endif
 ifeq ($(NATIVE_STATIC),1)
 ifneq ($(D349_RENDERER_STACK),1)
 $(error NATIVE_STATIC requires the D349_RENDERER_STACK=1 packet/deferral owner)
@@ -376,9 +390,11 @@ endif
 $(OBJDIR)/native-static.h: native-static-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_NATIVE_STATIC %s\n#define RE4DC_NATIVE_STATIC_OWNERS %sU\n#define RE4DC_NATIVE_MESH %s\n' '$(NATIVE_STATIC)' '$(NATIVE_STATIC_OWNERS)' '$(NATIVE_MESH)' > $@.tmp
+	@printf '#define RE4DC_MESH_LOD %s\n#define RE4DC_MESH_LOD_PX %s\n#define RE4DC_NATIVE_FOG %s\n#define RE4DC_FOG_FAR %s\n' '$(MESH_LOD)' '$(MESH_LOD_PX)' '$(NATIVE_FOG)' '$(FOG_FAR)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
-NATIVE_STATIC_PLATFORM = $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o
+NATIVE_STATIC_PLATFORM = $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o \
+	$(OBJDIR)/platform/gx_stub.o
 NATIVE_STATIC_GAME = $(OBJDIR)/model_bridge.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/src/game/scroll.o
 $(NATIVE_STATIC_PLATFORM) $(NATIVE_STATIC_GAME): $(OBJDIR)/native-static.h platform/include/native_static.h
 $(NATIVE_STATIC_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-static.h

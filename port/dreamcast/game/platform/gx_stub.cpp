@@ -225,7 +225,16 @@ void GXSetAlphaUpdate(u8 e) { (void) e; }
 void GXSetDstAlpha(u8 e, u8 a) { (void) e; (void) a; }
 void GXSetCullMode(int m) { (void) m; }
 void GXSetLineWidth(u8 w, int ofs) { (void) w; (void) ofs; }
+#if RE4DC_NATIVE_FOG
+extern "C" void re4dc_fog_capture(int type, float start, float end, unsigned rgba);
+// Native model headers take PVR table fog from this state (native_static.cpp).
+void GXSetFog(int type, f32 s, f32 e, f32 n, f32 f, GXColor c) {
+    (void) n; (void) f;
+    re4dc_fog_capture(type, s, e, ((u32) c.r << 24) | ((u32) c.g << 16) | ((u32) c.b << 8) | c.a);
+}
+#else
 void GXSetFog(int type, f32 s, f32 e, f32 n, f32 f, GXColor c) { (void) type; (void) s; (void) e; (void) n; (void) f; (void) c; }
+#endif
 
 void GXInitTexObj(GXTexObj* o, void* image, u16 w, u16 h, int fmt, int ws, int wt, u8 mip)
 {

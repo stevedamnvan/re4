@@ -1,5 +1,5 @@
 #pragma once
-// R4IM v1: instanced native scenery meshes (tools/convert_room_bins.py).
+// R4IM v1/v2: instanced native scenery meshes (tools/convert_room_bins.py).
 //
 // One mesh per source BIN in the BIN's own model space; every placement that
 // uses the BIN draws it with its live source modelview. A mesh part is matched
@@ -8,6 +8,14 @@
 // counts, so a stale or foreign pointer can never select geometry. The offset
 // is measured from the BIN's first part header (ModelData::pParts), because
 // archive compaction may move the part block inside a BIN.
+//
+// v2 (convert_room_bins.py --lod) adds levels of detail without changing any
+// v1 table: a MeshLodHeader follows the 80-byte header, each part owns a range
+// of clusters, each cluster a range of levels ordered by increasing error
+// (level 0 = source geometry), and each level a range of the part's meshlets.
+// A part's meshlet range still covers every level, so lighting stays one pass.
+// Only a LOD-aware runtime may adopt v2 (adopt(..., true)): a v1 draw loop
+// would draw every level of a v2 part on top of each other.
 #include <cstdint>
 #include <cstring>
 #include "room_package.hpp"
@@ -41,7 +49,24 @@ struct Meshlet {
     std::uint16_t vertex_count, strip_count;
     std::uint16_t bounds_min[3], bounds_max[3]; // mesh grid units
 };
+// v2 only, at offset 80.
+struct MeshLodHeader {
+    std::uint32_t cluster_count, level_count, part_lod_offset, cluster_offset, level_offset, reserved[3];
+};
+struct MeshPartLod { std::uint32_t first_cluster, cluster_count; };
+struct MeshCluster {
+    std::uint16_t bounds_min[3], bounds_max[3]; // mesh grid units, covers every level
+    std::uint32_t first_level, level_count;
+};
+struct MeshLevel {
+    std::uint32_t first_meshlet, meshlet_count;
+    float error; // model units; drawn while error * lod_scale <= nearest cluster depth
+};
 static_assert(sizeof(MeshHeader)==80);
+static_assert(sizeof(MeshLodHeader)==32);
+static_assert(sizeof(MeshPartLod)==8);
+static_assert(sizeof(MeshCluster)==20);
+static_assert(sizeof(MeshLevel)==12);
 static_assert(sizeof(MeshRecord)==68);
 static_assert(sizeof(MeshPart)==36);
 static_assert(sizeof(Meshlet)==28);
@@ -51,17 +76,27 @@ class MeshPackage {
 public:
     // Validates every offset, range, strip length/index and palette index once;
     // afterwards the draw path trusts the tables. data must be 4-byte aligned.
-    bool adopt(const std::uint8_t* data,std::uint32_t size){
+    // lod: the caller draws v2 levels (and still accepts v1); otherwise v1 only.
+    bool adopt(const std::uint8_t* data,std::uint32_t size,bool lod=false){
         close();
         if(size<sizeof(MeshHeader) || (reinterpret_cast<std::uintptr_t>(data)&3U))return fail("size");
         std::memcpy(&h_,data,sizeof(h_));
-        if(std::memcmp(h_.magic,"R4IM",4) || h_.version!=1 || h_.bytes!=size)return fail("header");
-        if(!section(h_.mesh_offset,h_.mesh_count,sizeof(MeshRecord),size) ||
-           !section(h_.part_offset,h_.part_count,sizeof(MeshPart),size) ||
-           !section(h_.meshlet_offset,h_.meshlet_count,sizeof(Meshlet),size) ||
-           !section(h_.vertex_offset,h_.vertex_count,sizeof(CompactVertex12),size) ||
-           !section(h_.strip_offset,h_.strip_bytes,1,size) ||
-           !section(h_.palette_offset,h_.palette_count,4,size))return fail("section");
+        if(std::memcmp(h_.magic,"R4IM",4) || !(h_.version==1 || (lod && h_.version==2)) || h_.bytes!=size)return fail("header");
+        std::uint32_t head=sizeof(MeshHeader);
+        if(h_.version==2){
+            head+=sizeof(MeshLodHeader);
+            if(size<head)return fail("size");
+            std::memcpy(&l_,data+sizeof(MeshHeader),sizeof(l_));
+        }
+        if(!section(h_.mesh_offset,h_.mesh_count,sizeof(MeshRecord),size,head) ||
+           !section(h_.part_offset,h_.part_count,sizeof(MeshPart),size,head) ||
+           !section(h_.meshlet_offset,h_.meshlet_count,sizeof(Meshlet),size,head) ||
+           !section(h_.vertex_offset,h_.vertex_count,sizeof(CompactVertex12),size,head) ||
+           !section(h_.strip_offset,h_.strip_bytes,1,size,head) ||
+           !section(h_.palette_offset,h_.palette_count,4,size,head))return fail("section");
+        if(h_.version==2 && (!section(l_.part_lod_offset,h_.part_count,sizeof(MeshPartLod),size,head) ||
+           !section(l_.cluster_offset,l_.cluster_count,sizeof(MeshCluster),size,head) ||
+           !section(l_.level_offset,l_.level_count,sizeof(MeshLevel),size,head)))return fail("lod section");
         if(!h_.palette_count || h_.palette_count>65536U)return fail("palette");
         data_=data;
         if(h_.reserved[0]!=kColorOctNormal)return fail("color encoding");
@@ -92,10 +127,34 @@ public:
             }
             if(count!=l.strip_count)return fail("strip count");
         }
+        if(h_.version==2){
+            // Every level of every cluster lies inside its own part's meshlet
+            // range; errors are finite, non-negative and non-decreasing.
+            for(unsigned i=0;i<h_.part_count;++i){
+                const auto& p=parts()[i];const auto& pl=part_lods()[i];
+                if(pl.first_cluster>l_.cluster_count || pl.cluster_count>l_.cluster_count-pl.first_cluster)return fail("part clusters");
+                for(unsigned c=pl.first_cluster;c<pl.first_cluster+pl.cluster_count;++c){
+                    const auto& cl=clusters()[c];
+                    if(!cl.level_count || cl.first_level>l_.level_count || cl.level_count>l_.level_count-cl.first_level)return fail("cluster levels");
+                    float previous=0.0f;
+                    for(unsigned k=cl.first_level;k<cl.first_level+cl.level_count;++k){
+                        const auto& lv=levels()[k];
+                        if(!(lv.error>=previous) || !(lv.error<3.0e38f))return fail("level error");
+                        previous=lv.error;
+                        if(lv.first_meshlet<p.first_meshlet || lv.meshlet_count>p.meshlet_count ||
+                           lv.first_meshlet-p.first_meshlet>p.meshlet_count-lv.meshlet_count)return fail("level meshlets");
+                    }
+                }
+            }
+        }
         return true;
     }
-    void close(){data_=nullptr;error_=nullptr;}
+    void close(){data_=nullptr;error_=nullptr;l_={};}
     bool valid()const{return data_!=nullptr;}
+    bool lod()const{return data_ && h_.version==2;}
+    const MeshPartLod* part_lods()const{return at<MeshPartLod>(l_.part_lod_offset);}
+    const MeshCluster* clusters()const{return at<MeshCluster>(l_.cluster_offset);}
+    const MeshLevel* levels()const{return at<MeshLevel>(l_.level_offset);}
     const char* error()const{return error_;}
     const MeshHeader& header()const{return h_;}
     const MeshRecord* meshes()const{return at<MeshRecord>(h_.mesh_offset);}
@@ -121,12 +180,13 @@ public:
     }
 private:
     template<class T> const T* at(std::uint32_t offset)const{return reinterpret_cast<const T*>(data_+offset);}
-    static bool section(std::uint32_t offset,std::uint32_t count,std::uint32_t stride,std::uint32_t size){
-        return offset>=sizeof(MeshHeader) && offset<=size && (offset&3U)==0 &&
+    static bool section(std::uint32_t offset,std::uint32_t count,std::uint32_t stride,std::uint32_t size,std::uint32_t head){
+        return offset>=head && offset<=size && (offset&3U)==0 &&
                std::uint64_t(count)*stride<=std::uint64_t(size-offset);
     }
     bool fail(const char* why){data_=nullptr;error_=why;return false;}
     MeshHeader h_{};
+    MeshLodHeader l_{};
     const std::uint8_t* data_=nullptr;
     const char* error_=nullptr;
 };

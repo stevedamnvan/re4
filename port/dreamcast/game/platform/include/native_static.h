@@ -19,6 +19,7 @@ struct Re4dcStaticStats {
     unsigned vertex_opaque, vertex_alpha_min, vertex_alpha_unused;
     int heap_before, heap_after;
     unsigned unowned_binds, locate_misses, parts_lit;
+    unsigned clusters_visible, clusters_culled, lod_draws[4]; // R4IM v2 (MESH_LOD)
 };
 extern "C" {
 // Called by scroll.cpp setObj after the object's placement matrix is final.
@@ -39,4 +40,11 @@ unsigned re4dc_ui_frame();
 void* re4dc_static_alloc(unsigned bytes);
 void re4dc_static_free(void*);
 int re4dc_static_heap_free();
+// NATIVE_FOG (native_static.cpp): GXSetFog state from gx_stub.cpp, the source
+// View far plane from the model bridge, and the frame-start PVR fog table
+// update from native_ui.cpp (after the previous render's fence).
+void re4dc_fog_capture(int type, float start, float end, unsigned rgba);
+unsigned re4dc_fog_enabled();
+void re4dc_fog_note_far(float far);
+void re4dc_fog_frame();
 }

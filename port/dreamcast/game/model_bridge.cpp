@@ -5,6 +5,11 @@
 #include "model.h"
 #include "gx.h"
 #include "native_model.h"
+#if RE4DC_NATIVE_FOG
+#include "view.h"
+extern "C" unsigned re4dc_fog_enabled();
+extern "C" void re4dc_fog_note_far(float far);
+#endif
 #include <stddef.h>
 #include <string.h>
 static_assert(sizeof(ModelPart)==0x20 && offsetof(ModelPart,size)==0x18);
@@ -78,6 +83,13 @@ extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
     p.cull=re4dc_model_cull(m->CullMode,(pG->Debug_flg[0]&0x20000000)!=0);
     p.blend=info->blend_mode;p.depth_mode=m->z_mode;
     memcpy(p.modelview,mv,sizeof(p.modelview));GXGetProjectionv(p.projection);GXGetViewportv(p.viewport);
+#if RE4DC_NATIVE_FOG
+    // Fog as the source set it for this draw (effects/filters/thermal turn it
+    // off temporarily) rides in the spare source_key[2] byte, so the part
+    // layout (and the deferral queue's word diffs) is unchanged; the
+    // fog-derived View far plane (light.cpp setFog) is global frame state.
+    p.source_key[2]=(unsigned char)re4dc_fog_enabled();re4dc_fog_note_far(View._zfar);
+#endif
     p.colors=(const unsigned char*)d->pClr;p.alpha_state=re4dc_gx_model_alpha();
     p.image=selected;p.uv_offset[0]=scroll_u;p.uv_offset[1]=scroll_v;p.wrap_s=wrap_s;p.wrap_t=wrap_t;
 #if RE4DC_D349_RENDERER_STACK

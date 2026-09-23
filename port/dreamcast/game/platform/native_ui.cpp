@@ -475,6 +475,9 @@ pvr_list_t desired_list=PVR_LIST_OP_POLY;
 void stream_open() {
 #if RE4DC_PVR_PIPELINE
     present_fence(); // previous scene flipped/discarded: TA bank and back buffer free
+#if RE4DC_NATIVE_FOG
+    re4dc_fog_frame(); // fog registers: the previous scene no longer renders
+#endif
 #endif
     pvr_scene_begin();
 #if RE4DC_TA_GUARD
@@ -917,6 +920,9 @@ extern "C" void re4dc_ui_begin(){
     frame_ready=ready;
 #else
     frame_ready=ready && re4dc::gpu::quiesce()==re4dc::gpu::FenceResult::ready;
+#if RE4DC_NATIVE_FOG
+    if(frame_ready)re4dc_fog_frame(); // PVR fog table/colour; the previous render has completed
+#endif
 #endif
     re4dc_prepare_model_assets(); // registration/update work precedes frame submission
     re4dc::profile::begin();
@@ -1202,7 +1208,11 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
 #endif
     pvr_poly_hdr_t header;std::uint32_t count;
 #if RE4DC_D349_RENDERER_STACK
-    const unsigned header_key=list|(p->blend<<3)|(p->depth_mode<<6)|(p->wrap_s<<8)|(p->wrap_t<<10)|((p->material_flags&4)<<12)|(p->cull<<16);
+    const unsigned header_key=list|(p->blend<<3)|(p->depth_mode<<6)|(p->wrap_s<<8)|(p->wrap_t<<10)|((p->material_flags&4)<<12)|(p->cull<<16)
+#if RE4DC_NATIVE_FOG
+        |(p->source_key[2]?1U<<20:0U) // NATIVE_FOG flag (model_bridge.cpp)
+#endif
+        ;
     if(handle->model_header_key==header_key){header=handle->model_header;++model_header_hits;}
     else {
 #endif
@@ -1228,6 +1238,9 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
     if(p->material_flags&4)c.txr.alpha=PVR_TXRALPHA_ENABLE;
 #endif
     c.txr.uv_clamp=(pvr_uv_clamp_t)((p->wrap_s?0:PVR_UVCLAMP_U)|(p->wrap_t?0:PVR_UVCLAMP_V));
+#if RE4DC_NATIVE_FOG
+    c.gen.fog_type=p->source_key[2]?PVR_FOG_TABLE:PVR_FOG_DISABLE; // table: native_static.cpp re4dc_fog_frame
+#endif
     pvr_poly_compile(&header,&c);++model_header_builds;
 #if RE4DC_D349_RENDERER_STACK
         handle->model_header=header;handle->model_header_key=header_key;

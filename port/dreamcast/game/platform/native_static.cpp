@@ -50,6 +50,28 @@
 #if RE4DC_NATIVE_MESH && RE4DC_MESH_FASTPATH
 #include "../../room/mesh_fastpath.hpp"
 #endif
+// R4IM v2 levels of detail (convert_room_bins.py --lod). Per visible cluster
+// the coarsest level whose error projects to at most RE4DC_MESH_LOD_PX pixels
+// at the cluster's nearest depth is drawn. 0 accepts v1 packages only.
+#ifndef RE4DC_MESH_LOD
+#define RE4DC_MESH_LOD 0
+#endif
+#ifndef RE4DC_MESH_LOD_PX
+#define RE4DC_MESH_LOD_PX 3
+#endif
+// Source fog on the native path: GXSetFog state becomes PVR table fog on model
+// headers (native_ui.cpp), ramped to 100% at the source View far plane, and
+// scenery clusters/meshlets beyond that far plane are rejected (the source's
+// own object gate distance, light.cpp setFog/hokanMove -> View.setFarPlane).
+#ifndef RE4DC_NATIVE_FOG
+#define RE4DC_NATIVE_FOG 0
+#endif
+#ifndef RE4DC_FOG_FAR
+#define RE4DC_FOG_FAR 0 // >0: DC fog/cull far plane (source units) when shorter than the source's
+#endif
+#ifndef RE4DC_FOG_BACKGROUND
+#define RE4DC_FOG_BACKGROUND 1 // background colour follows the fog colour while fog is on
+#endif
 
 namespace {
 using re4dc::room::Package;
@@ -400,7 +422,7 @@ bool open(MeshView& v,unsigned index,unsigned room){
     fs_close(file);
     stats.heap_after=re4dc_static_heap_free();
     if(!storage){re4dc_log("native mesh: %s not loaded (size=%u heap=%d)\n",path,size,stats.heap_before);return false;}
-    if(!v.package.adopt(storage,size)){
+    if(!v.package.adopt(storage,size,RE4DC_MESH_LOD!=0)){
         re4dc_log("native mesh: %s rejected: %s\n",path,v.package.error());
         re4dc_static_free(storage);++stats.open_failures;return false;
     }
@@ -413,8 +435,8 @@ bool open(MeshView& v,unsigned index,unsigned room){
     ++stats.owners_open;stats.package_bytes+=v.bytes;
     const struct mallinfo kos=mallinfo();
     const auto& h=v.package.header();
-    re4dc_log("native mesh: %s bytes=%u meshes=%u parts=%u meshlets=%u vertices=%u heap4=%d->%d kos_free=%d\n",
-        path,v.bytes,h.mesh_count,h.part_count,h.meshlet_count,h.vertex_count,
+    re4dc_log("native mesh: %s bytes=%u version=%u meshes=%u parts=%u meshlets=%u vertices=%u heap4=%d->%d kos_free=%d\n",
+        path,v.bytes,h.version,h.mesh_count,h.part_count,h.meshlet_count,h.vertex_count,
         stats.heap_before,stats.heap_after,kos.fordblks);
     return true;
 }
@@ -510,6 +532,14 @@ void light_part(MeshView& v,const re4dc::room::MeshRecord& mesh,re4dc::room::Mes
 struct MeshDraw : Emitter {
     const re4dc::room::MeshPackage& package; const re4dc::room::MeshPart& part;
     const std::uint32_t* lut; // mesh view's colour LUT (nullptr: per-corner path)
+    // Cluster/meshlet rejection distance: min(projection far, source View far)
+    // with RE4DC_NATIVE_FOG, else the projection far. Vertices still clip
+    // against the projection far, so a straddling strip is drawn whole (fully
+    // fogged past the View far) instead of going through the clipper.
+    float cull_far=0;
+    unsigned part_index=0; // v2: index into the package's part LOD table
+    float lod_scale=0;     // v2: level error (model units) * lod_scale <= depth
+    re4dc::room::CompactBatch batch{};
 #if RE4DC_MESH_FASTPATH
     // Transform-once state: the cache borrows the last kCacheSlots slots of
     // the bound packet range (never sent: strips stop at 'limit').
@@ -570,41 +600,85 @@ struct MeshDraw : Emitter {
         return 1;
     }
 #endif
+    // One meshlet: 1 drawn or culled, 0 fallback allowed, -1 frame aborted.
+    int draw(const re4dc::room::Meshlet& l){
+        const re4dc::render::DrawBounds bounds{
+            {float(l.bounds_min[0]),float(l.bounds_min[1]),float(l.bounds_min[2])},
+            {float(l.bounds_max[0]),float(l.bounds_max[1]),float(l.bounds_max[2])}};
+        if(!re4dc::render::group_visible(bounds,mvq,p.projection,p.viewport,near,cull_far,0)){++stats.groups_culled;return 1;}
+        ++stats.groups_visible;
+        if(!bind()){++stats.bind_rejects;return submitted?-1:0;}
+        ++stats.batches;
+#if RE4DC_MESH_FASTPATH
+        // A slab too small to lend the cache behaves like any other
+        // capacity failure: generic fallback, or abort once published.
+        if(!borrow()){++stats.reserve_rejects;return submitted?-1:0;}
+        return meshlet(l,batch);
+#else
+        const auto* base=package.vertices()+l.first_vertex;
+        const std::uint8_t* s=package.strips()+l.first_strip;
+        const std::uint8_t* const end=s+l.strip_bytes;
+        while(s<end){
+            const unsigned n=*s++;
+            const int result=strip(base,batch,s,n);
+            if(result<=0)return result;
+            s+=n;
+        }
+        return 1;
+#endif
+    }
+#if RE4DC_MESH_LOD
+    // v2: cluster test, then the coarsest level within tolerance at the
+    // cluster's nearest view depth (group_visible's support radius along z).
+    int draw_clusters(){
+        const auto& lod=package.part_lods()[part_index];
+        const auto* clusters=package.clusters();const auto* levels=package.levels();
+        for(unsigned c=lod.first_cluster;c<lod.first_cluster+lod.cluster_count;++c){
+            const auto& cl=clusters[c];
+            float lo[3],hi[3];
+            for(unsigned a=0;a<3;++a){lo[a]=float(cl.bounds_min[a]);hi[a]=float(cl.bounds_max[a]);}
+            const re4dc::render::DrawBounds bounds{{lo[0],lo[1],lo[2]},{hi[0],hi[1],hi[2]}};
+            if(!re4dc::render::group_visible(bounds,mvq,p.projection,p.viewport,near,cull_far,0)){++stats.clusters_culled;continue;}
+            ++stats.clusters_visible;
+            float depth=-mvq[11],radius=0;
+            for(unsigned a=0;a<3;++a){
+                depth-=mvq[8+a]*(lo[a]+hi[a])*0.5f;
+                radius+=std::fabs(mvq[8+a])*(hi[a]-lo[a])*0.5f;
+            }
+            depth-=radius;
+            if(depth<near)depth=near;
+            unsigned level=cl.level_count-1;
+            while(level && levels[cl.first_level+level].error*lod_scale>depth)--level;
+            ++stats.lod_draws[level<3?level:3];
+            const auto& lv=levels[cl.first_level+level];
+            const auto* lets=package.meshlets()+lv.first_meshlet;
+            for(unsigned i=0;i<lv.meshlet_count;++i){
+                const int result=draw(lets[i]);
+                if(result<=0)return result;
+            }
+        }
+        return 1;
+    }
+#endif
     int run(){
         if(!re4dc_model_packet_reserve(&p,&packet)){++stats.reserve_rejects;return 0;}
         streaming=re4dc_model_packet_streaming()!=0;
         clip={near,far,640,480,project,static_cast<Emitter*>(this)};
         palette=nullptr; // lit ARGB1555 corners (light_part)
-        re4dc::room::CompactBatch batch{};
         batch.uv_bias[0]=part.uv_bias[0];batch.uv_bias[1]=part.uv_bias[1];
         batch.uv_scale[0]=part.uv_scale[0];batch.uv_scale[1]=part.uv_scale[1];
-        const auto* lets=package.meshlets()+part.first_meshlet;
-        for(unsigned i=0;i<part.meshlet_count;++i){
-            const auto& l=lets[i];
-            const re4dc::render::DrawBounds bounds{
-                {float(l.bounds_min[0]),float(l.bounds_min[1]),float(l.bounds_min[2])},
-                {float(l.bounds_max[0]),float(l.bounds_max[1]),float(l.bounds_max[2])}};
-            if(!re4dc::render::group_visible(bounds,mvq,p.projection,p.viewport,near,far,0)){++stats.groups_culled;continue;}
-            ++stats.groups_visible;
-            if(!bind()){++stats.bind_rejects;return submitted?-1:0;}
-            ++stats.batches;
-#if RE4DC_MESH_FASTPATH
-            // A slab too small to lend the cache behaves like any other
-            // capacity failure: generic fallback, or abort once published.
-            if(!borrow()){++stats.reserve_rejects;return submitted?-1:0;}
-            const int result=meshlet(l,batch);
+#if RE4DC_MESH_LOD
+        if(package.lod()){
+            const int result=draw_clusters();
             if(result<=0)return result;
-#else
-            const auto* base=package.vertices()+l.first_vertex;
-            const std::uint8_t* s=package.strips()+l.first_strip;
-            const std::uint8_t* const end=s+l.strip_bytes;
-            while(s<end){
-                const unsigned n=*s++;
-                const int result=strip(base,batch,s,n);
-                if(result<=0)return result;
-                s+=n;
-            }
+        }else
 #endif
+        {
+            const auto* lets=package.meshlets()+part.first_meshlet;
+            for(unsigned i=0;i<part.meshlet_count;++i){
+                const int result=draw(lets[i]);
+                if(result<=0)return result;
+            }
         }
         if(used)re4dc_model_packet_commit(used);
         re4dc_model_result(0,input,output);
@@ -664,6 +738,80 @@ extern "C" void re4dc_static_retire_all(){
 }
 extern "C" const Re4dcStaticStats* re4dc_static_stats(){return &stats;}
 
+#if RE4DC_NATIVE_FOG
+namespace {
+// Last GXSetFog state (gx_stub.cpp) and the source View far plane seen by the
+// model bridge. Temporary type-0 calls (effects, filters, thermal/black) reach
+// parts as fog off through Re4dcModelPart::source_key[2]; the table keeps the last
+// fogged state and is rewritten only when that state changes.
+struct FogState { int type; float start,end,far; unsigned rgba; };
+FogState fog_now{0,0,0,0,0},fog_loaded{-1,0,0,0,0};
+constexpr float kFogRamp=0.8f; // ramp to 100% over the last 20% before the far plane
+// 2^x for x in [-8, 0] without libm (powf alone is ~2 KB of image): halve
+// per whole step, then e^y on y=frac*ln2 in (-0.7, 0] (Taylor, error < 2e-4,
+// far below the table's 8-bit alpha).
+float fog_exp2(float x){
+    float r=1.0f;
+    while(x<=-1.0f){r*=0.5f;x+=1.0f;}
+    const float y=x*0.69314718f;
+    return r*(1.0f+y*(1.0f+y*(0.5f+y*(1.0f/6.0f+y*(1.0f/24.0f+y*(1.0f/120.0f))))));
+}
+// GX fog amount at eye depth z (GXSetFog: perspective and orthographic
+// variants share the curve on t=(z-start)/(end-start)).
+float gx_fog(int type,float start,float end,float z){
+    if(!(end>start))return z>=end?1.0f:0.0f;
+    float t=(z-start)/(end-start);
+    t=t<0?0.0f:t>1?1.0f:t;
+    switch(type&7){
+    case 4: return 1.0f-fog_exp2(-8.0f*t);
+    case 5: return 1.0f-fog_exp2(-8.0f*t*t);
+    case 6: return fog_exp2(-8.0f*(1.0f-t));
+    case 7: return fog_exp2(-8.0f*(1.0f-t)*(1.0f-t));
+    default: return t;
+    }
+}
+}
+extern "C" void re4dc_fog_capture(int type,float start,float end,unsigned rgba){
+    fog_now.type=type;fog_now.start=start;fog_now.end=end;fog_now.rgba=rgba;
+}
+extern "C" unsigned re4dc_fog_enabled(){return fog_now.type!=0;}
+extern "C" void re4dc_fog_note_far(float far){
+#if RE4DC_FOG_FAR > 0
+    if(!(far<=float(RE4DC_FOG_FAR)))far=float(RE4DC_FOG_FAR);
+#endif
+    fog_now.far=far;
+}
+// Frame start (native_ui re4dc_ui_begin, after the previous render's fence):
+// PVR table fog indexes scaled 1/w, entry j <-> depth far/v(j) with
+// v(j)=2^(j>>4)*((j&15)+16)/16 (KOS pvr_fog.c), entry 0 at the far plane.
+extern "C" void re4dc_fog_frame(){
+    if(!fog_now.type)return;
+    if(fog_now.type==fog_loaded.type && fog_now.start==fog_loaded.start && fog_now.end==fog_loaded.end &&
+       fog_now.far==fog_loaded.far && fog_now.rgba==fog_loaded.rgba)return;
+    fog_loaded=fog_now;
+    const float far=fog_now.far>1.0f?fog_now.far:(fog_now.end>1.0f?fog_now.end:1.0f);
+    const float r=float((fog_now.rgba>>24)&255U)/255.0f,g=float((fog_now.rgba>>16)&255U)/255.0f,
+                b=float((fog_now.rgba>>8)&255U)/255.0f;
+    float table[129];
+    for(unsigned j=0;j<129;++j){
+        const float v=j<128?float((j&15U)+16U)/16.0f*float(1U<<(j>>4)):256.0f;
+        const float z=far/v;
+        float f=gx_fog(fog_now.type,fog_now.start,fog_now.end,z);
+        const float ramp=(z-kFogRamp*far)/((1.0f-kFogRamp)*far);
+        if(ramp>0){const float s=ramp>=1?1.0f:ramp*ramp*(3.0f-2.0f*ramp);f+=(1.0f-f)*s;}
+        table[j]=f;
+    }
+    pvr_fog_table_color(1.0f,r,g,b);
+    pvr_fog_far_depth(far);
+    pvr_fog_table_custom(table);
+#if RE4DC_FOG_BACKGROUND
+    pvr_set_bg_color(r,g,b);
+#endif
+    re4dc_log("native fog: type=%d start=%d end=%d far=%d colour=%08x near=%u%% mid=%u%%\n",fog_now.type,
+        int(fog_now.start),int(fog_now.end),int(far),fog_now.rgba,unsigned(table[128]*100.0f),unsigned(table[64]*100.0f));
+}
+#endif
+
 #if RE4DC_NATIVE_STATIC
 namespace {
 // Lowest alpha in the source colour array; 0 when it cannot be bounded.
@@ -685,6 +833,11 @@ void log_stats(unsigned frame){
         re4dc_log("native static: frame=%u vertices=%u batches=%u binds=%u misses=%u conflicts=%u unowned=%u unbound=%u lit=%u\n",
             frame,stats.vertices,stats.batches,stats.binds,stats.bind_misses,stats.bind_conflicts,stats.unowned_binds,
             stats.locate_misses,stats.parts_lit);
+#if RE4DC_MESH_LOD || RE4DC_NATIVE_FOG
+        re4dc_log("native static: frame=%u clusters=%u/%u lod=%u/%u/%u/%u px=%u\n",frame,stats.clusters_visible,
+            stats.clusters_visible+stats.clusters_culled,stats.lod_draws[0],stats.lod_draws[1],stats.lod_draws[2],
+            stats.lod_draws[3],unsigned(RE4DC_MESH_LOD_PX));
+#endif
     }
 }
 #if RE4DC_NATIVE_MESH
@@ -750,6 +903,29 @@ int mesh_submit(const Re4dcModelPart& p){
     if(re4dc_model_defer_part(drawn))return 1;
     MeshDraw d{{*drawn,{},near,far},v.package,*part,v.lut};
     d.alpha=(drawn->alpha_state&255U)<<24;d.vertex_alpha=vertex_alpha;
+    d.cull_far=far;
+#if RE4DC_NATIVE_FOG
+    {
+        const float view_far=fog_now.far; // source View._zfar, noted by model_bridge.cpp
+        if(p.source_key[2] && view_far>near && view_far<far)d.cull_far=view_far; // hidden by the fog ramp
+    }
+#endif
+#if RE4DC_MESH_LOD
+    {
+        // Pixels per model unit at unit depth: modelview scale (largest row,
+        // placement scale included) times the projection's pixel scale.
+        const float* m=drawn->modelview;
+        float scale=0;
+        for(unsigned r=0;r<3;++r){
+            const float n=m[4*r]*m[4*r]+m[4*r+1]*m[4*r+1]+m[4*r+2]*m[4*r+2];
+            if(n>scale)scale=n;
+        }
+        const float px_x=320.0f*std::fabs(p.projection[1]),px_y=240.0f*std::fabs(p.projection[3]);
+        const float px=px_x>px_y?px_x:px_y;
+        d.part_index=unsigned(part-v.package.parts());
+        d.lod_scale=std::sqrt(scale)*px/float(RE4DC_MESH_LOD_PX);
+    }
+#endif
     // Mesh grid -> source model space -> live source view (node matrix included).
     const float grid[12]={mesh.step[0],0,0,mesh.origin[0], 0,mesh.step[1],0,mesh.origin[1],
                           0,0,mesh.step[2],mesh.origin[2]};
