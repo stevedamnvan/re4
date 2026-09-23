@@ -223,6 +223,11 @@ User decisions (2026-09-23):
   - Simplified house shells (item 21, MESH_TEXTURES=1): the mid mesh with a 512 VQ texture (66 KB per house), used everywhere with no near swap. -0.71 hw ms for FILE_01/17+18; ~-1.6 to -1.8 projected for all FILE_01. Step 5.
   - Effects: bring back native sprites for muzzle flash, blood and fire (+0.5 to 1.0 hw ms), together with EFFECT_LEAN. Step 4.
   - Cutscene subtitles: no, for now.
+  - **Low setting mode (requested 2026-09-23):** a pre-game debug-menu toggle (Normal / Low, plus per-feature switches) that turns on the aggressive options: full replacement of the GC model drawing path, the Leon rebuild plus low-poly Ganados, and occlusion.
+    - Normal targets 20 fps; Low pushes toward 30 fps (33 ms hw).
+    - The switches are runtime, not compile-time. Only the selected asset set is resident. The logic trace is STRICT across modes.
+    - In design at /root/probe/d367-agents/design-lowmode, design-scenery and design-ganado.
+  - Outlook: all planned work lands at ~50-65 hw ms in quiet views, so 20 fps is the target. 30 fps would need every area near its floor at once.
   - **Gore stays** ("keep gore don't remove it"): CUT_GORE (r103 corpses and the r100 gore object via the JP path) is rejected and must not enter the recipe. That route now relies on the r103 corpse constructor alias (55c0a5b). Safe cuts are down to FX_LEAN (foot shadows, about 0.1 ms). Particle/decal caps aren't possible (shared RNG), and screen filters stay (about 0 ms; some set game flags).
   - Added to the lane: outdoor occlusion/PVS (hide houses and trees behind buildings; est. -3 to -6 hw ms in r101/r103), step 5. Leon render rebuild with fewer skinned bones (render skin weights only; the game skeleton, attach points and hit zones untouched; ~5-6 -> ~3 hw ms), step 3. Lower-poly Ganado render meshes (heads kept), step 3.
   - **Rejected:** reduced animation/skin update rates for any actor ("might throw off gameplay"). Crowd tiers vary geometry and shading only; every actor's pose updates every frame. This supersedes the earlier "skinned every other/3rd-4th frame" crowd tiers.
