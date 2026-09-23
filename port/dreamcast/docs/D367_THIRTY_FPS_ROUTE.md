@@ -186,7 +186,7 @@ Performance work is serialized: one integrated build, one change at a time.
 |---|---|---|
 | 0 | FRONT_NATIVE v1, RELEASE_FLAGS | landed (c881fba, ecbea1f) |
 | 1 | Texture preload per room, O(1) handles, no runtime CRC (movement hitches; crowd texture cost) | finishing |
-| 2 | Game-logic cuts (game30 LH recipe, then tick cuts) | queued |
+| 2 | Game-logic cuts (game30 LH recipe, then tick cuts) | LH recipe + GAME_TRIG landed (7dd50e7, 28ef388): hw game-logic 25.8 -> **12.0 ms/tick**, inside the ~15 budget; frame 157.8 -> 120.3 hw. STRICT. Next, ranked: D-cache prefetch in the logic list walks (EmAtCheck, partsWorldCalc; ceiling -3.25), EmAtCheck prefilter (<1), Hermite/vector maths (~0.5). Skip: I-cache relink (makes it worse), reciprocal fdiv (not bit-exact). Visual sims stay: cloth and pendulum write the parts chain; effects share the RNG. |
 | 3 | Enemies: Leon <=5 ms, CROWD_LOD tiers, ACT_CAP, safe cuts (CUT_GORE, FX caps, static car/cops) | queued |
 | 4 | Render front end: EFFECT_LEAN, EMIT_DIRECT, FRONT_NATIVE v2 | queued |
 | 5 | Scenery: fog distance, tree cap, house from halfway, W9 worst views and per-room fog | queued. Trials done: 25 m far plane (room's own curve) is scenery 29.9 -> 18.7 hw ms, frame 158.3 -> 140.1. 20 m fails the enemy rule (a Ganado at 20 m is 100% fogged). Rule for other rooms: min(room far, 25 m). House from halfway (~21 m) needs per-object building fog: open. LOD 5 px (-2.9 at 42.7 m) and TREE_THIN are unmeasured on top. |
