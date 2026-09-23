@@ -7,20 +7,29 @@
 // the compiled code and the loader's control flow (readRelData, DLL_Link,
 // prolog) stays as recovered.
 //
-// Differences from a real link, by design: the modules' static constructors
-// ran once at image start instead of at every prolog, and a module's .bss
-// keeps its values between loads instead of being re-zeroed.
+// Link-time state follows the GameCube loader. A fresh link (the header was
+// just read from disc) starts from the module's pristine .data and a zeroed
+// .bss, exactly what a newly read REL has; the pristine .data is captured at
+// the module's first link, before any of its code has run. A relink of the
+// same header after OSUnlink (cRoomData::stopRelData / restartRelData around
+// the sub screen) keeps the state: the source restores its bss backup there.
+// tools/gen_modules.py bounds each module's .data/.bss span and rejects
+// modules with static constructors, so the empty _ctors list the prologs walk
+// is also what a per-link constructor pass would run.
+
 #include "re4dc_platform.h"
 
 typedef unsigned long u32;
 
 extern "C" {
 // The stage entry objects (src/st<N>/st<N>.cpp) walk the linker-script
-// ctor / dtor label lists renamed to these; the image ran its constructors
-// before main, so both lists are empty.
+// ctor / dtor label lists renamed to these; no module has constructors
+// (checked when the module object is linked), so both lists are empty.
 void (*re4dc_module_ctors[])(void) = {0};
 void (*re4dc_module_dtors[])(void) = {0};
-#define MODULE(name) void name##_prolog(void); void name##_epilog(void);
+#define MODULE(name) void name##_prolog(void); void name##_epilog(void); \
+    extern char re4dc_mod_##name##_data[], re4dc_mod_##name##_data_end[], re4dc_mod_##name##_bss[], \
+        re4dc_mod_##name##_bss_end[], re4dc_mod_##name##_pristine[];
 MODULE(st1_0)
 MODULE(st1_1)
 MODULE(st1_2)
@@ -36,9 +45,15 @@ struct Re4dcModule {
     const char* name;
     void (*prolog)(void);
     void (*epilog)(void);
+    char* data;         // writable state span (gen_modules.py state.ld)
+    char* data_end;
+    char* bss;
+    char* bss_end;
+    char* pristine;     // .data as linked, captured before the first prolog
 };
 
-#define MODULE(id, name) {id, #name, name##_prolog, name##_epilog}
+#define MODULE(id, name) {id, #name, name##_prolog, name##_epilog, re4dc_mod_##name##_data, \
+    re4dc_mod_##name##_data_end, re4dc_mod_##name##_bss, re4dc_mod_##name##_bss_end, re4dc_mod_##name##_pristine}
 static const Re4dcModule g_modules[] = {
     MODULE(74, st1_0),
     MODULE(73, st1_1),
@@ -50,6 +65,47 @@ static const Re4dcModule g_modules[] = {
 };
 #undef MODULE
 
+namespace {
+constexpr unsigned kModules = sizeof(g_modules) / sizeof(g_modules[0]);
+// OSUnlink leaves this in the header's (OS-owned) link.next word; a header
+// read fresh from disc has 0 there, so a restart is told from a new read
+// even when the new REL lands at the address of the old one.
+constexpr u32 kUnlinkedMark = 0x57365552;  // "W6UR"
+struct ModuleState {
+    const void* header;     // header of the current link (nullptr when unlinked)
+    const void* stopped;    // header unlinked by OSUnlink, eligible for restart
+    bool captured;
+    unsigned fresh_links, restarts, unlinks;
+};
+ModuleState g_state[kModules];
+}
+
+static int moduleIndex(u32 id)
+{
+    for (unsigned i = 0; i < kModules; i++) {
+        if (g_modules[i].id == id) return int(i);
+    }
+    return -1;
+}
+
+// Fresh link: pristine .data, zero .bss (the GameCube OSLink of a newly read REL).
+static void freshState(unsigned i)
+{
+    const Re4dcModule& m = g_modules[i];
+    ModuleState& s = g_state[i];
+    const unsigned data = unsigned(m.data_end - m.data);
+    if (!s.captured) {
+        __builtin_memcpy(m.pristine, m.data, data);
+        s.captured = true;
+    } else {
+        __builtin_memcpy(m.data, m.pristine, data);
+    }
+    __builtin_memset(m.bss, 0, unsigned(m.bss_end - m.bss));
+    ++s.fresh_links;
+    re4dc_log("module state: %s fresh link %u data=%u bss=%u %s\n", m.name, s.fresh_links, data,
+              unsigned(m.bss_end - m.bss), s.fresh_links == 1 ? "captured" : "restored");
+}
+
 // Binds the header the game read (include/main_sub.h OSModuleHeader: id at 0,
 // prolog at 0x34, epilog at 0x38) to the compiled module; 1 = known module.
 extern "C" int re4dc_module_bind(void* header)
@@ -59,6 +115,10 @@ extern "C" int re4dc_module_bind(void* header)
         return 0;
     }
     u32* h = (u32*) header;
+    const int index = moduleIndex(h[0]);
+    // Relink of the header this module last unlinked: state is kept.
+    const bool restart = h[1] == kUnlinkedMark && index >= 0 && g_state[index].stopped == header;
+    if (h[1] == kUnlinkedMark) h[1] = 0;
     if (h[0x1c / 4] == 0xDC000001) {
         // Compact offline descriptor: no section, name, import or raw code fields.
         for (unsigned i = 1; i < 16; ++i) {
@@ -69,10 +129,7 @@ extern "C" int re4dc_module_bind(void* header)
             }
         }
     }
-    const Re4dcModule* m = 0;
-    for (unsigned i = 0; i < sizeof(g_modules) / sizeof(g_modules[0]); i++) {
-        if (g_modules[i].id == h[0]) m = &g_modules[i];
-    }
+    const Re4dcModule* m = index >= 0 ? &g_modules[index] : 0;
     void (**prolog)(void) = (void (**)(void)) &h[0x34 / 4];
     void (**epilog)(void) = (void (**)(void)) &h[0x38 / 4];
     if (m == 0) {
@@ -88,8 +145,47 @@ extern "C" int re4dc_module_bind(void* header)
         *epilog = 0;
         return 0;
     }
-    re4dc_log("module: id %lu -> %s (static)\n", h[0], m->name);
+    ModuleState& s = g_state[index];
+    if (s.header && s.header != header) {
+        re4dc_log("module: %s linked again without unlink\n", m->name);
+    }
+    if (restart) {
+        ++s.restarts;
+        re4dc_log("module: id %lu -> %s (static, restart %u keeps state)\n", h[0], m->name, s.restarts);
+    } else {
+        re4dc_log("module: id %lu -> %s (static)\n", h[0], m->name);
+        freshState(unsigned(index));
+    }
+    s.header = header;
+    s.stopped = 0;
     *prolog = m->prolog;
     *epilog = m->epilog;
     return 1;
+}
+
+// OSUnlink: the module's code stays resident; mark the header so a relink of
+// this very header (restartRelData) is a restart rather than a fresh read.
+extern "C" int re4dc_module_unbind(void* header)
+{
+    if (header == 0) return 0;
+    u32* h = (u32*) header;
+    const int index = moduleIndex(h[0]);
+    if (index < 0 || g_state[index].header != header) {
+        re4dc_log("module: unlink of id %lu that is not linked\n", h[0]);
+        return 1;
+    }
+    ModuleState& s = g_state[index];
+    s.header = 0;
+    s.stopped = header;
+    ++s.unlinks;
+    h[1] = kUnlinkedMark;
+    return 1;
+}
+
+// Room-lifecycle audit: fresh links / restarts / unlinks summed over modules.
+extern "C" void re4dc_module_counts(unsigned* fresh, unsigned* restarts, unsigned* unlinks, unsigned* linked)
+{
+    unsigned f = 0, r = 0, u = 0, l = 0;
+    for (const auto& s : g_state) { f += s.fresh_links; r += s.restarts; u += s.unlinks; l += s.header != 0; }
+    *fresh = f; *restarts = r; *unlinks = u; *linked = l;
 }

@@ -129,9 +129,67 @@ void SEQQuit(void) {}
 void SEQRunAudioFrame(void) {}
 
 // ARAM: addresses are handed out, requests complete without a transfer.
-u32 ARInit(u32* stack, u32 n) { (void) stack; (void) n; return 0; }
+// The allocator is the SDK's (src/lib/ar.c): a stack of at most the
+// ARInit entry count, popped by ARFree, over the GameCube's 16 MB. The game
+// takes one block at SndInit for the sound region and addresses the rest
+// (room/world data, sub screen) at fixed offsets, so the stack pointer is
+// constant across rooms; re4dc_aram_state reports it for the room audit and
+// any overrun halts instead of silently handing out overlapping addresses.
+static const u32 kAramSize = 0x1000000;
+static u32* g_aramBlockLength;
+static u32 g_aramFreeBlocks;
+static int g_aramInit;
+
+u32 ARInit(u32* stack, u32 n)
+{
+    if (g_aramInit) {
+        return 0x4000;
+    }
+    g_aramNext = 0x4000;
+    g_aramFreeBlocks = n;
+    g_aramBlockLength = stack;
+    g_aramInit = 1;
+    return g_aramNext;
+}
 u32 ARGetBaseAddress(void) { return 0x4000; }
-u32 ARAlloc(u32 len) { u32 a = g_aramNext; g_aramNext += (len + 31) & ~31u; return a; }
+u32 ARGetSize(void) { return kAramSize; }
+u32 ARGetInternalSize(void) { return kAramSize; }
+int ARCheckInit(void) { return g_aramInit; }
+u32 ARAlloc(u32 len)
+{
+    int old = irq_disable();
+    len = (len + 31) & ~31u;
+    if (!g_aramInit || g_aramFreeBlocks == 0 || len > kAramSize - g_aramNext) {
+        irq_restore(old);
+        re4dc_log("ARAlloc(%lu): init=%d free_blocks=%lu sp=%08lx\n", len, g_aramInit, g_aramFreeBlocks, g_aramNext);
+        re4dc_missing("ARAlloc out of ARAM or blocks");
+        return 0;
+    }
+    u32 a = g_aramNext;
+    g_aramNext += len;
+    *g_aramBlockLength++ = len;
+    g_aramFreeBlocks--;
+    irq_restore(old);
+    return a;
+}
+u32 ARFree(u32* length)
+{
+    int old = irq_disable();
+    g_aramBlockLength--;
+    if (length) {
+        *length = *g_aramBlockLength;
+    }
+    g_aramNext -= *g_aramBlockLength;
+    g_aramFreeBlocks++;
+    u32 sp = g_aramNext;
+    irq_restore(old);
+    return sp;
+}
+void re4dc_aram_state(u32* stack_pointer, u32* free_blocks)
+{
+    *stack_pointer = g_aramNext;
+    *free_blocks = g_aramFreeBlocks;
+}
 void ARQInit(void) {}
 void ARQFlushQueue(void) {}
 // ARQRequest (include/dolphin/ar.h): the SDK fills the request before the

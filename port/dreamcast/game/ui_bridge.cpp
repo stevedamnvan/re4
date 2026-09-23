@@ -55,6 +55,7 @@ extern "C" void re4dc_draw_id_quad(const IdUnit* u) {
 #include "global.h"
 #include "player.h"
 #include "native_render_profile.hpp"
+#include <stdio.h>
 #include <string.h>
 extern "C" void re4dc_profile_source(re4dc::profile::Source* out){
     *out={};if(!pG)return;
@@ -68,6 +69,155 @@ extern "C" void re4dc_profile_source(re4dc::profile::Source* out){
 
 extern "C" unsigned re4dc_fixture_source_frame(){ return pG ? pG->Frame_cnt : 0; }
 
+// ---------------------------------------------------------------- room lifecycle
+// Order of a room change (src/game): gameDoordemo -> gameStageInit -> StageSet
+// [re4dc_room_leave; reload: MemReplaceHeap(1,2); relink: stopRelData,
+// MemReplaceHeap(2,3), linkRelData] -> gameRoomInit -> gameRoomMemInit
+// [retire hooks again (idempotent), MemReplaceHeap(3,4), re4dc_room_enter].
+// One audit line per phase, compared by the capture tooling across round
+// trips: enter (heap 4 just rebuilt), steady (a fixed frame count into the
+// room) and leave (native owners retired, before any heap is replaced).
+#include "room_data.h"
+#include "sce_sys.h"
+#include "game.h"
+#include "native_motion.h"
+#include "native_effect.h"
+#include "re4dc_platform.h"
+extern "C" void re4dc_kos_heap_state(unsigned* free_chunks,unsigned* used,unsigned* break_room);
+extern "C" unsigned re4dc_vram_free();
+extern "C" int re4dc_fixture_read(const char* path,char* buffer,unsigned size);
+extern "C" void re4dc_aram_state(unsigned long* stack_pointer,unsigned long* free_blocks);
+extern "C" void re4dc_module_counts(unsigned* fresh,unsigned* restarts,unsigned* unlinks,unsigned* linked);
+extern "C" void re4dc_os_thread_stats(unsigned* registered,unsigned* reaped,unsigned* pending);
+extern "C" void re4dc_room4_open();
+extern "C" void re4dc_room4_close();
+extern "C" int re4dc_room4_state(unsigned* generation,unsigned* cells,unsigned* bytes,unsigned* stale,unsigned* refused);
+namespace {
+struct AuditValues { int heap4_free; unsigned vram_free,kos_free,kos_break; bool valid; };
+AuditValues last_audit[3];         // enter, steady, leave
+const char* const kPhase[3]={"enter","steady","leave"};
+unsigned room_frames;              // gameMainLoop frames since the room was entered
+bool steady_logged;
+void audit(int phase){
+    unsigned kos_free=0,kos_used=0,kos_break=0,fresh=0,restarts=0,unlinks=0,linked=0,threads=0,reaped=0,pending=0;
+    unsigned generation=0,cells=0,cell_bytes=0,stale=0,refused=0;
+    unsigned long aram_sp=0,aram_blocks=0;
+    re4dc_kos_heap_state(&kos_free,&kos_used,&kos_break);
+    re4dc_aram_state(&aram_sp,&aram_blocks);
+    re4dc_module_counts(&fresh,&restarts,&unlinks,&linked);
+    re4dc_os_thread_stats(&threads,&reaped,&pending);
+    re4dc_room4_state(&generation,&cells,&cell_bytes,&stale,&refused);
+    const unsigned vram=re4dc_vram_free();
+    // Every existing source heap must pass the SDK's own consistency walk.
+    char bad[16]="";unsigned nbad=0;
+    for(int h=0;h<MEM_HEAP_NUM;++h){
+        if(Heap[h].handle<0 || Heap[h].status)continue;
+        if(OSCheckHeap(Heap[h].handle)<0 && nbad<8){bad[nbad++]=char(h<10?'0'+h:'a'+h-10);bad[nbad]=0;}
+    }
+    const int heap4=Heap[4].handle>=0?OSCheckHeap(Heap[4].handle):-2;
+    // Two lines: re4dc_log formats into 256 bytes.
+    re4dc_log("room lifecycle: phase=%s room=%03x generation=%u frames=%u heap4=%08x-%08x size=%u free=%d "
+        "heap_check=%s%s native4=%u/%u stale=%u refused=%u\n",
+        kPhase[phase],unsigned(pG?pG->room_id:0),generation,room_frames,Heap[4].start,Heap[4].end,
+        Heap[4].end-Heap[4].start,heap4,nbad?"bad:":"ok",bad,cells,cell_bytes,stale,refused);
+    re4dc_log("room lifecycle: phase=%s vram_free=%u kos_free=%u kos_used=%u kos_break=%u aram_sp=%lx "
+        "aram_blocks=%lu modules=%u/%u/%u/%u threads=%u/%u/%u heap=%d\n",
+        kPhase[phase],vram,kos_free,kos_used,kos_break,aram_sp,aram_blocks,fresh,restarts,unlinks,linked,
+        threads,reaped,pending,int(MemGetCurrentHeap()));
+    AuditValues& previous=last_audit[phase];
+    const AuditValues now{heap4,vram,kos_free,kos_break,true};
+    if(previous.valid)
+        re4dc_log("room lifecycle: phase=%s drift heap4=%d vram=%d kos=%d\n",kPhase[phase],
+            now.heap4_free-previous.heap4_free,int(now.vram_free-previous.vram_free),
+            int(now.kos_free+now.kos_break)-int(previous.kos_free+previous.kos_break));
+    previous=now;
+    // KOS malloc has only a few KB left once the source arena is carved;
+    // thread records, file handles and texture metadata come out of it.
+    if(kos_free+kos_break<1024)re4dc_log("room lifecycle: WARNING KOS headroom %u < 1024\n",kos_free+kos_break);
+}
+}
+
+// StageSet entry (src/game/stage.cpp): the old room is over and every heap
+// is still in place. Idempotent; gameRoomMemInit retires again for the paths
+// that do not pass through StageSet (ending) and for the first room.
+extern "C" void re4dc_room_leave(){
+    unsigned generation,cells,bytes,stale,refused;
+    if(!re4dc_room4_state(&generation,&cells,&bytes,&stale,&refused))return;
+    re4dc_motion_retire_all();
+    re4dc_effect_retire_room();
+    re4dc_ui_retire_room();
+    re4dc_room4_close();
+    audit(2);
+    re4dc_room4_state(&generation,&cells,&bytes,&stale,&refused);
+    if(cells)re4dc_log("room lifecycle: %u native heap-4 cells (%u B) outlived retirement\n",cells,bytes);
+}
+
+// gameRoomMemInit after the source replaced heap 4: a new room heap exists.
+extern "C" void re4dc_room_enter(){
+    re4dc_room4_open();
+    room_frames=0;steady_logged=false;
+    audit(0);
+}
+
+// ---------------------------------------------------------------- room cycle fixture
+// /cd/dc/roomcycle.txt "<mode> <count> <frames>": after <frames> gameMainLoop
+// frames in a room (no event holding the game), leave through the source door
+// demo into the same room at the same point, <count> times. Test only: absent
+// file, no effect. Modes select the source path StageSet takes:
+//   door    same room REL, heap 4 rebuilt in place;
+//   relink  the room REL is relinked (RoomData.m_RelNo cleared, the r100->r101
+//           path: MemReplaceHeap(2,3) over the live heap 4, fresh OSLink);
+//   reload  the source continue (GameContinue(1): the save gameStageInit
+//           wrote, System_flg 0x80000): stage heap 2, heap 3 and the REL are
+//           all rebuilt.
+namespace {
+struct CycleFixture { bool loaded; int mode; unsigned count,frames,done; Vec pos; float y; unsigned char point; bool anchored; };
+CycleFixture cycle{};
+const char* const kCycleMode[3]={"door","relink","reload"};
+void load_cycle(){
+    cycle.loaded=true;
+    char text[64]={};
+    if(re4dc_fixture_read("/cd/dc/roomcycle.txt",text,sizeof(text)-1)<=0)return;
+    char mode[16]={};unsigned count=0,frames=0;
+    if(sscanf(text,"%15s %u %u",mode,&count,&frames)!=3)return;
+    for(int i=0;i<3;++i)if(!strcmp(mode,kCycleMode[i]))cycle.mode=i+1;
+    if(!cycle.mode)return;
+    cycle.count=count;cycle.frames=frames;
+    re4dc_log("room cycle: fixture mode=%s count=%u frames=%u\n",mode,count,frames);
+}
+}
+
+// Top of gameMainLoop (Rno0 == 3). 1 = the door demo was requested.
+extern "C" int re4dc_room_cycle_poll(){
+    unsigned generation,cells,bytes,stale,refused;
+    if(!re4dc_room4_state(&generation,&cells,&bytes,&stale,&refused))return 0;
+    ++room_frames;
+    if(!cycle.loaded)load_cycle();
+    if(!cycle.mode || !pPL || (pG->Status_flg[1]&0x10000000))return 0;
+    if(room_frames<cycle.frames)return 0;
+    if(!steady_logged){steady_logged=true;audit(1);}
+    if(cycle.done>=cycle.count)return 0;
+    if(!cycle.anchored){
+        // Every round trip re-enters where the first one left.
+        cycle.anchored=true;cycle.pos=pPL->pos;cycle.y=pPL->ang.y;cycle.point=pG->Part;
+    }
+    ++cycle.done;
+    if(cycle.mode==3){
+        re4dc_log("room cycle: reload %u/%u room=%03x via GameContinue\n",cycle.done,cycle.count,unsigned(pG->room_id));
+        GameContinue(1);
+        return 1;
+    }
+    re4dc_log("room cycle: %s %u/%u room=%03x at (%d,%d,%d)\n",kCycleMode[cycle.mode-1],cycle.done,cycle.count,
+        unsigned(pG->room_id),int(cycle.pos.x),int(cycle.pos.y),int(cycle.pos.z));
+    pG->room_id_prev=pG->room_id;pG->Part_old=pG->Part;
+    pG->next_room=pG->room_id;pG->next_point=cycle.point;
+    pG->NextPos=cycle.pos;pG->NextY=cycle.y;
+    if(cycle.mode==2)RoomData.m_RelNo=0;
+    SceSys.m_door_fade_eff=2;
+    pG->Rno0=4;pG->Rno1=0;pG->Rno2=0;pG->Rno3=0;
+    return 1;
+}
+
 #include "native_model.h"
 #include "re4dc_platform.h"
 namespace {
@@ -79,11 +229,72 @@ constexpr unsigned kRetainedBytes=131072;
 // new cell (payload + OS header + MAD tag), and leave >=80KiB for source use.
 constexpr unsigned kSourceReserve=81920,kAllocationOverhead=64;
 }
+
+// ---------------------------------------------------------------- room heap-4 cells
+#include <cstdint>
+// Native owners that borrow the source room heap (heap 4). The source rebuilds
+// heap 4 wholesale at every room change, and on a stage reload or room-REL
+// relink StageSet recreates heaps 2/3 over the live heap 4 range first
+// (MemReplaceHeap(1,2)/(2,3)) before gameRoomMemInit replaces heap 4. Native
+// room owners therefore retire at StageSet entry, while heap 4 is intact (the
+// room lifecycle above), and every native heap-4 cell carries the heap-4
+// generation it came from: a free after the rebuild is dropped (the cell went
+// with the old heap) instead of being threaded into whatever heap now covers
+// that address. Frees name heap 4's handle; Mem_free_h frees to the OS
+// current heap, which is heap 3 while StageSet links the next room's REL.
+extern "C" void OSFreeToHeap(int,void*);
+namespace {
+struct alignas(32) Room4Cell { unsigned magic,generation,bytes,reserved[5]; };
+static_assert(sizeof(Room4Cell)==32);
+constexpr unsigned kRoom4Magic=0x57364834; // "W6H4"
+struct Room4 {
+    bool live;                     // a room heap 4 exists and native owners may use it
+    unsigned generation;           // heap-4 rebuilds seen (gameRoomMemInit)
+    unsigned live_cells,live_bytes,stale_frees,refused;
+};
+Room4 room4{};
+
+void* room_alloc4(unsigned bytes,const char* tag,bool clear){
+    if(!room4.live || !memCheckHeapActive(4)){
+        ++room4.refused;
+        re4dc_log("room lifecycle: refused %s bytes=%u outside a live room heap\n",tag,bytes);
+        return nullptr;
+    }
+    auto* cell=static_cast<Room4Cell*>(clear?mem_calloc(bytes+sizeof(Room4Cell),tag,0,0,4)
+                                           :mem_alloc(bytes+sizeof(Room4Cell),tag,0,0,4));
+    if(!cell)return nullptr;
+    *cell={kRoom4Magic,room4.generation,bytes,{}};
+    ++room4.live_cells;room4.live_bytes+=bytes;
+    return cell+1;
+}
+void room_free4(void* p,const char* who){
+    if(!p)return;
+    auto* cell=static_cast<Room4Cell*>(p)-1;
+    const auto address=reinterpret_cast<std::uintptr_t>(cell);
+    if(cell->magic!=kRoom4Magic || cell->generation!=room4.generation || !memCheckHeapActive(4) ||
+       address<Heap[4].start || address>=Heap[4].end){
+        ++room4.stale_frees;
+        re4dc_log("room lifecycle: %s dropped stale heap-4 cell %p\n",who,p);
+        return;
+    }
+    cell->magic=0;--room4.live_cells;room4.live_bytes-=cell->bytes;
+    OSFreeToHeap(Heap[4].handle,cell);
+}
+}
+// gameRoomMemInit rebuilt heap 4: a new generation of native cells may start.
+extern "C" void re4dc_room4_open(){++room4.generation;room4.live_cells=0;room4.live_bytes=0;room4.live=true;}
+// StageSet entry, after the native owners retired: no new cells until the rebuild.
+extern "C" void re4dc_room4_close(){room4.live=false;}
+extern "C" int re4dc_room4_state(unsigned* generation,unsigned* cells,unsigned* bytes,unsigned* stale,unsigned* refused){
+    *generation=room4.generation;*cells=room4.live_cells;*bytes=room4.live_bytes;
+    *stale=room4.stale_frees;*refused=room4.refused;return room4.live;
+}
+
 extern "C" void re4dc_model_preparation_owner(void* owner){
 #if RE4DC_D349_RENDERER_STACK
     if(preparation_owner==owner)return;
     re4dc_model_detach_retained_storage();
-    if(retained_preparation)Mem_free_h(retained_preparation,4);
+    if(retained_preparation)room_free4(retained_preparation,"native model preparation");
     retained_preparation=nullptr;preparation_owner=owner;preparation_attempted=false;
 #endif
 }
@@ -122,8 +333,8 @@ extern "C" void* re4dc_model_retained_storage(unsigned* bytes){
         heap4_census();
 #endif
         const int before=OSCheckHeap(Heap[4].handle);
-        if(before>=int(kRetainedBytes+kAllocationOverhead+kSourceReserve))
-            retained_preparation=mem_calloc(kRetainedBytes,"native model preparation",0,0,4);
+        if(before>=int(kRetainedBytes+kAllocationOverhead+sizeof(Room4Cell)+kSourceReserve))
+            retained_preparation=room_alloc4(kRetainedBytes,"native model preparation",true);
         re4dc_log("native model preparation: bytes=%u source_free=%d->%d owner=%p reserve=%u\n",
             retained_preparation?kRetainedBytes:0,before,OSCheckHeap(Heap[4].handle),preparation_owner,kSourceReserve);
     }
@@ -144,11 +355,12 @@ extern "C" int re4dc_static_heap_free(){
 }
 extern "C" void* re4dc_static_alloc(unsigned bytes){
     const int before=re4dc_static_heap_free();
-    if(before<int(bytes+kAllocationOverhead+kSourceReserve)){
+    if(before<int(bytes+kAllocationOverhead+sizeof(Room4Cell)+kSourceReserve)){
         re4dc_log("native static: reject bytes=%u heap4_free=%d reserve=%u\n",bytes,before,kSourceReserve);
         return nullptr;
     }
-    return mem_alloc(bytes,"native static package",0,0,4);
+    return room_alloc4(bytes,"native static package",false);
 }
-extern "C" void re4dc_static_free(void* data){if(data)Mem_free_h(data,4);}
+extern "C" void re4dc_static_free(void* data){room_free4(data,"native static package");}
 #endif
+

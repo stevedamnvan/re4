@@ -43,6 +43,9 @@ void subMissionSt1();
 void subMissionSt2();
 void subMissionSt3();
 void SubMissionCheck();
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+void re4dc_room_leave();
+#endif
 }
 
 // Village rooms 200..208: list 2 until the church bell (Scenario_flg[0] 0x40000), then 3.
@@ -203,6 +206,12 @@ void StageSet()
     int reload = 0;
     int relink = 0;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // Native room owners live in heap 4, which the stage reload / REL relink
+    // below overlays with heaps 2 and 3 before gameRoomMemInit replaces it:
+    // retire them while it is intact (ui_bridge.cpp room lifecycle).
+    re4dc_room_leave();
+#endif
     if (flags & 0x2000) {
         reload = 1;
     } else if (flags & 0x100) {

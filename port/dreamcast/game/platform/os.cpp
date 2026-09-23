@@ -12,6 +12,8 @@
 // outrank the main thread and run as soon as they are resumed) and by taking
 // a suspended thread off the run queue; see the threads section.
 #include <kos.h>
+#include <malloc.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -220,8 +222,70 @@ static void* threadEntry(void* p)
     return r;
 }
 
+// Task threads end in thd_exit without a join (OSExitThread, or returning
+// from the entry), which leaves the KOS thread record allocated in state
+// FINISHED: about 1.6 KB of KOS malloc per task run, and the KOS heap has a
+// few KB of headroom. The scheduler recreates a slot's OSThread for its next
+// task, so the finished record is joined there (a join of a FINISHED thread
+// returns at once and frees it). One still running is parked here and
+// joined once it has finished.
+static kthread_t* g_reapPending[32];
+static unsigned g_reapPendingCount, g_reaped;
+
+static void reapFinished(void)
+{
+    if (irq_inside_int()) {
+        return;
+    }
+    for (unsigned i = 0; i < g_reapPendingCount;) {
+        kthread_t* kt = g_reapPending[i];
+        if (kt->state == STATE_FINISHED) {
+            thd_join(kt, NULL);
+            g_reaped++;
+            g_reapPending[i] = g_reapPending[--g_reapPendingCount];
+        } else {
+            i++;
+        }
+    }
+}
+
+static bool registered(const OSThread* thread)
+{
+    for (int i = 0; i < g_threadCount; i++) {
+        if (g_threads[i] == thread) {
+            return true;
+        }
+    }
+    return false;
+}
+
+extern "C" void re4dc_os_thread_stats(unsigned* registered_threads, unsigned* reaped, unsigned* pending)
+{
+    int old = irq_disable();
+    reapFinished();
+    *registered_threads = (unsigned) g_threadCount;
+    *reaped = g_reaped;
+    *pending = g_reapPendingCount;
+    irq_restore(old);
+}
+
 int OSCreateThread(OSThread* thread, void* (*func)(void*), void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr)
 {
+    {
+        // Only a registered OSThread's kt is a record this layer created.
+        int old = irq_disable();
+        const bool known = registered(thread);
+        kthread_t* previous = known ? thread->kt : NULL;
+        if (previous != NULL && previous != thd_current && previous != g_mainThread.kt) {
+            if (g_reapPendingCount < sizeof(g_reapPending) / sizeof(g_reapPending[0])) {
+                g_reapPending[g_reapPendingCount++] = previous;
+            } else {
+                re4dc_log("OSCreateThread: reap list full; KOS thread record %p leaks\n", (void*) previous);
+            }
+        }
+        reapFinished();
+        irq_restore(old);
+    }
     memset(thread, 0, sizeof(*thread));
     thread->func = func;
     thread->param = param;
@@ -253,9 +317,18 @@ int OSCreateThread(OSThread* thread, void* (*func)(void*), void* param, void* st
     }
     re4dc_log("OSCreateThread: tid %d prio %ld stack top %p size %u\n", (int) thread->kt->tid, (long) priority, stack,
               (unsigned) stackSize);
-    if (g_threadCount < 32) {
-        g_threads[g_threadCount++] = thread;
+    // One entry per OSThread: slots are recreated for every task run, and
+    // threadOf() treats an unregistered thread as the main thread.
+    old = irq_disable();
+    if (!registered(thread)) {
+        if (g_threadCount < 32) {
+            g_threads[g_threadCount++] = thread;
+        } else {
+            irq_restore(old);
+            re4dc_missing("OS thread registry full");
+        }
     }
+    irq_restore(old);
     return 1;
 }
 
@@ -695,8 +768,11 @@ char* OSGetFontTexture(const char* string, void** image, s32* x, s32* y, s32* wi
 }
 
 // Known RELs use compiled native entry points; unknown IDs fail explicitly.
-// Lifecycle remains limited: static BSS/constructors are not reloaded by OSLink.
+// A fresh link restores the module's pristine .data and zeroes its .bss
+// (platform/modules.cpp); a relink after OSUnlink keeps them. The source's
+// separate bss buffer is unused by the resident modules.
 extern "C" int re4dc_module_bind(void* header);
+extern "C" int re4dc_module_unbind(void* header);
 
 BOOL OSLink(void* module, void* bss)
 {
@@ -706,8 +782,38 @@ BOOL OSLink(void* module, void* bss)
 
 BOOL OSUnlink(void* module)
 {
-    (void) module;
-    return 1;
+    return re4dc_module_unbind(module);
+}
+
+// Room-lifecycle audit (game/ui_bridge.cpp): KOS malloc headroom is free
+// chunks plus what sbrk may still take below the kernel stack (mm_sbrk's
+// limit); the source arena memalign leaves only a few KB of it.
+void re4dc_kos_heap_state(unsigned* free_chunks, unsigned* used, unsigned* break_room)
+{
+    const struct mallinfo mi = mallinfo();
+    const uintptr_t brk = (uintptr_t) sbrk(0);
+    const uintptr_t limit = _arch_mem_top - THD_KERNEL_STACK_SIZE;
+    *free_chunks = (unsigned) mi.fordblks;
+    *used = (unsigned) mi.uordblks;
+    *break_room = brk < limit ? (unsigned) (limit - brk) : 0;
+}
+
+unsigned re4dc_vram_free(void)
+{
+    return (unsigned) pvr_mem_available();
+}
+
+// Optional disc fixture (test-only inputs such as /cd/dc/roomcycle.txt);
+// bytes read, or -1 when the file is absent.
+int re4dc_fixture_read(const char* path, char* buffer, unsigned size)
+{
+    file_t f = fs_open(path, O_RDONLY);
+    if (f < 0) {
+        return -1;
+    }
+    const ssize_t n = fs_read(f, buffer, size);
+    fs_close(f);
+    return (int) n;
 }
 
 // DBIsDebuggerPresent: the hang detector halts after 3600 idle vsyncs when no

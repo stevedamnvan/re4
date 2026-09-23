@@ -198,6 +198,10 @@ void gameOption();
 void gameDoordemo();
 void gameRoomMemInit();
 void gameStopMove();
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+void re4dc_room_enter();
+int re4dc_room_cycle_poll();
+#endif
 void gameDebugDisp();
 void gameDebug();
 }
@@ -658,6 +662,11 @@ void gameMainLoop()
     int slow;
     int nObj;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    if (re4dc_room_cycle_poll()) {
+        return;  // test fixture: the door demo (Rno0 = 4) was requested
+    }
+#endif
     BitOff(pG->Status_flg[2], 0x10000000);
     UpdateNearClipDist();
     gameStopMove();
@@ -1395,6 +1404,9 @@ void gameRoomMemInit()
         }
         MemSetCurrentHeap(4);
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    re4dc_room_enter();
+#endif
     memclr_asm(pG->pad_16C, 0x4E00);
     U32Set(pG->Debug_flg[0], 0);
     U32Set(pG->Debug_flg[1], 0);
