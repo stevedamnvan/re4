@@ -436,6 +436,28 @@ def fmt_fcvseq(sw, off, size, ctx):
         sw.u16(off + 4 + 4 * i)
 
 
+def fmt_term_seq(sw, off, size, ctx):
+    """op/opNN.das SEQ sub-files (Sscrn ss_term.cpp OpeMesTblInit / OpeSeqMove):
+    TermSeq records {u16 x0, s16 x2, s32 time, s32 mesNo, s32 arg}, 16 bytes
+    each; the record whose arg is -1 ends the op. The bytes after it are
+    0 / 0xCD padding and stay as they are. Not the FCV MotionSeqKey layout
+    that the SEQ tag names elsewhere."""
+    count = 0
+    while True:
+        p = off + 16 * count
+        if p + 16 > off + size:
+            raise ValueError('term sequence has no end record (arg -1)')
+        arg = struct.unpack_from('>i', sw.data, p + 12)[0]
+        sw.u16s(p, 2)
+        sw.u32s(p + 4, 3)
+        count += 1
+        if arg == -1:
+            break
+    tail = bytes(sw.data[off + 16 * count:off + size])
+    if any(b not in (0, 0xCD) for b in tail):
+        raise ValueError('term sequence trailing bytes are not 0 / 0xCD padding')
+
+
 def fmt_itm(sw, off, size, ctx):
     """item_model.cpp: source id table and table-relative BIN/TPL pairs."""
     version = sw.u32(off)
@@ -1558,6 +1580,12 @@ TAG_FORMATS = {
     b"CNS\0": fmt_cns,
     b"SAT\0": fmt_sat,
     b"EAT\0": fmt_sat,
+    # Sub screen map room hit (ss_map.cpp mapHitAddr -> cSatHeader, read by
+    # mapPositionCheck through cSat::init/getSat): the SAT layout.
+    b"MHT\0": fmt_sat,
+    # Sub screen font (sscrn.cpp / ss_file.cpp / ss_term.cpp setupFont with
+    # SS_ARC_PTR(arc, 4)): the MesFontFile of font/*.fnt.
+    b"FNT\0": fmt_fnt,
     b"MDT\0": fmt_mdt,
     b"TPL\0": fmt_tpl,
     b"UWF\0": fmt_uwf,
@@ -1565,11 +1593,11 @@ TAG_FORMATS = {
 }
 
 
-def looks_like_tagged(data, off, size):
+def looks_like_tagged(data, off, size, max_count=0x100):
     if size < 0x18:
         return False
     n = struct.unpack_from(">I", data, off)[0]
-    if n == 0 or n > 0x100 or 0x10 + 8 * n > size:
+    if n == 0 or n > max_count or 0x10 + 8 * n > size:
         return False
     if any(struct.unpack_from(">3I", data, off + 4)):
         return False
@@ -1606,6 +1634,9 @@ def fmt_tagged(sw, off, size, ctx):
             continue
         sub_ctx = "%s#%d" % (ctx, i)
         handler = TAG_FORMATS.get(tags[i])
+        for pattern, table in FILE_TAG_FORMATS:
+            if tags[i] in table and fnmatch.fnmatchcase(sw.label, pattern):
+                handler = table[tags[i]]
         # CoreData's fixed offset is authoritative; BIN here is not ModelData.
         if sub_ctx == 'etc/core.das:0#11':
             handler = fmt_light_paths
@@ -1621,6 +1652,18 @@ def fmt_tagged(sw, off, size, ctx):
             entry["handled"] = True
             guarded(sw, fmt_tagged, off + start, end - start, sub_ctx, entry)
         REPORT.append(entry)
+
+
+def fmt_ss_arc(sw, off, size, ctx):
+    """ss_pzzl.dat (ss_pzzl.cpp pieceTblInit / SsPzzlMain::init, ss_shop.cpp):
+    the tagged archive shape (SsArc: SS_ARC_PTR(arc, n) = ofs[n] + arc, so
+    SsArc index n is sub-file n - 4), but with 424 slots: a BIN / TPL pair per
+    item id at 4 + 2 * id / 5 + 2 * id (zero-tag empty slots keep their
+    index), then MDT 0x1A4, TPL 0x1A5, BIN 0x1A6..0x1A9, EFF 0x1AA, UWF 0x1AB.
+    Only the slot limit differs from the generic detector."""
+    if not looks_like_tagged(sw.data, off, size, max_count=0x200):
+        raise ValueError('not a sub screen tagged archive')
+    return fmt_tagged(sw, off, size, ctx)
 
 
 def guarded(sw, handler, off, size, ctx, entry):
@@ -1655,6 +1698,13 @@ RAW_CONTRACTS = {
     "etc/sizetbl.dat": "stored in cDvd::pSizeTbl by SizeTableRead and never dereferenced (src/game/dvd.cpp)",
 }
 
+# Tag handlers that hold only inside one file family (the same tag names
+# another layout elsewhere): the codec screen's op/opNN.das SEQ sub-files are
+# ss_term TermSeq tables, not FCV motion sequences.
+FILE_TAG_FORMATS = [
+    ("op/op*.das", {b"SEQ\0": fmt_term_seq}),
+]
+
 FILE_FORMATS = [
     ("bgm/bio4str.hed", fmt_bio4str_hed),
     ("bgm/bio4midi.hed", fmt_u32_array),
@@ -1666,6 +1716,12 @@ FILE_FORMATS = [
     # Loose chapter-title ID data (r101.cpp r101_Event30_TitleCall: IdTexDataLoad / IdSys.set).
     ("etc/*/id*.eff", fmt_eff),
     ("etc/*/*.uwf", fmt_uwf),
+    # Sub screen: item examine models (ss_main.cpp SS/item/idm%03x.bin,
+    # cap%02d.bin), pick-up models (sce_at.cpp SS/cmn/itm%02x.bin) and the
+    # attache case archive; all are ModelData / tagged layouts.
+    ("ss/item/*.bin", fmt_bin),
+    ("ss/cmn/itm*.bin", fmt_bin),
+    ("ss/*/ss_pzzl.dat", fmt_ss_arc),
     ("*.tpl", fmt_tpl),
 ]
 

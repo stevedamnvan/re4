@@ -583,5 +583,66 @@ class RoomInfoTest(unittest.TestCase):
         self.assertEqual(bytes(data[0x40:0x44]), b"r120")
 
 
+def make_sat_single():
+    """One SAT file (atari.h): version byte 0, nv=3 nn=1 ne=3, one floor
+    polygon, no blocks; vectors from +20, then the 20-byte polygon."""
+    head = bytes([0, 0]) + struct.pack(">9H", 3, 1, 3, 0, 1, 1, 0, 0, 0)
+    vectors = struct.pack(">21f", *[float(i) for i in range(21)])
+    poly = struct.pack(">7HxxI", 0, 1, 2, 0, 0, 1, 2, 0x01020304)
+    return head + vectors + poly
+
+
+class SubScreenTest(unittest.TestCase):
+    def test_file_patterns_select_sub_screen_models_and_case_archive(self):
+        find = lambda rel: LE.find_handler(LE.FILE_FORMATS, rel)
+        self.assertIs(find('ss/item/idm0a1.bin'), LE.fmt_bin)
+        self.assertIs(find('ss/item/cap03.bin'), LE.fmt_bin)
+        self.assertIs(find('ss/cmn/itm1a.bin'), LE.fmt_bin)
+        self.assertIs(find('ss/eng/ss_pzzl.dat'), LE.fmt_ss_arc)
+        self.assertIsNone(find('etc/sample.bin'))
+        self.assertIsNone(find('ss/eng/ss_item.dat'))
+
+    def test_case_archive_keeps_all_slots_beyond_generic_limit(self):
+        tpl = make_tpl([(8, 8, 5, IMAGE[:128])])
+        parts = [('', b'')] * 300
+        parts[5] = ('TPL', tpl)
+        parts[299] = ('TPL', tpl)
+        raw = make_tagged(parts)
+        self.assertFalse(LE.looks_like_tagged(raw, 0, len(raw)))  # generic rule unchanged
+        out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file('ss/eng/ss_pzzl.dat', out)
+        top = [e for e in LE.REPORT if 'sub' not in e]
+        self.assertTrue(top[0]['complete'], top)
+        subs = [e for e in LE.REPORT if 'sub' in e]
+        self.assertEqual([e['sub'] for e in subs], ['ss/eng/ss_pzzl.dat#5', 'ss/eng/ss_pzzl.dat#299'])
+        offsets = struct.unpack_from('>300I', raw, 16)
+        self.assertEqual(struct.unpack_from('<300I', out, 16), offsets)
+        self.assertEqual(out[16 + 4 * 300:16 + 8 * 300], raw[16 + 4 * 300:16 + 8 * 300])
+        # The same shape under another name stays with the generic detector.
+        other = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file('ss/eng/other.dat', other)
+        self.assertEqual(bytes(other), raw)
+        self.assertFalse(LE.REPORT[0]['handled'])
+
+    def test_font_and_map_hit_sub_files(self):
+        tpl = make_tpl([(8, 8, 5, IMAGE[:128])])
+        widths = bytes(range(1, 33))
+        fnt = be32(32, 32 + len(tpl)) + bytes(24) + tpl + widths
+        sat = make_sat_single()
+        raw = make_tagged([('BIN', b''), ('FNT', fnt), ('MHT', sat)])
+        out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file('ss/cmn/map_room.dat', out)
+        subs = {e['tag']: e for e in LE.REPORT if 'sub' in e}
+        self.assertTrue(subs['FNT']['complete'] and subs['MHT']['complete'], subs)
+        f, s = subs['FNT']['ofs'], subs['MHT']['ofs']
+        self.assertEqual(struct.unpack_from('<2I', out, f), (32, 32 + len(tpl)))
+        self.assertEqual(struct.unpack_from('<3I', out, f + 32), (0x0020AF30, 1, 12))
+        self.assertEqual(bytes(out[f + 32 + len(tpl):f + 32 + len(tpl) + 32]), widths)
+        self.assertEqual(struct.unpack_from('<9H', out, s + 2), (3, 1, 3, 0, 1, 1, 0, 0, 0))
+        self.assertEqual(struct.unpack_from('<f', out, s + 20 + 4)[0], 1.0)
+        self.assertEqual(struct.unpack_from('<7H', out, s + 20 + 84), (0, 1, 2, 0, 0, 1, 2))
+        self.assertEqual(struct.unpack_from('<I', out, s + 20 + 84 + 16)[0], 0x01020304)
+
+
 if __name__ == "__main__":
     unittest.main()
