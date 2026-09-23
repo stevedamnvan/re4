@@ -62,6 +62,37 @@
 #ifndef RE4DC_UI_VRAM_RESERVE_KB
 #define RE4DC_UI_VRAM_RESERVE_KB 64
 #endif
+// UI_HANDLES=1 (default off = previous image): direct texture handles. A
+// source image descriptor resolves to its cache entry once; later draws reach
+// it by one direct-mapped compare (no source scan, identity lookup, texel
+// hash or entry scan). See resolve() below.
+#ifndef RE4DC_UI_HANDLES
+#define RE4DC_UI_HANDLES 0
+#endif
+// UI_HEADERS=1 (default off = previous image): each UI/HUD quad's PVR header
+// (texture binding and blend) is compiled once per cache entry and blend mode
+// and reused while the entry lives; the per-frame UI path only writes vertices.
+#ifndef RE4DC_UI_HEADERS
+#define RE4DC_UI_HEADERS 0
+#endif
+// TEX_RESIDENT=1 (default off = previous image): no texture load while moving.
+// Packages open without the runtime payload CRC (verified at staging); each
+// bound room/enemy/player/weapon identity set is preloaded on the first frame
+// after the bind (behind the room-entry fade), up to the texture budget minus
+// TEX_RESIDENT_RESERVE_KB; the cache holds 128 entries; a package missing from
+// the disc is remembered instead of evicting an entry and retrying every frame.
+#ifndef RE4DC_TEX_RESIDENT
+#define RE4DC_TEX_RESIDENT 0
+#endif
+#ifndef RE4DC_TEX_RESIDENT_RESERVE_KB
+#define RE4DC_TEX_RESIDENT_RESERVE_KB 256
+#endif
+#ifndef RE4DC_TEX_RESIDENT_RESERVE_SLOTS
+#define RE4DC_TEX_RESIDENT_RESERVE_SLOTS 32 // entries the room-entry preload leaves for first-sight loads
+#endif
+#ifndef RE4DC_TEX_SLOTS
+#define RE4DC_TEX_SLOTS 192 // TEX_RESIDENT cache entries: r101 pins 95 per frame; the r100 room table has ~146
+#endif
 #if (RE4DC_PVR_PIPELINE || RE4DC_TA_DIRECT) && !RE4DC_PVR_STREAM
 #error PVR_PIPELINE and TA_DIRECT extend the PVR_STREAM=1 frame owner
 #endif
@@ -83,7 +114,7 @@
 #include "../../room/pvr_geometry.hpp"
 
 namespace {
-constexpr unsigned kQuadCount=256, kTextureCount=RE4DC_PVR_STREAM?80:48, kSourceCount=RE4DC_PVR_STREAM?128:256, kVramBudget=4*1024*1024;
+constexpr unsigned kQuadCount=256, kTextureCount=RE4DC_TEX_RESIDENT?RE4DC_TEX_SLOTS:RE4DC_PVR_STREAM?80:48, kSourceCount=RE4DC_PVR_STREAM?128:256, kVramBudget=4*1024*1024;
 #if RE4DC_UI_VRAM
 unsigned vram_budget,vram_retries,vram_rejects; // budget: set by re4dc_ui_init() from the actual pool
 #endif
@@ -92,13 +123,30 @@ struct Entry { re4dc::texture::Package package; Key key{}; unsigned frame=0; boo
 #if RE4DC_D349_RENDERER_STACK
     pvr_poly_hdr_t model_header{};unsigned model_header_key=~0U;
 #endif
+#if RE4DC_UI_HEADERS
+    pvr_poly_hdr_t ui_header{};unsigned ui_header_key=~0U; // UI quad header for blend ui_header_key
+#endif
 };
 struct Source { Re4dcUiImage image{}; Key key{}; };
 // Current source view needs >64 simultaneously pinned native handles. Reuse
 // bytes from the optional source-key lookup cache, not the game heap/queue.
 // An uncached source descriptor still resolves through its existing owner table.
 Entry entries[kTextureCount]; Source sources[kSourceCount]; unsigned nsource;
-static_assert(sizeof(entries)+sizeof(sources)<=64*sizeof(Entry)+256*sizeof(Source));
+// TEX_RESIDENT deliberately exceeds this bound: TEX_SLOTS-80 more entries (x sizeof(Entry)).
+static_assert(RE4DC_TEX_RESIDENT || sizeof(entries)+sizeof(sources)<=64*sizeof(Entry)+256*sizeof(Source));
+#if RE4DC_UI_HANDLES
+// One 32-bit clock stamps every event that invalidates a handle: closing an
+// entry (entry_closed[]) and every source descriptor boundary (each sources[]
+// reset, handle_reset). A handle stamped later than both is still exact.
+unsigned entry_closed[kTextureCount]; unsigned handle_clock=1,handle_reset=1,handle_hits,handle_misses,handle_bypass;
+inline void sources_reset(){nsource=0;handle_reset=++handle_clock;}
+#else
+inline void sources_reset(){nsource=0;}
+#endif
+#if RE4DC_TEX_RESIDENT
+Key missing_keys[32]; unsigned nmissing;
+bool preload_pending; unsigned preload_loads,preload_skipped,preload_runs;
+#endif
 re4dc::texture::SourceIdentityTable room_identities,core_identities,option_identities,player_identities,weapon_identities;unsigned identity_hits;
 // Match the recovered loader's four module owners; texture uploads still share
 // the existing cache and VRAM budget. These views own no texels or allocations.
@@ -813,11 +861,38 @@ bool model_mask_key(const Re4dcModelPart* p,Key& key){
     return true;
 }
 #endif
+#if RE4DC_TEX_RESIDENT
+// Least-recently-REQUESTED eviction. A model part's lookup does not pin its
+// entry (the part pins it only once committed to the scene) and a new
+// unpinned upload used to get frame 0: under a full pool (room preload) it was
+// the first victim of the next load in the same frame, so parts that ask for a
+// texture every frame reloaded it every frame (4-5 disc reads per frame).
+// A lookup now marks the entry as requested last frame: still evictable this
+// frame, but after every texture nothing asked for since.
+#define RE4DC_TOUCH(e) do{if(pin)(e).frame=frame;else if(frame && (e).frame+1<frame)(e).frame=frame-1;}while(0)
+#else
+#define RE4DC_TOUCH(e) if(pin)(e).frame=frame
+#endif
+#if RE4DC_TEX_RESIDENT
+// TEX_RESIDENT discs fan the packages out by the first hex digit (stage.sh):
+// the flat /cd/dc/tex directory (~550 packages, 17+ sectors) overflowed the
+// iso9660 16-sector inode cache, so every open re-read the directory from the
+// disc (~0.2 s per first-sight texture in Flycast at r100, ~0.3 s at r101).
+#define RE4DC_TEX_PATH(buf,key) std::sprintf(buf,"/cd/dc/tex/%x/%08x-%08x.re4tex",(key).crc>>28,(key).crc,(key).fnv)
+#else
+#define RE4DC_TEX_PATH(buf,key) std::sprintf(buf,"/cd/dc/tex/%08x-%08x.re4tex",(key).crc,(key).fnv)
+#endif
 void close_entry(Entry& entry) {
     if(entry.valid) used-=entry.package.vram_bytes();
     entry.package.close();entry.valid=false;
 #if RE4DC_D349_RENDERER_STACK
     entry.model_header_key=~0U;
+#endif
+#if RE4DC_UI_HANDLES
+    entry_closed[&entry-entries]=++handle_clock;
+#endif
+#if RE4DC_UI_HEADERS
+    entry.ui_header_key=~0U; // a new upload gets its own texture address
 #endif
 }
 Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=nullptr) {
@@ -828,11 +903,11 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     const unsigned hint=(key.crc^(key.crc>>7)^key.fnv)&127U;
     if(const unsigned h=entry_hint[hint]){
         Entry& e=entries[h-1];
-        if(e.valid && e.key==key){if(pin)e.frame=frame;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
+        if(e.valid && e.key==key){RE4DC_TOUCH(e);RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
     }
-    for(auto& e:entries) if(e.valid && e.key==key) {entry_hint[hint]=(unsigned char)(&e-entries+1);if(pin)e.frame=frame;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
+    for(auto& e:entries) if(e.valid && e.key==key) {entry_hint[hint]=(unsigned char)(&e-entries+1);RE4DC_TOUCH(e);RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
 #else
-    for(auto& e:entries) if(e.valid && e.key==key) {if(pin)e.frame=frame;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
+    for(auto& e:entries) if(e.valid && e.key==key) {RE4DC_TOUCH(e);RE4DC_PROFILE_COUNT(TextureHits,1);return &e;}
 #endif
 #if RE4DC_UI_VRAM
     {
@@ -846,17 +921,41 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
         if(pinned+least>vram_budget){++vram_rejects;RE4DC_PROFILE_COUNT(TextureBudgetFailures,1);return nullptr;}
     }
 #endif
+#if RE4DC_TEX_RESIDENT
+    // A package absent from the disc: fail without evicting an entry or
+    // touching the filesystem again (it was retried every frame).
+    for(const auto& m:missing_keys) if(m.crc|m.fnv) if(m==key) return nullptr;
+#endif
     Entry* slot=nullptr;
     for(auto& e:entries) if(!e.valid){slot=&e;break;}
     if(!slot) for(auto& e:entries) if(e.frame!=frame && (!slot || e.frame<slot->frame)) slot=&e;
     if(!slot) {RE4DC_PROFILE_COUNT(TextureNoSlot,1);return nullptr;}
+#if RE4DC_TEX_RESIDENT
+    // Never evict a resident texture for a package that is not on the disc:
+    // check it exists first (only when this load would evict), and remember
+    // an absent key so it is never tried again.
+    if(slot->valid){
+        char probe[96];RE4DC_TEX_PATH(probe,key);
+        const file_t f=fs_open(probe,O_RDONLY);
+        if(f==FILEHND_INVALID){
+            re4dc_log("native UI: package absent, not evicting: %s\n",probe);
+            missing_keys[nmissing++%(sizeof(missing_keys)/sizeof(missing_keys[0]))]=key;
+            RE4DC_PROFILE_COUNT(TextureOpenFailures,1);return nullptr;
+        }
+        fs_close(f);
+    }
+#endif
     if(slot->valid)RE4DC_PROFILE_COUNT(TextureEvictions,1);
     close_entry(*slot); // caller has completed both TA and render fences
-    char path[96];std::sprintf(path,"/cd/dc/tex/%08x-%08x.re4tex",key.crc,key.fnv);
+    char path[96];RE4DC_TEX_PATH(path,key);
     re4dc_log("native UI: load %s %ux%u fmt=%u\n",path,image.width,image.height,image.format);
     const int heap_before=re4dc_ui_heap_free();
     bool ok=slot->package.open_streamed(path);
     if(!ok) {RE4DC_PROFILE_COUNT(TextureOpenFailures,1);re4dc_log("native UI: package rejected: %s\n",slot->package.error());}
+#if RE4DC_TEX_RESIDENT
+    if(!ok && slot->package.error() && !std::strcmp(slot->package.error(),"open failed"))
+        missing_keys[nmissing++%(sizeof(missing_keys)/sizeof(missing_keys[0]))]=key;
+#endif
 #if RE4DC_UI_VRAM
     // Evict the least recently used upload that this frame's scene does not
     // reference (frame!=current); LRU order spends uploads idle >=2 frames
@@ -872,8 +971,14 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
         if(!victim) return false;
         RE4DC_PROFILE_COUNT(TextureEvictions,1);close_entry(*victim);++reclaimed;return true;
     };
+#if RE4DC_TEX_RESIDENT
+    unsigned need=0;
+    if(ok) {
+        const auto& h=slot->package.header();need=h.data_size;
+#else
     if(ok) {
         const auto& h=slot->package.header();
+#endif
         ok=h.texture_count==1 && h.data_size<=vram_budget;
         // Accounted budget first, then the real pool (allocator overhead).
         while(ok && (used+h.data_size>vram_budget || pvr_mem_available()<h.data_size))
@@ -888,6 +993,11 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
         for(const char* e=slot->package.error();!ok && e && !std::strcmp(e,"PVR texture allocation failed") && evict();e=slot->package.error()){
             ++vram_retries;
             re4dc_log("native UI: fragmented VRAM, evicted and retrying (retries=%u free=%u)\n",vram_retries,(unsigned)pvr_mem_available());
+#if RE4DC_TEX_RESIDENT
+            // Evict until one contiguous block of the size fits, then read the
+            // package once more (was: a full re-read per single eviction).
+            for(;;){pvr_ptr_t probe=pvr_mem_malloc(need);if(probe){pvr_mem_free(probe);break;}if(!evict())break;}
+#endif
             ok=slot->package.open_streamed(path) && slot->package.upload();
         }
         ok=ok && slot->package.release_payload();
@@ -930,19 +1040,166 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     re4dc_log("native UI: bounded upload heap=%d->%d metadata=%u staging=shared-16384 source_allocation=0\n",heap_before,re4dc_ui_heap_free(),slot->package.metadata_bytes());
     if(ok)++loads;
     if(!ok) return nullptr;
-    slot->valid=true;slot->key=key;slot->frame=pin?frame:0;used+=slot->package.vram_bytes();
+    slot->valid=true;slot->key=key;
+#if RE4DC_TEX_RESIDENT
+    slot->frame=pin?frame:frame?frame-1:0;
+#else
+    slot->frame=pin?frame:0;
+#endif
+   used+=slot->package.vram_bytes();
     if(used>peak) peak=used;
     return slot;
 }
+#if RE4DC_UI_HANDLES
+// Direct texture handles. The first draw of a source image (with its alpha
+// mask for masked model parts) takes the full path: image_key() (source scan,
+// identity tables or texel hash) and load() (entry scan, upload). Its result
+// is kept in a direct-mapped handle: one 32-byte line holding the descriptor
+// and the entry index. Later draws compare the descriptor words and the stamp
+// and use the entry directly: no hashing, keying, memcmp or table scan.
+// Exactness: the handle is dropped by any entry close (eviction, retire) and
+// by every source descriptor boundary (sources_reset(): room/core/option/
+// player/weapon/enemy binds, invalidate_sources), the same contract under
+// which sources[] already maps a descriptor to its key without rehashing.
+// Indexed (C4/C8) images, e.g. the HUD: image_key() re-qualifies the CURRENT
+// palette each time. Their handle also keeps a copy of the palette qualified
+// at fill time (palette_copies[], one per handle slot group) and hits only
+// while the live palette is identical, so a hit is exactly what the full path
+// would resolve; any palette change takes the full path again.
+struct alignas(32) Handle { const void *pixels,*palette,*mask_pixels,*mask_palette; unsigned shape,mask_shape,stamp; unsigned char entry; unsigned short palette_bytes; };
+static_assert(sizeof(void*)!=4 || sizeof(Handle)==32,"one SH-4 D-cache line per handle");
+Handle handle_table[256];
+constexpr unsigned kPaletteCopies=16;
+struct PaletteCopy { unsigned short owner,bytes; unsigned short data[256]; }; // owner: handle index+1
+PaletteCopy palette_copies[kPaletteCopies];
+inline bool handle_shape(const Re4dcUiImage& i,unsigned& shape,bool allow_indexed){
+    // The bridges mark "no palette" as palette_format 0xffffffff (GX TLUT formats are 0-2).
+    const unsigned palette_format=i.palette_format==0xffffffffU?3U:i.palette_format;
+    const bool indexed=i.format==8 || i.format==9;
+    if(indexed ? (!allow_indexed || !i.palette || !i.palette_bytes || i.palette_bytes>512 || (i.palette_bytes&1) ||
+                  (reinterpret_cast<std::uintptr_t>(i.palette)&1))
+               : i.palette_bytes!=0)return false;
+    if(!i.pixels || i.format>15 || palette_format>3 || !i.width || !i.height || i.width>1024 || i.height>1024)return false;
+    shape=i.width|i.height<<11|i.format<<22|palette_format<<26|1U<<31;return true;
+}
+inline bool palette_same(unsigned index,const Re4dcUiImage& i){
+    const PaletteCopy& c=palette_copies[index%kPaletteCopies];
+    if(c.owner!=index+1 || c.bytes!=i.palette_bytes)return false;
+    const auto* p=static_cast<const unsigned short*>(i.palette);
+    for(unsigned n=0;n<i.palette_bytes/2;++n)if(c.data[n]!=p[n])return false;
+    return true;
+}
+inline void palette_keep(unsigned index,const Re4dcUiImage& i){
+    PaletteCopy& c=palette_copies[index%kPaletteCopies];
+    c.owner=(unsigned short)(index+1);c.bytes=(unsigned short)i.palette_bytes;
+    std::memcpy(c.data,i.palette,i.palette_bytes);
+}
+Entry* resolve_full(const Re4dcUiImage& image,const Re4dcModelPart* masked,bool pin){
+#if RE4DC_D349_RENDERER_STACK
+    if(masked){Key key{};if(!model_mask_key(masked,key))return nullptr;return load(image,pin,&key);}
+#else
+    (void)masked;
+#endif
+    return load(image,pin);
+}
+Entry* resolve(const Re4dcUiImage& image,const Re4dcModelPart* masked,bool pin){
+    const Re4dcUiImage* mask=masked?&masked->mask:nullptr;
+    unsigned shape,mask_shape=0;
+    if(!handle_shape(image,shape,!mask) || (mask && !handle_shape(*mask,mask_shape,false))){++handle_bypass;return resolve_full(image,masked,pin);}
+    const bool indexed=image.format==8 || image.format==9;
+    const void* mask_pixels=mask?mask->pixels:nullptr;const void* mask_palette=mask?mask->palette:nullptr;
+    const unsigned a=unsigned(reinterpret_cast<std::uintptr_t>(image.pixels)),b=unsigned(reinterpret_cast<std::uintptr_t>(mask_pixels));
+    Handle& h=handle_table[((a>>5)^(a>>13)^(b>>6)^(shape>>11))&255U];
+    if(h.pixels==image.pixels && h.shape==shape && h.palette==image.palette && h.mask_pixels==mask_pixels &&
+       h.mask_shape==mask_shape && h.mask_palette==mask_palette && h.stamp>handle_reset && h.stamp>entry_closed[h.entry] &&
+       h.palette_bytes==image.palette_bytes && (!indexed || palette_same(unsigned(&h-handle_table),image))){
+        Entry& e=entries[h.entry];
+        RE4DC_TOUCH(e);
+        ++handle_hits;RE4DC_PROFILE_COUNT(TextureHits,1);return &e;
+    }
+    ++handle_misses;
+    Entry* e=resolve_full(image,masked,pin);
+    if(e){
+        h={image.pixels,image.palette,mask_pixels,mask_palette,shape,mask_shape,++handle_clock,(unsigned char)(e-entries),(unsigned short)image.palette_bytes};
+        if(indexed)palette_keep(unsigned(&h-handle_table),image);
+    }
+    return e;
+}
+#endif
+#if RE4DC_TEX_RESIDENT
+// Room-entry preload: runs on the render thread at the first frame after an
+// identity set was bound (the room's entry fade), never while moving.
+// 1. Select in priority order (room, enemy sets, player, weapon) while the
+//    least possible size (16-bit or full-codebook VQ, as the fail-fast check)
+//    fits the budget minus the byte reserve and the selection leaves
+//    RE4DC_TEX_RESIDENT_RESERVE_SLOTS entries for first-sight loads.
+// 2. Load the selection in package-name order, which is the order of the
+//    files on the disc (ISO 9660 sorts names): short forward seeks instead of
+//    a random walk (r101 took ~0.4 s per package in table order in Flycast).
+// Loads pin to this frame so the loop only evicts older uploads (the previous
+// room), never its own; at the end they become "requested last frame", so the
+// scene's first frame is never short of an entry.
+unsigned preload_least(unsigned width,unsigned height){
+    unsigned pw=8,ph=8;while(pw<width)pw*=2;while(ph<height)ph*=2;
+    return std::min(pw*ph*2,2048+pw*ph/4);
+}
+struct PreloadPick { Key key; unsigned short width,height,format; };
+PreloadPick preload_picks[kTextureCount];
+void preload_select(const re4dc::texture::SourceIdentityTable& table,unsigned& n,unsigned& resident,unsigned& bytes,unsigned limit,unsigned byte_limit){
+    for(unsigned i=0;i<table.count() && n+resident<limit;++i){
+        unsigned crc,fnv,width,height,format;
+        if(!table.record(i,crc,fnv,width,height,format) || !width || !height || width>1024 || height>1024)continue;
+        const Key key{crc,fnv};
+        bool known=false;
+        for(auto& e:entries)if(e.valid && e.key==key){if(e.frame!=frame){e.frame=frame;++resident;bytes+=e.package.vram_bytes();}known=true;break;}
+        for(const auto& m:missing_keys)if(!known && (m.crc|m.fnv) && m==key)known=true;
+        for(unsigned k=0;k<n && !known;++k)if(preload_picks[k].key==key)known=true;
+        if(known)continue;
+        const unsigned least=preload_least(width,height);
+        if(bytes+least>byte_limit)continue; // a smaller one later may still fit
+        preload_picks[n++]={key,(unsigned short)width,(unsigned short)height,(unsigned short)format};bytes+=least;
+    }
+}
+void preload_identities(){
+    preload_pending=false;++preload_runs;
+    const std::uint64_t start=timer_us_gettime64();
+    const unsigned loads=preload_loads,skipped=preload_skipped;
+    const unsigned budget=(RE4DC_UI_VRAM?vram_budget:kVramBudget),reserve=RE4DC_TEX_RESIDENT_RESERVE_KB*1024U;
+    unsigned pinned=0,pinned_bytes=0;
+    for(const auto& e:entries)if(e.valid && e.frame==frame){++pinned;pinned_bytes+=e.package.vram_bytes();}
+    const unsigned limit=kTextureCount>RE4DC_TEX_RESIDENT_RESERVE_SLOTS+pinned?kTextureCount-RE4DC_TEX_RESIDENT_RESERVE_SLOTS-pinned:0;
+    const unsigned byte_limit=budget>reserve+pinned_bytes?budget-reserve-pinned_bytes:0;
+    unsigned n=0,resident=0,bytes=0; // resident: already uploaded, pinned for the loop
+    preload_select(room_identities,n,resident,bytes,limit,byte_limit);
+    for(auto& e:enemy_identities)if(e.archive)preload_select(e.table,n,resident,bytes,limit,byte_limit);
+    preload_select(player_identities,n,resident,bytes,limit,byte_limit);preload_select(weapon_identities,n,resident,bytes,limit,byte_limit);
+    // Package-name order ("%08x-%08x": crc, then fnv).
+    for(unsigned i=1;i<n;++i){
+        const PreloadPick p=preload_picks[i];unsigned j=i;
+        for(;j && (preload_picks[j-1].key.crc>p.key.crc || (preload_picks[j-1].key.crc==p.key.crc && preload_picks[j-1].key.fnv>p.key.fnv));--j)preload_picks[j]=preload_picks[j-1];
+        preload_picks[j]=p;
+    }
+    bool full=false;
+    for(unsigned i=0;i<n;++i){
+        if(used+reserve>=budget){full=true;break;}
+        const PreloadPick& p=preload_picks[i];
+        const Re4dcUiImage image{reinterpret_cast<const void*>(1),nullptr,p.width,p.height,p.format,0xffffffffU,0};
+        if(load(image,true,&p.key))++preload_loads;else ++preload_skipped;
+    }
+    if(frame)for(auto& e:entries)if(e.valid && e.frame==frame)e.frame=frame-1;
+    re4dc_log("native texture preload: frame=%u picked=%u resident=%u loads=%u skipped=%u full=%d used=%u budget=%u entries=%u us=%u\n",frame,n,resident,preload_loads-loads,
+        preload_skipped-skipped,full?1:0,used,budget,kTextureCount,unsigned(timer_us_gettime64()-start));
+}
+#endif
 }
 #if RE4DC_PVR_PIPELINE
 // Called by room/texture_package.cpp (PVR_PIPELINE builds) before VRAM is
 // freed or uploaded: it may be referenced by the scene not yet resolved.
 extern "C" void re4dc_pvr_vram_fence(){present_fence();}
 #endif
-extern "C" void re4dc_ui_invalidate_sources(){nsource=0;re4dc_model_reset_draw_plans();}
+extern "C" void re4dc_ui_invalidate_sources(){sources_reset();re4dc_model_reset_draw_plans();}
 extern "C" int re4dc_ui_bind_core(void* archive,unsigned bytes){
-    nsource=0;
+    sources_reset();
     const bool ok=core_identities.adopt(archive,bytes);
     if(ok)re4dc_model_bind_draw_owner(&core_identities,archive,bytes,0);
     else re4dc_model_unbind_draw_owner(&core_identities);
@@ -950,12 +1207,15 @@ extern "C" int re4dc_ui_bind_core(void* archive,unsigned bytes){
     return ok;
 }
 extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
-    nsource=0;identity_hits=0;
+    sources_reset();identity_hits=0;
     const bool ok=room_identities.adopt(archive,bytes);
 #if RE4DC_D349_RENDERER_STACK
     re4dc_model_preparation_owner(ok?archive:nullptr);
 #endif
     if(ok)re4dc_model_bind_draw_owner(&room_identities,archive,bytes,1);
+#if RE4DC_TEX_RESIDENT
+    if(ok)preload_pending=true;
+#endif
     else re4dc_model_unbind_draw_owner(&room_identities);
     re4dc_log("native room identities: %s count=%u archive=%u metadata_owner=room\n",ok?"ok":"REJECTED",room_identities.count(),bytes);
     return ok;
@@ -963,28 +1223,34 @@ extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
 // Option/death UI remains resident across rooms. Borrow only its validated
 // identity table; source overwrite invalidates descriptor lookups first.
 extern "C" int re4dc_ui_bind_option(void* archive,unsigned bytes){
-    nsource=0;bool ok=option_identities.adopt(archive,bytes);
+    sources_reset();bool ok=option_identities.adopt(archive,bytes);
     if(ok)re4dc_model_bind_draw_owner(&option_identities,archive,bytes,0);
     else re4dc_model_unbind_draw_owner(&option_identities);
     re4dc_log("native option identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",option_identities.count(),bytes);return ok;
 }
-extern "C" void re4dc_ui_unbind_option(){re4dc_model_unbind_draw_owner(&option_identities);option_identities.clear();nsource=0;}
+extern "C" void re4dc_ui_unbind_option(){re4dc_model_unbind_draw_owner(&option_identities);option_identities.clear();sources_reset();}
 // Player and weapon regions persist across room retirement when the source
 // retains them. Their explicit source release/overwrite boundaries clear views.
 extern "C" int re4dc_ui_bind_player(void* archive,unsigned bytes){
-    nsource=0;bool ok=player_identities.adopt(archive,bytes);
+    sources_reset();bool ok=player_identities.adopt(archive,bytes);
     if(ok)re4dc_model_bind_draw_owner(&player_identities,archive,bytes,0);
+#if RE4DC_TEX_RESIDENT
+    if(ok)preload_pending=true;
+#endif
     else re4dc_model_unbind_draw_owner(&player_identities);
     re4dc_log("native player identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",player_identities.count(),bytes);return ok;
 }
 extern "C" int re4dc_ui_bind_weapon(void* archive,unsigned bytes){
-    nsource=0;bool ok=weapon_identities.adopt(archive,bytes);
+    sources_reset();bool ok=weapon_identities.adopt(archive,bytes);
     if(ok)re4dc_model_bind_draw_owner(&weapon_identities,archive,bytes,0);
+#if RE4DC_TEX_RESIDENT
+    if(ok)preload_pending=true;
+#endif
     else re4dc_model_unbind_draw_owner(&weapon_identities);
     re4dc_log("native weapon identities: %s count=%u archive=%u\n",ok?"ok":"REJECTED",weapon_identities.count(),bytes);return ok;
 }
-extern "C" void re4dc_ui_unbind_player(){re4dc_model_unbind_draw_owner(&player_identities);player_identities.clear();nsource=0;}
-extern "C" void re4dc_ui_unbind_weapon(){re4dc_model_unbind_draw_owner(&weapon_identities);weapon_identities.clear();nsource=0;}
+extern "C" void re4dc_ui_unbind_player(){re4dc_model_unbind_draw_owner(&player_identities);player_identities.clear();sources_reset();}
+extern "C" void re4dc_ui_unbind_weapon(){re4dc_model_unbind_draw_owner(&weapon_identities);weapon_identities.clear();sources_reset();}
 extern "C" int re4dc_ui_bind_enemy(void* archive,unsigned bytes){
     re4dc::texture::SourceIdentityTable table;
     if(!table.adopt(archive,bytes))return 0;
@@ -995,7 +1261,10 @@ extern "C" int re4dc_ui_bind_enemy(void* archive,unsigned bytes){
     EnemyIdentity* slot=nullptr;
     for(auto& e:enemy_identities){if(e.archive==archive)return 0;if(!e.archive && !slot)slot=&e;}
     if(!slot)return 0;
-    slot->archive=archive;slot->table=table;nsource=0;
+    slot->archive=archive;slot->table=table;sources_reset();
+#if RE4DC_TEX_RESIDENT
+    preload_pending=true;
+#endif
     re4dc_model_bind_draw_owner(archive,archive,bytes,1);
     re4dc_log("native enemy identities: count=%u archive=%u metadata_owner=enemy upload_staging=0\n",table.count(),bytes);
     return 1;
@@ -1008,7 +1277,7 @@ extern "C" void re4dc_ui_unbind_enemy(void* archive){
     for(auto& e:enemy_identities)if(archive && e.archive==archive){e.table.clear();e.archive=nullptr;}
     // Queued packets own copied native vertices/headers and cache handles; no
     // queued reader borrows archive texels. This does not free live VRAM uploads.
-    nsource=0;
+    sources_reset();
 }
 extern "C" void re4dc_ui_retire_room(){
 #if RE4DC_D349_RENDERER_STACK
@@ -1038,7 +1307,7 @@ extern "C" void re4dc_ui_retire_room(){
     // No queued draw may outlive its source room. Shared cached uploads may be
     // reloaded from their stable identities; no archive texels are needed.
     // Core descriptors belong to the persistent core region and survive this reset.
-    nquad=0;model_used=0;model_handle=nullptr;nsource=0;room_identities.clear();identity_hits=0;
+    nquad=0;model_used=0;model_handle=nullptr;sources_reset();room_identities.clear();identity_hits=0;
     for(auto& e:enemy_identities){e.table.clear();e.archive=nullptr;}
 #if RE4DC_PVR_STREAM
     if(!stream_retire)
@@ -1122,6 +1391,9 @@ extern "C" void re4dc_ui_begin(){
     if(frame_ready)re4dc_fog_frame(); // PVR fog table/colour; the previous render has completed
 #endif
 #endif
+#if RE4DC_TEX_RESIDENT
+    if(preload_pending && frame_ready)preload_identities();
+#endif
     re4dc_prepare_model_assets(); // registration/update work precedes frame submission
     re4dc::profile::begin();
 #if defined(__sh__)
@@ -1150,7 +1422,11 @@ extern "C" void re4dc_ui_submit(const Re4dcUiQuad* q){
     if(!drawn && !nquad) re4dc_log("native UI: first quad xy=%d,%d color=%08x\n",(int)q->xy[0],(int)q->xy[1],q->color);
     // Source texture storage can be retired by the following TaskScheduler.
     // Resolve/upload while the OT consumer still owns valid source pointers.
+#if RE4DC_UI_HANDLES
+    Entry* handle=resolve(q->image,nullptr,true);
+#else
     Entry* handle=load(q->image);
+#endif
     if(!handle){++missing;return;}
     handles[nquad]=handle;new(quads+nquad++) Re4dcUiQuad(*q);
     RE4DC_PROFILE_COUNT(UiQuads,1);RE4DC_PROFILE_COUNT(UiBytes,sizeof(Re4dcUiQuad));
@@ -1181,6 +1457,13 @@ extern "C" void re4dc_ui_present(){
     for(unsigned i=0;i<nquad && !movie_override && !re4dc_vi_black();++i){
         if(!handles[i])continue;
         const auto& q=quads[i];const auto& t=handles[i]->package.textures()[0];
+#if RE4DC_UI_HEADERS
+        // Stable HUD/UI elements: the header (texture binding, blend) is compiled
+        // once per cache entry and blend mode; later frames only write vertices.
+        pvr_poly_hdr_t header;
+        if(handles[i]->ui_header_key==q.blend){header=handles[i]->ui_header;}
+        else {
+#endif
         unsigned fmt=re4dc::texture::pvr_format(t);
         pvr_poly_cxt_t c;pvr_poly_cxt_txr(&c,PVR_LIST_TR_POLY,fmt,t.width,t.height,
                             handles[i]->package.pvr_texture(0),PVR_FILTER_BILINEAR);
@@ -1188,7 +1471,13 @@ extern "C" void re4dc_ui_present(){
         const pvr_blend_mode_t src[]={PVR_BLEND_SRCALPHA,PVR_BLEND_SRCALPHA,PVR_BLEND_ONE,PVR_BLEND_DESTCOLOR,PVR_BLEND_DESTCOLOR};
         const pvr_blend_mode_t dst[]={PVR_BLEND_INVSRCALPHA,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ZERO};
         c.blend.src=src[q.blend];c.blend.dst=dst[q.blend];c.txr.env=PVR_TXRENV_MODULATEALPHA;c.txr.uv_clamp=PVR_UVCLAMP_UV;
+#if RE4DC_UI_HEADERS
+        pvr_poly_compile(&header,&c);
+        handles[i]->ui_header=header;handles[i]->ui_header_key=q.blend;
+        }
+#else
         pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);
+#endif
         alignas(32) pvr_vertex_t commands[5]{};std::uint32_t count;
         re4dc::render::begin_pvr_packet(commands,count,header);
         pvr_vertex_t* v=commands+count;const unsigned order[]={0,1,3,2};
@@ -1267,6 +1556,9 @@ extern "C" void re4dc_ui_present(){
     if(frame%120==0) re4dc_log("native UI: frame=%u quads=%u drawn=%u missing=%u unsupported=%u drops=%u vram=%u peak=%u staging=%u loads=%u freed=%u culled=%u fb=%08x,%08x black=%d\n",frame,nquad,drawn,missing,unsupported,dropped,used,peak,staging_peak,loads,reclaimed,culled,(unsigned)pvr_get_front_buffer(),(unsigned)pvr_get_back_buffer(),re4dc_vi_black());
 #if RE4DC_UI_VRAM
     if(frame%120==0) re4dc_log("native UI VRAM: frame=%u budget=%u used=%u free=%u rejects=%u retries=%u evicted=%u\n",frame,vram_budget,used,(unsigned)pvr_mem_available(),vram_rejects,vram_retries,reclaimed);
+#endif
+#if RE4DC_UI_HANDLES
+    if(frame%120==0) re4dc_log("native UI handles: frame=%u hits=%u misses=%u bypass=%u\n",frame,handle_hits,handle_misses,handle_bypass);
 #endif
 }
 
@@ -1411,11 +1703,19 @@ extern "C" void* re4dc_model_metadata_storage(unsigned* bytes){
 extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket* out){
     RE4DC_PROFILE_SCOPE(PacketPack);
     if(!re4dc_model_packet_reserve(p,out))return 0;
+#if RE4DC_UI_HANDLES
+    const Re4dcModelPart* masked=nullptr;
+#if RE4DC_D349_RENDERER_STACK
+    if(p->material_flags&4)masked=p;
+#endif
+    Entry* handle=resolve(p->image,masked,false);if(!handle){++model_texture_rejects;return 0;}
+#else
     Key prepared{};const Key* key=nullptr;
 #if RE4DC_D349_RENDERER_STACK
     if(p->material_flags&4){if(!model_mask_key(p,prepared)){++model_texture_rejects;return 0;}key=&prepared;}
 #endif
     Entry* handle=load(p->image,false,key);if(!handle){++model_texture_rejects;return 0;}
+#endif
     const auto& t=handle->package.textures()[0];
     // Repeating a padded image would repeat its border. Reject, never change wrap.
     if((p->wrap_s && t.width!=p->image.width)||(p->wrap_t && t.height!=p->image.height)){++model_wrap_rejects;return 0;}

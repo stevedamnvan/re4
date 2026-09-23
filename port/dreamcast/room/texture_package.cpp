@@ -134,6 +134,22 @@ bool SourceIdentityTable::adopt(const void* archive, std::size_t bytes) {
     return true;
 }
 
+#ifndef RE4DC_TEX_RESIDENT
+#define RE4DC_TEX_RESIDENT 0
+#endif
+#ifndef RE4DC_TEX_PAYLOAD_CRC
+#define RE4DC_TEX_PAYLOAD_CRC 0
+#endif
+#if RE4DC_TEX_RESIDENT
+bool SourceIdentityTable::record(unsigned index,unsigned& crc,unsigned& fnv,unsigned& width,unsigned& height,unsigned& format) const {
+    if(!data_ || index>=count_) return false;
+    const auto start=word(table_+12*index);
+    if(std::uint64_t(start)+32>bytes_) return false;
+    const auto* p=data_+start;
+    crc=word(p+8);fnv=word(p+12);width=word(p+16);height=word(p+20);format=word(p+24);
+    return true;
+}
+#endif
 int SourceIdentityTable::lookup(const void* pixels,unsigned width,unsigned height,unsigned format,
                                   unsigned& crc,unsigned& fnv,const void* palette,unsigned palette_format,unsigned palette_bytes) const {
     const auto address=reinterpret_cast<std::uintptr_t>(pixels);
@@ -222,6 +238,14 @@ bool Package::open_streamed(const char* path) {
             error_="streamed upload requires native texture layout";close();return false;
         }
     }
+#if RE4DC_TEX_RESIDENT && !RE4DC_TEX_PAYLOAD_CRC
+    // TEX_RESIDENT: no payload CRC pass on the render thread (it read the whole
+    // file a second time through a bit-serial CRC: tens of ms per texture). The
+    // payload CRC is verified when the disc is staged (tools/d367/stage.sh);
+    // the header and every descriptor were validated above. TEX_PAYLOAD_CRC=1
+    // restores the runtime check for debugging.
+    error_=nullptr;return true;
+#endif
     // Validate once before any VRAM allocation or publishing this package.
     std::uint32_t crc=0xffffffffU;
     if(fs_seek(file_,sizeof(Header),SEEK_SET)!=sizeof(Header) ||

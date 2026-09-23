@@ -339,6 +339,12 @@ $(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/pvr-stre
 # UI_VRAM=1: native texture cache budget from the actual PVR pool (minus
 # UI_VRAM_RESERVE_KB), LRU eviction/fragmentation retry/fail-fast, and 2 KiB
 # page placement of VQ codebooks and page-sized textures (texture_package).
+# UI_HANDLES=1: direct texture handles; a source image resolves to its cache
+# entry once, later draws skip the image_key()/load() scans and hashing.
+# UI_HEADERS=1: UI/HUD quad PVR headers compiled once per texture entry and blend.
+# TEX_RESIDENT=1: no runtime payload CRC (verified at staging; TEX_PAYLOAD_CRC=1
+# restores it), identity sets preloaded at room entry, TEX_SLOTS cache entries (128),
+# absent packages remembered and never evict a resident texture.
 PVR_FAST_WAKE ?= 0
 PVR_PIPELINE ?= 0
 TA_DIRECT ?= 0
@@ -351,6 +357,12 @@ TA_GUARD ?= 0
 PERF_HUD ?= 0
 UI_VRAM ?= 0
 UI_VRAM_RESERVE_KB ?= 64
+UI_HANDLES ?= 0
+UI_HEADERS ?= 0
+TEX_RESIDENT ?= 0
+TEX_RESIDENT_RESERVE_KB ?= 256
+TEX_SLOTS ?= 192
+TEX_PAYLOAD_CRC ?= 0
 .PHONY: pipeline30-force
 $(OBJDIR)/pipeline30.h: pipeline30-force
 	@mkdir -p $(dir $@)
@@ -358,6 +370,8 @@ $(OBJDIR)/pipeline30.h: pipeline30-force
 	@printf '#define RE4DC_PVR_FAST_WAKE %s\n#define RE4DC_PVR_PIPELINE %s\n#define RE4DC_TA_DIRECT %s\n#define RE4DC_BRIDGE_LEAN %s\n' '$(PVR_FAST_WAKE)' '$(PVR_PIPELINE)' '$(TA_DIRECT)' '$(BRIDGE_LEAN)' > $@.tmp
 	@printf '#define RE4DC_TA_VERTBUF_KB %s\n#define RE4DC_TA_DOUBLEBUF %s\n#define RE4DC_TA_OPB_BINS %s\n#define RE4DC_TA_OPB_OVERFLOW %s\n#define RE4DC_TA_GUARD %s\n#define RE4DC_PERF_HUD %s\n' '$(TA_VERTBUF_KB)' '$(TA_DOUBLEBUF)' '$(TA_OPB_BINS)' '$(TA_OPB_OVERFLOW)' '$(TA_GUARD)' '$(PERF_HUD)' >> $@.tmp
 	@printf '#define RE4DC_UI_VRAM %s\n#define RE4DC_UI_VRAM_RESERVE_KB %s\n' '$(UI_VRAM)' '$(UI_VRAM_RESERVE_KB)' >> $@.tmp
+	@printf '#define RE4DC_UI_HANDLES %s\n#define RE4DC_UI_HEADERS %s\n' '$(UI_HANDLES)' '$(UI_HEADERS)' >> $@.tmp
+	@printf '#define RE4DC_TEX_RESIDENT %s\n#define RE4DC_TEX_RESIDENT_RESERVE_KB %s\n#define RE4DC_TEX_PAYLOAD_CRC %s\n#define RE4DC_TEX_SLOTS %s\n' '$(TEX_RESIDENT)' '$(TEX_RESIDENT_RESERVE_KB)' '$(TEX_PAYLOAD_CRC)' '$(TEX_SLOTS)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_ui.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/pipeline30.h

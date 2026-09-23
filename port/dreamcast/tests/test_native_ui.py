@@ -2,6 +2,7 @@
 Host fixtures compile the real shared implementation, following the existing
 native_room_load/native_module_binding fixture pattern. No emulator substitute.
 """
+import re
 import pathlib
 import shutil
 import subprocess
@@ -326,7 +327,7 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
             first=source.index('extern "C" int re4dc_ui_bind_player(')
             last=source.index('extern "C" void re4dc_ui_init(',first)
             bindings=source[first:last]
-            setup='struct EnemyIdentity {void* archive=nullptr;re4dc::texture::SourceIdentityTable table;};\nEnemyIdentity enemy_identities[4];unsigned nsource;void re4dc_log(const char*,...){}\n'
+            setup='struct EnemyIdentity {void* archive=nullptr;re4dc::texture::SourceIdentityTable table;};\nEnemyIdentity enemy_identities[4];unsigned nsource;void sources_reset(){nsource=0;}void re4dc_log(const char*,...){}\n'
             setup+='re4dc::texture::SourceIdentityTable player_identities,weapon_identities,room_identities;bool ready;unsigned nquad,model_used,identity_hits,closed;struct Entry{};Entry entries[1];Entry* model_handle;void close_entry(Entry&){assert(render_calls);++closed;}void re4dc_missing(const char*){assert(false); }\n'
             fixture=fixture.replace('int main(',setup+bindings+'int main(',1)
             cpp=root/"fixture.cpp";cpp.write_text(fixture)
@@ -341,10 +342,12 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
     @unittest.skipUnless(shutil.which("g++"), "host compiler required")
     def test_texture_pin_matches_committed_packet_ownership(self):
         source=(ROOT/"port/dreamcast/game/platform/native_ui.cpp").read_text()
-        # close_entry() and load() through load's closing brace (the anonymous
-        # namespace closes next; PVR_PIPELINE fence glue may follow it).
-        first=source.index("void close_entry(")
-        loader=source[first:source.index("\n}\n}\n",source.index("Entry* load(",first))+3]
+        # close_entry(), load() and the UI_HANDLES resolve() through the end of
+        # the anonymous namespace (PVR_PIPELINE fence glue follows it).
+        first=source.index("#if RE4DC_TEX_RESIDENT\n// Least-recently-REQUESTED")
+        loader=source[first:source.index("\n}\n#if RE4DC_PVR_PIPELINE\n// Called by room/texture_package.cpp",source.index("Entry* load(",first))+1]
+        # The room-entry preload (identity tables, timer) is not part of this fixture.
+        loader=re.sub(r"#if RE4DC_TEX_RESIDENT\n// Room-entry preload.*?\n#endif\n","",loader,flags=re.S)
         commit=source[source.index('extern "C" void re4dc_model_packet_commit('):source.index('extern "C" void re4dc_model_result(')]
         fixture=r"""
 #include "native_ui.h"
@@ -376,10 +379,22 @@ struct Entry{re4dc::texture::Package package;Key key;unsigned frame=0;bool valid
 Entry entries[2],*model_handle=nullptr;unsigned frame=5,used=0,peak=0,loads=0;
 unsigned model_used=0,model_pending=1,model_peak=0;
 constexpr unsigned kVramBudget=128;
-unsigned vram_budget=1000,vram_retries=0,vram_rejects=0,reclaimed=0;
+unsigned vram_budget=1000,vram_retries=0,vram_rejects=0,reclaimed=0,keys=0;
 unsigned image_size(const Re4dcUiImage&){return 32;}
-bool image_key(const Re4dcUiImage& i,Key& k){k.crc=(uintptr_t)i.pixels;k.fnv=k.crc;return true;}
+bool image_key(const Re4dcUiImage& i,Key& k){++keys;k.crc=(uintptr_t)i.pixels;k.fnv=k.crc;return true;}
+struct Re4dcModelPart{Re4dcUiImage image,mask;};
+#if RE4DC_UI_HANDLES
+unsigned entry_closed[2],handle_clock=1,handle_reset=1,handle_hits=0,handle_misses=0,handle_bypass=0,nsource=0;
+void sources_reset(){nsource=0;handle_reset=++handle_clock;}
+#endif
 int re4dc_ui_heap_free(){return 1000;}unsigned pvr_mem_available(){return 1000;}
+#if RE4DC_TEX_RESIDENT
+Key missing_keys[32];unsigned nmissing=0,absent=0,probes=0;
+typedef int file_t;constexpr file_t FILEHND_INVALID=-1;constexpr int O_RDONLY=0;
+file_t fs_open(const char* p,int){++probes;unsigned c=0,f=0;std::sscanf(p,"/cd/dc/tex/%*x/%08x-%08x",&c,&f);return c==absent?FILEHND_INVALID:3;}
+void fs_close(file_t){}
+typedef void* pvr_ptr_t;pvr_ptr_t pvr_mem_malloc(unsigned){return (void*)64;}void pvr_mem_free(pvr_ptr_t){}
+#endif
 """+loader+commit+r"""
 int main(){
  Re4dcUiImage a{};a.width=a.height=8;a.pixels=(void*)1;
@@ -415,12 +430,61 @@ int main(){
  assert(!load(a)&&vram_rejects==1&&uploads==uploads_before&&retried->valid&&used==64);
  vram_budget=1000;
 #endif
+#if RE4DC_UI_HANDLES
+ // Direct handles: the first use takes the full path, later uses return the
+ // same entry without image_key()/load(); pin like load(); dropped by any
+ // entry close and by every source boundary; indexed images never cached.
+ ++frame;for(auto& e:entries)close_entry(e);assert(!used);
+ Re4dcUiImage h{};h.width=h.height=8;h.format=14;h.palette_format=0xffffffffU;h.pixels=(void*)21; // bridges: no palette = ~0
+ auto* e1=resolve(h,nullptr,false);assert(e1&&e1->valid&&handle_misses==1);
+ unsigned k0=keys,u0=uploads;
+ for(int i=0;i<100;++i)assert(resolve(h,nullptr,false)==e1);
+ assert(keys==k0&&uploads==u0&&handle_hits==100&&e1->frame!=frame);
+ assert(resolve(h,nullptr,true)==e1&&e1->frame==frame&&keys==k0);
+ h.width=16;assert(resolve(h,nullptr,false)==e1&&handle_misses==2&&keys==k0+1); // other descriptor, same key
+ h.width=8;close_entry(*e1);auto* e2=resolve(h,nullptr,false);
+ assert(e2&&handle_misses==3&&keys==k0+2&&uploads==u0+1);                  // closed: re-resolved and reloaded
+ assert(resolve(h,nullptr,false)==e2&&keys==k0+2);
+ sources_reset();assert(resolve(h,nullptr,false)==e2&&handle_misses==4&&keys==k0+3); // boundary: re-keyed
+ Re4dcModelPart part{};part.image=h;part.mask=h;part.mask.pixels=(void*)31;
+ assert(resolve(part.image,&part,false)==e2&&handle_misses==5);             // masked is its own handle
+ assert(resolve(part.image,&part,false)==e2&&handle_misses==5);
+ part.mask.pixels=(void*)32;assert(resolve(part.image,&part,false)==e2&&handle_misses==6);
+ unsigned hits=handle_hits;h.format=8;
+ for(int i=0;i<3;++i)assert(resolve(h,nullptr,false));
+ assert(handle_hits==hits&&handle_bypass==3&&keys==k0+8);                    // indexed without a palette: full path
+ // Indexed with a live palette (HUD C4/C8): hits only while the palette is
+ // identical to the one qualified at fill time; an in-place change re-qualifies.
+ unsigned short pal[16]={1,2,3};h.palette=pal;h.palette_bytes=32;h.pixels=(void*)41;
+ unsigned k1=keys;assert(resolve(h,nullptr,true)&&keys==k1+1);
+ assert(resolve(h,nullptr,true)&&keys==k1+1);
+ pal[5]=9;assert(resolve(h,nullptr,true)&&keys==k1+2);
+ assert(resolve(h,nullptr,true)&&keys==k1+2);
+ h.palette_bytes=30;assert(resolve(h,nullptr,true)&&keys==k1+3);              // other palette size: other qualification
+#endif
+#if RE4DC_TEX_RESIDENT
+ // An absent package never evicts a resident texture, and is not probed again.
+ ++frame;for(auto& e:entries)close_entry(e);assert(!used);
+ Re4dcUiImage x{};x.width=x.height=8;x.pixels=(void*)51;auto* ex=load(x);
+ Re4dcUiImage y=x;y.pixels=(void*)52;auto* ey=load(y);assert(ex&&ey&&ex!=ey&&used==64);
+ ++frame;Re4dcUiImage z=x;z.pixels=(void*)53;absent=53;unsigned u1=uploads,c1=closes,p1=probes;
+ assert(!load(z)&&ex->valid&&ey->valid&&used==64&&uploads==u1&&closes==c1&&probes==p1+1);
+ assert(!load(z)&&probes==p1+1);                                              // remembered: no second probe
+ // Least-recently-requested: an unpinned lookup keeps its entry off the
+ // victim list for this frame's other loads (it used to be the first victim).
+ ++frame;assert(load(x,false)==ex&&ex->frame==frame-1&&ey->frame==frame-2);
+ Re4dcUiImage w=x;w.pixels=(void*)54;auto* ew=load(w,false);
+ assert(ew==ey&&ew->frame==frame-1&&ex->valid);                               // the unrequested one went
+ u1=uploads;assert(load(x,false)==ex&&uploads==u1);
+#endif
 }
 """
         with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d);cpp=p/"pin.cpp";cpp.write_text(fixture);exe=p/"pin"
-            for knob in ("0","1"): # default cache, then UI_VRAM=1 (pool budget, retry, fail-fast)
-                subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-DRE4DC_UI_VRAM="+knob,"-fsanitize=address,undefined","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)
+            # default cache, UI_VRAM=1 (pool budget, retry, fail-fast), UI_HANDLES=1 (direct handles)
+            # TEX_RESIDENT=1 (absent packages, least-recently-requested eviction)
+            for knob,handles,resident in (("0","0","0"),("1","0","0"),("0","1","0"),("1","1","0"),("1","1","1")):
+                subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-DRE4DC_UI_VRAM="+knob,"-DRE4DC_UI_HANDLES="+handles,"-DRE4DC_TEX_RESIDENT="+resident,"-fsanitize=address,undefined","-I"+str(ROOT/"port/dreamcast/game/platform/include"),str(cpp),"-o",str(exe)],check=True)
                 subprocess.run([str(exe)],check=True)
 
     @unittest.skipUnless(shutil.which("g++"), "host compiler required")

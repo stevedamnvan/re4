@@ -68,6 +68,9 @@ public:
                 unsigned& crc, unsigned& fnv, const void* palette = nullptr,
                 unsigned palette_format = 0xffffffffU, unsigned palette_bytes = 0) const;
     unsigned count() const { return count_; }
+    // TEX_RESIDENT builds: the native key and source shape of record `index`
+    // (room-entry preload by identity; defined only in those builds).
+    bool record(unsigned index, unsigned& crc, unsigned& fnv, unsigned& width, unsigned& height, unsigned& format) const;
 private:
     const std::uint8_t* data_ = nullptr;
     const std::uint8_t* table_ = nullptr;

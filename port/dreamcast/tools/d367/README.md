@@ -2,28 +2,115 @@
 
 The plan and measurements are in `port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md`.
 
-## Commands
+## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 
 ```
+LFV="NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1 UI_VRAM=1 TA_VERTBUF_KB=2048 UI_HANDLES=1 TEX_RESIDENT=1"
+P=/root/probe/d367-agents/ps2-blender/stage/ps2trees     # LD packages (private)
+VQ=/root/probe/d367-agents/ui-vram/tex-vq5                # VQ texture overlay (private, see below)
+
 # build (private OBJDIR keeps flag changes from reusing the shared obj/)
-OWNERS=0x7F STATIC=1 MESH=1 EXTRA_MAKE="<flags> OBJDIR=/path/obj-<name>" \
+OWNERS=0x7F STATIC=1 MESH=1 EXTRA_MAKE="$LFV OBJDIR=/path/obj-<name>" \
   bash port/dreamcast/tools/d367/build.sh /path/build-<name>
 
-# stage (MIRROR, FIXTURES_SRC and KEYED are locally extracted private data)
+# stage (MIRROR, FIXTURES_SRC and KEYED are locally extracted private data).
+# TEXDIRS order matters: later directories win. The VQ overlay also re-encodes
+# the GC bark key f6e54e3e-1ef21097, so the PS2 bark ($P/tex) must come last.
 MIRROR=/root/probe/d367-mirror KEYED=/root/probe/d367-native-static/keyed12 \
-  MESHDIR=<packages> TEXDIRS="<texture overlays>" \
+  MESHDIR=$P/mesh TEXDIRS="$VQ $P/tex" \
   bash port/dreamcast/tools/d367/stage.sh /path/build-<name> /path/disc-<name>
 ```
 
-Capture with `port/dreamcast/tools/flycast-harness/` (see its README).
+Capture with `port/dreamcast/tools/flycast-harness/` (see its README). `stage.sh` records
+its inputs in `<disc-dir>/stage-inputs.txt` and warns when a `UI_VRAM=1 TA_VERTBUF_KB=2048`
+build is staged without a VQ overlay (the 2.6 MB texture pool then thrashes: 1,884 upload
+failures and multi-second frames at r100 in Flycast).
+
+`UI_HANDLES=1 TEX_RESIDENT=1` (texture hitch fix; Flycast r100 camera tour, frames 2400+):
+- The hitch was the first-sight texture load: ~0.2 s per package at r100 (~0.3-0.4 s at r101),
+  almost all of it the iso9660 lookup. The flat `/cd/dc/tex` directory (~550 packages, 17+
+  sectors) overflowed KOS's 16-sector inode cache, so every open re-read the directory from
+  the disc. `stage.sh` fans a TEX_RESIDENT build's packages out into `tex/0`..`tex/f` (first hex
+  digit); the build opens `/cd/dc/tex/<d>/<crc>-<fnv>.re4tex`.
+- `TEX_RESIDENT=1`: the room/enemy/player/weapon identity sets are preloaded at room entry
+  (in disc order, leaving 32 of the 192 entries and 256 KiB for first-sight loads), absent
+  packages are remembered and never evict a resident texture, eviction is
+  least-recently-requested, and the runtime payload CRC is skipped (`stage.sh` verifies every
+  package's CRC instead; `TEX_PAYLOAD_CRC=1` keeps the runtime check).
+- `UI_HANDLES=1`: one direct-mapped handle per source image descriptor (O(1), no hashing).
+- Tour result, LFV + tex-vq3 -> this recipe: median 100 -> 100 ms, p99 870 -> 119 ms, max
+  4264 -> 489 ms, frames over 2x the median 289 -> 5, texture loads while moving 756 -> 6.
+  The five remaining spikes are not textures (3 are draw-plan installs, `visit_draw_locals` +
+  memmove, ~450 ms). The r100 room entry preloads 177 packages in 4.4 s (r101: 188 in 5.0 s).
+- Image cost with the knobs on: +41,888 bytes (text +3,360; data +17,920 = the 192 cache
+  entries; bss +20,608 = handle table, palette copies, preload list). `TEX_SLOTS=128`
+  saves 10,240 bytes. The default build is byte-identical.
+
+Why each part of LFV is needed (Flycast r100, frames 2401-2520, all 116.8 ms/frame):
+- `TA_VERTBUF_KB=2048`: r100 sends ~1.41 MB/frame of TA stream (~1031 KB of TA
+  parameters), over a 1024 KB bank on hardware (Flycast does not enforce it).
+- The 2 MiB banks shrink the PVR texture pool from 4.74 MB to 2.64 MB. `UI_VRAM=1` sizes
+  the native texture cache from the actual pool (LRU eviction, fragmentation retry,
+  fail-fast, 2 KiB page placement for VQ).
+- `tex-vq3` makes the title/menu textures (32 images, 7.24 MB -> 0.97 MB) and large model
+  textures (23 images, 2.75 MB -> 0.39 MB) full-codebook VQ. Title peak 1.04 MB, r100 uses
+  1.59 MB of 2.58 MB; 0 upload failures, 0 evictions. Worst model PSNR is 26.3 dB (leaf
+  litter), which was not visibly different in 2x gameplay crops against LF.
+
+### Generating the VQ overlay (tex-vq5; tex-vq3 below is the same rule on fewer logs)
+
+tex-vq5 applies the tex-vq3 rule to three more logs (the camera tour and the 4/10-Ganado
+crowd) and to the r100 textures the room preload loads, and makes model textures VQ from
+16 KiB padded (tex-vq3: 64 KiB), so the r100 room set fits the 2.58 MB pool: 137 images,
+14,024,704 -> 2,033,664 bytes, lowest PSNR 26.3 dB (the tex-vq3 leaf litter). Logs are kept
+privately in `/root/probe/d367-agents/ui-vram/logs/`:
+
+```
+L=/root/probe/d367-agents/ui-vram/logs
+python3 port/dreamcast/tools/vq_native_ui.py --textures /root/probe/d354v7-fixtures/tex \
+  --log $L/v2-run-output.txt --log $L/v3-run-output.txt --log $L/p2048a-run-output.txt \
+  --log $L/la-run-output.txt --log $L/lod2048-run-output.txt --log $L/scen-tour-G25-run-output.txt \
+  --log $L/actors30-gcrowd-crowd-run-output.txt --log $L/actors30-gfull-crowd-run-output.txt \
+  --log $L/uivram-tour-t1-run-output.txt --log $L/uivram-tour-t3-run-output.txt \
+  --model-min-bytes 16384 --output /root/probe/d367-agents/ui-vram/tex-vq5
+```
+
+### Generating the VQ overlay (tex-vq3)
+
+The packages are private derived game data: keep them out of Git. Inputs are the
+fixtures' native texture packages (`$FIXTURES_SRC/tex`, default
+`/root/probe/d354v7-fixtures/tex`) and Flycast run logs that reached r100 gameplay; the
+`native UI: load ...` lines name the images the title, menus and r100 load. The measured
+`tex-vq3` came from the five logs kept (private) in `/root/probe/d367-agents/ui-vram/logs/`:
+
+```
+L=/root/probe/d367-agents/ui-vram/logs
+python3 port/dreamcast/tools/vq_native_ui.py --textures /root/probe/d354v7-fixtures/tex \
+  --log $L/v2-run-output.txt --log $L/v3-run-output.txt --log $L/p2048a-run-output.txt \
+  --log $L/la-run-output.txt --log $L/lod2048-run-output.txt --model-min-bytes 65536 \
+  --output /root/probe/d367-agents/ui-vram/tex-vq3 [--previews <png-dir>]
+```
+
+Without those logs, pass the `run-output.txt` of any one LFV/LF run that reached r100
+instead. The encoder is deterministic: that gives the same 55 packages byte for byte, plus
+3 model textures only the LF scenery loads (256x256, 32.9-34.5 dB; 58 images,
+10,387,456 -> 1,417,216 bytes). The 58-image set was not captured in Flycast.
+
+UI images (loaded before the first room binds, or indexed C4/C8 sources) of at least 32 KiB
+padded and 32 px per side, and model textures of at least 64 KiB padded, are re-encoded
+by the pinned KOS `pvrtex` (`/root/work/kos-re4dc-d336/utils/pvrtex/pvrtex`, full
+256-entry codebook). The package names (source identities), padded sizes and UV scale are
+unchanged. `vq-native-ui-report.json` lists every image with its PSNR; the expected summary
+is 55 images, 9,994,240 -> 1,361,920 bytes. The overlay is required only by the 2 MiB TA
+recipe; the default-flag build ignores it.
 
 ## Candidate flag sets (Flycast r100, frames 2401-2520)
 
 | Name | ms/frame | EXTRA_MAKE |
 |---|---|---|
 | LD | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=1 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1` |
-| LF (default) | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1`. Async present; `build.sh` selects `/root/work/kos-re4dc-d367` (see `patches/README.md`). Neutral in Flycast; adopted because it stops the CPU waiting on render. |
-| LH | 83 (hw 120.3) | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1 COPY_LEAN=1 FRONT_LEAN=1 MESH_DIRECT=1 TA_DIRECT=1 NATIVE_ACTOR_DIRECT=1 UI_VRAM=1 TA_VERTBUF_KB=2048 GAME_FP_CONTRACT=off GAME_CPU=1 GAME_ROT_CACHE=1 GAME_O2=hot GAME_TRIG=1 AICA_AUDIO=1 RELEASE_FLAGS=1`. Build TEXDIRS with tex-vq3 first, then the PS2 bark (they share a texture key). Logic trace STRICT vs the TR-OFF baseline; hw game-logic 12.0 ms/tick. The integrated perf lane's base; FRONT_NATIVE=1 is not yet measured on it. |
+| LF | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1`. Async present; `build.sh` selects `/root/work/kos-re4dc-d367` (see `patches/README.md`). Neutral in Flycast; adopted because it stops the CPU waiting on render. |
+| LFV (default) | 117 | LF plus `UI_VRAM=1 TA_VERTBUF_KB=2048`, staged with the `tex-vq3` overlay (above). Fits the r100 TA stream on hardware; same Flycast frame time as LF. |
 
 LD packages: the scenery30 LOD packages with the PS2 tree substitution (`MESHDIR`), and
 the PS2 bark texture overlay (`TEXDIRS`). The generation steps are documented with the
