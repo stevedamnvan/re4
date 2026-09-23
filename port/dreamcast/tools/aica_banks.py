@@ -26,6 +26,9 @@ usage:
       (bgm/aica_str.dat: the route's disc streams as AICA ADPCM, see build_streams)
   aica_banks.py merge --mirror DIR --overlay OVERLAY --out DATADIR
       (a disc data directory for mkdisc.sh: the mirror hardlinked, overlay files in place)
+  aica_banks.py disc --mirror DIR --out DATADIR --cache DIR [--json OUT]
+      (build + streams + merge in one step, both cached by content: what
+      tools/d367/stage.sh runs for every disc; banks rewritten, the rest hardlinked)
 
 Game data never enters the repository: the mirror, the overlay and the cache are
 private directories.
@@ -495,7 +498,7 @@ def cached_convert(cache_dir, img, samples, coefs, cap, check):
 # (ADPCM long-stream mode) refilled by a reader thread; the GC ring voices stay silent.
 #
 #   header  : magic 'AIS1', count, 0, 0, then `count` entries of STR_ENT
-#   entry   : file offset of the stream in bio4bgm.sbb (SND_SHD offset), rate,
+#   entry   : file offset of the stream in its .sbb (SND_SHD offset), rate,
 #             flags (1 = loops | stream block << 8 | request number << 16), channels, intro samples (A = [0, loop end)),
 #             loop samples (B = [loop start, loop end), 0 = none), A data offset,
 #             B data offset (bytes in this file, 2 KB aligned)
@@ -504,7 +507,13 @@ def cached_convert(cache_dir, img, samples, coefs, cap, check):
 STR_MAGIC = 0x31534941   # "AIS1"
 STR_ENT = struct.Struct('<8I')
 STR_BLOCK = 2048
-ROUTE_STREAMS = [(0, 2), (0, 8)]   # bgmtbl: r100 / r101 0x8002, r103 0x8008 (block 0 = bio4bgm.sbb)
+# Stream block -> file (snd.cpp StrFileTbl {1, 0x5F} -> dvd.cpp FileTbl): 0 music, 1 events / voice.
+STREAM_FILES = {0: 'bgm/bio4bgm.sbb', 1: 'bgm/bio4evt.sbb'}
+ROUTE_STREAMS = [
+    (0, 2), (0, 8),   # bgmtbl: r100 / r101 0x8002, r103 0x8008
+    (1, 3),           # Ope radio (sscrn.cpp OpeSetOpenTerm strTbl: terms 0, 1 in r100, 0xC at r101 entry)
+    (1, 14),          # em21 (em21.cpp SndStrReq(1, 0xE)), in r100 and r103
+]
 
 
 def nibble_to_sample(n):
@@ -595,13 +604,15 @@ def interleave(chans):
 
 def build_streams(mirror, out, keys):
     shds = stream_headers(mirror)
-    with open(os.path.join(mirror, 'bgm', 'bio4bgm.sbb'), 'rb') as f:
-        sbb = f.read()
+    sbbs = {}
     ents, blobs, report = [], [], []
     pos = 2048   # header sector
     for key in keys:
         shd = shds[key]
-        chans = decode_stream(sbb, shd)
+        if key[0] not in sbbs:
+            with open(os.path.join(mirror, STREAM_FILES[key[0]]), 'rb') as f:
+                sbbs[key[0]] = f.read()
+        chans = decode_stream(sbbs[key[0]], shd)
         loops = bool(shd['flag'] & 4)          # the driver loops (str_ax_voice_loop_to_top) on 0x4
         # intro and loop lengths in whole 4-byte ADPCM words (8 samples): every ring write
         # is then G2-aligned; moves the loop point by < 8 samples (0.25 ms)
@@ -649,6 +660,64 @@ def build_streams(mirror, out, keys):
     return report
 
 
+STREAM_VERSION = 2   # bump when build_streams output changes
+
+
+def cached_streams(mirror, out, keys, cache_dir):
+    """build_streams, reusing bgm/aica_str.dat from `cache_dir` when its inputs are unchanged."""
+    h = hashlib.sha1(b'%d %r ' % (STREAM_VERSION, keys))
+    with open(os.path.join(mirror, 'bgm', 'bio4str.hed'), 'rb') as f:
+        h.update(f.read())
+    for blk in sorted({k[0] for k in keys}):
+        st = os.stat(os.path.join(mirror, STREAM_FILES[blk]))
+        h.update(b'%d %d %d ' % (blk, st.st_size, st.st_mtime_ns))
+    cached = os.path.join(cache_dir, 'streams-%s.dat' % h.hexdigest()[:20])
+    dst = os.path.join(out, 'bgm', 'aica_str.dat')
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    if not os.path.exists(cached):
+        tmp = os.path.join(cache_dir, 'streams-tmp')
+        os.makedirs(tmp, exist_ok=True)
+        build_streams(mirror, tmp, keys)
+        os.makedirs(cache_dir, exist_ok=True)
+        os.replace(os.path.join(tmp, 'bgm', 'aica_str.dat'), cached)
+    else:
+        print('  streams: cached %s' % os.path.basename(cached))
+    os.link(cached, dst)
+
+
+def disc(mirror, out, cache_dir, rooms, keys, json_out):
+    """A disc data directory: the mirror hardlinked, route banks converted, disc streams added."""
+    import shutil
+    import tempfile
+    if os.path.exists(out):
+        raise SystemExit(out + ' exists')
+    os.makedirs(cache_dir, exist_ok=True)
+    budget = AICA_POOL - MOVIE_RESERVE - STREAM_RING
+    res, per_room, uniq, slots, arena = plan(mirror, rooms, budget)
+    rep = report(res, per_room, uniq, slots, arena, budget)
+    # AICA RAM at run time: the layout plus the stream ring; what stays free must
+    # cover the movie reserve (snd_stream, agreed with the cutscene audio). plan()
+    # already sizes the layout against pool - reserve - ring; this is the hard check.
+    used = rep['layout_total'] + STREAM_RING
+    free = AICA_POOL - used
+    if free < MOVIE_RESERVE:
+        raise SystemExit('aica: layout %d + stream ring %d leaves %d bytes free, below the %d byte movie reserve'
+                         % (rep['layout_total'], STREAM_RING, free, MOVIE_RESERVE))
+    overlay = tempfile.mkdtemp(prefix='aica-overlay.', dir=cache_dir)
+    try:
+        rep['overlay'] = build(mirror, overlay, res, per_room, uniq, slots, os.path.join(cache_dir, 'banks'), False)
+        cached_streams(mirror, overlay, keys, cache_dir)
+        merge(mirror, overlay, out)
+    finally:
+        shutil.rmtree(overlay, ignore_errors=True)
+    if json_out:
+        with open(json_out, 'w') as f:
+            json.dump(rep, f, indent=1)
+    print('aica: AICA RAM %d of %d (layout %d + stream ring %d), free %d = movie reserve %d + spare %d; '
+          '%d banks rewritten, %d streams' % (used, AICA_POOL, rep['layout_total'], STREAM_RING, free, MOVIE_RESERVE,
+                                              free - MOVIE_RESERVE, sum(n for _, n in rep['overlay']), len(keys)))
+
+
 def merge(mirror, overlay, out):
     """Hardlink `mirror` into `out` (no data copied), then link the overlay files over it."""
     if os.path.exists(out):
@@ -673,7 +742,7 @@ def merge(mirror, overlay, out):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    ap.add_argument('cmd', choices=('plan', 'build', 'merge', 'streams'))
+    ap.add_argument('cmd', choices=('plan', 'build', 'merge', 'streams', 'disc'))
     ap.add_argument('--streams', default=','.join('%d:%d' % k for k in ROUTE_STREAMS), help='blk:no list')
     ap.add_argument('--overlay')
     ap.add_argument('--mirror', required=True)
@@ -685,6 +754,11 @@ def main():
     a = ap.parse_args()
     if a.cmd == 'merge':
         return merge(a.mirror, a.overlay, a.out)
+    if a.cmd == 'disc':
+        if not (a.out and a.cache):
+            raise SystemExit('disc needs --out and --cache')
+        keys = [tuple(int(x) for x in k.split(':')) for k in a.streams.split(',') if k]
+        return disc(a.mirror, a.out, a.cache, [r for r in a.route.split(',') if r], keys, a.json)
     if a.cmd == 'streams':
         keys = [tuple(int(x) for x in k.split(':')) for k in a.streams.split(',') if k]
         rep = build_streams(a.mirror, a.out, keys)

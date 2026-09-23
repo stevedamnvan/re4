@@ -87,13 +87,29 @@ AICA_AUDIO ?= 0
 ifneq ($(AICA_AUDIO),1)
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/audio_aica.o,$(PLATFORM_OBJS))
 endif
-# AICA_STREAMS=1 (with AICA_AUDIO=1, not yet verified): the stream player's DVD
-# reads / ARAM DMAs complete at the next audio frame (audio_aica.cpp __wrap_*),
-# as on the GC, instead of inside the call, so disc streams can start.
+# Disc stream player I/O (platform/audio_strm.cpp, every build): its DVD reads /
+# ARAM DMAs complete at the next audio frame, as on the GC, instead of inside the
+# call, so streams go ready -> playing -> ended and scenario waits return.
+GAME_LDFLAGS += -Wl,--wrap=DVDReadAsyncPrio -Wl,--wrap=ARQPostRequest
+# AICA_STREAMS=1 (with AICA_AUDIO=1): streams play from bgm/aica_str.dat
+# (tools/aica_banks.py; a disc without it keeps them silent). 0: silent streams.
 AICA_STREAMS ?= 0
 ifeq ($(AICA_AUDIO)$(AICA_STREAMS),11)
-GAME_LDFLAGS += -Wl,--wrap=DVDReadAsyncPrio -Wl,--wrap=ARQPostRequest
 $(OBJDIR)/platform/audio_aica.o: PLATFORM_CPPFLAGS += -DRE4DC_AICA_STREAMS=1
+endif
+.PHONY: aica-audio-force
+$(OBJDIR)/aica-audio.h: aica-audio-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_AICA_AUDIO %s\n' '$(AICA_AUDIO)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/audio_stub.o: $(OBJDIR)/aica-audio.h
+$(OBJDIR)/platform/audio_stub.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/aica-audio.h
+# D367 audio: AICA_AUDIO=1 plays the recovered sound driver on the AICA
+# (platform/audio_aica.cpp); default images keep the silent audio_stub.cpp.
+AICA_AUDIO ?= 0
+ifneq ($(AICA_AUDIO),1)
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/audio_aica.o,$(PLATFORM_OBJS))
 endif
 .PHONY: aica-audio-force
 $(OBJDIR)/aica-audio.h: aica-audio-force

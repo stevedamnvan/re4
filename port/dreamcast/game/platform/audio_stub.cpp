@@ -25,22 +25,55 @@ struct AXVPB { u32 w[128]; };  // 0x200: larger than the SDK's voice block
 static AXVPB g_voices[64];
 static u8 g_voiceUsed[64];
 static AXCallback g_axCallback;
+// Stream player voices (acquired with cb_str_voice_drop): pb.state / pb.addr /
+// pb.src are kept at the SDK offsets and the address advanced each audio frame
+// (audio_strm.cpp), so a stream runs for its length and ends, silently.
+static u8 g_strmVoice[64];
+static f32 g_strmFrac[64];
+static uint64_t g_strmLastUs, g_tickUs;
+static const u32 kPb = 0x138, kPbState = kPb + 0x0E, kPbAddr = kPb + 0x6E, kPbSrc = kPb + 0xA6;
+static inline u16* pb16(AXVPB* p, u32 ofs) { return (u16*) ((u8*) p + ofs); }
 #endif
 static u32 g_aramNext = 0x4000;
 
 extern "C" {
 
 u32 re4dc_vi_retrace_count(void);
+void re4dc_audio_pend_run(void);                           // audio_strm.cpp
 #if RE4DC_AICA_AUDIO
 void re4dc_audio_arq(u32 src, u32 dst, u32 len);
 #else
+void cb_str_voice_drop(void* voice);                        // snd_str3.cpp
+int re4dc_strm_advance(u16* addr, f32 samples, f32* frac);  // audio_strm.cpp
+void re4dc_strm_test_frame(void);                           // audio_strm.cpp (RE4DC_STRM_TEST)
 
-// Runs from the vblank interrupt (vi.cpp): the driver's audio frame.
+// Once per game frame (pad.cpp PADRead): the driver's 5 ms audio frames that
+// wall time owes (the GC AI interrupt rate, as audio_aica.cpp's thread runs
+// them; at most 64 after a stall), each after the stream player's I/O
+// completions; then the stream voices move on in real time.
 void re4dc_audio_frame(void)
 {
-    if (g_axCallback) {
-        g_axCallback();
+    uint64_t now = timer_us_gettime64();
+    if (!g_strmLastUs) g_strmLastUs = g_tickUs = now - 5000;
+    u32 ticks = (u32) ((now - g_tickUs) / 5000);
+    if (ticks > 64) { ticks = 64; g_tickUs = now; }
+    else g_tickUs += ticks * 5000ull;
+    for (u32 t = 0; t < ticks; t++) {
+        re4dc_audio_pend_run();
+        if (g_axCallback) {
+            g_axCallback();
+        }
     }
+    f32 dt = (f32) (now - g_strmLastUs) * 1e-6f;
+    g_strmLastUs = now;
+    for (int i = 0; i < 64; i++) {
+        AXVPB* p = &g_voices[i];
+        if (!g_voiceUsed[i] || !g_strmVoice[i] || !*pb16(p, kPbState)) continue;
+        u16* src = pb16(p, kPbSrc);
+        f32 ratio = (f32) (((u32) src[0] << 16) | src[1]) / 65536.0f;
+        if (re4dc_strm_advance(pb16(p, kPbAddr), dt * ratio * 32000.0f, &g_strmFrac[i])) *pb16(p, kPbState) = 0;
+    }
+    re4dc_strm_test_frame();
 }
 
 void AIInit(u8* stack) { (void) stack; }
@@ -57,10 +90,12 @@ void AXRegisterAuxBCallback(void (*cb)(void*, void*), void* ctx) { (void) cb; (v
 
 AXVPB* AXAcquireVoice(u32 prio, void (*cb)(void*), u32 user)
 {
-    (void) prio; (void) cb; (void) user;
+    (void) prio; (void) user;
     for (int i = 0; i < 64; i++) {
         if (!g_voiceUsed[i]) {
             g_voiceUsed[i] = 1;
+            g_strmVoice[i] = cb == cb_str_voice_drop;
+            g_strmFrac[i] = 0;
             memset(&g_voices[i], 0, sizeof(AXVPB));
             g_voices[i].w[1] = (u32) i;  // the SDK keeps the index at +4
             return &g_voices[i];
@@ -69,16 +104,22 @@ AXVPB* AXAcquireVoice(u32 prio, void (*cb)(void*), u32 user)
     return 0;
 }
 void AXFreeVoice(AXVPB* p) { if (p) g_voiceUsed[p - g_voices] = 0; }
-void AXSetVoiceState(AXVPB* p, u16 s) { (void) p; (void) s; }
+void AXSetVoiceState(AXVPB* p, u16 s) { if (g_strmVoice[p - g_voices]) *pb16(p, kPbState) = s; }
 void AXSetVoiceType(AXVPB* p, u16 t) { (void) p; (void) t; }
 void AXSetVoicePriority(AXVPB* p, u32 prio) { (void) p; (void) prio; }
-void AXSetVoiceAddr(AXVPB* p, void* a) { (void) p; (void) a; }
+void AXSetVoiceAddr(AXVPB* p, void* a) { if (g_strmVoice[p - g_voices]) memcpy(pb16(p, kPbAddr), a, 16); }
 void AXSetVoiceAdpcm(AXVPB* p, void* a) { (void) p; (void) a; }
 void AXSetVoiceAdpcmLoop(AXVPB* p, void* a) { (void) p; (void) a; }
-void AXSetVoiceLoop(AXVPB* p, u16 l) { (void) p; (void) l; }
-void AXSetVoiceLoopAddr(AXVPB* p, u32 a) { (void) p; (void) a; }
-void AXSetVoiceEndAddr(AXVPB* p, u32 a) { (void) p; (void) a; }
-void AXSetVoiceSrc(AXVPB* p, void* s) { (void) p; (void) s; }
+void AXSetVoiceLoop(AXVPB* p, u16 l) { if (g_strmVoice[p - g_voices]) pb16(p, kPbAddr)[0] = l; }
+void AXSetVoiceLoopAddr(AXVPB* p, u32 a)
+{
+    if (g_strmVoice[p - g_voices]) { pb16(p, kPbAddr)[2] = (u16) (a >> 16); pb16(p, kPbAddr)[3] = (u16) a; }
+}
+void AXSetVoiceEndAddr(AXVPB* p, u32 a)
+{
+    if (g_strmVoice[p - g_voices]) { pb16(p, kPbAddr)[4] = (u16) (a >> 16); pb16(p, kPbAddr)[5] = (u16) a; }
+}
+void AXSetVoiceSrc(AXVPB* p, void* s) { if (g_strmVoice[p - g_voices]) memcpy(pb16(p, kPbSrc), s, 4); }
 void AXSetVoiceSrcType(AXVPB* p, u32 t) { (void) p; (void) t; }
 void AXSetVoiceSrcRatio(AXVPB* p, f32 r) { (void) p; (void) r; }
 void AXSetVoiceLpf(AXVPB* p, void* l) { (void) p; (void) l; }

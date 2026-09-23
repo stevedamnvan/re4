@@ -28,9 +28,9 @@
 //    seamless loop body) play from a 2 x 12 KB per channel AICA ring in ADPCM
 //    long-stream mode, refilled by a reader thread (DMA reads, no decoding on the
 //    SH-4). The driver's own stream voices keep running silently and drive
-//    start, stop and volume. A stream missing from aica_str.dat stays silent.
-//    Needs AICA_STREAMS=1 (Makefile): not yet verified in a capture; without it
-//    the GC stream player stalls at its first block and streams stay silent.
+//    start, stop and volume (audio_strm.cpp keeps them running in every build,
+//    so scenario waits on a stream always complete). A stream missing from
+//    aica_str.dat, or a build without AICA_STREAMS=1, is silent.
 //
 // Not covered yet: AUX reverb, LPF, LFO, DPL2.
 #include <kos.h>
@@ -138,17 +138,14 @@ extern "C" {
 extern Re4dcStrWorkView Snd_str_work[4];
 const u32* Snd_get_shd_adrs(u16 blk_no, u16 req_no);   // SND_SHD*
 void cb_str_voice_drop(void* voice);                   // the stream player's AX voice callback
-void cb_dvd_read_end(s32 result, void* info);          // its DVD read completion (snd_str2.cpp)
-void cb_aram_dma_end(u32 task);                        // its ARAM DMA completion (snd_str2.cpp)
-#ifndef RE4DC_AICA_STREAMS
-#define RE4DC_AICA_STREAMS 0   // Makefile AICA_STREAMS=1: deferred stream-player completions (--wrap)
-#endif
-#if RE4DC_AICA_STREAMS
-// Linker --wrap (Makefile, AICA_STREAMS=1): the port's own implementations.
-s32 __real_DVDReadAsyncPrio(void* fi, void* addr, s32 length, s32 offset, void (*cb)(s32, void*), s32 prio);
-void __real_ARQPostRequest(void* req, u32 owner, u32 type, u32 prio, u32 src, u32 dst, u32 len, void (*cb)(u32));
-#endif
+// Stream player plumbing shared with the stub (audio_strm.cpp).
+void re4dc_audio_pend_run(void);
+int re4dc_strm_advance(u16* addr, f32 samples, f32* frac);
+extern u32 re4dc_strm_reads_skipped, re4dc_strm_dmas;
 }
+#ifndef RE4DC_AICA_STREAMS
+#define RE4DC_AICA_STREAMS 0   // Makefile AICA_STREAMS=1: play disc streams from bgm/aica_str.dat
+#endif
 u32 SndStrReq(int blk, int no, int req, int time, int vol, f32 pos);   // snd.cpp (C++ linkage)
 
 // ---------------------------------------------------------------------------
@@ -257,6 +254,8 @@ const u32 kStrHalfSamples = kStrHalfBytes * 2;
 const u32 kStrChBytes = 2 * kStrHalfBytes;
 const u32 kStrRingBytes = 2 * kStrChBytes;
 u32 g_strRing;
+const u32 kAicaPoolBytes = 1900544;          // KOS snd_mem pool (AICA RAM above the driver)
+const u32 kMovieReserveBytes = 64 * 1024;    // left free for snd_stream (movie audio)
 
 // Conversion (or copy) of the block currently being uploaded.
 struct Conv {
@@ -313,7 +312,6 @@ struct Stats {
     u32 blocks_prebuilt, blocks_runtime, copy_bytes;
     u32 active_voices, active_notes, peak_voices, peak_notes;
     u32 str_starts, str_underruns, str_read_bytes, str_reads, str_io_us, str_io_max_us, str_load_us;
-    u32 gc_str_reads_skipped, gc_str_dmas;
 };
 
 }  // namespace
@@ -429,6 +427,15 @@ bool layout_init(const AicaBankHeader& h)
             }
         return true;
     }
+    // The movie reserve (snd_stream, cutscene audio) is never given to the layout:
+    // tools/aica_banks.py sizes it so, and a bank built for another budget is refused.
+    u32 want = kStrRingBytes;
+    for (int i = 0; i < 9; i++) want += (h.slot_bytes[i] + 31) & ~31u;
+    if (g_aicaUsed + want > kAicaPoolBytes - kMovieReserveBytes) {
+        re4dc_log("aica: layout %u + ring %u bytes would leave less than the %u byte movie reserve, banks silent\n",
+                  (unsigned) (want - kStrRingBytes), (unsigned) kStrRingBytes, (unsigned) kMovieReserveBytes);
+        return false;
+    }
     for (int i = 0; i < 9; i++) {
         if (!h.slot_bytes[i]) continue;
         u32 a = snd_mem_malloc(h.slot_bytes[i]);
@@ -446,12 +453,13 @@ bool layout_init(const AicaBankHeader& h)
     g_layout = true;
     if (!g_strRing && (g_strRing = snd_mem_malloc(kStrRingBytes)) != 0) g_aicaUsed += kStrRingBytes;
     re4dc_log("aica: layout core=%06x+%u pl=%06x+%u wep=%06x+%u bgm0=%06x+%u bgm1=%06x+%u door=%06x+%u arena=%06x+%u "
-              "str=%06x+%u, %u bytes\n",
+              "str=%06x+%u, %u bytes, %u free (movie reserve %u)\n",
               (unsigned) g_slot[0].base, (unsigned) g_slot[0].size, (unsigned) g_slot[1].base, (unsigned) g_slot[1].size,
               (unsigned) g_slot[2].base, (unsigned) g_slot[2].size, (unsigned) g_slot[3].base, (unsigned) g_slot[3].size,
               (unsigned) g_slot[4].base, (unsigned) g_slot[4].size, (unsigned) g_slot[7].base, (unsigned) g_slot[7].size,
               (unsigned) g_slot[8].base, (unsigned) g_slot[8].size, (unsigned) g_strRing,
-              (unsigned) (g_strRing ? kStrRingBytes : 0), (unsigned) g_aicaUsed);
+              (unsigned) (g_strRing ? kStrRingBytes : 0), (unsigned) g_aicaUsed,
+              (unsigned) (kAicaPoolBytes - g_aicaUsed), (unsigned) kMovieReserveBytes);
     return true;
 }
 
@@ -1167,95 +1175,12 @@ mutex_t g_lock = MUTEX_INITIALIZER;   // blocks (map) vs the audio step
 u8 g_thread_stack[12 * 1024] __attribute__((aligned(8)));
 kthread_t* g_thread;
 
-// Stream player I/O completions. The GC stream player (snd_str2.cpp) issues a DVD
-// read or an ARAM DMA and only then sets dvd_busy / dma_busy; the GC completes both
-// later, from an interrupt. The port's DVD and ARQ calls complete inside the call,
-// so the busy flag set afterwards would never clear and the player would stall at
-// its first block. Its completions are therefore queued and delivered at the next
-// audio frame, before the driver runs, as the GC interrupt would. Its DVD reads are
-// not performed at all: the AICA plays the stream from aica_str.dat, the GC data
-// would only feed the (silent) GC ring, and skipping them keeps disc I/O off the
-// audio thread (a synchronous 32 KB .sbb read every 0.26 s, 2.5-4.5 ms each).
-struct Pend { void (*dvd)(s32, void*); void (*arq)(u32); void* obj; s32 res; };
-Pend g_pend[8];
-u32 g_pendN;
-
-#if RE4DC_AICA_STREAMS
-void pend_push(const Pend& p)
-{
-    int old = irq_disable();
-    bool ok = g_pendN < 8;
-    if (ok) g_pend[g_pendN++] = p;
-    irq_restore(old);
-    if (!ok) {   // cannot happen with 4 stream works (one read + one DMA each); complete now
-        if (p.dvd) p.dvd(p.res, p.obj);
-        else p.arq((u32) p.obj);
-    }
-}
-#endif
-
-void pend_run()
-{
-    Pend run[8];
-    int old = irq_disable();
-    u32 n = g_pendN;
-    memcpy(run, g_pend, n * sizeof(Pend));
-    g_pendN = 0;
-    irq_restore(old);
-    for (u32 i = 0; i < n; i++) {
-        if (run[i].dvd) {
-            u8* fi = (u8*) run[i].obj;           // DVDFileInfo: cb.state @0x0C, cb.transferredSize @0x20
-            *(s32*) (fi + 0x0C) = 0;             // DVD_STATE_END
-            *(u32*) (fi + 0x20) = (u32) run[i].res;
-            run[i].dvd(run[i].res, run[i].obj);
-        } else {
-            run[i].arq((u32) run[i].obj);
-        }
-    }
-}
-
-// A stream player voice has no sample of its own: its GC ring address advances
-// here the way the DSP would move it (4-bit ADPCM, 14 samples per 8-byte frame),
-// honouring the loop / end addresses the player reprograms block by block, so the
-// player's play position, refills and end detection behave as on the GC.
+// A stream player voice ran out (re4dc_strm_advance): the driver sees it stopped.
 void strm_stop(AXVPBView& p)
 {
     p.state = 0;
     p.vs.running = 0;
     if (p.vs.strm == 2 && &p == g_str.v[0]) g_str.want = 0;
-}
-
-void strm_advance(AXVPBView& p, f32 dt)
-{
-    VoiceState& v = p.vs;
-    v.pos += dt * v.ratio * 32000.0f;
-    u32 n = (u32) v.pos;
-    if (!n) return;
-    v.pos -= (f32) n;
-    u32 nib = ((u32) p.addr.currentAddressHi << 16) | p.addr.currentAddressLo;
-    u32 end = ((u32) p.addr.endAddressHi << 16) | p.addr.endAddressLo;
-    u32 lp = ((u32) p.addr.loopAddressHi << 16) | p.addr.loopAddressLo;
-    for (int guard = 0; n && guard < 16; guard++) {
-        u32 r = nib & 15;
-        if (r < 2) { nib = (nib & ~15u) + 2; r = 2; }   // frame header nibbles hold no sample
-        u32 frame = nib & ~15u;
-        if (end < nib) {
-            if (p.addr.loopFlag) { nib = lp; continue; }
-            strm_stop(p);
-            break;
-        }
-        u32 to_end = nib_to_sample(end, frame) + 1 - (r - 2);   // samples up to and including end
-        u32 k = n < to_end ? n : to_end;
-        u32 s = (r - 2) + k;
-        nib = frame + (s / 14) * 16 + 2 + s % 14;
-        n -= k;
-        if (k == to_end) {
-            if (p.addr.loopFlag) nib = lp;
-            else { strm_stop(p); break; }
-        }
-    }
-    p.addr.currentAddressHi = (u16) (nib >> 16);
-    p.addr.currentAddressLo = (u16) nib;
 }
 
 void audio_step()
@@ -1268,7 +1193,7 @@ void audio_step()
     if ((int) ticks > re4dc_audio_max_ticks) { ticks = re4dc_audio_max_ticks; g_lastTickUs = now; }
     else g_lastTickUs += ticks * 5000ull;
     mutex_lock(&g_lock);
-    pend_run();
+    re4dc_audio_pend_run();
     for (u32 i = 0; i < ticks; i++) g_axCallback();
     u64 t1 = timer_us_gettime64();
 
@@ -1280,7 +1205,10 @@ void audio_step()
         VoiceState& v = p.vs;
         if (!v.used || !v.running) continue;
         ++active;
-        if (v.strm) { strm_advance(p, dt); continue; }
+        if (v.strm) {   // silent: position only (the AICA ring plays the stream)
+            if (re4dc_strm_advance(&p.addr.loopFlag, dt * v.ratio * 32000.0f, &v.pos)) strm_stop(p);
+            continue;
+        }
         v.pos += dt * v.ratio * 32000.0f;
         if (!v.loop && v.pos >= (f32) v.gc_len) {
             p.state = 0;
@@ -1313,18 +1241,22 @@ void audio_step()
     if ((S.frames % 2000) == 0) {   // every ~10 s
         S.aica_free = g_aicaUsed;
         u64 wall = now - g_threadStartUs;
-        re4dc_log("aica: steps=%u ticks=%u wall=%ums drv=%uus flush=%uus total (%u+%u us per 33ms) max %u/%u se=%u unm=%u notes on=%u off=%u steal=%u keyon=%u regw=%u act=%u/%u peak=%u/%u used=%u conv=%uus blocks pre/rt=%u/%u copy=%u ch=%u "
-                  "str=%u st=%u under=%u rd=%u/%uKB io=%u/%uus g2=%uus gc_skip=%u/%u\n",
+        // two lines: the log truncates long lines
+        re4dc_log("aica: str wall=%ums starts=%u state=%u under=%u reads=%u %uKB io=%uus max %uus g2=%uus gc_skip=%u/%u\n",
+                  (unsigned) (wall / 1000), (unsigned) S.str_starts, (unsigned) g_str.state, (unsigned) S.str_underruns,
+                  (unsigned) S.str_reads, (unsigned) (S.str_read_bytes >> 10), (unsigned) S.str_io_us,
+                  (unsigned) S.str_io_max_us, (unsigned) S.str_load_us, (unsigned) re4dc_strm_reads_skipped,
+                  (unsigned) re4dc_strm_dmas);
+        re4dc_log("aica: steps=%u ticks=%u wall=%ums drv=%uus flush=%uus total (%u+%u us per 33ms) max %u/%u\n",
                   (unsigned) S.frames, (unsigned) S.ticks, (unsigned) (wall / 1000), (unsigned) S.drv_us, (unsigned) S.flush_us,
                   (unsigned) ((u64) S.drv_us * 33333 / (wall ? wall : 1)), (unsigned) ((u64) S.flush_us * 33333 / (wall ? wall : 1)),
-                  (unsigned) S.max_drv_us, (unsigned) S.max_flush_us, (unsigned) S.se_starts, (unsigned) S.se_unmapped,
+                  (unsigned) S.max_drv_us, (unsigned) S.max_flush_us);
+        re4dc_log("aica: se=%u unm=%u notes on=%u off=%u steal=%u keyon=%u regw=%u act=%u/%u peak=%u/%u used=%u conv=%uus blocks pre/rt=%u/%u copy=%u ch=%u\n",
+                  (unsigned) S.se_starts, (unsigned) S.se_unmapped,
                   (unsigned) S.note_on, (unsigned) S.note_off, (unsigned) S.note_steal, (unsigned) S.keyons, (unsigned) S.regwrites,
                   (unsigned) active, (unsigned) notes, (unsigned) S.peak_voices, (unsigned) S.peak_notes, (unsigned) S.aica_free,
                   (unsigned) S.conv_us, (unsigned) S.blocks_prebuilt, (unsigned) S.blocks_runtime,
-                  (unsigned) S.copy_bytes, (unsigned) g_chUsed, (unsigned) S.str_starts, (unsigned) g_str.state,
-                  (unsigned) S.str_underruns, (unsigned) S.str_reads, (unsigned) (S.str_read_bytes >> 10),
-                  (unsigned) S.str_io_us, (unsigned) S.str_io_max_us, (unsigned) S.str_load_us,
-                  (unsigned) S.gc_str_reads_skipped, (unsigned) S.gc_str_dmas);
+                  (unsigned) S.copy_bytes, (unsigned) g_chUsed);
     }
 }
 
@@ -1341,11 +1273,16 @@ void* audio_main(void*)
 // Stream reader: a KOS thread (priority 4, above the game) that sleeps 10 ms at a
 // time. It claims streams, prefills the ring and, while one plays, rewrites each
 // ring half once the play position (time x the AICA rate) has left it: one
-// 12 KB-per-channel refill per 0.77 s at 32 kHz. Reads are whole 2 KB sectors
-// into a 32-byte aligned buffer, so KOS reads them by DMA and the CPU is free
-// while the drive works; the CPU cost is the G2 copy into AICA RAM.
-u8 g_strStack[6 * 1024] __attribute__((aligned(8)));
-u8 g_strCache[8 * 1024] __attribute__((aligned(32)));
+// 12 KB-per-channel refill per 0.77 s at 32 kHz; the CPU cost is the G2 copy.
+// The read buffer is deliberately NOT 32-byte aligned: KOS iso9660 turns a
+// sector-aligned read into a 32-byte aligned buffer into a CD stream over the
+// rest of the file (cdrom_stream_start), and a stream kept open by this thread
+// while game threads open and read other files made every later fs_open fail
+// (b1 capture). Unaligned, KOS reads through its sector cache instead.
+u8 g_strStack[6 * 1024] __attribute__((aligned(8), unused));   // unused without AICA_STREAMS
+u8 g_strCacheRaw[8 * 1024 + 32] __attribute__((aligned(32)));
+u8* const g_strCache = g_strCacheRaw + 4;   // 4-byte aligned for the G2 32-bit copy
+const u32 kStrCacheBytes = 8 * 1024;
 u32 g_strCacheOfs = 0xFFFFFFFFu, g_strCacheLen;
 file_t g_strFile = -1;
 const u32* g_strMissShd;
@@ -1429,7 +1366,7 @@ bool str_cache(u32 fofs, u32 fend)
     u32 grp = g_str.nch * 2048u;
     if (fofs >= g_strCacheOfs && fofs + grp <= g_strCacheOfs + g_strCacheLen) return true;
     u32 len = fend - fofs;
-    if (len > sizeof(g_strCache)) len = sizeof(g_strCache) / grp * grp;
+    if (len > kStrCacheBytes) len = kStrCacheBytes / grp * grp;
     u64 t0 = timer_us_gettime64();
     bool ok = fs_seek(g_strFile, fofs, SEEK_SET) == (off_t) fofs && fs_read(g_strFile, g_strCache, len) == (ssize_t) len;
     u32 us = (u32) (timer_us_gettime64() - t0);
@@ -1486,7 +1423,7 @@ void str_fill(u32 h, u32 gen)
     S.str_load_us += (u32) (timer_us_gettime64() - t0) - (S.str_io_us - io0);
 }
 
-void* str_main(void*)
+__attribute__((unused)) void* str_main(void*)
 {
     if (!str_index_load()) return nullptr;
     for (;;) {
@@ -1544,6 +1481,7 @@ void start_thread()
     g_threadStartUs = timer_us_gettime64();
     g_thread = thd_create_ex(&a, audio_main, nullptr);
     re4dc_log("aica: audio thread tid=%d prio=3 period=5ms\n", g_thread ? (int) g_thread->tid : -1);
+#if RE4DC_AICA_STREAMS
     kthread_attr_t r{};
     r.stack_size = sizeof(g_strStack);
     r.stack_ptr = g_strStack;
@@ -1552,6 +1490,9 @@ void start_thread()
     r.create_detached = true;
     kthread_t* st = thd_create_ex(&r, str_main, nullptr);
     re4dc_log("aica: stream reader tid=%d prio=4\n", st ? (int) st->tid : -1);
+#else
+    re4dc_log("aica: disc streams silent (built without AICA_STREAMS=1)\n");
+#endif
 }
 
 }  // namespace
@@ -1571,9 +1512,11 @@ unsigned re4dc_aica_used_bytes(void) { return g_aicaUsed; }
 // With RE4DC_AICA_STR_TEST=n it also issues the request a floor attribute makes
 // (snd.cpp SndStrReq(blk, no, 0x80000003, ...)) 5 s after each room bank load and
 // the stop request 75 s later, so an idle capture exercises start, loop and stop.
+void re4dc_strm_test_frame(void);   // audio_strm.cpp (RE4DC_STRM_TEST)
 void re4dc_audio_frame(void)
 {
     if (!g_thread && g_axCallback) audio_step();
+    re4dc_strm_test_frame();
 #if RE4DC_AICA_STR_TEST
     static u32 room_ms, blocks_seen, phase;
     u32 now = (u32) (timer_us_gettime64() / 1000);
@@ -1591,28 +1534,6 @@ void re4dc_audio_frame(void)
 #endif
 }
 
-#if RE4DC_AICA_STREAMS
-// Stream player reads (see pend_push): not performed, completed at the next audio frame.
-s32 __wrap_DVDReadAsyncPrio(void* fi, void* addr, s32 length, s32 offset, void (*cb)(s32, void*), s32 prio)
-{
-    if (cb != cb_dvd_read_end || !g_init) return __real_DVDReadAsyncPrio(fi, addr, length, offset, cb, prio);
-    u8* f = (u8*) fi;
-    *(s32*) (f + 0x0C) = 1;   // DVD_STATE_BUSY until the completion
-    *(u32*) (f + 0x20) = 0;
-    ++S.gc_str_reads_skipped;
-    pend_push(Pend{ cb, nullptr, fi, length });
-    return 1;
-}
-
-// Stream player ARAM DMAs: bookkeeping by the port's ARQ, completion at the next audio frame.
-void __wrap_ARQPostRequest(void* req, u32 owner, u32 type, u32 prio, u32 src, u32 dst, u32 len, void (*cb)(u32))
-{
-    if (cb != cb_aram_dma_end || !g_init) { __real_ARQPostRequest(req, owner, type, prio, src, dst, len, cb); return; }
-    __real_ARQPostRequest(req, owner, type, prio, src, dst, len, nullptr);
-    ++S.gc_str_dmas;
-    pend_push(Pend{ nullptr, cb, req, 0 });
-}
-#endif
 
 // ARQ hook (audio_stub.cpp ARQPostRequest): a piece of a sound block's ARAM part.
 void re4dc_audio_arq(u32 src, u32 dst, u32 len)

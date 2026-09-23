@@ -87,6 +87,23 @@ class Build(unittest.TestCase):
             self.assertEqual(h[9 + 8], (h[3] + 31) & ~31)     # layout slot_bytes[8] = room arena
 
 
+class Reserve(unittest.TestCase):
+    def test_disc_refuses_to_eat_the_movie_reserve(self):
+        with tempfile.TemporaryDirectory() as d:
+            mirror = os.path.join(d, 'm')
+            os.makedirs(os.path.join(mirror, 'st1'))
+            make_archive(os.path.join(mirror, 'st1', 'r100.dar'), [60000, 60000], 8000)
+            old = ab.ROOMS, ab.RESIDENT, ab.AICA_POOL
+            ab.ROOMS, ab.RESIDENT = {'r100': ['st1/r100.dar']}, []
+            ab.AICA_POOL = ab.MOVIE_RESERVE + ab.STREAM_RING + 1000   # too small even at the lowest cap
+            try:
+                with self.assertRaises(SystemExit):
+                    ab.disc(mirror, os.path.join(d, 'out'), os.path.join(d, 'cache'), ['r100'], [], None)
+            finally:
+                ab.ROOMS, ab.RESIDENT, ab.AICA_POOL = old
+            self.assertFalse(os.path.exists(os.path.join(d, 'out')))
+
+
 class Streams(unittest.TestCase):
     def test_interleave_2k_blocks(self):
         a, b = bytes([1]) * 3000, bytes([2]) * 100
