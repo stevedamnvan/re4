@@ -146,6 +146,21 @@ Game logic alone is ~26 ms on hardware, so a 33 ms frame leaves almost nothing f
 
 Tools: /root/probe/d367-agents/hwmodel (hwsim.c, run_whatifs.sh); a repo patch is pending.
 
+## 20 fps hardware budget (2026-09-23)
+
+Game logic is a fixed 30 Hz tick: one update per frame (main.cpp, 2 vsyncs), with no delta-time scaling; only pad repeat timers use GetSystemVcnt. Rendering at 20 fps at the correct game speed therefore needs 1.5 logic ticks per rendered frame, so logic is a fixed per-second tax whatever the frame rate. At the modelled 25.8 ms/tick, logic alone is 77% of the CPU.
+
+| Area | HW now (LD) | 20 fps budget (50 ms) |
+|---|---|---|
+| Game logic | 25.8 / tick (38.7 / frame) | ~15 / tick (22.5 / frame) |
+| GC render front-end | 37.3 | ~3 (replace it; don't trim it) |
+| Actors | 34.5 | ~7 (Leon full, Ganado tier + crowd rules) |
+| Scenery | 31.4 | ~8 (shorter fog, coarser LOD, impostors, house shells) |
+| UI / texture cache | 12.3 | ~2 (O(1) handles) |
+| Copies + TA + KOS | 16.6 | ~7.5 |
+
+Open for user decision: fog far plane ~43 m -> 25-30 m; distant Ganados skinned at half rate; visual-only simulations (cloth, pendulum, some particles) at half rate.
+
 ## Asset decisions
 
 - **Trees:** PS2 trees for r100, with the source key texture replaced by the
