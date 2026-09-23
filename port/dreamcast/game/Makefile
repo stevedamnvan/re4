@@ -91,9 +91,9 @@ endif
 # ARAM DMAs complete at the next audio frame, as on the GC, instead of inside the
 # call, so streams go ready -> playing -> ended and scenario waits return.
 GAME_LDFLAGS += -Wl,--wrap=DVDReadAsyncPrio -Wl,--wrap=ARQPostRequest
-# AICA_STREAMS=1 (with AICA_AUDIO=1): streams play from bgm/aica_str.dat
+# AICA_STREAMS=1 (default; with AICA_AUDIO=1): streams play from bgm/aica_str.dat
 # (tools/aica_banks.py; a disc without it keeps them silent). 0: silent streams.
-AICA_STREAMS ?= 0
+AICA_STREAMS ?= 1
 ifeq ($(AICA_AUDIO)$(AICA_STREAMS),11)
 $(OBJDIR)/platform/audio_aica.o: PLATFORM_CPPFLAGS += -DRE4DC_AICA_STREAMS=1
 endif
