@@ -126,6 +126,17 @@ $(OBJDIR)/aica-audio.h: aica-audio-force
 	@rm -f $@.tmp
 $(OBJDIR)/platform/audio_stub.o: $(OBJDIR)/aica-audio.h
 $(OBJDIR)/platform/audio_stub.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/aica-audio.h
+# MOTION_FAST_READ=1: motion keys read straight into their aligned residency block (one GD
+# stream command + a block-cache tail) instead of one GD command per sector (W10).
+MOTION_FAST_READ ?= 0
+.PHONY: motion-read-force
+$(OBJDIR)/motion-read.h: motion-read-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_MOTION_FAST_READ %s\n' '$(MOTION_FAST_READ)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_motion.o: $(OBJDIR)/motion-read.h
+$(OBJDIR)/platform/native_motion.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/motion-read.h
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 # Route cutscenes (default off): PS2 prerecorded movies present source events
 # (/cd/dc/movie/*.seq, docs/ROUTE_CUTSCENES.md). Default images carry none of it.

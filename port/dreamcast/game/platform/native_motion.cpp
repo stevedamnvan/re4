@@ -26,6 +26,35 @@ std::uint64_t stamp;
 mutex_t lock=MUTEX_INITIALIZER;
 unsigned word(const unsigned char* p) { unsigned n;std::memcpy(&n,p,4);return n; }
 unsigned aligned(unsigned n) { return (n+31)&~31U; }
+#ifndef RE4DC_MOTION_FAST_READ
+#define RE4DC_MOTION_FAST_READ 0
+#endif
+#if RE4DC_MOTION_FAST_READ
+// MOTION_FAST_READ=1: read a key (<= 32 KiB) straight into its 32-byte-aligned residency
+// block. KOS fs_iso9660 reads a misaligned destination (storage::read_file's bounce copy
+// path) one sector per GD command: ~98 ms per key in Flycast, 75 keys per r100 entry. An
+// aligned destination at offset 0 takes one stream command for the 32-byte multiple; the
+// <32-byte tail is then read through the block cache after a seek moves the fd off the
+// stream (KOS's own sub-32-byte stream request is the one that never returns, R4_5A).
+// Returns bytes read, -1 on open/size failure, -2 when dst is not 32-byte aligned.
+int fast_key_read(const char* path, unsigned char* dst, unsigned size) {
+    if(reinterpret_cast<std::uintptr_t>(dst)&31U)return -2;
+    const file_t f=fs_open(path,O_RDONLY);
+    if(f==FILEHND_INVALID)return -1;
+    if(fs_total(f)!=ssize_t(size)) { fs_close(f);return -1; }
+    const unsigned body=size&~31U;unsigned got=0;
+    while(got<body) { const ssize_t n=fs_read(f,dst+got,body-got);if(n<=0)break;got+=unsigned(n); }
+    if(got==body && got<size) {
+        if(got) { fs_seek(f,0,SEEK_SET);fs_seek(f,got,SEEK_SET); }   // pointer moves: stream aborted
+        alignas(32) unsigned char tail[64];                         // tail+16: misaligned on purpose
+        const unsigned start=got;
+        while(got<size) { const ssize_t n=fs_read(f,tail+16+(got-start),size-got);if(n<=0)break;got+=unsigned(n); }
+        std::memcpy(dst+start,tail+16,got-start);
+    }
+    fs_close(f);
+    return int(got);
+}
+#endif
 unsigned prefix(const unsigned char* p) { unsigned n=p[2];return ((3+3*n+3)&~3U)+4+4*n; }
 [[noreturn]] void fail(const char* reason) {
     ++stats.failures;re4dc_log("motion residency failure: %s\n",reason);
@@ -84,6 +113,13 @@ unsigned* load(Binding& b,unsigned i) {
         if(!data)fail("motion key allocation");
         re4dc::storage::Arena arena;arena.init(data,bytes);
         char path[64];snprintf(path,sizeof(path),"/cd/dc/mot/%08x-%08x.fcv",word(e+8),word(e+12));
+#if RE4DC_MOTION_FAST_READ
+        const int fast=fast_key_read(path,data,size);
+        if(fast>=0) {
+            if(unsigned(fast)!=size) { re4dc_motion_free(data);fail("motion key read"); }
+            stats.bytes_read+=size;
+        } else {
+#endif
         auto result=re4dc::storage::read_file(arena,path);
         while(result.error && !std::strcmp(result.error,"storage reader re-entry") &&
               timer_us_gettime64()-started<5000000) {
@@ -91,6 +127,9 @@ unsigned* load(Binding& b,unsigned i) {
         }
         if(result.error || result.size!=size) { re4dc_motion_free(data);fail("motion key read"); }
         stats.bytes_read+=result.size;
+#if RE4DC_MOTION_FAST_READ
+        }
+#endif
         unsigned fnv=2166136261U;for(unsigned j=0;j<size;++j)fnv=(fnv^data[j])*16777619U;
         const auto* proxy=b.archive+word(e);const unsigned head=prefix(proxy);
         if(net_crc32le(data,size)!=word(e+8) || fnv!=word(e+12) || std::memcmp(proxy,data,head)) {
