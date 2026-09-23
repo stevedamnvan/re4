@@ -1,6 +1,23 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Current D358 priority (2026-09-22): finish the same D349 prepare-once/reuse-many
+Current D359 priority (2026-09-22): stop admission-ranking changes and restore
+retained preparation at the existing native asset/resource boundary. The current
+full candidate is committed as8bdb4dd. A normal-build paired capture, with detailed
+profiling/audit disabled, matches107 source ticks without measured drops:
+B render p50/p95=1562.056/1564.143ms, pageflip p50=1589.783ms. This remains far
+from playable. Do not use the former~1973ms instrumented result as normal cost,
+or interpret disabled failure/upload counters as passing gates.
+
+Qualified actual-descriptor replay of53 static parts covers43% of references but
+finds827 extra transforms and only732 shade evaluations saved over the existing
+fallback. Higher coverage is not progress. Recover a materially useful native
+preparation lifetime by replacing qualified render-only backing and measuring
+its real storage/overlap, without another representation copy or metadata growth.
+Preserve source light/camera/material dependencies and the full-stack acceptance
+unit. Do not activate PS2 visual compromises to mask the unresolved contract.
+See [D359](R4_NATIVE_PREPARATION_CHECKPOINT.md#d359---committed-stack-real-build-cost-end-admission-tuning-2026-09-22).
+
+Previous D358 priority (2026-09-22): finish the same D349 prepare-once/reuse-many
 integration. Whole-registration local admission is implemented within 8 KiB and
 passes a78-tick full-stack A/B stability gate, but B render p50/p95
 1,972.755/1,974.568ms is unchanged in practical terms. Coverage34.09%

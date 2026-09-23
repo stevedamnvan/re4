@@ -1,4 +1,4 @@
-# Native renderer integration checkpoints: D350-D352
+# Native renderer integration checkpoints: D350-D359
 
 Updated 2026-09-22. Base HEAD `ed9165bc7069232df840aba5a70150166b21989b`
 plus the recorded inherited integration overlay. No historical gameplay, pose,
@@ -949,3 +949,130 @@ HEAD 4e45b76 alone does not reproduce these dirty integration executables.
 TMU2 spans include instrumentation/preemption; no estimated overhead is removed.
 Page-flip/GPU intervals are separate. This is settled-view Flycast evidence,
 not full RNG/enemy-state parity, manual encounter/audio/retry or console approval.
+
+
+## D359 - committed stack, real build cost, end admission tuning (2026-09-22)
+
+Implementation checkpoint `8bdb4dd78067cec6bfcad538a182e7ac7c0c1b66`
+commits the default-off integrated renderer cohort and its source/block ownership
+hooks. It does not claim D349-equivalent preparation reuse or performance.
+Unrelated inherited source-address/endian, scheduling, fixture and event changes
+remain byte-preserved and uncommitted. Clean HEAD alone is not the recorded
+boot-to-room executable.
+
+### Reproducible implementation boundary
+
+A separate checkout `/root/work/re4-d359-renderer-cohort` at `23aa27a` plus the
+reviewed cohort compiles/links both selector arms with pinned
+`/root/work/kos-re4dc-d336` and SH-ELF GCC15.2. Five existing missing stubs remain.
+31 focused geometry/ownership/lighting/UI/texture checks pass, plus two profiler
+checks. The initial UI test invocation lacked its PYTHONPATH; the corrected
+six-test UI invocation passes. Shared block/model/trans preprocessing with
+`__PPC__` is byte-identical to HEAD; this is not a new full ProDG object comparison.
+Private manifests, patches, logs and build identities are under
+`/root/probe/d359-renderer-cohort/`. The primary index matched the clean snapshot
+before commit; hashes prove its other working files were not changed by staging.
+
+The normal-build source snapshot is retained once per frame with the existing
+seqlock/frame ID, `clock_valid=0` and zero clock reads. This adds no per-vertex
+measurement. Detailed profiling and reuse auditing compile out; existing frame,
+work, queue and presentation observations remain. No render algorithm or asset
+change was used to obtain the following normal-build measurement.
+
+### Normal full-stack A/B
+
+Private evidence:
+`C:/Flycast-Evidence/re4-dreamcast/d359normala-integrated-stack` and
+`d359normalb-integrated-stack`; parent `d359normal-comparison.json`.
+Build recipes `/root/probe/d359normal-build-arm.sh a|b` and
+`d359normal-prepare-arm.py a|b`; exact ELF, disc, fixture, toolchain/emulator,
+configuration and dirty-overlay identities are in each evidence directory.
+Both arms use `NATIVE_RENDER_PROFILE=0 NATIVE_REUSE_AUDIT=0`.
+
+| Matched ticks2387-2493, 107 frames | A baseline | B complete candidate |
+| --- | ---: | ---: |
+| Render wall p50 / p95 (ms) | 971.282 / 973.140 | 1562.056 / 1564.143 |
+| Presentation interval p50 / p95 (ms) | 1003.414 / 1003.416 | 1589.783 / 1606.466 |
+| Queue drops / aborted frames | 0 / 0 | 0 / 0 |
+
+Recorded source snapshots match exactly and native/source/presentation samples
+are consecutive. Queue high-water stays below the existing declared capacity.
+Source free remains66,592B. These are Flycast results in the settled opening
+view, not manual combat, the three-room route, or hardware acceptance. A has less
+material/lighting coverage; its cost is not an equal-appearance performance goal.
+B's final screenshot was inspected and retains the accepted presentation.
+
+The earlier instrumented B cost was1972.755ms median and975,488 profiling-clock
+reads/frame. Normal B is1562.056ms; removing diagnostics materially affects the
+measurement but does not fix the renderer. Do not subtract calibration from old
+timings or call the entire measured difference an arithmetic optimization.
+Profile-only allocation, texture-failure and upload metrics are unavailable in
+normal builds: their zero storage is not a pass. Actual logs still report source-render state rejections (cumulative frame2400:
+A4510/B730); these are not allocation failures. Exact-symbol final RAM and the
+RAM boot log bracket unchanged successful texture uploads/missing/discard totals
+A98/0/1 through all matched frames and B111/0/1 through native frame2490
+(103/107 matched frames). The last four B frames remain unmeasured for uploads.
+The cumulative discard1 is the earlier warm-up discard; frame snapshots show
+zero new discards throughout the measured107 frames. The comparison report retains this distinction
+and any bounded cumulative upload evidence; this is not blanket failure-free
+render acceptance. GPU intervals overlap CPU work and are not added to it.
+
+A ELF: `bf95783d339cb7eae5d1053d9594917e16c7ad506122af6d0da73079d7fe82a5`.
+B ELF: `fc4adcec73734cebf7764f147d225b057872f48a0f43edd0c96fb5f0661310d8`.
+They were built from `23aa27a` plus the recorded integration overlay, before the
+cohort commit. Preserve those manifests, not a HEAD-only reproduction claim.
+
+### Decisive reuse attribution
+
+Existing replay, actual installed bounded descriptors and original call order
+qualify53 immutable static parts at tick2382:86,276/200,643 references (43.0%) and
+756,835us of1,735,180us whole-part target CPU (43.6%). Counts, both ordered source
+hashes, work counts, original source bindings and source-array bytes match.
+Mutable/mismatching parts are explicitly excluded; no whole-frame attribution is
+claimed. Private reproduction/report: `/root/probe/d359-reuse-attribution-host/`.
+
+Against a shadow of the existing continuously updated64-slot fallback, the
+installed hybrid causes827 extra position transforms and avoids only732 complete
+shade evaluations (about1.1% on that subset). Dense-only position gains72 versus
+fallback-only losses1035 demonstrate why gross coverage was misleading. Both RGB
+branches show55,175 conversions and13,020 direct packed-color reuses. Per-part
+unique identities are31,092 positions/40,996 shades versus59,573 transforms and
+65,970 shade evaluations. These are potential duplicate-work populations, not
+promised achievable savings with the current160-slot workspace.
+
+**Decision: end admission-ranking experiments.** The full candidate is retained;
+its preparation architecture remains incomplete. Do not revisit R3s keyed
+lookups, persistent per-corner remaps, a larger8KiB metadata arena, another source
+heap cut, or isolated subsystem target promotion.
+
+### Next implementation contract
+
+Restore the missing retained native preparation representation at the existing
+asset/resource ownership boundary. Qualified static render-only backing must be
+replaced or compacted, with actual reclaimed allocation and loading overlap
+measured, before funding meaningful persistent preparation. Keep source corner/index streams as backing under their live owner generation;
+no persistent per-corner remapping. Other qualified render-only storage changes
+must adapt every remaining CPU reader; no second complete geometry representation
+or parallel renderer. Use the
+existing DAR preparation, native packages/storage and bind/unbind/move/retire
+contracts. Source model identity, pose, current material/visibility and gameplay
+remain authoritative. Make one coherent working replacement and judge the full
+stack, not another sequence of cache-coverage victories.
+
+Historical prepared room lighting also needs original source light identity and
+invalidation, not just final camera-space GX values. `lightSetObj`/`setModel2`
+select lights; `LightSetModel` applies model-dependent parameters and camera
+transformation. Light moves, parents, cuts and environment changes matter.
+Reuse the historical unclamped static accumulation only after proving those
+inputs; do not freeze camera-relative or mutable contributions. The present
+41k observed per-part shade identities would take about492KB as float RGB alone;
+that illustrates the retention cost, not a proven minimum or a new allocation
+request. D349's larger tables cannot be supplied by an8KiB descriptor tweak.
+
+If the selected source-backed replacement cannot fund substantial reuse, report
+its exact net byte/work limit and resolve that representation/budget boundary;
+do not restart ranking or claim that another tiny cache recreates D349. The
+PS2/Dreamcast visual-profile phase remains explicitly authorized at its existing
+gate. This checkpoint does not activate static prelighting/mesh substitutions to
+hide the unresolved preparation contract. Menu/three-room work and all existing
+backlogs remain in force.

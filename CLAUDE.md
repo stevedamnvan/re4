@@ -73,7 +73,38 @@ The shared PVR owner, storage/texture ownership and completed source skinning
 remain the boundaries. Source lighting state and native pass organization are
 part of this candidate, not deferred post-performance polish.
 
-## D358 current - admission improved, actual reuse still incomplete
+## D359 current - implementation committed; stop admission tuning
+
+Renderer cohort `8bdb4dd` is pushed. Both selector arms link from a separate clean
+snapshot; focused correctness checks pass. The inherited source/fixture/event
+integration overlay is preserved separately, so HEAD alone still does not
+reproduce the recorded boot-to-room build.
+
+The first current normal-build A/B disables detailed profiling/audit and retains
+only existing frame/source/work observations.107 matched ticks2387-2493 have
+identical recorded source snapshots, consecutive presentation, zero measured
+queue drops/discards and unchanged66,592B source free. B render p50/p95 is
+1562.056/1564.143ms; presentation p50/p95 is1589.783/1606.466ms. Old~1973ms
+profiling results included~975k clock reads/frame. Normal cost is still unusable;
+removing diagnostics is not the missing preparation architecture. Disabled
+allocation/upload metrics remain unmeasured, not zero-failure assertions.
+
+Qualified replay of53 static parts (43% of references) proves the hybrid cache
+adds827 position transforms and avoids only732 shade evaluations compared with
+the existing fallback. End admission-ranking work. Next is one meaningful
+source-to-native preparation/ownership replacement for qualified static render
+backing, including the retained-data budget and source light invalidation. Use
+existing resource code; do not add another cache, grow metadata/source budgets,
+or import the prototype loop. Restore prepare-once/reuse-many as a resource
+contract, then judge the complete stack. If it cannot fit, report the exact
+replacement/net-budget limit rather than extending the tuning loop.
+
+See [D359](port/dreamcast/docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d359---committed-stack-real-build-cost-end-admission-tuning-2026-09-22)
+for exact builds/evidence, attribution and limits. Both captures have ended; no
+emulator window remains owned. The PS2 visual-profile gate and three-room goal
+are unchanged.
+
+## Previous D358 - admission improved, actual reuse still incomplete
 
 Full D358v2 A/B passes the measured stability/source-snapshot gates for
 78 matched ticks2387-2464, but B render p50/p95 is
@@ -84,7 +115,7 @@ rises 12.95%->34.09%, yet actual transforms 133,147->133,111 and individual-ligh
 evaluations 387,402->384,223 barely change. Packet flushes 212/fallbacks 171,
 source free 66,592B and VRAM are unchanged. Presentation remains accepted for now.
 
-The next concrete check is hit/loss attribution in the existing captured-source
+The historical next check (completed in D359) was hit/loss attribution in the existing captured-source
 replay: existing 64-slot fallback tables already reuse positions and complete
 lighting across strips; short dense-domain generations can replace those hits
 or lose them. The local score counts gross repetition, not additional work
