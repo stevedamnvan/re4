@@ -24,6 +24,12 @@ checkpoints remain evidence.
 - **Floating point:** `-ffp-contract=off` everywhere was approved (logic plan
   step 6B). Recapture the determinism baseline once. After that, O2 changes
   must be strictly identical.
+  - GAME_FDLIBM=1 (contract-off trig built from the recovered newlib sources)
+    goes in the same step.
+  - Render-only native renderer objects are exempt, saving about 0.5 ms on
+    hardware.
+  - KOS flushes denormals (FPSCR), so O2 isn't identical by construction. The
+    STRICT trace gate decides.
 - **Hardware test gate:**
   - No console testing until the recovered game plays r100 -> r101 -> r103
     through normal transitions, with cutscenes, music, sound effects,
@@ -88,6 +94,8 @@ drawn. Kamui never overflows.
 | LA | 150 | scenery30: MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1 (LOD packages, GX fog as PVR table fog to the 42.7 m source far plane) |
 | LB | 150 | Lightly reduced GC trees; about 2 ms less work, same vblank step |
 | LC | 117 | actors30: NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1; actors about 51 -> 18 ms |
+| LD | 117 | PS2 trees (ps2-blender stage.sh overlay). About 2.5 ms less work; COMMON package 507 -> 136 KB, so heap 4 gains ~370 KB. **Chosen.** |
+| LE | 117-119 | PS2 "groves" variant. 6% more TA data; a few more background trunks; the visual gain is negligible. Rejected by the frame-time rule. |
 
 Remaining work in LC is about 98 ms. It rounds up to 7 vblanks.
 
@@ -105,8 +113,8 @@ Remaining work in LC is about 98 ms. It rounds up to 7 vblanks.
   PS2 bark (VQ).
   - The worst village view drops from 61.7k to 35.7k strip corners.
   - A "groves" variant (one PS2 tree per GC trunk) costs about 2.5 ms more
-    scenery time on hardware. Choose it only if it looks substantially better
-    in game.
+    scenery time on hardware. It was compared in game (LD vs LE) and rejected:
+    the visual gain is negligible.
 - **PS2 static scenery** is the same geometry as GC, so there is no gain there.
 - **PS2 character meshes** are not lighter (em12: 411 KB vs 407 KB). Actors
   instead rely on:
