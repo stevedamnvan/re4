@@ -181,6 +181,22 @@ Steps are ordered by expected frame-time gain.
 6. Hardware tuning after the first console session: cache layout, prefetch,
    OC-RAM.
 
+## Controls (done: e024e19, 0a33d0c)
+
+Standard pad:
+- Stick, A, B, X, Y, Start, L and R map directly, with the GC PADClamp ranges.
+- In free movement the D-pad is camera look, and a short tap of D-pad down is Z (map).
+- In scope or binoculars, D-pad up/down zooms.
+- In menus, aiming and QTEs the D-pad is the D-pad.
+
+Dual-analog pads use the second stick as the C-stick, and C/Z as Z.
+
+Debug traps (L+Start, Z item-maker) are blocked unless DEBUG_PAD=1.
+
+0a33d0c fixes stick aiming on little-endian targets. Before it, only the D-pad aimed.
+
+The glyph swap for Z/C-stick prompts is still to do. No Z or C-stick glyph textures exist; wording is spelled out in the message tables. The A/B/X/L/R/stick glyphs are in core.das #25 and the ss_map/ss_cmmn/ss_cap hint strips.
+
 ## Route plan (frontier units)
 
 Assessment: the recovered game reaches r100 gameplay. r101 and r103 have never
