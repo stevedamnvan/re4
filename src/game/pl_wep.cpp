@@ -986,7 +986,11 @@ void PlWepLockCtrl(cModel* plm)
         spd2 = spd;
         break;
     }
+#if !defined(__PPC__)
+    if (Joy[0].stickX | Joy[0].stickY) {  // main stick deflected (the u32 test reads the C-stick bytes little-endian)
+#else
     if (*(u32*) &Joy[0].stickX & 0xFFFF0000) {  // main stick (sx, sy) deflected
+#endif
         if (repCtr < 7.0f) {
             repCtr = repCtr + 1.0f;
         }

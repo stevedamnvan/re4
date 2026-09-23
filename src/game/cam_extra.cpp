@@ -464,7 +464,11 @@ void CameraScope::move()
     m_rnd.y = COSF(FRef(ytime)) * (rnd_gain2 - rdir); // FRef: the static loads wait for the yure stores
     xtime = LIMIT_ANGLE(FRef(xtime) + FRef(x_yure_spd));
     ytime = LIMIT_ANGLE(ytime + y_yure_spd);
+#if !defined(__PPC__)
+    if (pastkey != 1 || (Joy[0].stickX | Joy[0].stickY)) { // sx/sy: the u32 test reads the C-stick bytes little-endian
+#else
     if (pastkey != 1 || (*(u32*) &Joy[0] & 0xFFFF0000)) { // the first word of Joy[0] (sx/sy bytes), not `on`
+#endif
         Vec* a = (Vec*) &angle_x;
         PSVECAdd(a, &m_rnd, a);
         yure2 = *a;
