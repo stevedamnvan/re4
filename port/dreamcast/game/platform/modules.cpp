@@ -37,6 +37,10 @@ MODULE(st1_3)
 MODULE(wep02)
 MODULE(em12)
 MODULE(em23)
+MODULE(em15)
+MODULE(em26)
+MODULE(em28)
+MODULE(em21)
 #undef MODULE
 }
 
@@ -62,6 +66,10 @@ static const Re4dcModule g_modules[] = {
     MODULE(4, wep02),
     MODULE(18, em12),
     MODULE(7, em23),
+    MODULE(19, em15),
+    MODULE(14, em26),
+    MODULE(17, em28),
+    MODULE(6, em21),
 };
 #undef MODULE
 

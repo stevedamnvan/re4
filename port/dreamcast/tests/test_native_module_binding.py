@@ -40,7 +40,7 @@ struct State { char data[8]; char bss[4]; char pristine[8]; };
         ".globl re4dc_mod_" #n "_bss\n.set re4dc_mod_" #n "_bss, " #n "_state+8\n" \
         ".globl re4dc_mod_" #n "_bss_end\n.set re4dc_mod_" #n "_bss_end, " #n "_state+12\n" \
         ".globl re4dc_mod_" #n "_pristine\n.set re4dc_mod_" #n "_pristine, " #n "_state+12\n");
-ENTRY(st1_0) ENTRY(st1_1) ENTRY(st1_2) ENTRY(st1_3) ENTRY(wep02) ENTRY(em12) ENTRY(em23)
+ENTRY(st1_0) ENTRY(st1_1) ENTRY(st1_2) ENTRY(st1_3) ENTRY(wep02) ENTRY(em12) ENTRY(em23) ENTRY(em15) ENTRY(em26) ENTRY(em28) ENTRY(em21)
 #undef ENTRY
 int re4dc_module_bind(void*);
 int re4dc_module_unbind(void*);

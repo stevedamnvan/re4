@@ -71,7 +71,13 @@ extern "C" void _unresolved()
 // EmInitFunc of the module: constructs the cEm26 class in the manager's work.
 void Em26Init(cEm* em)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // As in Em12Init, retain the archive installed by cEmMgr::construct.
+    // Modern value-initialization would zero it before the base constructor.
+    new (em) cEm26;
+#else
     new (em) cEm26();
+#endif
 }
 
 // Per-frame damage check (cEm26::move): an explosion / fire volume kills the cow at once (flag bit5,

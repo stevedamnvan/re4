@@ -82,7 +82,13 @@ extern "C" void _unresolved()
 // EmInitFunc of the module: constructs the cEm28 class in the manager's work.
 void Em28Init(cEm* em)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // As in Em12Init, retain the archive installed by cEmMgr::construct.
+    // Modern value-initialization would zero it before the base constructor.
+    new (em) cEm28;
+#else
     new (em) cEm28();
+#endif
 }
 
 // Per-frame damage check (cEm28::move): an explosion / fire volume kills the chicken (flag bit6,

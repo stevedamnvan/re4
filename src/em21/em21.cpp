@@ -72,7 +72,12 @@ static inline cEm* em21EmWork(u32 no)
     if (no >= m->nArray) {
         return 0;
     }
+#if !defined(__PPC__)
+    // Scan helper: unbacked sparse slots read as absent (no allocation), as em10.cpp's scans.
+    return (cEm*) m->workAt(no);
+#else
     return (cEm*) ((u8*) m->pArray + m->size * no);
+#endif
 }
 
 // Routine bytes written through an int inline (player.cpp PlRoutineSet).
@@ -109,7 +114,13 @@ extern "C" void _unresolved()
 // EmInitFunc of the module: constructs the cEm21 class in the manager's work.
 void Em21Init(cEm* em)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // As in Em12Init, retain the archive installed by cEmMgr::construct.
+    // Modern value-initialization would zero it before the base constructor.
+    new (em) cEm21;
+#else
     new (em) cEm21();
+#endif
 }
 
 // Per-frame damage check (cEm21::move): the dog never dies; an explosion / fire damage volume (kind
@@ -937,7 +948,12 @@ int em21SearchElgigante(cEm21* em)
     u32 i;
 
     for (i = 0; i < EmMgr.nArray; i++) {
+#if !defined(__PPC__)
+        cEm* e = (cEm*) EmMgr.workAt(i);
+        if (!e) continue;
+#else
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+#endif
 
         if (!e->isAlive()) {
             continue;
@@ -1260,6 +1276,9 @@ void em21EscapeWithYou(cEm21* em)
     for (i = 0; i < EmMgr.nArray; i++) {
         cEm* e = em21EmWork(i);
 
+#if !defined(__PPC__)
+        if (!e) continue;
+#endif
         if (!(e->be_flag & 1)) {
             continue;
         }
@@ -1326,6 +1345,9 @@ int em21TrapSearch(cEm21* em)
     for (i = 0; i < EmMgr.nArray; i++) {
         cEm* e = em21EmWork(i);
 
+#if !defined(__PPC__)
+        if (!e) continue;
+#endif
         if (!(e->be_flag & 1)) {
             continue;
         }

@@ -47,7 +47,7 @@ OBJDIR = obj
 # turns every module in MODULES into one partially linked object whose only
 # global symbols are its renamed entry points (obj/modules.mk), and
 # platform/modules.cpp maps the REL header ids to them for OSLink.
-MODULES = st1_0 st1_1 st1_2 st1_3 wep02 em12 em23
+MODULES = st1_0 st1_1 st1_2 st1_3 wep02 em12 em23 em15 em26 em28 em21
 MODULE_OBJS =
 MODULES_MK = $(OBJDIR)/modules.mk
 GAME_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS))
@@ -235,7 +235,7 @@ ENEMY_DEMAND ?= 0
 # Direct-slot consumers reviewed for this module set. Audit any newly linked
 # module before enabling sparse enemy backing; census/reference remain usable.
 ifeq ($(ENEMY_DEMAND),1)
-ifneq ($(filter-out st1_0 st1_1 st1_2 st1_3 wep02 em12 em23,$(MODULES)),)
+ifneq ($(filter-out st1_0 st1_1 st1_2 st1_3 wep02 em12 em23 em15 em26 em28 em21,$(MODULES)),)
 $(error ENEMY_DEMAND requires a direct-slot consumer audit for the selected MODULES)
 endif
 endif
