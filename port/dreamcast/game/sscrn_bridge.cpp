@@ -21,6 +21,7 @@
 #include "player.h"
 #include "emhit.h"
 #include "mes.h"
+#include "card.h"
 #include "re4dc_platform.h"
 #include <stdio.h>
 #include <string.h>
@@ -362,6 +363,9 @@ struct Fixture {
     bool continue_pending;
     unsigned done_events;                   // "done <events>": "w11 done" 300 game frames after
     bool done_logged;
+    unsigned save_after, save_count, saves; // "save <frames> <count> [room] [slot]": the typewriter's
+    unsigned save_room, save_slot;          // CardSave(slot, 1) (sce_at.cpp type 8), once per room
+    unsigned save_generation;               // generation, `frames` room frames in
 };
 Fixture fx{};
 
@@ -376,7 +380,7 @@ void load_fixture()
     for (char* line = text; line && *line;) {
         char* next = strchr(line, '\n');
         if (next) *next++ = 0;
-        unsigned a = 0, b = 0, r = 0;
+        unsigned a = 0, b = 0, r = 0, v2 = 0;
         int v = 0;
         if (sscanf(line, "die %u %u %x", &a, &b, &r) >= 2) {
             fx.die_after = a;
@@ -385,14 +389,19 @@ void load_fixture()
         } else if (sscanf(line, "life %d %u", &v, &b) == 2) {
             fx.life_value = v;
             fx.life_after = b;
+        } else if (sscanf(line, "save %u %u %x %u", &a, &b, &r, &v2) >= 2) {
+            fx.save_after = a;
+            fx.save_count = b;
+            fx.save_room = r;
+            fx.save_slot = v2;
         } else if (sscanf(line, "done %u", &a) == 1) {
             fx.done_events = a;
         }
         line = next;
     }
-    re4dc_log("w11 fixture: die after=%u count=%u room=%03x life=%d after=%u done=%u\n", fx.die_after, fx.die_count,
-              fx.die_room,
-              fx.life_value, fx.life_after, fx.done_events);
+    re4dc_log("w11 fixture: die after=%u count=%u room=%03x life=%d after=%u done=%u save after=%u count=%u room=%03x slot=%u\n",
+              fx.die_after, fx.die_count, fx.die_room, fx.life_value, fx.life_after, fx.done_events, fx.save_after,
+              fx.save_count, fx.save_room, fx.save_slot);
 }
 
 u32 items_hash()
@@ -428,17 +437,18 @@ void player_state(const char* when)
 }
 
 // Frame timing per phase, and the capture markers.
-enum Phase { kBoot, kGame, kSub, kDead };
-const char* const kPhaseName[] = {"boot", "game", "sub", "dead"};
+enum Phase { kBoot, kGame, kSub, kDead, kCard };
+const char* const kPhaseName[] = {"boot", "game", "sub", "dead", "card"};
 struct Window { unsigned frames; unsigned long long sum, max; };
-Window window[4];
+Window window[5];
 unsigned long long last_us;
 Phase last_phase = kBoot;
-unsigned phase_frames, opens, deaths;
+unsigned phase_frames, opens, deaths, cards;
 
 Phase phase_now()
 {
     if (!pG) return kBoot;
+    if (pG->System_flg & 0x1000) return kCard;  // CardMainTask running (card.cpp)
     if (SubScreenWk.type) return kSub;  // set by SubScreenOpen, cleared when the screen has closed
     if (fx.death_frame) return kDead;
     if (pG->Rno0 == 3) return kGame;
@@ -478,6 +488,20 @@ extern "C" int re4dc_w11_room_poll(unsigned generation)
         fx.life_done = true;
         re4dc_log("w11 fixture: life %d -> %d\n", int(s16(pG->pl_life)), fx.life_value);
         pG->pl_life = u16(fx.life_value);
+    }
+    if (fx.save_count && fx.saves < fx.save_count && fx.save_generation != generation &&
+        fx.room_frames >= fx.save_after && (!fx.save_room || unsigned(pG->room_id) == fx.save_room) &&
+        !SubScreenWk.type && !(pG->System_flg & 0x1000) && s16(pG->pl_life) > 0) {
+        fx.save_generation = generation;
+        ++fx.saves;
+        census("save");
+        player_state("save");
+        re4dc_log("w11 fixture: typewriter save %u/%u slot %u at room frame %u\n", fx.saves, fx.save_count,
+                  fx.save_slot, fx.room_frames);
+        CardSave(int(fx.save_slot), 1);  // returns when the card screen has closed
+        census("save-closed");
+        player_state("save-closed");
+        re4dc_log("w11 fixture: typewriter save %u returned\n", fx.saves);
     }
     if (fx.die_count && fx.dies < fx.die_count && !fx.death_frame && fx.room_frames >= fx.die_after &&
         (!fx.die_room || unsigned(pG->room_id) == fx.die_room) &&
@@ -527,10 +551,16 @@ extern "C" void re4dc_w11_frame()
             player_state("sub-closed");
         }
         if (p == kDead) ++deaths;
+        if (p == kCard) {
+            ++cards;
+            census("card-open");
+        } else if (last_phase == kCard) {
+            census("card-closed");
+        }
         re4dc_log("w11 phase: %s -> %s opens=%u deaths=%u frame=%u\n", kPhaseName[last_phase], kPhaseName[p], opens,
                   deaths, pG ? unsigned(pG->Frame_cnt) : 0);
         // Padscript anchor "w11=<phase>/<n>": sub/dead count their own events, game counts both.
-        re4dc_fixture_state("w11", int(p), int(p == kSub ? opens : p == kDead ? deaths : opens + deaths));
+        re4dc_fixture_state("w11", int(p), int(p == kSub ? opens : p == kDead ? deaths : p == kCard ? cards : opens + deaths));
         phase_frames = 0;
         last_phase = p;
     }
@@ -542,11 +572,12 @@ extern "C" void re4dc_w11_frame()
     }
     if (p == kSub && phase_frames % 120 == 90 && phase_frames < 1500) shot("sub%u-%u", opens, phase_frames);
     if (p == kGame && opens && phase_frames == 60) shot("closed%u-%u", opens, phase_frames);
-    if (p == kGame && fx.done_events && !fx.done_logged && opens + deaths >= fx.done_events && phase_frames == 300) {
+    if (p == kCard && phase_frames % 120 == 60 && phase_frames < 1500) shot("card%u-%u", cards, phase_frames);
+    if (p == kGame && fx.done_events && !fx.done_logged && opens + deaths + cards >= fx.done_events && phase_frames == 300) {
         fx.done_logged = true;
         census("done");
         player_state("done");
-        re4dc_log("w11 done: opens=%u deaths=%u\n", opens, deaths);
+        re4dc_log("w11 done: opens=%u deaths=%u cards=%u\n", opens, deaths, cards);
     }
     if (p == kDead && (phase_frames == 150 || phase_frames == 330 || phase_frames == 450)) shot("dead%u-%u", deaths, phase_frames);
     last_us = now;

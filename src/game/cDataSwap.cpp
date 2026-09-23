@@ -12,6 +12,29 @@
 #if defined(RE4DC_GAME) && !defined(__PPC__)
 #include "re4dc_platform.h"
 #endif
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_SUBSCREEN
+// D367 VMU S0 (SUBSCREEN=1, subscreen.mk): Dreamcast storage for the swapped range when the heap
+// copy does not fit. The range goes to the W11 VRAM backing (platform/subscreen_backing.cpp: the
+// idle second TA vertex bank, then texture-pool blocks) and comes back byte-exact, checked by hash.
+// The sub screen and the card screen never overlap: a second open is refused and halts below.
+extern "C" {
+int re4dc_ssb_open(unsigned bytes, unsigned* bank_bytes, unsigned* pool_bytes);
+void re4dc_ssb_rewind();
+void re4dc_ssb_put(const void* src, unsigned bytes);
+void re4dc_ssb_get(void* dst, unsigned bytes);
+void re4dc_ssb_close();
+unsigned long long re4dc_ssb_us();
+}
+enum { kSwapVram = 4 };  // m_be_flag: copy in the VRAM backing
+static u32 swapVramHash;
+static u32 swapHash(u32 addr, u32 size)
+{
+    const u32* p = (const u32*) addr;
+    u32 h = 2166136261U;
+    for (u32 n = size / 4; n; --n) h = (h ^ *p++) * 16777619U;
+    return h;
+}
+#endif
 
 extern "C" {
 void SubScreenAramRead();
@@ -47,6 +70,27 @@ int cDataSwap::SwapOut(u32 addr, u32 size, u32 aram)
 #line 64 "D:/Bio4/Prog/cDataSwap.cpp"
     mram = MEM_ALLOC(size, 0, 13);
     if (mram == NULL) {
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_SUBSCREEN
+        {
+            unsigned bank = 0, pool = 0;
+            const unsigned long long t0 = re4dc_ssb_us();
+            if ((size & 3) || (addr & 3) || !re4dc_ssb_open(size, &bank, &pool)) {
+                re4dc_missing("cDataSwap: VRAM backing unavailable (sub screen open or VRAM short)");
+                return 0;
+            }
+            re4dc_ssb_rewind();
+            re4dc_ssb_put((const void*) addr, size);
+            swapVramHash = swapHash(addr, size);
+            this->m_SwapMaddr = addr;
+            m_be_flag |= kSwapVram;
+            re4dc_log("cDataSwap: out addr=%08x size=%u bank=%u pool=%u us=%u hash=%08x\n", (unsigned) addr,
+                      (unsigned) size, bank, pool, (unsigned) (re4dc_ssb_us() - t0), (unsigned) swapVramHash);
+            MemSuspendHeap(m_CurHeapNo);
+            MemCreateHeap(11, this->m_SwapMaddr, this->m_SwapMaddr + this->m_SwapSize);
+            MemSetCurrentHeap(11);
+            return 1;
+        }
+#endif
 #if defined(RE4DC_GAME) && !defined(__PPC__)
         // ARQ currently provides no mutable backing. Do not reuse live archive
         // bytes (including borrowed native identities) without a real snapshot.
@@ -88,6 +132,21 @@ void cDataSwap::SwapIn()
 {
     if (m_be_flag != 0) {
         MemDestroyHeap(11);
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_SUBSCREEN
+        if (m_be_flag & kSwapVram) {
+            const unsigned long long t0 = re4dc_ssb_us();
+            re4dc_ssb_rewind();
+            re4dc_ssb_get((void*) m_SwapMaddr, m_SwapSize);
+            re4dc_ssb_close();
+            const u32 h = swapHash(m_SwapMaddr, m_SwapSize);
+            re4dc_log("cDataSwap: in addr=%08x size=%u us=%u hash=%08x %s\n", (unsigned) m_SwapMaddr,
+                      (unsigned) m_SwapSize, (unsigned) (re4dc_ssb_us() - t0), (unsigned) h,
+                      h == swapVramHash ? "ok" : "MISMATCH");
+            if (h != swapVramHash) {
+                re4dc_missing("cDataSwap: VRAM backing corrupted");
+            }
+        }
+#endif
         if (m_be_flag & 2) {
             Aram.DmaTransReq(1, m_SwapAaddr, m_SwapMaddr, m_SwapSize, 1);
             if (m_SwapAaddr == 0xD00000) {

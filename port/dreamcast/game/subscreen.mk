@@ -13,6 +13,8 @@
 #                  The ARAM preload at game start (1.75 MB of reads with nowhere to go) is
 #                  skipped. Needs the sub screen data converted (le_mirror ss/ handlers) and
 #                  its texture packages on the disc.
+#                  The card screen's cDataSwap (a typewriter save swaps ~250 KB of the room heap
+#                  out) uses the same backing when its heap copy does not fit (VMU design S0).
 #   W11_FIXTURE=1  test instrumentation, never in a product image: /cd/dc/w11.txt (death /
 #                  life fixture through the source damage entry), heap/VRAM/KOS census around
 #                  every sub screen open and close and every death, frame-time windows per
@@ -33,7 +35,7 @@ $(OBJDIR)/subscreen.h: subscreen-force
 	@rm -f $@.tmp
 # A knob change regenerates the module list.
 $(MODULES_MK): $(OBJDIR)/subscreen.h
-SUBSCREEN_GAME = $(OBJDIR)/src/game/sscrn.o $(OBJDIR)/ui_bridge.o
+SUBSCREEN_GAME = $(OBJDIR)/src/game/sscrn.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/src/game/cDataSwap.o
 $(SUBSCREEN_GAME) $(OBJDIR)/platform/modules.o: $(OBJDIR)/subscreen.h
 $(SUBSCREEN_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/subscreen.h
 $(OBJDIR)/platform/modules.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/subscreen.h
