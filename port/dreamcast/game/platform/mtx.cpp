@@ -39,6 +39,9 @@ void C_VECCrossProduct(const Vec* a, const Vec* b, Vec* axb);
 f32 C_VECSquareDistance(const Vec* a, const Vec* b);
 f32 C_VECDistance(const Vec* a, const Vec* b);
 
+// GAME_PS_ALIAS (game30.mk): platform/ps_alias.ld binds the PS* names to the C_* bodies at
+// link time instead (same arithmetic, one call frame less per call).
+#if !RE4DC_PS_ALIAS
 void PSMTXIdentity(Mtx m) { C_MTXIdentity(m); }
 void PSMTXCopy(const Mtx s, Mtx d) { C_MTXCopy(s, d); }
 void PSMTXConcat(const Mtx a, const Mtx b, Mtx ab) { C_MTXConcat(a, b, ab); }
@@ -65,6 +68,7 @@ f32 PSVECDotProduct(const Vec* a, const Vec* b) { return C_VECDotProduct(a, b); 
 void PSVECCrossProduct(const Vec* a, const Vec* b, Vec* d) { C_VECCrossProduct(a, b, d); }
 f32 PSVECSquareDistance(const Vec* a, const Vec* b) { return C_VECSquareDistance(a, b); }
 f32 PSVECDistance(const Vec* a, const Vec* b) { return C_VECDistance(a, b); }
+#endif
 
 // mtx44.c carries PSMTX44MultVec only as paired-single asm; the C form.
 void C_MTX44MultVec(const Mtx44 m, const Vec* src, Vec* dst)
@@ -80,6 +84,7 @@ void C_MTX44MultVec(const Mtx44 m, const Vec* src, Vec* dst)
     dst->z = oz * w;
 }
 
+#if !RE4DC_SH4_MATH  // GAME_SH4_MATH: platform/mtx_sh4.S (_re4dc_sh4_MTXReorder)
 // The SDK's PSMTXReorder: a 3x4 row matrix into the column-major 4x3 form the
 // skinning palette uses (rotation columns first, translation last).
 void PSMTXReorder(const Mtx src, ROMtx dst)
@@ -93,5 +98,6 @@ void PSMTXReorder(const Mtx src, ROMtx dst)
     dst[3][1] = src[1][3];
     dst[3][2] = src[2][3];
 }
+#endif
 
 }  // extern "C"

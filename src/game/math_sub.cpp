@@ -288,6 +288,13 @@ void TransMatrix(Mtx m, Vec* pos)
 
 // The game's Euler rotation matrix (radians): m = Rz(rot.z) * Ry(rot.y) * Rx(rot.x), i.e. a
 // vector is rotated about X first, then Y, then Z; translation cleared. Used for every model angle.
+#if defined(RE4DC_ROT_CACHE) && RE4DC_ROT_CACHE
+// GAME_ROT_CACHE (game30.mk): the body below is compiled unchanged under another name and the
+// public RotMatrix (after it) memoises it. RotMatrix is a pure function of the three angle bit
+// patterns: it reads rot->x/y/z before its first store, writes all twelve words of m, and
+// sinf / cosf have no side effects here; so a hit returns exactly the bits a call would compute.
+#define RotMatrix __attribute__((noinline)) RotMatrix_uncached
+#endif
 void RotMatrix(Mtx m, Vec* rot)
 {
     f32 sx;
@@ -325,6 +332,52 @@ void RotMatrix(Mtx m, Vec* rot)
     m[2][2] = cy * cx;
     m[2][3] = 0.0f;
 }
+#if defined(RE4DC_ROT_CACHE) && RE4DC_ROT_CACHE
+#undef RotMatrix
+// 32-entry direct-mapped memo keyed by the exact angle bits (+0 / -0 and NaN payloads distinct).
+// Static and idle models keep their angles from frame to frame; animated ones simply miss.
+struct RotCacheEntry {
+    u32 key[3];
+    u32 valid;
+    u32 m[12];
+};
+static RotCacheEntry s_rotCache[32];
+extern "C" {
+u32 re4dc_rot_cache_hits;
+u32 re4dc_rot_cache_misses;
+}
+
+void RotMatrix(Mtx m, Vec* rot)
+{
+    const u32* k = (const u32*) rot;
+    const u32 kx = k[0], ky = k[1], kz = k[2];
+    u32 h = kx ^ (ky << 1) ^ (kz << 2);
+    h ^= h >> 15;
+    h ^= h >> 7;
+    RotCacheEntry* e = &s_rotCache[h & 31];
+    u32* out = (u32*) m;
+    if (e->valid && e->key[0] == kx && e->key[1] == ky && e->key[2] == kz) {
+        re4dc_rot_cache_hits++;
+        for (int i = 0; i < 12; i++) {
+            out[i] = e->m[i];
+        }
+        return;
+    }
+    re4dc_rot_cache_misses++;
+    Vec a;
+    a.x = rot->x;
+    a.y = rot->y;
+    a.z = rot->z;   // the key's own copy: m may overlap *rot
+    RotMatrix_uncached(m, &a);
+    e->key[0] = kx;
+    e->key[1] = ky;
+    e->key[2] = kz;
+    for (int i = 0; i < 12; i++) {
+        e->m[i] = out[i];
+    }
+    e->valid = 1;
+}
+#endif
 
 // RotMatrix using the game's fast SINF/COSF (zero angles short-cut); same matrix. Used by the
 // effect and parts code.

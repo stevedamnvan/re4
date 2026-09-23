@@ -148,6 +148,8 @@ GAME_CPPFLAGS += $(NO_EH_FLAGS)
 PLATFORM_CPPFLAGS += $(NO_EH_FLAGS)
 SDK_CFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
 endif
+# Opt-in game-side CPU knobs and the determinism trace (default off: no effect).
+include game30.mk
 platform/sdk/gen/%.c: $(ROOT)/src/lib/%.c platform/sdk/strip_cw_asm.py
 	@mkdir -p $(dir $@)
 	python3 platform/sdk/strip_cw_asm.py $< $@
@@ -163,9 +165,9 @@ $(MODULES_MK): Makefile tools/gen_modules.py $(ROOT)/config/G4BE08/modules.py $(
 	python3 tools/gen_modules.py $(ROOT)/config/G4BE08/modules $(ROOT) $(OBJDIR) $@ $(MODULES)
 include $(MODULES_MK)
 
-$(TARGET): $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a $(OBJS) tools/link.sh tools/gen_aliases.py tools/gen_missing.py platform/aliases-manual.ld
+$(TARGET): $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a $(OBJS) $(GAME30_LINK_INPUTS) tools/link.sh tools/gen_aliases.py tools/gen_missing.py platform/aliases-manual.ld
 	@if [ "$(PVR_STREAM)" = 1 ]; then test "$$($(KOS_CC_BASE)/bin/$(KOS_CC_PREFIX)-nm -g --defined-only $(KOS_BASE)/lib/$(KOS_ARCH)/libkallisti.a | grep -Ec ' T _pvr_(set_manual_flip|resolve_frame)$$')" -eq 2 || { echo 'PVR_STREAM requires the pinned manual-flip KOS patch' >&2; exit 1; }; fi
-	bash tools/link.sh $(TARGET) "$(GAME_OPT)" $(OBJS)
+	bash tools/link.sh $(TARGET) "$(GAME_OPT)" $(OBJS) $(GAME30_LINK_INPUTS)
 
 # Undefined-symbol inventory over every gameplay unit, REL modules included.
 census: $(CENSUS_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)

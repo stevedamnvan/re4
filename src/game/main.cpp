@@ -77,10 +77,16 @@ void Title_task();
 // game/debug.cpp
 void ProcessTickInit();
 void ProcessTickGet(int no, const char* name);
+#if defined(RE4DC_TICK_LOG) && RE4DC_TICK_LOG
+void ProcessTickLog();  // game/debug.cpp
+#endif
 void DebugControl();
 void ConfigSet();
 // game/trans.cpp
 void Render();
+#if defined(RE4DC_LOGIC_TRACE) && RE4DC_LOGIC_TRACE
+extern "C" void re4dc_logic_trace_tick(void);  // port/dreamcast/game/logic_trace.cpp
+#endif
 void SetPrimBuffPtr();
 void Trans();
 // game/eprintf.cpp
@@ -205,6 +211,11 @@ RESTART:
         }
         TaskExec(0, Title_task, 0);
         for (;;) {
+#if defined(RE4DC_LOGIC_TRACE) && RE4DC_LOGIC_TRACE
+            // Determinism trace (LOGIC_TRACE=1 test builds only): the state left by the previous
+            // iteration's complete logic + render pass, independent of how long rendering took.
+            re4dc_logic_trace_tick();
+#endif
             StopwatchInit();
             ProcessTickInit();
             Render_before();
@@ -258,6 +269,9 @@ RESTART:
             systemVSyncPost();
             BitOff(pG->System_flg, 0x10000000);
             ProcessTickGet(0, "PROCESS TOTAL");
+#if defined(RE4DC_TICK_LOG) && RE4DC_TICK_LOG
+            ProcessTickLog();  // GAME_TICK_LOG: per-subsystem timing line every N frames
+#endif
             ret = systemResetCheck();
             if (ret == 1) {
                 goto RESTART;

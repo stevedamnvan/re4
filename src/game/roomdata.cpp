@@ -189,6 +189,50 @@ void cRoomData::clear(void* src)
     }
 }
 
+#if defined(RE4DC_ROOM_INDEX) && RE4DC_ROOM_INDEX
+// GAME_ROOM_INDEX (game30.mk): the record index the scan below computes is a pure function of the
+// static stage tables (stat / num / tbl are never written at run time; the stage modules only
+// store the init / main function pointers), so it is tabulated once on first use:
+// k = number of stat == 1 entries before (stage, no) in stage-then-room order, 0xFF = no record.
+// The scan cost ~70 entries (each a checkRoomRange call) per lookup and the scenario / sound code
+// looks the current room up many times per frame (~1.2 ms/frame at r100). Identical results for
+// all 65,536 inputs (tools/roomdata_check.py); pSave is still read at call time.
+static u8 s_roomRecord[67 + 33 + 46 + 52 + 18];
+static u8 s_stageBase[10];
+static bool s_roomRecordReady;
+
+static void roomRecordBuild()
+{
+    u32 k = 0;
+    u32 slot = 0;
+    for (u32 s = 0; s <= 9; s++) {
+        s_stageBase[s] = (u8) slot;
+        for (u32 i = 0; Room_data_tbl[s].tbl != 0 && i < Room_data_tbl[s].num; i++) {
+            s_roomRecord[slot++] = Room_data_tbl[s].tbl[i].stat == 1 ? (u8) k++ : (u8) 0xFF;
+        }
+    }
+    s_roomRecordReady = true;
+}
+
+u8* cRoomData::getRoomSavePtr(u16 room)
+{
+    u32 stage = room >> 8;
+    u32 no = room & 0xFF;
+    u32 k;
+
+    if (stage > 9 || Room_data_tbl[stage].tbl == 0 || no >= Room_data_tbl[stage].num) {
+        return 0;
+    }
+    if (!s_roomRecordReady) {
+        roomRecordBuild();
+    }
+    k = s_roomRecord[s_stageBase[stage] + no];
+    if (k == 0xFF) {
+        return 0;
+    }
+    return pSave + k * sizeof(RoomSave);
+}
+#else
 // The RoomSave record of room `room` (stage << 8 | no); 0 when the room is out of range or has no
 // record.
 u8* cRoomData::getRoomSavePtr(u16 room)
@@ -220,6 +264,7 @@ u8* cRoomData::getRoomSavePtr(u16 room)
     }
     return 0;
 }
+#endif
 
 // Runs the room's init function from its stage table entry, if any (room entry).
 void cRoomData::execInitFunc(u16 room)

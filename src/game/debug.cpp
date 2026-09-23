@@ -320,6 +320,16 @@ void ProcessTickGet(int no, const char* name)
     }
 }
 
+#if defined(RE4DC_TICK_LOG) && RE4DC_TICK_LOG
+// GAME_TICK_LOG (game30.mk): hands the frame's sealed marker list to the platform logger
+// (port/dreamcast/game/tick_log.cpp) after PROCESS TOTAL; read-only.
+extern "C" void re4dc_tick_log_frame(const u32* ticks, const char* const* names, int count, unsigned frame);
+extern "C" void ProcessTickLog()  // C linkage like ProcessTickGet (main.cpp declares both in extern "C")
+{
+    re4dc_tick_log_frame(proc_tick, proc_name, proc_tick_idx + 5, pG->Frame_cnt);
+}
+#endif
+
 // Frame start: resets the process tick list (called before the game loop).
 void ProcessTickInit()
 {
