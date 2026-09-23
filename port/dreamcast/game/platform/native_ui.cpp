@@ -357,6 +357,9 @@ extern "C" int re4dc_ui_bind_core(void* archive,unsigned bytes){
 extern "C" int re4dc_ui_bind_room(void* archive,unsigned bytes){
     nsource=0;identity_hits=0;
     const bool ok=room_identities.adopt(archive,bytes);
+#if RE4DC_D349_RENDERER_STACK
+    re4dc_model_preparation_owner(ok?archive:nullptr);
+#endif
     if(ok)re4dc_model_bind_draw_owner(&room_identities,archive,bytes,1);
     else re4dc_model_unbind_draw_owner(&room_identities);
     re4dc_log("native room identities: %s count=%u archive=%u metadata_owner=room\n",ok?"ok":"REJECTED",room_identities.count(),bytes);
@@ -415,6 +418,7 @@ extern "C" void re4dc_ui_unbind_enemy(void* archive){
 extern "C" void re4dc_ui_retire_room(){
 #if RE4DC_D349_RENDERER_STACK
     reset_deferred();
+    re4dc_model_preparation_owner(nullptr);
 #endif
     re4dc_model_retire_draw_plans();
 #if RE4DC_PVR_STREAM

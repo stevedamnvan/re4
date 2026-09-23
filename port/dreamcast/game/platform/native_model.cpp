@@ -81,6 +81,15 @@ Re4dcPreparationStats preparation_stats{};
 struct PositionSlot { unsigned serial=0;re4dc::render::ProjectedVertex value; };
 struct NormalSlot { unsigned serial=0;float value[3]; };
 struct ShadeSlot { unsigned serial=0;float rgb[3];unsigned packed; };
+// The same preparation workspace, retained at model/frame scope. Source indices
+// address fixed slots directly; there is no corner map, hash probe or hot-loop
+// retirement. Most space serves normals/lighting, the measured dominant cost.
+constexpr unsigned kRetainedPositions=896,kRetainedNormals=2560;
+struct NormalShadeSlot { NormalSlot normal;ShadeSlot shade;std::uint16_t position,color; };
+struct RetainedPreparation {
+    PositionSlot positions[kRetainedPositions];NormalShadeSlot normals[kRetainedNormals];
+};
+static_assert(sizeof(RetainedPreparation)==131072);
 struct PositionState {
     const void* model=nullptr;const void* info=nullptr;const unsigned char* array=nullptr;
     unsigned count=0,stride=0,shift=0;float modelview[12]{},projection[7]{},viewport[6]{};
@@ -103,13 +112,18 @@ struct PreparedModelBatch {
     PositionSlot positions[re4dc::render::kLocalSlots];
     NormalSlot normals[re4dc::render::kLocalSlots];ShadeSlot shades[re4dc::render::kLocalSlots];
     unsigned serial=0,position_generation=0,normal_generation=0,shade_generation=0;
+    unsigned retained_position_generation=0,retained_normal_generation=0,retained_shade_generation=0;
+    RetainedPreparation* retained=nullptr;
     const re4dc::render::LocalBatch* domain=nullptr;
     unsigned next(){
         if(++serial==0){ // once per 2^32 state changes, never per-frame retirement
             for(auto& s:positions)s.serial=0;for(auto& s:normals)s.serial=0;for(auto& s:shades)s.serial=0;
             // A wrap may occur between activate()'s three assignments. Keep
             // every active generation nonzero so cleared slots cannot hit.
-            serial=4;position_generation=1;normal_generation=2;shade_generation=3;domain=nullptr;
+            if(retained){for(auto& s:retained->positions)s.serial=0;
+                for(auto& s:retained->normals)s.normal.serial=s.shade.serial=0;}
+            serial=7;position_generation=1;normal_generation=2;shade_generation=3;
+            retained_position_generation=4;retained_normal_generation=5;retained_shade_generation=6;domain=nullptr;
         }
         return serial;
     }
@@ -126,11 +140,11 @@ struct PreparedModelBatch {
     void prepare(const Re4dcModelPart& p){
         ++preparation_stats.parts;bool shade_changed=false;
         if(!position_valid || !position.matches(p)){
-            position.assign(p);position_valid=true;position_generation=next();shade_changed=true;++preparation_stats.position_states;
+            position.assign(p);position_valid=true;position_generation=next();retained_position_generation=next();shade_changed=true;++preparation_stats.position_states;
         }else ++preparation_stats.position_state_hits;
         if(p.lighting){const auto& source=*p.lighting;
             if(!normal_valid || !normal.matches(p)){
-                normal.assign(p);normal_valid=true;normal_generation=next();shade_changed=true;++preparation_stats.normal_states;
+                normal.assign(p);normal_valid=true;normal_generation=next();retained_normal_generation=next();shade_changed=true;++preparation_stats.normal_states;
             }else ++preparation_stats.normal_state_hits;
             unsigned count=0;bool same=lights_valid;
             if(source.enable)for(unsigned i=0;i<8;++i)if(source.mask&(1U<<i)){
@@ -146,7 +160,7 @@ struct PreparedModelBatch {
         // Mutable source RGB has no publication serial yet. Conservatively invalidate
         // it once at the submission boundary, never compare color keys per vertex.
         if(p.lighting && (p.lighting->ambient_vertex || p.lighting->material_vertex))shade_changed=true;
-        if(shade_changed)shade_generation=next();
+        if(shade_changed){shade_generation=next();retained_shade_generation=next();}
     }
 };
 static_assert(sizeof(PreparedModelBatch)<=12288,"Batch must fit existing packet scratch");
@@ -155,6 +169,9 @@ PreparedModelBatch* acquire_batch(const Re4dcModelPart& p){
     if(!prepared_batch){unsigned bytes=0;void* memory=re4dc_model_preparation_storage(&bytes);
         if(!memory || bytes<sizeof(PreparedModelBatch))return nullptr;
         prepared_batch=new(memory) PreparedModelBatch{};}
+    if(!prepared_batch->retained){unsigned bytes=0;void* memory=re4dc_model_retained_storage(&bytes);
+        if(memory && bytes>=sizeof(RetainedPreparation)){
+            prepared_batch->retained=static_cast<RetainedPreparation*>(memory);prepared_batch->invalidate();}}
     prepared_batch->prepare(p);return prepared_batch;
 }
 #endif
@@ -287,9 +304,13 @@ struct Builder {
 #endif
         auto& cached=positions[slot];
 #if RE4DC_D349_RENDERER_STACK
-        PositionSlot* shared_position=nullptr;bool shared_hit=false;
-        if(dense_pos){shared_position=&batch->positions[local_position];shared_hit=shared_position->serial==batch->position_generation;}
-        if(dense_pos?shared_hit:cached.key==vi+1U){v.position=dense_pos?shared_position->value:cached.value;++work_stats.position_hits;}else
+        PositionSlot* shared_position=nullptr;unsigned position_serial=0;
+        if(batch && batch->retained && vi<kRetainedPositions){
+            shared_position=&batch->retained->positions[vi];position_serial=batch->retained_position_generation;
+        }else if(dense_pos){shared_position=&batch->positions[local_position];position_serial=batch->position_generation;}
+        if(shared_position?shared_position->serial==position_serial:cached.key==vi+1U){
+            v.position=shared_position?shared_position->value:cached.value;++work_stats.position_hits;
+        }else
 #else
         if(cached.key==vi+1U){v.position=cached.value;++work_stats.position_hits;}else
 #endif
@@ -317,7 +338,7 @@ struct Builder {
             v.position.x=x;v.position.y=y;v.position.z=z;
 #if RE4DC_MODEL_POSITION_CACHE
 #if RE4DC_D349_RENDERER_STACK
-            if(dense_pos){shared_position->value=v.position;shared_position->serial=batch->position_generation;}else
+            if(shared_position){shared_position->value=v.position;shared_position->serial=position_serial;}else
 #endif
             {cached.value=v.position;cached.key=vi+1U;}
 #endif
@@ -332,12 +353,22 @@ struct Builder {
         if(p.lighting){
             RE4DC_PROFILE_SCOPE(Lighting);
             auto& legacy_shade=shades[(vi*7+ni*17+ci)&63U];
-            ShadeSlot* shared_shade=nullptr;bool shared_hit=false;
-            if(dense_shade){shared_shade=&batch->shades[shade_by_normal?local_normal:local_position];shared_hit=shared_shade->serial==batch->shade_generation;}
-            float* rgb=dense_shade?shared_shade->rgb:legacy_shade.rgb;
-            if(dense_shade?!shared_hit:(legacy_shade.position!=vi || legacy_shade.normal!=ni || legacy_shade.color!=ci)){
-                bool normal_hit=false;NormalSlot* shared_normal=nullptr;
-                if(dense_normal){shared_normal=&batch->normals[local_normal];normal_hit=shared_normal->serial==batch->normal_generation;}
+            ShadeSlot* shared_shade=nullptr;bool shared_hit=false;unsigned shade_serial=0;
+            auto* retained=(batch && batch->retained && ni<kRetainedNormals)?&batch->retained->normals[ni]:nullptr;
+            const bool retain_shade=retained && !(dense_shade && !shade_by_normal);
+            const unsigned shade_color=(p.lighting->ambient_vertex || p.lighting->material_vertex)?ci:0;
+            if(retain_shade){shared_shade=&retained->shade;shade_serial=batch->retained_shade_generation;
+                // A source normal may be shared by DIFFERENT positions/colors.
+                // Direct addressing never asserts that those lit inputs agree.
+                shared_hit=shared_shade->serial==shade_serial && retained->position==vi && retained->color==shade_color;
+            }else if(dense_shade){shared_shade=&batch->shades[shade_by_normal?local_normal:local_position];
+                shade_serial=batch->shade_generation;shared_hit=shared_shade->serial==shade_serial;}
+            float* rgb=shared_shade?shared_shade->rgb:legacy_shade.rgb;
+            if(shared_shade?!shared_hit:(legacy_shade.position!=vi || legacy_shade.normal!=ni || legacy_shade.color!=ci)){
+                bool normal_hit=false;NormalSlot* shared_normal=nullptr;unsigned normal_serial=0;
+                if(retained){shared_normal=&retained->normal;normal_serial=batch->retained_normal_generation;}
+                else if(dense_normal){shared_normal=&batch->normals[local_normal];normal_serial=batch->normal_generation;}
+                if(shared_normal)normal_hit=shared_normal->serial==normal_serial;
                 float nx,ny,nz;
                 if(normal_hit){nx=shared_normal->value[0];ny=shared_normal->value[1];nz=shared_normal->value[2];++preparation_stats.normal_hits;}
                 else {
@@ -350,7 +381,7 @@ struct Builder {
                 ny=m[4]*n[0]+m[5]*n[1]+m[6]*n[2];
                 nz=m[8]*n[0]+m[9]*n[1]+m[10]*n[2];
                 ++work_stats.normal_transforms;
-                if(dense_normal){shared_normal->serial=batch->normal_generation;shared_normal->value[0]=nx;shared_normal->value[1]=ny;shared_normal->value[2]=nz;}
+                if(shared_normal){shared_normal->serial=normal_serial;shared_normal->value[0]=nx;shared_normal->value[1]=ny;shared_normal->value[2]=nz;}
                 }
                 const unsigned char white[]={255,255,255,255};
                 const auto* color=(p.lighting->ambient_vertex || p.lighting->material_vertex)?p.colors+ci*4:white;
@@ -369,7 +400,8 @@ struct Builder {
                     if(value){value->generation=static_context->generation;value->position=vi;value->normal=ni;
                         value->color=color_value;std::memcpy(value->rgb,rgb,3*sizeof(float));++work_stats.static_light_misses;}
                 }
-                if(dense_shade){shared_shade->serial=batch->shade_generation;
+                if(shared_shade){shared_shade->serial=shade_serial;
+                    if(retain_shade){retained->position=vi;retained->color=shade_color;}
                     shared_shade->packed=0; // bit 24 marks a prepared RGB value
                 }else {legacy_shade.position=vi;legacy_shade.normal=ni;legacy_shade.color=ci;}
             }else ++work_stats.light_hits;
@@ -677,6 +709,11 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
 
 extern "C" const Re4dcModelWorkStats* re4dc_model_work_stats(){return &work_stats;}
 
+extern "C" void re4dc_model_detach_retained_storage(){
+#if RE4DC_D349_RENDERER_STACK
+    if(prepared_batch){prepared_batch->retained=nullptr;prepared_batch->invalidate();}
+#endif
+}
 extern "C" void re4dc_model_preparation_frame(){
 #if RE4DC_D349_RENDERER_STACK
     if(prepared_batch)prepared_batch->invalidate();

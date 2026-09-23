@@ -1,6 +1,20 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Current D360 storage prerequisite: a selectable source-index externalization
+Current D361 (2026-09-22): model/frame retained preparation now produces a
+measured12.5% whole-render reduction on106 identical source ticks with the same
+selected assets. Render p50/p95=1368.078/1370.789ms; presentation
+p50/p95=1389.601/1406.282ms. This is progress, not playability or full D349 costs.
+Actual workspace cell131,136B is funded by D360's147,232B recovery; source free/
+largest=82,688B, capacity unchanged. Packet/VRAM/queue/fallback counts are unchanged.
+See [D361](R4_NATIVE_PREPARATION_CHECKPOINT.md#d361---retained-modelframe-preparation-2026-09-22).
+Do not tune admission/slot constants again. Preserve the full candidate and source
+semantics; assess the remaining native asset/preparation representation against
+actual budgets using existing conversion/ownership work. An offline replacement
+must displace loaded backing. The PS2 visual-profile gate remains explicit;
+this result does not automatically accept prelighting/mesh substitutions.
+
+Previous D360 storage prerequisite:
+ a selectable source-index externalization
 recovers 147,232 actual source heap bytes (free/largest66,592->213,824) while
 preserving the integrated renderer, current native textures and required large
 block/enemy allocations. It is not a speedup: render remains ~1.56 seconds.

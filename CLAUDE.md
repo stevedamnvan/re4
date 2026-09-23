@@ -73,7 +73,45 @@ The shared PVR owner, storage/texture ownership and completed source skinning
 remain the boundaries. Source lighting state and native pass organization are
 part of this candidate, not deferred post-performance polish.
 
-## D360 current - actual room memory recovered; preparation remains next
+## D361 current - retained preparation measured; asset budget still unresolved
+
+Commit candidate extends the existing PreparedModelBatch with a room-owned
+128KiB direct-source-index workspace:896 positions,2560 normals/complete lit
+values. Model/frame generations survive local-span changes. Pose/camera,
+normal-matrix, selected lights, channels and mutable source colors retain their
+existing invalidation. Shared normals still check their position/color identity;
+no corner remap, hash probing, fixed lighting or topology-budget growth.
+
+Same selected D360 assets,106 exact source snapshots at ticks2387-2492:
+render p50/p95 improves1562.865/1564.571 ->1368.078/1370.789ms (12.5% median),
+presentation p50/p95 improves1589.783/1606.466 ->1389.601/1406.282ms.
+Packets/VRAM/queue/212 flushes/171strip fallbacks are unchanged. Source free and
+largest block=82,688B after the131,136B actual cell, versus213,824 in D360;
+this still leaves16,096B more than pre-D360. Heap capacity and required large
+block/enemy allocations are unchanged. The current renderer remains unusably slow.
+
+Evidence: C:/Flycast-Evidence/re4-dreamcast/d361-retained-model;
+private disc is on D: via that directory's disc-output junction. Existing
+capture tooling and fixture are reused. Capture ended at its340s deadline,
+not a game crash. Both selector/asset candidates remain default-off. Source
+menu/outdoor Leon/cabin/HUD were observed; no new combat/audio/retry acceptance.
+Allocation/failure counters disabled in normal builds remain unmeasured; see
+[R4_NATIVE_PREPARATION_CHECKPOINT.md#d361---retained-modelframe-preparation-2026-09-22](port/dreamcast/docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d361---retained-modelframe-preparation-2026-09-22)
+for exact evidence, upload brackets, allocator and host qualification.
+
+Do not restart slot/admission tuning. This proves a useful reuse correction,
+not full D349-equivalent costs.841,824 fallback GX bytes/frame and3,578,720
+median packet bytes remain. The user has asked about making the render assets
+fit the available budget offline instead of preserving expensive layouts. Use
+the existing native converters/ownership and isolated prelighting deliverable
+for that representation decision; price replacements against actual retained
+source consumers and CPU/RAM/VRAM costs. No new inventory, parallel renderer or
+automatic PS2 substitution is authorized by this result. Preserve the future
+visual-profile gate and distinguish remaining avoidable work from intended
+quality changes. The next boundary must replace costly loaded render backing,
+not merely add another cached representation. Three-room gameplay is unfinished.
+
+## Previous D360 - actual room memory recovered
 
 A default-off `--compact-room-palettes` extension to the existing compact/native
 path releases three immutable r100 EFF index images while retaining checked CLUTs,
@@ -98,7 +136,7 @@ in both arms. See [D360](port/dreamcast/docs/R4_NATIVE_PREPARATION_CHECKPOINT.md
 for recipes, exact identities, failed gates and remaining qualification. Inherited
 dirty integration edits remain separate; HEAD alone is not the captured executable.
 
-## D359 current - implementation committed; stop admission tuning
+## Previous D359 - implementation committed; stop admission tuning
 
 Renderer cohort `8bdb4dd` is pushed. Both selector arms link from a separate clean
 snapshot; focused correctness checks pass. The inherited source/fixture/event

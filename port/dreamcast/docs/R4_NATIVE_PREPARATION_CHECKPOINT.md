@@ -1197,3 +1197,146 @@ justify per-corner remapping, a new cache, fixed lights, or another pipeline.
 Source light provenance/invalidation still needs integration. Run the next full
 renderer-stack A/B with the SAME selected assets in both arms; the loading-phase
 comparison above cannot serve as that gate. Stop admission-ranking experiments.
+
+
+## D361 - retained model/frame preparation (2026-09-22)
+
+**Decision: keep inside the default-off integrated candidate.** This is the first
+material work/frame improvement after admission tuning ended. It does not make
+the encounter playable or reproduce D349's approximately49ms workload. No source
+pose, light, mesh, material, camera, gameplay, collision or event substitution.
+
+### Connection and bounded storage
+
+Reuses PreparedModelBatch/PositionState/NormalState/PreparedSourceLights and the
+existing strip, clipping, packet and PVR owners. Re4dcModelPart continues to borrow
+current source arrays. The genuinely new adapter is a131072-byte room-owned
+source allocation in ui_bridge, attached/detached by the existing room bind/retire
+path, plus extended direct-index slot storage.896 position slots and2560 combined
+normal/lit-value slots consume exactly128KiB. Source index ranges outside those
+slots retain the prior local/fallback path. No copied corners or geometry.
+
+The retained serials change at actual model/frame/dependency boundaries, not on
+LocalBatch changes. Source normal indices address slots directly; a normal shared
+by distinct positions/colors cannot produce a false lighting hit. Existing
+by-position local qualification remains useful for those seams. Mutable source
+vertex color invalidates at submission; frame and owner resets invalidate pose
+views; serial wrap clears stamps. RGB floats remain available to the unchanged
+clipper, with packed colors reused by direct strips. Alpha/UV/material packets
+continue to consume current source state.
+
+The source allocator extension acquires only with an active room owner/heap4 and
+enough free memory to leave80KiB after payload plus OS/MAD overhead. It tries at
+most once per owner, explicitly logs refusal/failure, and falls back safely.
+Retirement detaches prepared pointers before Mem_free_h(...,4), ahead of the
+source heap replacement. There is no source capacity reduction. Metadata remains
+30,560/32,768B, including the existing local admission5984/8192B; packet scratch
+and flush behavior are unchanged. No additional per-corner metadata budget.
+
+### Exact host checks
+
+The existing captured-source replay compares all263 submitted parts against the
+previous complete native candidate using identical source bytes/state. Ordered
+references, submissions, triangle count and emitted geometry/color hashes match.
+Full replay is host-only because mutable final RAM does not qualify an earlier
+live tick. The previously qualified53 immutable static parts retain their stricter
+target correspondence; their positions59573->33053, normals65964->40469, complete
+shade calls65970->44921, individual lights165389->108412. That is44.5% fewer position
+transforms and31.9% fewer complete shades, versus the earlier approximately1% win.
+
+The full host replay has70135 unique positions,82735 unique normal inputs and
+100549 unique complete lit inputs; candidate work is82576 transforms,83125 normal
+transforms and115958 complete shades. These are evidence about remaining reuse,
+not target timing forecasts or proof every identity can fit simultaneously.
+Keep the source-light/channel/matrix identity distinctions. Private replay:
+/root/probe/d361-host (reference/candidate, commands, comparison.json).
+
+Ten focused host tests pass across native model, UI/package, source lighting,
+draw-plan ownership and the new storage adapter. Native model exercises ten
+build combinations, including retained on/off, seams/clipping, mutable channels,
+frame/serial invalidation and packet failure. Storage test compiles the actual
+ui_bridge adapter tail with a fake source allocator:three acquire/use/release
+cycles, inactive heap, wrong heap, insufficient budget, allocation failure,
+no repeated retry and owner replacement. Sanitizers cover model/storage/UI/owner
+checks. These are harness cycles, not gameplay transition acceptance. The initial
+suite named a nonexistent test_native_draw_plan_owner; test_native_draw_plan is
+the actual suite and passes. Shared GameCube source was not edited in this slice.
+
+### Full candidate A/B: same assets and source ticks
+
+A is preserved D360 integrated renderer with compact indexed room assets;
+B is the same full stack plus retained preparation. Both PROFILE=0/AUDIT=0,
+640x480, identical source fixture/toolchain/emulator/asset identities.106 matched
+ticks2387-2492 have zero recorded source-snapshot differences, consecutive native/
+source/presentation samples and no measured queue drops or aborted frames.
+
+| Quantity | A D360 | B D361 |
+| --- | ---: | ---: |
+| Render wall p50/p95 ms | 1562.865/1564.571 | 1368.078/1370.789 |
+| Presentation interval p50/p95 ms | 1589.783/1606.466 | 1389.601/1406.282 |
+| Position refs/frame | 200643 | 200643 |
+| Position transforms/frame | 133111 | 82576 |
+| Normal transforms/frame | 154396 | 83125 |
+| Individual selected-light evaluations/frame | 384223 | 294297 |
+| GX fallback bytes/frame | 841824 | 841824 |
+| PVR calls/bytes median | 470/3578720 | 470/3578720 |
+| Packet flushes/strip fallbacks | 212/171 | 212/171 |
+| Clipped triangles/frame | 1184 | 1184 |
+| Queue high-water/capacity | 25536/26624 | 25536/26624 |
+| Texture VRAM | 3682304 | 3682304 |
+| Free/largest source block | 213824 | 82688 |
+
+Prepared-light builds/hits remain114/149 across263 parts and126 position/normal
+state boundaries.991 local-span activations remain, but they no longer invalidate
+the retained model values. Legacy local-reference counters do not include the new
+retained hits; packed-color counters cover only their documented branches, not
+total RGB conversions. No telemetry count is promoted as a standalone result.
+
+Native UI monotonic totals show no new uploads/missing handles/discards in
+A's bracket2353-2489 and B's2353-2508. B covers all matched ticks; A does not cover
+the final four native frames. The fully bracketed common source window is
+2387-2488. Disabled allocation/texture-failure metrics remain unmeasured, not zero.
+Normal profiling cannot supply fresh individual CPU-stage times. No overlapping
+PVR/CPU intervals are summed. This is a settled-view Flycast result, not active
+combat/input-latency, audible output, loading-peak or physical-hardware acceptance.
+
+### Actual memory and accepted frontier
+
+Captured allocator lists prove equal8,840,576-byte source capacity. B has423 cells
+versus422; its new tagged cell is131,136B (131072payload+32OSheader+32MADtag).
+Required block cell1126336, enemy/event cell1105216 and room cell3607424 remain
+unchanged. One free block of82688B remains:16096B more than pre-D360. This is a
+real allocation charge, not claimed recovery from untouched storage. Text grows
+2888B; data/BSS are unchanged. Overall loading peak remains unqualified.
+
+Source menu and outdoor room/Leon/HUD images were captured; B final framebuffer
+was visually inspected and preserves the currently accepted presentation. Final
+images are different end ticks and are not a pixel-error measurement. The exact
+host packet comparisons above are separate evidence. Capture ended normally at
+its340-second observation deadline; it did not trace death/retry/room transition.
+
+B ELF7a8bc93843d2faf3236d2bece64b7d6b691a705bd952b31f79c20490c4889fb6.
+Same selected room DAR506ea32111d4a20bd3da4655dddf5bcab7269a3d631136967b1f0b3bcb406424.
+Evidence C:/Flycast-Evidence/re4-dreamcast/d361-retained-model; disc storage on
+D:/Flycast-Evidence/re4-dreamcast/d361-retained-model-disc via disc-output junction.
+Existing accepted references were not modified. Recipes /root/probe/d361-build.sh,
+d361-prepare-capture.py, d361-comparison.py, d361-allocator.py. Baseline/dirty overlay
+snapshot /root/probe/d361-before; clean HEAD alone does not reproduce boot.
+The original D360 mirror remains selectable, with unsampled indexed-effect
+presentation qualifications unchanged. No default assets or primary gameplay
+fixtures were promoted by this checkpoint.
+
+### Next boundary
+
+Stop slot/admission tuning. Retain this useful integrated correction. The user
+asks whether the assets themselves can be prepared to fit the available budget:
+that is a source-to-native representation decision, not another memory inventory.
+Use existing native converters and the isolated prelighting candidate; identify
+which loaded render backing a proposed native representation replaces, account
+for retained CPU readers and prepared-data storage, then test the complete game.
+Do not promise that a smaller file saves heap, a prelit room is mathematically
+identical to dynamic lighting, or source-compatible PS2 art is automatically
+cheaper. Preserve the explicit future visual-profile gate and source gameplay
+contracts. The841824-byte fallback decode and remaining repeated identities are
+still open integration costs; this result does not erase them or authorize a
+second renderer. Menu/r100-r101-r103 playability remains the objective.

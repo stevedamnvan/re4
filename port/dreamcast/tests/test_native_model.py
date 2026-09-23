@@ -41,6 +41,11 @@ extern "C" const re4dc::render::DrawPlanBounds* re4dc_model_acquired_bounds(){re
 extern "C" const re4dc::render::DrawLocalPlan* re4dc_model_acquired_locals(){return reference_spans?nullptr:local_plan;}
 extern "C" void re4dc_model_release_draw_plan(){}
 extern "C" void* re4dc_model_static_lighting_storage(unsigned* bytes){*bytes=0;return nullptr;}
+#ifndef RE4DC_TEST_RETAINED
+#define RE4DC_TEST_RETAINED 0
+#endif
+alignas(32) unsigned char retained_scratch[131072];
+extern "C" void* re4dc_model_retained_storage(unsigned* bytes){*bytes=RE4DC_TEST_RETAINED?sizeof(retained_scratch):0;return *bytes?retained_scratch:nullptr;}
 alignas(32) unsigned char preparation_scratch[12288];
 extern "C" void* re4dc_model_preparation_storage(unsigned* bytes){*bytes=sizeof(preparation_scratch);return preparation_scratch;}
 extern "C" int re4dc_model_defer_part(const Re4dcModelPart*){return 0;}
@@ -361,8 +366,8 @@ int main(){
    reference=reference.replace('"../../room/pvr_geometry.hpp"','"pvr_geometry.hpp"').replace('void re4dc_model_submit(', 'void re4dc_model_submit_reference(')
    (root/"reference.cpp").write_text(reference)
    exe=root/"check"
-   for cache,strips,plans,stack in ((0,0,0,0),(0,1,0,0),(1,0,0,0),(1,1,0,0),(0,0,1,0),(0,1,1,0),(1,0,1,0),(1,1,1,0),(1,1,1,1)):
-    subprocess.run(["g++","-std=c++20","-O2","-DRE4DC_TEST_GENERATIONS=1","-DRE4DC_D349_RENDERER_STACK="+str(stack),"-DRE4DC_MODEL_DRAW_PLANS="+str(plans),"-DRE4DC_MODEL_ROOM_STRIPS="+str(strips),"-DRE4DC_MODEL_POSITION_CACHE="+str(cache),"-fsanitize=address,undefined","-fno-omit-frame-pointer",
+   for cache,strips,plans,stack,retained in ((0,0,0,0,0),(0,1,0,0,0),(1,0,0,0,0),(1,1,0,0,0),(0,0,1,0,0),(0,1,1,0,0),(1,0,1,0,0),(1,1,1,0,0),(1,1,1,1,0),(1,1,1,1,1)):
+    subprocess.run(["g++","-std=c++20","-O2","-DRE4DC_TEST_GENERATIONS=1","-DRE4DC_TEST_RETAINED="+str(retained),"-DRE4DC_D349_RENDERER_STACK="+str(stack),"-DRE4DC_MODEL_DRAW_PLANS="+str(plans),"-DRE4DC_MODEL_ROOM_STRIPS="+str(strips),"-DRE4DC_MODEL_POSITION_CACHE="+str(cache),"-fsanitize=address,undefined","-fno-omit-frame-pointer",
     "-I"+str(root),"-I"+str(game/"platform/include"),"-I"+str(room),str(root/"fixture.cpp"),str(root/"reference.cpp"),
     str(game/"platform/native_model.cpp"),str(room/"pvr_geometry.cpp"),str(room/"native_draw_plan.cpp"),str(room/"source_lighting.cpp"),"-o",str(exe)],check=True)
     subprocess.run([str(exe)],check=True)

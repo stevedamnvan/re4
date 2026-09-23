@@ -142,5 +142,11 @@ struct Re4dcPreparationStats {
     unsigned normal_dense_references,shade_dense_references;
 };
 extern "C" void* re4dc_model_preparation_storage(unsigned* bytes);
+// Optional room-owned extension, funded by compact source backing. It retains
+// prepared values only; source arrays and the bounded topology remain backing.
+// Binding does not allocate. Acquisition happens after source room consumers.
+extern "C" void re4dc_model_preparation_owner(void* owner);
+extern "C" void* re4dc_model_retained_storage(unsigned* bytes);
+extern "C" void re4dc_model_detach_retained_storage();
 extern "C" void re4dc_model_preparation_frame();
 extern "C" const Re4dcPreparationStats* re4dc_model_preparation_stats();

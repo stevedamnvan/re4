@@ -140,6 +140,7 @@ extern "C" void re4dc_model_bind_draw_owner(const void*,void*,unsigned,unsigned)
 extern "C" void re4dc_model_unbind_draw_owner(const void*){}
 extern "C" void re4dc_prepare_model_assets(){}
 extern "C" void re4dc_model_retire_draw_plans(){}
+extern "C" void re4dc_model_preparation_owner(void*){}
 unsigned allocs=0,last_alloc=0,raw_bytes=0,raw_calls=0,linear_calls=0;int ta=0,render=0,render_calls=0;
 void* pvr_mem_malloc(std::size_t n){++allocs;last_alloc=n;return malloc((n+31)&~std::size_t(31));}
 void pvr_mem_free(void* p){assert(allocs);--allocs;free(p);}

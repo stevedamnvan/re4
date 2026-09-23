@@ -67,3 +67,41 @@ extern "C" void re4dc_profile_source(re4dc::profile::Source* out){
 }
 
 extern "C" unsigned re4dc_fixture_source_frame(){ return pG ? pG->Frame_cnt : 0; }
+
+#include "native_model.h"
+#include "re4dc_platform.h"
+namespace {
+void* preparation_owner=nullptr;
+void* retained_preparation=nullptr;
+bool preparation_attempted=false;
+constexpr unsigned kRetainedBytes=131072;
+// D360 frees147232 bytes without shrinking game capacity. Charge the complete
+// new cell (payload + OS header + MAD tag), and leave >=80KiB for source use.
+constexpr unsigned kSourceReserve=81920,kAllocationOverhead=64;
+}
+extern "C" void re4dc_model_preparation_owner(void* owner){
+#if RE4DC_D349_RENDERER_STACK
+    if(preparation_owner==owner)return;
+    re4dc_model_detach_retained_storage();
+    if(retained_preparation)Mem_free_h(retained_preparation,4);
+    retained_preparation=nullptr;preparation_owner=owner;preparation_attempted=false;
+#endif
+}
+extern "C" void* re4dc_model_retained_storage(unsigned* bytes){
+    *bytes=0;
+#if RE4DC_D349_RENDERER_STACK
+    if(!preparation_owner || MemGetCurrentHeap()!=4 || !memCheckHeapActive(4))return nullptr;
+    if(!preparation_attempted){
+        preparation_attempted=true;
+        const int before=OSCheckHeap(Heap[4].handle);
+        if(before>=int(kRetainedBytes+kAllocationOverhead+kSourceReserve))
+            retained_preparation=mem_calloc(kRetainedBytes,"native model preparation",0,0,4);
+        re4dc_log("native model preparation: bytes=%u source_free=%d->%d owner=%p reserve=%u\n",
+            retained_preparation?kRetainedBytes:0,before,OSCheckHeap(Heap[4].handle),preparation_owner,kSourceReserve);
+    }
+    if(retained_preparation)*bytes=kRetainedBytes;
+    return retained_preparation;
+#else
+    return nullptr;
+#endif
+}
