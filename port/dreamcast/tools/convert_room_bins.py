@@ -24,6 +24,7 @@ import argparse
 import hashlib
 import math
 import json
+import re
 import struct
 import sys
 import zlib
@@ -405,9 +406,12 @@ DEFAULT_CARDS = ((0.5, 12000.0), (0.25, 20000.0), (0.125, 30000.0))  # (kept fra
 # vertex of that part, normals from vn or the nearest source vertex, so the
 # runtime lighting and 16-colour palette are unchanged. Relative OBJ paths are
 # relative to the manifest.
-def read_obj(path):
-    """-> [((xyz, uv or None, normal or None) * 3)] fan-triangulated faces."""
-    v, vt, vn, faces = [], [], [], []
+def parse_obj(path):
+    """-> dict(v, vt, vn, groups, faces=[(usemtl name, ((v, vt or None, vn or None) 0-based indices) * 3)],
+    face_groups=[index into groups per face]); polygons fan-triangulated. Every g/o line opens a
+    group (faces before the first one belong to "default")."""
+    v, vt, vn, faces, groups, face_groups = [], [], [], [], [], []
+    material = ""
     for line in Path(path).read_text().splitlines():
         f = line.split()
         if not f or f[0].startswith("#"):
@@ -418,6 +422,10 @@ def read_obj(path):
             vt.append(tuple(float(x) for x in f[1:3]))
         elif f[0] == "vn":
             vn.append(tuple(float(x) for x in f[1:4]))
+        elif f[0] == "usemtl":
+            material = f[1] if len(f) > 1 else ""
+        elif f[0] in ("g", "o"):
+            groups.append(f[1] if len(f) > 1 else "g%d" % len(groups))
         elif f[0] == "f":
             corners = []
             for c in f[1:]:
@@ -427,19 +435,34 @@ def read_obj(path):
                     if not i:
                         return None
                     i = int(i)
-                    return table[i - 1 if i > 0 else len(table) + i]
+                    return i - 1 if i > 0 else len(table) + i
                 corners.append((pick(v, idx[0]), pick(vt, idx[1]), pick(vn, idx[2])))
+            if not groups:
+                groups.append("default")
             for k in range(1, len(corners) - 1):
-                faces.append((corners[0], corners[k], corners[k + 1]))
-    return faces
+                faces.append((material, (corners[0], corners[k], corners[k + 1])))
+                face_groups.append(len(groups) - 1)
+    return dict(v=v, vt=vt, vn=vn, groups=groups, faces=faces, face_groups=face_groups)
+
+
+def read_obj(path):
+    """-> [((xyz, uv or None, normal or None) * 3)] fan-triangulated faces."""
+    obj = parse_obj(path)
+
+    def value(table, i):
+        return None if i is None else table[i]
+    return [tuple((obj["v"][c[0]], value(obj["vt"], c[1]), value(obj["vn"], c[2])) for c in f)
+            for _, f in obj["faces"]]
 
 
 def load_substitutes(manifest):
     """-> {(owner, bin, part_index): dict(offset, levels=[(error_world, faces)])}"""
+    if Path(manifest).is_dir():
+        return {}
     data = json.loads(Path(manifest).read_text())
     base = Path(manifest).parent
     out = {}
-    for entry in data["parts"]:
+    for entry in data.get("parts", []):
         owner = entry["owner"]
         owner = int(owner, 0) if isinstance(owner, str) else int(owner)
         levels = sorted(((float(l["error"]), read_obj(base / l["obj"])) for l in entry["levels"]), key=lambda l: l[0])
@@ -500,22 +523,150 @@ def substitute_levels(sub, tris, welded, factor_scale=1.0):
     return out
 
 
+# ---- Whole-BIN replacement (--lod-substitute DIR, or a manifest's "replace") --
+#
+# Unlike per-part levels above, a replacement swaps a BIN's render geometry
+# before level generation: the BIN's QEM / card levels are then built from the
+# replacement exactly as from source geometry. The OBJ is in the BIN's model
+# space; faces are assigned to source parts by material name "p<part>_..."
+# (e.g. "p0_bark"), and a source part with no faces draws nothing. Part
+# identity (source offset/size), texture, alpha and flags stay the source's,
+# so the game still decides when and where every part draws; collision,
+# placement and sequencing never read this geometry. Each part takes the
+# CLR0 colour of its first source corner; normals come from vn, else from the
+# replacement's face normals merged across faces meeting within
+# REPLACE_SMOOTH_ANGLE at one position. Levels that simplify to no triangles
+# are dropped for replaced BINs only (a replacement must not vanish at
+# distance; source BINs keep their authored empty levels). Directory form:
+# DIR/<OWNER>_<bin>.obj with OWNER MAINSCENARIO (0xff), COMMON (0xfe) or
+# FILE_<nn>; manifest form: {"replace": [{"owner": "0xfe", "bin": 3,
+# "obj": "COMMON_3.obj"}]} (relative to the manifest).
+REPLACE_SMOOTH_ANGLE = 45.0
+OWNER_NAMES = {0xFF: "MAINSCENARIO", 0xFE: "COMMON"}
+
+
+def owner_name(owner):
+    return OWNER_NAMES.get(owner, "FILE_%02d" % owner)
+
+
+def load_replacements(path):
+    """-> {(owner, bin): OBJ path} from a directory or a manifest's "replace" list."""
+    path = Path(path)
+    out = {}
+    if path.is_dir():
+        names = {v: k for k, v in OWNER_NAMES.items()}
+        for p in sorted(path.glob("*.obj")):
+            m = re.fullmatch(r"(MAINSCENARIO|COMMON|FILE_(\d+))_(\d+)", p.stem)
+            if not m:
+                raise ValueError("%s: expected <OWNER>_<bin>.obj" % p)
+            owner = names[m.group(1)] if m.group(2) is None else int(m.group(2))
+            out[(owner, int(m.group(3)))] = p
+        return out
+    data = json.loads(path.read_text())
+    for entry in data.get("replace", []):
+        owner = entry["owner"]
+        owner = int(owner, 0) if isinstance(owner, str) else int(owner)
+        out[(owner, int(entry["bin"]))] = path.parent / entry["obj"]
+    return out
+
+
+def _mesh_lod():
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import mesh_lod
+    return mesh_lod
+
+
+def _unit(v):
+    s = math.sqrt(sum(x * x for x in v))
+    return tuple(x / s for x in v) if s > 1e-12 else (0.0, 1.0, 0.0)
+
+
+def merge_normals(items, angle):
+    """items [(key, unit normal, weight)] at one position -> {key: merged normal};
+    greedy by weight, a normal joins the first group within angle."""
+    c = math.cos(math.radians(angle))
+    groups = []  # [weighted sum, unit direction, keys]
+    for key, n, w in sorted(items, key=lambda t: -t[2]):
+        for g in groups:
+            if sum(a * b for a, b in zip(g[1], n)) >= c:
+                g[0] = [a + w * b for a, b in zip(g[0], n)]
+                g[1] = _unit(g[0])
+                g[2].append(key)
+                break
+        else:
+            groups.append([[w * b for b in n], n, [key]])
+    return {key: g[1] for g in groups for key in g[2]}
+
+
+def replace_source(src, path, angle=REPLACE_SMOOTH_ANGLE):
+    """parse_bin() result -> the same BIN with every part's triangles taken from
+    the replacement OBJ (loose triangles; corners carry uv/normal/colour values)."""
+    mesh_lod = _mesh_lod()
+    obj = parse_obj(path)
+    positions = obj["v"]
+    part_faces = [[] for _ in src["parts"]]
+    for material, f in obj["faces"]:
+        m = re.match(r"p(\d+)(?:_|$)", material)
+        if not m or int(m.group(1)) >= len(part_faces):
+            raise ValueError("%s: material %r names no source part (0..%d)" % (path, material, len(part_faces) - 1))
+        part_faces[int(m.group(1))].append(f)
+    ids, _ = mesh_lod.weld(positions)
+    items = {}
+    for pi, faces in enumerate(part_faces):
+        for fi, f in enumerate(faces):
+            if all(c[2] is not None for c in f):
+                continue
+            a, b, c = (positions[k[0]] for k in f)
+            cross = mesh_lod._cross(mesh_lod._sub(b, a), mesh_lod._sub(c, a))
+            area = math.sqrt(sum(x * x for x in cross))
+            if area <= 0:
+                continue
+            for j, k in enumerate(f):
+                items.setdefault(ids[k[0]], []).append(((pi, fi, j), tuple(x / area for x in cross), area))
+    face_normal = {}
+    for group in items.values():
+        for key, n in merge_normals(group, angle).items():
+            face_normal[key] = tuple(round(x, 6) for x in n)
+    parts = []
+    for pi, (part, faces) in enumerate(zip(src["parts"], part_faces)):
+        first = next(iter([k for s in part["strips"] for k in s] + [k for t in part["loose"] for k in t]), None)
+        color = src["color"](first[1]) if first else (255, 255, 255, 255)
+        loose = []
+        for fi, f in enumerate(faces):
+            loose.append(tuple((k[0], color,
+                                tuple(round(x, 6) for x in obj["vt"][k[1]]) if k[1] is not None else (0.0, 0.0),
+                                _unit(obj["vn"][k[2]]) if k[2] is not None else
+                                face_normal.get((pi, fi, j), (0.0, 1.0, 0.0)))
+                               for j, k in enumerate(f)))
+        parts.append(dict(part, strips=[], loose=loose))
+
+    def same(x):
+        return x
+    return dict(src, positions=positions, parts=parts, uv=same, normal=same, color=same)
+
+
 def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS, cluster_world=20000.0,
                 cluster_tris_max=768, cards=DEFAULT_CARDS, min_gain=0.5, max_levels=5, bias=None,
-                substitutes=None, export_dir=None):
+                substitutes=None, export_dir=None, replacements=None):
     """entries as convert(); scales: {(owner, bin): world scale} (largest
     placement scale, default 1) so that errors are chosen in world units.
     bias: {(owner, bin): factor}; stored level errors are multiplied by it, so
     a factor of 3/8 lets that BIN reach 8 px where the runtime allows 3 px.
     substitutes: load_substitutes(); export_dir: write each part's levels as
-    OBJ (<owner>-<bin>-p<part>-L<k>.obj) plus parts.json there."""
-    if str(Path(__file__).resolve().parent) not in sys.path:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import mesh_lod
+    OBJ (<owner>-<bin>-p<part>-L<k>.obj) plus parts.json there.
+    replacements: load_replacements(); whole-BIN render geometry swapped in
+    before level generation (see replace_source)."""
+    mesh_lod = _mesh_lod()
     scales = scales or {}
     bias = bias or {}
     substitutes = substitutes or {}
+    replacements = replacements or {}
+    both = {(o, b) for o, b, _ in substitutes} & set(replacements)
+    if both:
+        raise ValueError("BINs both replaced and given per-part levels: %s" % sorted(both))
     used_substitutes = set()
+    used_replacements = set()
     exported = []
     meshes, parts, meshlets, vertices, index_bytes = [], [], [], [], bytearray()
     part_lods, clusters, levels = [], [], []
@@ -535,6 +686,10 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
 
     for owner, common, bin_no, path in entries:
         src = parse_bin(path.read_bytes())
+        replaced = (owner, bin_no) in replacements
+        if replaced:
+            src = replace_source(src, replacements[(owner, bin_no)])
+            used_replacements.add((owner, bin_no))
         pos = src["positions"]
         used = sorted({k[0] for p in src["parts"] for s in p["strips"] for k in s} |
                       {k[0] for p in src["parts"] for t in p["loose"] for k in t})
@@ -576,6 +731,8 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
             card = sub is None and mesh_lod.is_card_field(tris, bool(part["flags"] & 4))
             if sub is not None:
                 cluster_tris = [tris]
+            elif not tris:
+                cluster_tris = []   # a replacement may leave a source part empty: it draws nothing
             elif card:
                 cluster_tris = mesh_lod.kd_clusters(tris, welded, 256, 0.4 * cluster_world / scale,
                                                     0.2 * cluster_world / scale)
@@ -606,6 +763,8 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
                             ls.append((e, t))
                 else:
                     ls = mesh_lod.simplify_levels(welded, ct, [e / scale for e in eps_world], locked, min_gain)
+                    if replaced:
+                        ls = [lv for lv in ls if lv[1]] or ls[:1]
                 built.append(ls[:max_levels])
             corners = [a for ls in built for _, lt in ls for t in lt for a in t[1]]
             if corners:
@@ -673,6 +832,9 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
     missing = set(k for k in substitutes if (k[0], k[1]) in {(e[0], e[2]) for e in entries}) - used_substitutes
     if missing:
         raise ValueError("substitutes for missing parts: %s" % sorted(missing))
+    missing = set(k for k in replacements if k[0] in {e[0] for e in entries}) - used_replacements
+    if missing:
+        raise ValueError("replacements for missing BINs: %s" % sorted(missing))
     if export_dir is not None:
         (Path(export_dir) / "parts.json").write_text(json.dumps(dict(
             space="BIN model space (source positions after the position shift); vt = source UV; GX front-face winding",
@@ -705,6 +867,7 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
     summary = dict(package_bytes=total, meshes=len(meshes), parts=len(parts), meshlets=len(meshlets),
                    vertices=len(vertices), strip_bytes=len(index_bytes), palette=len(palette),
                    clusters=len(clusters), levels=len(levels), substituted_parts=len(used_substitutes),
+                   replaced_bins=len(used_replacements),
                    level0_triangles=sum(lv["triangles"] for r in report for p in r["parts"] for lv in p["levels"]
                                         if lv["level"] == 0),
                    meshes_detail=report)
@@ -738,8 +901,10 @@ def main():
     ap.add_argument("--lod-max-levels", type=int, default=5)
     ap.add_argument("--scales", type=Path,
                     help='JSON {"<owner>:<bin>": world scale}; the largest placement scale of each BIN')
-    ap.add_argument("--lod-substitute", type=Path, metavar="MANIFEST.json",
-                    help="per-part external levels (OBJ in BIN model space); see load_substitutes")
+    ap.add_argument("--lod-substitute", type=Path, action="append", metavar="MANIFEST.json|DIR",
+                    help="external geometry in BIN model space, repeatable: a manifest's per-part levels "
+                         "(load_substitutes) and whole-BIN replacements (load_replacements), or a directory "
+                         "of <OWNER>_<bin>.obj replacements")
     ap.add_argument("--lod-export", type=Path, metavar="DIR",
                     help="also write every part's levels as OBJ plus parts.json (templates for --lod-substitute)")
     ap.add_argument("--lod-bias", action="append", default=[], metavar="OWNER:BINS=FACTOR",
@@ -762,12 +927,18 @@ def main():
                 for b in range(int(lo_bin), int(hi_bin or lo_bin) + 1):
                     bias[(int(o, 0), b)] = float(factor)
         eps = tuple(float(x) for x in a.lod_eps.split(","))
-        substitutes = load_substitutes(a.lod_substitute) if a.lod_substitute else None
+        substitutes, replacements = {}, {}
+        for source in a.lod_substitute or []:
+            for table, new in ((substitutes, load_substitutes(source)), (replacements, load_replacements(source))):
+                twice = set(table) & set(new)
+                if twice:
+                    raise ValueError("%s: given twice: %s" % (source, sorted(twice)))
+                table.update(new)
         if a.lod_export:
             a.lod_export.mkdir(parents=True, exist_ok=True)
         blob, summary = convert_lod(entries, a.color_scale, scales, a.lod_px, eps, a.lod_cluster, a.lod_cluster_tris,
                                     min_gain=a.lod_min_gain, max_levels=a.lod_max_levels, bias=bias,
-                                    substitutes=substitutes, export_dir=a.lod_export)
+                                    substitutes=substitutes, export_dir=a.lod_export, replacements=replacements)
         version = VERSION_LOD
     else:
         blob, summary = convert(entries, a.color_scale, a.cell, a.min_fill)
@@ -780,7 +951,7 @@ def main():
     if a.lod:
         summary.update(lod_px=a.lod_px, lod_eps=a.lod_eps, lod_cluster=a.lod_cluster, lod_cluster_tris=a.lod_cluster_tris,
                        lod_min_gain=a.lod_min_gain, lod_max_levels=a.lod_max_levels, lod_bias=a.lod_bias,
-                       lod_substitute=str(a.lod_substitute) if a.lod_substitute else None)
+                       lod_substitute=[str(p) for p in a.lod_substitute] if a.lod_substitute else None)
     Path(str(a.out) + ".json").write_text(json.dumps(summary, indent=1))
     detail = summary.pop("meshes_detail")
     print(json.dumps(summary))

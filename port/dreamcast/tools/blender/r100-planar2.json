@@ -1,0 +1,29 @@
+{
+ "planar2": {
+  "keys": [
+   "FILE_01_17",
+   "FILE_01_18",
+   "FILE_02_4",
+   "FILE_01_3",
+   "MAINSCENARIO_6",
+   "FILE_01_1",
+   "FILE_01_30",
+   "FILE_02_0",
+   "FILE_02_5",
+   "MAINSCENARIO_10",
+   "FILE_00_0",
+   "FILE_01_25",
+   "FILE_01_29",
+   "FILE_01_20",
+   "FILE_01_22",
+   "FILE_01_23",
+   "FILE_01_21"
+  ],
+  "ops": [
+   [
+    "planar",
+    2.0
+   ]
+  ]
+ }
+}

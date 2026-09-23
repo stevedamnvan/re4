@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build a bootable Dreamcast disc image (CUE/BIN) from an ELF plus a data
-# directory.  mkdisc.sh <elf> <datadir> <outdir> [fixturesdir]
+# directory.  [TEXDIRS=dir[:dir]] [MESHDIRS=dir[:dir]] #   mkdisc.sh <elf> <datadir> <outdir> [fixturesdir]
+# (overlays: see "Optional overlays" below)
 #
 # Deliberately a single-session CD-R layout rather than a GD-ROM (GDI) image.
 # KOS mounts /cd by reading the *low density* table of contents
@@ -60,6 +61,45 @@ if [ -n "$EXTRA" ] && [ -d "$EXTRA" ]; then
   mkdir -p "$WORK/cdroot/dc"
   cp -r "$EXTRA"/. "$WORK/cdroot/dc/"
 fi
+# Optional overlays, applied to this run's copy after the fixtures so the data
+# and fixtures directories (often shared or hard-linked) are never written.
+# Each variable is a colon-separated list of directories, applied in order.
+#   TEXDIRS   texture packages <crc>-<fnv>.re4tex -> /cd/dc/tex/. Each must
+#             replace a texture the fixtures already publish: the name is the
+#             GC source image identity the runtime looks up, so a replacement
+#             under a new name would never be read (e.g. the PS2 tree bark,
+#             tools/ps2_tree_texture.py, replaces GC R100.TPL image 0).
+#   MESHDIRS  native mesh packages *.re4mesh -> /cd/dc/native/${MESHROOM:-r100}/
+#             (e.g. convert_room_bins.py --lod output), added or replaced.
+overlay() {
+  local var="$1" dest="$2" pattern="$3" must_replace="$4" dir f n
+  local IFS=:
+  for dir in ${!var:-}; do
+    [ -n "$dir" ] || continue
+    if [ ! -d "$dir" ]; then
+      echo "mkdisc: $var directory $dir missing" >&2
+      exit 1
+    fi
+    n=0
+    mkdir -p "$dest"
+    for f in "$dir"/$pattern; do
+      [ -e "$f" ] || continue
+      if [ "$must_replace" = 1 ] && [ ! -e "$dest/$(basename "$f")" ]; then
+        echo "mkdisc: $var: $(basename "$f") replaces no published texture (key must be a source identity)" >&2
+        exit 1
+      fi
+      cp "$f" "$dest/"
+      n=$((n + 1))
+    done
+    if [ "$n" = 0 ]; then
+      echo "mkdisc: $var directory $dir holds no $pattern" >&2
+      exit 1
+    fi
+    echo "mkdisc: $var $dir: $n file(s) -> ${dest#"$WORK/cdroot"}"
+  done
+}
+overlay TEXDIRS "$WORK/cdroot/dc/tex" '*.re4tex' 1
+overlay MESHDIRS "$WORK/cdroot/dc/native/${MESHROOM:-r100}" '*.re4mesh' 0
 
 # One MODE1/2048 data track starting at LBA 0, with IP.BIN occupying the first
 # sixteen sectors. Rock Ridge and Joliet both carry the real (lower case, long)

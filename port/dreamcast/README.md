@@ -482,6 +482,66 @@ make -C port/dreamcast/room \
   PLAYER_DEATH_VOICE_13=../build/private/source-player-audio/pl00-cue13.wav
 ```
 
+## r100 PS2 tree packages
+
+The r100 scenery can draw the PlayStation 2 release's trees in place of the
+GameCube trees (COMMON BINs 0-10, about 80% of the resident scenery triangles;
+the PS2 models are about seven times lighter). Only the render mesh and the
+bark texture change. Placement, collision, events, part identity and the
+material stay GameCube. Everything below is private: no PS2 or GameCube file,
+OBJ, PNG or package is tracked by Git.
+
+1. From a locally supplied PS2 disc image (*Resident Evil 4 (USA)*), extract
+   `r100.dat` from the disc's AFS archive (member 2294, SHA-256
+   `75fe9de6fe15af37a454ae6d0a0667aec6a578a898afb5028bf79acf8b4b6441`). Then
+   unpack it with JADERLINK's tools:
+   - `RE4_DATUDAS_TOOL` 1.0.4, which gives `r100/r100_004.SMD` and `.TPL`;
+   - `RE4_PS2_SCENARIO_SMD_TOOL` 1.3.0 on `r100_004.SMD`, which gives
+     `r100_004.scenario.obj` and `.idx_ps2_smd`;
+   - `RE4_PS2_TPL_EXTRACT` B.1.1.1 on `r100_004.TPL` with the `PNG` format
+     argument (its TGA writer crashes). The bark is `r100_004/0023.PNG`.
+2. Generate the replacement meshes, the bark and the packages. The GameCube
+   inputs default to the checkout's `orig/.../r100_full_export`
+   (`RE4DC_R100_EXPORT` overrides it), and `pvrtex` comes from
+   `$RE4DC_KOS_BASE`.
+
+   ```sh
+   T=port/dreamcast/tools
+   python3 $T/ps2_trees.py out/trees --ps2-obj PS2/r100_004.scenario.obj --dc-uv
+   python3 $T/ps2_tree_texture.py PS2/r100_004/0023.PNG out/bark
+   # Optional Blender static reduction, also used by the chosen r100 set:
+   python3 $T/export_room_bins_obj.py out/bins
+   blender -b --factory-startup --python $T/blender/bl_decimate.py -- \
+     "$PWD/out/bins" "$PWD/out/blender" $T/blender/r100-planar2.json
+   # Per owner, with the same LOD arguments as the default r100 packages:
+   python3 $T/convert_room_bins.py out/pkg/COMMON.re4mesh --owner 0xfe --common \
+     --bins EXPORT/R100.FILE_SHARED --lod --scales scales-r100.json \
+     --lod-min-gain 0.4 --lod-max-levels 4 --lod-eps 24,48,96,192,384 \
+     --lod-bias 0xfe:0-10=0.375 \
+     --lod-substitute out/trees --lod-substitute out/blender/planar2
+   python3 $T/verify_tree_uv.py out/pkg/COMMON.re4mesh out/bark
+   ```
+
+   `--lod-substitute DIR` replaces every `<OWNER>_<bin>.obj` in the directory
+   as a whole BIN, and levels of detail are generated from the replacement.
+   With the D367 arguments, COMMON is expected to hash to
+   `cdeade631a35b6e9514c31d4ec0dbd19f07c66c508b5611270257cebed1191b6` and the
+   bark to `5b40350924d4164c08608a769acfb165f3c54e571b51d5baa50de4aa305e16d9`.
+3. Stage both at once. The bark replaces the GameCube tree texture under that
+   texture's own source identity. The PS2 UVs are transposed, so these meshes
+   must never ship with the GameCube bark, nor the bark with the GameCube
+   meshes:
+
+   ```sh
+   TEXDIRS=out/bark/tex MESHDIRS=out/pkg \
+     port/dreamcast/tools/mkdisc.sh <elf> <data> <outdir> <fixtures>
+   ```
+
+   `blender/bl_render_compare.py` renders the GameCube tree, the PS2 tree and
+   the packaged result side by side. `blender/bl_measure.py` and
+   `blender/bl_pair_ps2.py` measure the surface error of a replacement and the
+   world-space GC/PS2 correspondence.
+
 ## Near-term sequence
 
 1. Reuse one conservative visibility/draw-state list across all room passes and
