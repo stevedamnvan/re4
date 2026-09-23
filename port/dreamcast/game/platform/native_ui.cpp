@@ -146,6 +146,10 @@ inline void sources_reset(){nsource=0;}
 #if RE4DC_TEX_RESIDENT
 Key missing_keys[32]; unsigned nmissing;
 bool preload_pending; unsigned preload_loads,preload_skipped,preload_runs;
+// Open VRAM claims (re4dc_ui_vram_claim: route movie texture, sub screen backing):
+// the room-entry preload waits while any is open and runs again after the last
+// one closes if a claim released uploads.
+unsigned vram_claims,claim_released;
 #endif
 re4dc::texture::SourceIdentityTable room_identities,core_identities,option_identities,player_identities,weapon_identities;unsigned identity_hits;
 // Match the recovered loader's four module owners; texture uploads still share
@@ -1181,7 +1185,9 @@ void preload_identities(){
     }
     bool full=false;
     for(unsigned i=0;i<n;++i){
-        if(used+reserve>=budget){full=true;break;}
+        // The reserve is also kept in the real pool: VQ page placement pads blocks
+        // beyond the accounted bytes (r100 ended at 8,936 B free with 182 KB of budget left).
+        if(used+reserve>=budget || pvr_mem_available()<reserve+preload_least(preload_picks[i].width,preload_picks[i].height)){full=true;break;}
         const PreloadPick& p=preload_picks[i];
         const Re4dcUiImage image{reinterpret_cast<const void*>(1),nullptr,p.width,p.height,p.format,0xffffffffU,0};
         if(load(image,true,&p.key))++preload_loads;else ++preload_skipped;
@@ -1198,6 +1204,40 @@ void preload_identities(){
 extern "C" void re4dc_pvr_vram_fence(){present_fence();}
 #endif
 extern "C" void re4dc_ui_invalidate_sources(){sources_reset();re4dc_model_reset_draw_plans();}
+#if RE4DC_TEX_RESIDENT
+// A VRAM user outside the texture cache (route movie texture, sub screen backing)
+// claims `bytes`: least recently used uploads that this frame's scene does not
+// reference are released (close() fences a previous-frame upload) until one
+// contiguous block of that size is available. The room preload keeps the pool
+// nearly full for the hitch fix, so such a user found no room (r100: s40 movie,
+// transceiver). Returns 1 when the block fits. Every claim is paired with
+// re4dc_ui_vram_unclaim(); the preload waits while one is open and afterwards
+// reloads what the claims released (it skips what is still resident).
+extern "C" int re4dc_ui_vram_claim(unsigned bytes){
+    ++vram_claims;
+    unsigned released=0,released_bytes=0;
+    // Probe only when the total would do: a failed pvr_mem_malloc() logs an error.
+    auto fits=[bytes]{if(pvr_mem_available()<bytes)return false;pvr_ptr_t p=pvr_mem_malloc(bytes);if(!p)return false;pvr_mem_free(p);return true;};
+    bool ok=fits();
+    while(!ok){
+        Entry* victim=nullptr;
+        for(auto& e:entries) if(e.valid && e.frame!=frame && (!victim || e.frame<victim->frame)) victim=&e;
+        if(!victim)break;
+        released_bytes+=victim->package.vram_bytes();++released;
+        RE4DC_PROFILE_COUNT(TextureEvictions,1);close_entry(*victim);
+        ok=fits();
+    }
+    claim_released+=released;
+    re4dc_log("native texture claim: bytes=%u fits=%d released=%u (%u B) free=%u used=%u claims=%u\n",bytes,ok?1:0,released,released_bytes,
+        (unsigned)pvr_mem_available(),used,vram_claims);
+    return ok?1:0;
+}
+extern "C" void re4dc_ui_vram_unclaim(){
+    if(!vram_claims)return;
+    if(!--vram_claims && claim_released){preload_pending=true;claim_released=0;}
+    re4dc_log("native texture unclaim: claims=%u preload=%d free=%u\n",vram_claims,preload_pending?1:0,(unsigned)pvr_mem_available());
+}
+#endif
 extern "C" int re4dc_ui_bind_core(void* archive,unsigned bytes){
     sources_reset();
     const bool ok=core_identities.adopt(archive,bytes);
@@ -1392,7 +1432,7 @@ extern "C" void re4dc_ui_begin(){
 #endif
 #endif
 #if RE4DC_TEX_RESIDENT
-    if(preload_pending && frame_ready)preload_identities();
+    if(preload_pending && frame_ready && !vram_claims)preload_identities();
 #endif
     re4dc_prepare_model_assets(); // registration/update work precedes frame submission
     re4dc::profile::begin();
@@ -2039,8 +2079,14 @@ extern "C" void* re4dc_model_deferred_storage(unsigned* bytes){
 extern "C" int re4dc_ui_movie_open(unsigned width,unsigned height){
     // Macroblock sizes inside the 512x256 texture; rows load as 32-byte blocks.
     if(movie_texture || !ready || !width || !height || width>512 || height>256 || (width&15))return 0;
+#if RE4DC_TEX_RESIDENT
+    re4dc_ui_vram_claim(512*256*2); // released with the texture (re4dc_ui_movie_close)
+#endif
     movie_texture=pvr_mem_malloc(512*256*2);movie_picture=false;movie_width=width;movie_height=height;
     movie_upload_serial=movie_shown_serial=movie_presentations=0;movie_first_picture_us=0;
+#if RE4DC_TEX_RESIDENT
+    if(!movie_texture)re4dc_ui_vram_unclaim();
+#endif
     return movie_texture!=nullptr;
 }
 // The previous scene must have finished sampling the texture before rows change.
@@ -2099,7 +2145,11 @@ extern "C" int re4dc_ui_movie_close(){
     present_fence();
 #endif
     if(re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready){re4dc_log("route movie texture retirement fence pending\n");return 0;}
-    pvr_mem_free(movie_texture);movie_texture=nullptr;movie_picture=false;return 1;
+    pvr_mem_free(movie_texture);movie_texture=nullptr;movie_picture=false;
+#if RE4DC_TEX_RESIDENT
+    re4dc_ui_vram_unclaim();
+#endif
+    return 1;
 }
 namespace {
 void movie_draw(){
