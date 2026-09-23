@@ -20,7 +20,7 @@ Any asset can be pinned to `reset`, `upscale` or explicit parameters, then rebui
 ## 1. Command line
 
 ```
-assets.sh <room|route|all> [--mode standard|low] [--only CLASS[,CLASS]] [--override FILE ...]
+assets.sh <room|route|all> [--mode standard|original] [--only CLASS[,CLASS]] [--override FILE ...]
           [--jobs N] [--dry-run] [--verify] [--no-review]
 assets.sh inventory <room|all>      # measure only: counts, bounds, textures, instances
 assets.sh plan <room>               # solve only: print decisions and predicted cost, build nothing
@@ -248,33 +248,74 @@ Q(option) = w_class * sum over views of ( e_px(option) - e_px(best) )_+ * area_f
 
 ### 4.9 Budgets and the two modes
 
-The two modes are two looks, not one look with a margin (user, 2026-09-23):
+The two modes are two looks, not one look with a margin (user, 2026-09-23; names 2026-09-23):
 
-- **Standard** is source-first: the faithful GC look at 20 fps (50 ms hw). The solver reduces
-  only as far as the budgets require, and reduced assets keep their source silhouettes.
-- **Low** is budget-first: a "Dreamcast-native look" at 30 fps (33 ms hw). The budgets below are
-  hard per view, and assets may change the look:
-  - houses become a few dozen polygons with their detail baked into textures (the house-shell
-    generator at far lower face budgets);
-  - terrain becomes coarse with its detail baked;
+- **Standard (default)** is budget-first: a "Dreamcast-native look" at 30 fps (33 ms hw).
+  Its budgets are hard per view, and assets may change the look:
+  - houses become baked low-poly shells (the item 21 house-shell generator; see 4.9.1);
+  - terrain and structures may use a Blender reduction (planar dissolve + collapse) where its
+    measured error is small;
   - trees become impostors beyond a few metres;
-  - clutter is culled or merged.
-  Only render meshes change. Logic and collision data are untouched, and Low never uses more
-  heap than Standard at any allocation.
+  - clutter is culled beyond a distance (never landmarks).
+  Only render meshes change. Logic and collision data are untouched, and Standard never uses
+  more heap 4 than Original at any allocation. (Earlier notes call this mode "Low".)
+- **Original** is source-first: the faithful GC look at 20 fps (50 ms hw), the recipe
+  packages (`--plan recipe`), reduced only as far as its budgets require. (Earlier notes call
+  this mode "Standard".)
 
-| Budget | Standard (20 fps) | Low (30 fps, budget-first) | Statistic |
+`--mode standard` (default) runs `assetpipe/budget.py`; `--mode original` runs the recipe
+build (`pipeline.build_room`). A Standard build also builds Original and prices both from the
+same cameras.
+
+| Budget | Original (20 fps) | Standard (30 fps, budget-first) | Statistic |
 |---|---|---|---|
-| scenery hw ms | 8 | **5, excluding the fixed runtime overhead** (`base_ms`, which is being designed away separately) | Standard: p95 over views; Low: every view |
-| scenery triangles per view | none | **15-20k** (hard) | every view |
+| scenery hw ms | 8 | **5, excluding the fixed runtime overhead** (`base_ms`, which is being designed away separately) | Original: p95 over views; Standard: every view |
+| scenery triangles per view | none | **15-20k** (hard; 18000 in costmodel.toml) | every view |
 | actors | 7 hw ms | **at most 3 full-detail Ganados**; the rest on tiers | r101 fight worst case |
-| texture VRAM, room set | pool - resident | same as Standard | sum |
+| texture VRAM, room set | pool - resident | same as Original | sum |
 | TA parameter bytes | 2 MiB - 128 KiB | same | max over views |
-| heap 4 | per room (measured free; ~155 KB margin at r100 s40 / r101) | never more than Standard, per room and per file | sum |
+| heap 4 | per room (measured free; ~155 KB margin at r100 s40 / r101) | never more than Original, per room and per file | sum |
 
-Low allocation outcomes must not differ from Standard, because the logic trace is STRICT
-across modes. So every Low manifest records `heap4_delta_vs_standard` and
-`vram_delta_vs_standard`, and flags any positive value. Every Low room also reports the disc
-bytes its second asset set adds.
+Allocation outcomes must not differ between modes, because the logic trace is STRICT across
+modes. Every Standard manifest records heap 4 per package (Original, Standard, delta), VRAM
+(room textures still drawn, shells, impostor atlases) and the disc bytes of the second set.
+
+#### 4.9.1 The Standard plan (budget.py)
+
+1. Classes: explicit lists in rooms.toml `[room.X.standard]` (houses, landmarks) and the recipe
+   trees; otherwise ground (height <= 0.25 x horizontal extent, >= 10 m wide), clutter (radius
+   <= 1.5 m) or structure.
+2. Houses: `house.shell` steps (Blender bl_house_shell.py + house_shells.py, cached by hash) on
+   the ladder `house_faces`; the first rung whose p90 source-to-shell error is <= `house_err_cm`
+   is used. r100: 48, 96 and 200 faces break the houses (p90 1.2-3.7 m); 400 faces pass (21 and
+   26 cm), the same count as the approved low512 shells. The review shows the rejected rungs.
+3. Options per class (`[plan.standard.options]`): extra LOD bias, tree impostor centre depth
+   (item 20 records), clutter cull centre depth; plus, for ground/structure, the same options on
+   a Blender reduction (`scenery.decimate`, bl_decimate.py) whose p90 error is <= `max_p90_mm`
+   and whose worst source-to-reduction distance is <= `max_mm`. That reduction's error is the
+   option's error floor in the quality term. Standard packages use a coarser LOD chain of the
+   same depth (`lod_args`); an owner whose package would grow is rebuilt with the recipe chain.
+4. Pricing at runtime LOD px 5 over the ground grid plus the named views (`[room.X.views]`:
+   spawn and walk frames from SCEN_LOG cam/pl, house approach at 30/8/3 m, the heaviest
+   Original grid view).
+5. Lazy-greedy multiple-choice solver (`budget.solve`): moves ranked by reduction of summed
+   relative excess over all views per unit of weighted quality loss, deterministic ties, then
+   an upgrade pass. Views still over budget are reported, never hidden.
+6. Final packages bake recipe bias x chosen bias per BIN; the staged set is priced again and
+   those numbers are the ones reported (the solver's differ by at most ~0.5 ms).
+   `plan.json` carries the runtime choices (impostor/cull distances, geometry variant).
+7. Review: `review/standard/<room>/index.html` renders both modes from identical cameras with
+   the textured software renderer (`render.py`, `scene.py`: TPL textures, PS2 bark, baked shell
+   textures, impostor atlas cells, PVR-style modulate, punch-through alpha, 25 m fog), with
+   per-view asset ms, triangles, and a frame estimate = `frame_rest_ms` (design-lowmode D2 floor
+   28.3) + `base_ms_planned` (2.5) + assets, against 33.3 ms.
+
+r100 prototype (2026-09-23), scenery assets excluding base: Standard named views 5.7-10.7 hw
+ms, grid p95 7.35 / max 10.6, within 5 ms at 159 of 215 views; Original 14.2-24.9, grid p95
+17.6 / max 24.9. Heap 4 -302 KB (every package <= Original), VRAM +170 KB (shells 132 KB,
+atlases 82 KB), second set on disc 1.51 MB (every package differs while biases are baked; a
+runtime per-BIN bias table would limit the second set to geometry-changed packages). Remaining
+cost: PS2 trees nearer than the impostor distance, a tail of terrain pieces, the two shells.
 
 ## 5. Camera model and view set
 
@@ -393,7 +434,7 @@ Pending plug-ins and their stage kinds:
 |---|---|---|---|
 | `ganado_lowpoly` | design-ganado (a75b5dc9f0fe43a05) | `actor`: 4 nested levels (L0-L3) per em model, 3 tiers (near <= 7 m or the nearest 3, mid <= 17 m, far); output one archive per enemy type, `em/em12.drs` and `em/em15.drs` | the same in both modes (user decision): L1 / L2 / L2 |
 | `pvs` | design-scenery (a5dd25741b47eff9d) | `pvs`: `r<room>.re4pvs` (R4PV v1) from room .das + MAINSCENARIO package + classes | conservative in Standard, aggressive in Low |
-| `lowmode_sets` | design-lowmode (af92085074ca55b28) | the Low asset sets and their disc layout | defines `--mode low` staging |
+| `lowmode_sets` | design-lowmode (af92085074ca55b28) | the Standard (ex-Low) set's runtime layout | defines the `--mode standard` staging layout |
 
 ### Standard and Low staging
 
@@ -585,7 +626,8 @@ weights).
 |---|---|---|
 | a | this design | done |
 | b | tool skeleton, cache, r100 wired to the existing generators, review sheet | done: `build r100 --plan recipe` reproduces the LFV r100 inputs byte for byte; `--verify` passes |
-| c | solver + `calibrate` | |
+| b2 | Standard (budget-first) prototype for r100: classes, shells, coarse variants, impostor/cull options, solver, textured Standard vs Original review | done (prototype; 4.9.1) |
+| c | solver (`--plan solve` for Original) + `calibrate` | solver done in budget.py; calibrate open |
 | d | r101, r103 | |
 | e | overrides + upscale (source) + opt-in ai-upscale | |
 | f | `assets.sh audit <room>`: bring-up gaps (missing-module stubs, missing packages, events without PS2 FMV, unported systems, heap/image estimate), seeded from R4_FIRST_STAGE_GAP_AUDIT.md and the next-room dependency brief | |

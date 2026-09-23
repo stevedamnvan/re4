@@ -9,7 +9,8 @@ level rules as native_static.cpp) to any room and to per-asset option vectors:
 
 Options of an asset (sorted best quality first):
   {"id": "b1", "bias": 1.0}                     stored errors times bias
-  {"id": "imp12", "bias": 0.375, "imp_mm": 12000}  a tree drawn as one quad beyond depth D
+  {"id": "imp12", "bias": 0.375, "imp_mm": 12000}  a tree drawn as one quad beyond centre depth D
+  {"id": "c10", "bias": 0.5, "cull_mm": 10000}  not drawn beyond centre depth D (W9b class rule)
 Costs use costmodel.toml [scenery] (section 4.2); quality is section 4.8.
 """
 import math
@@ -147,8 +148,15 @@ def _eval_view(args):
         imp_done = [False] * len(opts)
         for oi, o in enumerate(opts):
             acc[oi][5] += 1
+            cull = o.get("cull_mm") or 0
+            if cull and zc >= cull:
+                # culled beyond cull_mm (object centre depth): the whole object is the error
+                imp_done[oi] = True
+                zz = max(zc, 1.0)
+                acc[oi][9] += (rad_obj * K / zz) * min(1.0, math.pi * (rad_obj * K / zz) ** 2 / area_div)
+                continue
             d = o.get("imp_mm") or 0
-            if d and depth_obj >= d:
+            if d and zc >= d:          # object centre depth, as TREE_IMPOSTOR_MM (native_static.cpp)
                 a = acc[oi]
                 a[0] += 4
                 a[1] += 1
@@ -198,7 +206,9 @@ def _eval_view(args):
                         a[2] += 1
                         a[6] += v
                         a[7] += t
-                    e = levels[pick][0] * s_k_z
+                    # err_floor: the option's geometry is itself a reduction of the source (e.g. a
+                    # Blender decimation, model units), so no level is better than that
+                    e = max(levels[pick][0], o.get("err_floor", 0.0)) * s_k_z
                     if e > e_ref:
                         a[9] += (e - e_ref) * ar
             for oi in range(len(opts)):
@@ -225,11 +235,13 @@ class Pricing:
         self.counts = {}   # key -> [option] {field: mean over views}
         self.quality = {}  # key -> [option] q
         self.ta = {}       # key -> [option][view] TA parameter bytes
+        self.tris = {}     # key -> [option][view] triangles drawn
         tb = cost["ta"]
         nv = len(views)
         for key, opts in options.items():
             ms = [[0.0] * nv for _ in opts]
             ta = [[0] * nv for _ in opts]
+            tr = [[0] * nv for _ in opts]
             tot = [[0] * 10 for _ in opts]
             for vi, r in enumerate(per_view):
                 a = r.get(key)
@@ -238,10 +250,12 @@ class Pricing:
                 for oi in range(len(opts)):
                     ms[oi][vi] = cycles(cost, a[oi]) / clock
                     ta[oi][vi] = tb["bytes_per_record"] * a[oi][0] + tb["bytes_per_substrip"] * a[oi][1]
+                    tr[oi][vi] = a[oi][7] + 2 * a[oi][8]
                     for k in range(10):
                         tot[oi][k] += a[oi][k]
             self.ms[key] = ms
             self.ta[key] = ta
+            self.tris[key] = tr
             self.counts[key] = [{f: round(t[i] / nv, 2) for i, f in enumerate(COUNT_FIELDS)} for t in tot]
             self.quality[key] = [round(t[9] / nv, 6) for t in tot]
 

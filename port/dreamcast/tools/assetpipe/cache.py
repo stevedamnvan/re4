@@ -134,7 +134,19 @@ class Cache:
             if self.verify:
                 self._verify(name, params, inputs, tools, fn, label, obj)
             return obj
-        obj = self._build(name, params, ih, tools, fn, label, final, key)
+        # one builder per key across processes: the others wait, then take the hit
+        import fcntl
+        final.parent.mkdir(parents=True, exist_ok=True)
+        with open(final.parent / (key + ".lock"), "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            try:
+                if (final / "step.json").exists():
+                    meta = json.loads((final / "step.json").read_text())
+                    self.hits.append((label, key))
+                    return Obj(key, final, meta["outputs"], meta.get("info", {}), True)
+                obj = self._build(name, params, ih, tools, fn, label, final, key)
+            finally:
+                fcntl.flock(lk, fcntl.LOCK_UN)
         self.built.append((label, key))
         return obj
 

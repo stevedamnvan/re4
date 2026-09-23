@@ -178,6 +178,158 @@ class Gen:
         return self.cache.step("texture.vq", dict(model_min_bytes=model_min_bytes, logs=[p.name for p in logs]),
                                dict(fixtures=fixtures, logs=logs), fp, fn, label="VQ overlay")
 
+    # ---- a replacement directory without some <OWNER>_<bin>.obj (e.g. planar2 minus the shelled houses)
+    def subst_without(self, src, exclude):
+        src_dir = Path(src.out if hasattr(src, "out") else src)
+        exclude = sorted(set(exclude))
+
+        def fn(out, work):
+            kept = []
+            for f in sorted(src_dir.iterdir()):
+                if f.is_file() and f.stem not in exclude:
+                    shutil.copy2(f, out / f.name)
+                    kept.append(f.name)
+            return dict(kept=len(kept), excluded=exclude)
+        return self.cache.step("subst.filter", dict(exclude=exclude), dict(src=src), {"rule": "copy minus exclude"},
+                               fn, label="subst %s minus %s" % (src_dir.name, ",".join(exclude)))
+
+    # ---- decoded room TPL (convert_tpl.decode_image -> RGBA PNG <index>.png; deterministic)
+    def tpl_png(self, room):
+        from . import texture
+        tpl_path = self.cfg.path("r100_export") / "R100.TPL.TPL" if room.kind == "export" else None
+        if tpl_path is None:
+            raise NotImplementedError("tpl_png: %s (smd rooms: TPL from the room archive, step d)" % room.name)
+        fp = fingerprint([tool("convert_tpl.py")], dict(python=sys.version.split()[0]))
+
+        def fn(out, work):
+            imgs = texture.tpl_images(tpl_path, TOOLS)
+            for i, im in enumerate(imgs):
+                (out / ("%d.png" % i)).write_bytes(texture.png_rgba_bytes(im))
+            return dict(images=len(imgs))
+        return self.cache.step("texture.tpl_png", dict(room=room.name), dict(tpl=tpl_path), fp, fn,
+                               label="%s TPL -> PNG" % room.name)
+
+    # ---- source BINs as OBJ (export_room_bins_obj.py: model space, one material per part)
+    def bin_objs(self, room, keys):
+        if room.kind != "export":
+            raise NotImplementedError("bin_objs: %s (smd rooms arrive with step d)" % room.name)
+        exp = self.cfg.path("r100_export")
+        keys = sorted(keys)
+        fp = fingerprint([tool("export_room_bins_obj.py"), tool("convert_room_bins.py"), tool("mesh_lod.py")],
+                         dict(python=sys.version.split()[0]))
+        inputs = {}
+        for k in keys:
+            owner, b = k.rsplit("_", 1)
+            d = {"MAINSCENARIO": "R100.FILE_MAIN", "COMMON": "R100.FILE_SHARED"}.get(
+                owner, "R100.FILE_%d" % int(owner[5:]) if owner.startswith("FILE_") else owner)
+            inputs[k] = exp / d / ("%04d.BIN" % int(b))
+
+        def fn(out, work):
+            run([PY, "-B", tool("export_room_bins_obj.py"), out, "--export", exp, "--keys", ",".join(keys)],
+                cwd=work, log=work / "log.txt")
+            return dict(objs=sorted(p.name for p in out.glob("*.obj")))
+        return self.cache.step("scenery.bin_obj", dict(room=room.name, keys=keys), inputs, fp, fn,
+                               label="%s BIN OBJ %s" % (room.name, ",".join(keys)))
+
+    # ---- Blender reductions (tools/blender/bl_decimate.py: planar dissolve / collapse, normals kept)
+    def decimate(self, room, keys, variant, ops):
+        """Whole-BIN replacement OBJs <out>/<KEY>.obj (+ blender-report.json) for convert_room_bins.py
+        --lod-substitute. ops: [["planar", deg] | ["collapse", ratio], ...]."""
+        import os
+        import subprocess
+        blender = Path(self.cfg.src["blender"])
+        bwork = Path(self.cfg.src["blender_work"])
+        keys = sorted(keys)
+        objs = self.bin_objs(room, keys)
+        st = blender.stat()
+        script = tool("blender/bl_decimate.py")
+        fp = fingerprint([script], dict(blender="%s:%d:%d" % (blender.name, st.st_size, int(st.st_mtime))))
+        spec = {variant: dict(keys=keys, ops=[list(o) for o in ops])}
+
+        def win(p):
+            return subprocess.run(["wslpath", "-w", str(p)], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+
+        def fn(out, work):
+            w = bwork / ("decimate-%s-%d" % (variant, os.getpid()))
+            if w.exists():
+                shutil.rmtree(w)
+            (w / "in").mkdir(parents=True)
+            for k in keys:
+                shutil.copy2(objs.path(k + ".obj"), w / "in" / (k + ".obj"))
+            shutil.copy2(script, w / "bl_decimate.py")
+            (w / "spec.json").write_text(json.dumps(spec, indent=1, sort_keys=True))
+            try:
+                run([blender, "-b", "--factory-startup", "--python", win(w / "bl_decimate.py"), "--",
+                     win(w / "in"), win(w / "out"), win(w / "spec.json")], cwd=w, log=work / "blender.txt",
+                    timeout=7200)
+                for f in sorted((w / "out" / variant).glob("*.obj")):
+                    shutil.copy2(f, out / f.name)
+                rep = json.loads((w / "out" / "blender-report.json").read_text())
+                (out / "blender-report.json").write_text(json.dumps(rep, indent=1, sort_keys=True))
+            finally:
+                shutil.rmtree(w, ignore_errors=True)
+            return dict(objs=len(keys))
+        return self.cache.step("scenery.decimate", dict(room=room.name, variant=variant, spec=spec),
+                               dict(objs=objs), fp, fn, label="%s decimate %s (%d BINs)" % (room.name, variant,
+                                                                                           len(keys)))
+
+    # ---- house shells (item 21: Blender bl_house_shell.py + house_shells.py VQ packaging)
+    def house_shell(self, room, key, faces, tex_size=512, extra=()):
+        """One baked low-poly render shell for BIN `key` (e.g. FILE_01_17). Blender 5.2 (Windows) runs
+        on copies in sources [paths] blender_work; Cycles CPU bake, fixed seeds (bl_house_shell.py).
+        Outputs: <key>.obj/.png/.json (Blender), replace/<key>.obj, tex/<crc>-<fnv>.re4tex,
+        preview/<key>.png (as pvrtex decodes it), textures.json (house_shells.py)."""
+        import os
+        import subprocess
+        ext = self.pinned("item2x_tools")
+        blender = Path(self.cfg.src["blender"])
+        bwork = Path(self.cfg.src["blender_work"])
+        objs = self.bin_objs(room, [key])
+        tpl = self.tpl_png(room)
+        st = blender.stat()
+        fp = fingerprint([ext / "blender/bl_house_shell.py", ext / "house_shells.py", tool("convert_tpl.py"),
+                          self.pvrtex], dict(python=sys.version.split()[0],
+                                             blender="%s:%d:%d" % (blender.name, st.st_size, int(st.st_mtime))))
+        args = ["--keep-alpha", "--cull-hidden", "--faces", str(int(faces)), "--tex-size", str(int(tex_size))]
+        args += [str(a) for a in extra]
+
+        def win(p):
+            return subprocess.run(["wslpath", "-w", str(p)], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+
+        def fn(out, work):
+            w = bwork / ("%s-%d" % (key, os.getpid()))
+            if w.exists():
+                shutil.rmtree(w)
+            (w / "tex").mkdir(parents=True)
+            (w / "out").mkdir()
+            shutil.copy2(objs.path(key + ".obj"), w / (key + ".obj"))
+            for f in sorted(tpl.out.glob("*.png")):
+                shutil.copy2(f, w / "tex" / f.name)
+            shutil.copy2(ext / "blender/bl_house_shell.py", w / "bl_house_shell.py")
+            try:
+                run([blender, "-b", "--factory-startup", "--python", win(w / "bl_house_shell.py"), "--",
+                     win(w / (key + ".obj")), win(w / "tex"), win(w / "out")] + args, cwd=w, log=work / "blender.txt",
+                    timeout=3600)
+                shells = work / "shells"
+                shells.mkdir()
+                for suf in (".obj", ".png", ".json"):
+                    shutil.copy2(w / "out" / (key + suf), shells / (key + suf))
+                    shutil.copy2(w / "out" / (key + suf), out / (key + suf))
+            finally:
+                shutil.rmtree(w, ignore_errors=True)
+            run([PY, "-B", ext / "house_shells.py", work / "pkg", shells, "--pvrtex", self.pvrtex], cwd=work,
+                log=work / "log.txt", env=det_env(dict(PYTHONPATH=str(TOOLS))))
+            for d in ("replace", "tex", "preview"):
+                shutil.copytree(work / "pkg" / d, out / d)
+            shutil.copy2(work / "pkg" / "textures.json", out / "textures.json")
+            m = json.loads((out / (key + ".json")).read_text())
+            return {k: m.get(k) for k in ("source_triangles", "shell_triangles", "alpha_triangles",
+                                          "hidden_faces_removed", "source_to_shell_cm", "shell_to_source_cm")}
+        return self.cache.step("house.shell", dict(room=room.name, key=key, args=args),
+                               dict(obj=objs, tpl=tpl), fp, fn, label="%s shell %s %d faces" % (room.name, key, faces))
+
     # ---- audio (aica_banks.py; the same cache stage.sh uses)
     def audio(self, route="title,r100,r101,r103"):
         mirror = self.cfg.path("mirror")

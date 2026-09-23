@@ -39,6 +39,19 @@ bias = ["0xfe:0-10=0.375"]
 substitute = ["trees", "planar2"]
 expect = { COMMON = "cdeade631a35b6e9514c31d4ec0dbd19f07c66c508b5611270257cebed1191b6", MAINSCENARIO = "f4b31f51940a04987126da3338b0550b0798f65aaf13903894673b1fb0ee646c", FILE_01 = "69c135fdaaa2f7af760ac96f9e67041c03b819d4e464a0d90706be3ac5ddc4c9" }
 
+[room.r100.standard]         # Standard (default, budget-first) plan inputs; classes the heuristics can't tell
+houses = ["1:17", "1:18"]    # item 21 house shells (bl_house_shell.py)
+landmarks = []               # never culled, never below bias 1
+
+[room.r100.views]            # named review/pricing views; cam/toward from SCEN_LOG (scenery trials tour, arm C, 25 m);
+                             # the game camera direction is not logged: cam->player is used, which matches the
+                             # spawn frame (kept as a reference) but not the walking frames
+spawn = { cam = [-100308, 1310, -209], toward = [-99692, -454, -1343], pitch = -10.0, frame = "scen-tour-C/frames/fc02400_fb0.png" }
+path_a = { cam = [-94321, 1696, -2688], toward = [-93703, -68, -3823], pitch = -10.0 }
+path_b = { cam = [-88030, 1724, -6559], toward = [-87413, -40, -7694], pitch = -10.0 }
+house = { bin = "1:17", from = "spawn", distances_m = [30.0, 8.0, 3.0] }
+widest = { grid = "max_original_ms" }
+
 [room.r101]
 das = "St1/r101.das"
 

@@ -155,7 +155,7 @@ def room_base_ms(cfg, room):
     return float(cfg.cost["scenery"].get("base_ms", {}).get(room, cfg.cost["scenery"]["base_ms_default"]))
 
 
-def build_room(ctx, name, mode="standard", plan="recipe", only=None, review=True):
+def build_room(ctx, name, mode="original", plan="recipe", only=None, review=True):
     cfg, gen = ctx.cfg, ctx.gen
     room = Room(cfg, ctx.cache, name)
     ctx.log("== %s (%s, plan=%s)" % (name, mode, plan))

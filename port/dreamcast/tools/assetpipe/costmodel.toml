@@ -80,16 +80,39 @@ shell_vram_bytes = 67584   # 512 VQ package (66 KB)
 weights = { landmark = 3.0, structure = 2.0, tree = 1.5, ground = 1.0, clutter = 0.5, default = 1.0 }
 engagement_weight = 2.0
 
-[budgets.standard]          # source-first, faithful look, 20 fps (50 ms hw)
+[budgets.original]          # "Original": source-first, faithful look, 20 fps (50 ms hw)
 scenery_ms_p95 = 8.0       # p95 over views, including base_ms
 actors_ms = 7.0
 ta_bytes_max = 1966080     # 2 MiB - 128 KiB
-[budgets.low]               # budget-first "Dreamcast-native look", 30 fps (33 ms hw); user 2026-09-23
+[budgets.standard]          # "Standard" (default): budget-first Dreamcast-native look, 30 fps (33 ms hw); user 2026-09-23
 scenery_ms_view_max = 5.0  # EVERY view, excluding base_ms (the fixed runtime overhead is designed away separately)
 scenery_tris_view_max = 18000   # hard per-view triangle budget (15-20k)
 full_ganados_max = 3       # at most 3 full-detail Ganados; the rest on tiers
 ta_bytes_max = 1966080
-heap4_vs_standard = 0      # Low never uses more heap 4 than Standard (per room, per file)
+heap4_vs_original = 0      # Standard never uses more heap 4 than Original (per room, per file)
+frame_rest_ms = 28.3       # everything but scenery at the 30 fps floor (design-lowmode D2: 33.3 - scenery 5)
+base_ms_planned = 2.5      # scenery fixed runtime overhead after design-scenery S1-S5 (today: [scenery.base_ms])
+
+[plan.standard]             # budget-first plan (budget.py); options priced per asset class, greedy solver
+px = 5.0                   # RQ_LOD_PX in Standard (runtime q->lod_px)
+house_faces = [48, 96, 200, 400, 600]   # shell ladder (user asked for "a few dozen polygons"); the first
+house_err_cm = 30.0        # rung whose p90 source->shell error <= house_err_cm is used, else the last rung
+house_review_faces = [48, 96, 200]   # rungs rendered next to the chosen one in the review (not staged)
+lod_args = ["--lod", "--lod-min-gain", "0.5", "--lod-max-levels", "4", "--lod-eps", "48,192,768,3072"]   # coarser chain, same depth
+# Blender reduction offered as an extra geometry option; a BIN's reduction is only offered when its
+# measured error stays small (p90 both ways <= max_p90_mm, source-to-reduction max <= max_mm)
+coarse = { variant = "coarse", classes = ["ground", "structure"], ops = [["planar", 4.0], ["collapse", 0.3]], max_p90_mm = 150.0, max_mm = 600.0 }
+house_tex = 512
+ground_flat = 0.25         # ground: height <= 0.25 x horizontal extent and horizontal >= ground_min_mm
+ground_min_mm = 10000.0
+clutter_radius_mm = 1500.0 # clutter: bounding radius <= 1.5 m (cullable; never landmarks)
+[plan.standard.options]
+ground = { bias = [1.0, 0.5, 0.25, 0.125] }
+structure = { bias = [1.0, 0.75, 0.5, 0.375, 0.25] }
+house = { bias = [1.0, 0.5] }
+tree = { bias = [1.0, 0.5, 0.25], imp_mm = [0, 12000, 8000, 6000, 4000, 3000] }
+clutter = { bias = [1.0, 0.5, 0.25], cull_mm = [0, 15000, 10000, 6000] }
+landmark = { bias = [1.0] }
 
 [views]
 grid = 6                   # N x N ground points, 8 yaws, eye 1.6 m (room_model.py)

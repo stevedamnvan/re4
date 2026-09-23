@@ -23,6 +23,7 @@ evidence = "/mnt/d/Flycast-Evidence/re4-dreamcast"
 kos = "/root/work/kos-re4dc-d336"
 blender = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe"
 aica_cache = "/root/probe/d367-aica-cache"
+blender_work = "/mnt/c/Users/lambd/AppData/Local/Temp/re4dc-assets-blender"   # Windows-side scratch for Blender steps
 
 [pinned]
 # Outputs of earlier manual or Windows-side steps, used as content-hashed inputs.
@@ -30,3 +31,6 @@ aica_cache = "/root/probe/d367-aica-cache"
 r100_planar2 = "/root/probe/d367-agents/ps2-blender/subst/planar2"          # bl_decimate.py r100-planar2.json (Blender 5.2)
 r100_bark_png = "/root/probe/d367-agents/ps2-blender/texture/ps2/r100_004/0023.PNG"   # RE4_PS2_TPL_EXTRACT B.1.1.1
 vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq5"                      # README: tex-vq5 (vq_native_ui.py)
+item2x_tools = "/root/probe/d367-agents/assets/ext/item2x/port/dreamcast/tools"   # item 20/21 tools (bl_house_shell.py,
+                                                          # house_shells.py, tree_impostors.py) until they land in the checkout
+r100_impostors = "/root/probe/d367-agents/ps2-blender/impostor/rt/out"   # item 20 tree_impostors.py output (16 views, h128, PAL4 VQ)

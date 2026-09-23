@@ -15,7 +15,8 @@ def main(argv=None):
     cmd = argv.pop(0) if argv and argv[0] in COMMANDS else "build"
     ap = argparse.ArgumentParser(prog="assets.sh " + cmd, description=__doc__)
     ap.add_argument("target", nargs="?", default="route", help="room (r100), 'route' or 'all'")
-    ap.add_argument("--mode", choices=("standard", "low"), default="standard")
+    ap.add_argument("--mode", choices=("standard", "original"), default="standard",
+                    help="standard (default): budget-first Dreamcast-native look; original: the faithful recipe")
     ap.add_argument("--plan", choices=("recipe", "solve"), default="recipe",
                     help="recipe: the accepted hand-tuned packages (rooms.toml); solve: the cost-model solver")
     ap.add_argument("--only", default="", help="classes to (re)build: scenery,tree,house,texture,actor,pvs,audio,movie")
@@ -61,6 +62,18 @@ def main(argv=None):
         return calibrate(ctx, a.set)
     rc = 0
     for t in targets:
+        if a.mode == "standard":
+            from .budget import build_standard
+            m = build_standard(ctx, t, only=a.only.split(",") if a.only else None,
+                               review=not a.no_review and cmd != "plan")
+            sm = m["predicted"]["summary"]
+            print("%s standard: status %s, scenery assets hw ms (excl. base) grid p95 %.2f max %.2f, named max %.2f "
+                  "(original p95 %.2f max %.2f); heap4 ok %s, second set %.2f MB, manifest %s" % (
+                      t, m["status"], sm["standard"]["assets_ms"]["p95"], sm["standard"]["assets_ms"]["max"],
+                      sm["standard"]["named_assets_ms_max"], sm["original"]["assets_ms"]["p95"],
+                      sm["original"]["assets_ms"]["max"], m["predicted"]["sizes"]["heap4_ok"],
+                      m["predicted"]["sizes"]["disc"]["second_set_bytes"] / 1e6, m["manifest_sha256"][:16]))
+            continue
         m = build_room(ctx, t, mode=a.mode, plan=a.plan, only=a.only.split(",") if a.only else None,
                        review=not a.no_review and cmd != "plan")
         s = m["predicted"]["scenery"]
