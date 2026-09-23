@@ -63,6 +63,7 @@ TPL_OBSERVER = None
 # Optional prepared-resource relocation observer: field, relative base, value.
 OFFSET_OBSERVER = None
 SEQUENCE_OBSERVER = None  # qualified EST/SST records, before optional native compaction
+MODEL_OBSERVER = None  # qualified source BIN layout and UV index fields; offline only
 
 
 class Swapper:
@@ -1316,16 +1317,18 @@ def fmt_bin(sw, off, size, ctx):
     version = sw.peek32(off + 60)
     if version not in (0x20010801, 0x20030818):
         raise ValueError('unsupported ModelData version %#x' % version)
-    head = sw.u32(off)
-    color, tex, weight = sw.u32s(off + 12, 3)
+    head = sw.offset32(off, off)
+    color, tex, weight = (sw.offset32(off + i, off) for i in (12, 16, 20))
     nw, nj = sw.data[off + 24:off + 26]
     nd = sw.u16(off + 26)
-    parts, flags, ntex = sw.u32s(off + 28, 3)
+    parts = sw.offset32(off + 28, off)
+    flags, ntex = sw.u32s(off + 32, 2)
     ext = sw.u16(off + 42)
-    shape, vertices, normals = sw.u32s(off + 44, 3)
+    shape, vertices, normals = (sw.offset32(off + i, off) for i in (44, 48, 52))
     nv, nn = sw.u16s(off + 56, 2)
     sw.u32(off + 60)
-    blend, flip = sw.u32s(off + 64, 2) if version == 0x20030818 else (0, 0)
+    blend, flip = ([sw.offset32(off + i, off) for i in (64, 68)]
+                   if version == 0x20030818 else (0, 0))
     raw = []
     for i in range(nj):
         # Joint identity/parent bytes are not the numeric ModelDataHead union.
@@ -1353,6 +1356,7 @@ def fmt_bin(sw, off, size, ctx):
     # Material header is bytes except its size/statistics words. Parse only the
     # established indexed GX primitives; the stream itself remains unchanged.
     cursor = off + parts
+    uv_indices = [] if MODEL_OBSERVER is not None else None
     max_tex = max_color = -1
     stride = 8 if flags & 0x80000000 else 6
     for i in range(nd):
@@ -1377,7 +1381,10 @@ def fmt_bin(sw, off, size, ctx):
                 vi, ni = sw.peek16(p), sw.peek16(p + 2)
                 if vi >= nv or ni >= nn:
                     raise ValueError('GX position/normal index outside array')
-                max_tex = max(max_tex, sw.peek16(p + stride - 2))
+                ti = sw.peek16(p + stride - 2)
+                max_tex = max(max_tex, ti)
+                if uv_indices is not None:
+                    uv_indices.append((p + stride - 2, ti))
                 if stride == 8:
                     max_color = max(max_color, sw.peek16(p + 4))
                 p += stride
@@ -1398,7 +1405,8 @@ def fmt_bin(sw, off, size, ctx):
         count = sw.u32(off + shape)
         table = off + shape + 4
         sw._check(table, count * 8)
-        entries = [sw.u32s(table + i * 8, 2) for i in range(count)]
+        entries = [(sw.offset32(table + i * 8, table),
+                    sw.u32(table + i * 8 + 4)) for i in range(count)]
         converted = {}
         for relative, number in entries:
             target = table + relative
@@ -1416,6 +1424,21 @@ def fmt_bin(sw, off, size, ctx):
                 values = sw.u16s(target + i * 8, 4)
                 if values[0] >= nv:
                     raise ValueError('morph vertex outside source position array')
+    if MODEL_OBSERVER is not None:
+        # The existing bounded parser provides the layout. Consumers must still
+        # select a reviewed family and reject unsupported/mutable contracts.
+        occupied = [(off, off + (72 if version == 0x20030818 else 64)),
+                    (off + head, off + head + nj * 16),
+                    (off + weight, off + weight + (ext * 12 if ext > 255 else nw * 8)),
+                    (off + vertices, off + vertices + nv * 8),
+                    (off + normals, off + normals + nn * (4 if flags & 0x20000000 else 8)),
+                    (off + parts, cursor)]
+        if max_color >= 0:
+            occupied.append((off + color, off + color + (max_color + 1) * 4))
+        MODEL_OBSERVER(sw.label, off, size, ctx, dict(
+            version=version, joints=nj, weights=nw, extended_weights=ext,
+            shape=shape, blend=blend, flip=flip, uv_offset=off + tex,
+            uv_count=max_tex + 1, uv_indices=uv_indices, occupied=occupied))
     return raw
 
 def fmt_smd(sw, off, size, ctx):

@@ -1,17 +1,24 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
-Current D361 (2026-09-22): model/frame retained preparation now produces a
-measured12.5% whole-render reduction on106 identical source ticks with the same
-selected assets. Render p50/p95=1368.078/1370.789ms; presentation
-p50/p95=1389.601/1406.282ms. This is progress, not playability or full D349 costs.
-Actual workspace cell131,136B is funded by D360's147,232B recovery; source free/
-largest=82,688B, capacity unchanged. Packet/VRAM/queue/fallback counts are unchanged.
-See [D361](R4_NATIVE_PREPARATION_CHECKPOINT.md#d361---retained-modelframe-preparation-2026-09-22).
-Do not tune admission/slot constants again. Preserve the full candidate and source
-semantics; assess the remaining native asset/preparation representation against
-actual budgets using existing conversion/ownership work. An offline replacement
-must displace loaded backing. The PS2 visual-profile gate remains explicit;
-this result does not automatically accept prelighting/mesh substitutions.
+Current D362 (2026-09-22): final lossless asset step is complete. Exact source UV
+sharing recovers34016 actual heap bytes (free/largest82688->116704 B) but leaves
+render~1368ms unchanged across127 matched ticks. Stop duplicate/unused-array and
+strip-repacking hunts; existing stripifier found zero order-preserving savings.
+
+The user explicitly activates one substantial r100 static-render replacement:
+reuse existing D349/D353 baking/native representation machinery with current
+source-owned assets; replace qualified normals/runtime lighting rather than add
+a second scene. Actors remain dynamic. Preserve source ownership, activation and
+gameplay; handle dynamic/camera-relative lights and intentional visual differences
+explicitly. Compare the whole candidate to D361 retained preparation (~1.368s),
+with actual loaded memory, work counts, packet/VRAM costs and appearance. The
+next milestone is materially cheaper rendering, not another handful of KiB.
+[D362 evidence and exact scope](R4_NATIVE_PREPARATION_CHECKPOINT.md#d362---final-lossless-uv-sharing-static-replacement-activated-2026-09-22).
+This targeted activation is recorded in [the visual profile](PS2_INSPIRED_DREAMCAST_PROFILE.md);
+it does not accept unrelated substitutions or claim hardware/gameplay completion.
+
+Previous D361: retained model/frame preparation reduced render cost12.5% with
+unchanged source behavior/packets; the128KiB workspace remains in the baseline.
 
 Previous D360 storage prerequisite:
  a selectable source-index externalization

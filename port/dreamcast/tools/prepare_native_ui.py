@@ -180,6 +180,65 @@ def compact_spans(decoded, references, ranges):
     return out,mapped
 
 
+def compact_model_uvs(decoded, models):
+    """Share byte-identical UV records in qualified rigid r100 scenery only.
+
+    Source positions/normals/colors, GX commands/order and materials stay intact.
+    UVs remain the same four-byte source records; this is not quantization or a
+    native sidecar. Savings are multiples of 32 to preserve source alignments.
+    """
+    import re
+    ranges=[];entries=[];patches=[];seen=set();retained=[]
+    for model_off,size,ctx,layout in models:
+        if not re.fullmatch(r'st1/r100\.arc#5/BIN[0-9]+',ctx):
+            continue
+        if model_off in seen:
+            raise ValueError('duplicate observed model owner')
+        seen.add(model_off)
+        if (layout['joints']!=1 or layout['weights']>1 or
+            layout['extended_weights']>255 or
+            any(layout[k] for k in ('shape','blend','flip'))):
+            retained.append(dict(context=ctx,reason='non-rigid/morph/motion contract retained'))
+            continue
+        start=layout['uv_offset'];count=layout['uv_count'];end=start+count*4
+        if not count:continue
+        if start%4 or start<model_off or end>model_off+size or end>len(decoded):
+            raise ValueError('model UV range outside its qualified owner')
+        if any(a<b and start<b and end>a for a,b in layout['occupied']):
+            raise ValueError('model UV array overlaps a retained consumer')
+        indices=layout['uv_indices']
+        if any(index>=count or field<model_off or field+2>model_off+size or
+               (field<end and field+2>start) or
+               struct.unpack_from('>H',decoded,field)[0]!=index
+               for field,index in indices):
+            raise ValueError('model UV index disagrees with qualified source')
+        unique={};remap=[];packed=bytearray()
+        for i in range(count):
+            record=bytes(decoded[start+i*4:start+(i+1)*4])
+            if record not in unique:
+                unique[record]=len(unique);packed+=record
+            remap.append(unique[record])
+        saving=(end-start-len(packed))//32*32
+        if not saving:
+            retained.append(dict(context=ctx,reason='less than 32 aligned bytes saved'))
+            continue
+        record=bytes(packed)+bytes(end-start-saving-len(packed))
+        ranges.append((start,end,record))
+        for field,index in indices:
+            patches.append((field,remap[index]))
+        # Hash the values in original corner order, independent of index numbers.
+        digest=hashlib.sha256()
+        for _,index in indices:digest.update(decoded[start+index*4:start+(index+1)*4])
+        entries.append(dict(context=ctx,source_model=model_off,source_payload=start,
+            source_bytes=end-start,resident_bytes=len(record),source_records=count,
+            unique_records=len(unique),corner_references=len(indices),recovery_bytes=saving,
+            ordered_uv_sha256=digest.hexdigest(),padding_bytes=len(record)-len(packed)))
+    # Mutate only after all selections have been validated; the caller owns this
+    # decoded candidate, never the original disc or an accepted mirror.
+    for field,index in patches:struct.pack_into('>H',decoded,field,index)
+    return sorted(ranges),entries,retained
+
+
 def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=None):
     """Existing qualified image selection, shared by room/core/enemy producers."""
     selected=[];retained=[];seen={}
@@ -253,7 +312,7 @@ def native_identity_index(selected, mapped, original_bytes, resident_bytes):
     return header+table+bytes(table_size-32-len(table))
 
 
-def _compact_upload_only(decoded, references, palettes, textures, allowed, effect_ranges=(), effect_entries=(), indexed_allowed=None):
+def _compact_upload_only(decoded, references, palettes, textures, allowed, effect_ranges=(), effect_entries=(), indexed_allowed=None, model_ranges=(), model_entries=()):
     """Shared source-layout transform, using the existing converter's offsets."""
     import compact_effect_records as effects
     n=struct.unpack_from('<I',decoded)[0]
@@ -264,7 +323,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
         raise ValueError('archive lacks spare native-identity header slot')
     ranges,selected,retained=select_upload_only(decoded,palettes,textures,allowed,indexed_allowed)
     if not ranges:raise ValueError('no qualified upload-only payloads')
-    out,mapped=compact_spans(decoded,references,sorted(ranges+list(effect_ranges)))
+    out,mapped=compact_spans(decoded,references,sorted(ranges+list(effect_ranges)+list(model_ranges)))
     table_size=(32+12*len(selected)+31)&~31
     effect_size=((32+12*len(effect_entries)+31)&~31) if effect_entries else 0
     final_bytes=len(out)+table_size+effect_size
@@ -280,6 +339,14 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     report={'original_archive_bytes':len(decoded),'resident_archive_bytes':len(out),
         'archive_recovery_bytes':len(decoded)-len(out),'identity_table_bytes':table_size,
         'replacement_record_bytes':sum(len(record) for _,_,record in ranges),'selected':selected,'retained':retained}
+    if model_entries:
+        for e in model_entries:
+            e['resident_model']=mapped(e['source_model'])
+            e['resident_payload']=mapped(e['source_payload'])
+        report['model_uvs']=dict(entries=model_entries,
+            recovery_bytes=sum(b-a-len(v) for a,b,v in model_ranges),
+            runtime_metadata_bytes=0,runtime_scratch_bytes=0,
+            policy='exact source UV records shared; source GX backing replaced offline')
     if effect_entries:
         for e in effect_entries:e['resident_offset']=mapped(e['source_offset'])
         report['effects']={'entries':effect_entries,'index_bytes':effect_size,
@@ -288,7 +355,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     return out,report
 
 
-def compact_room(source_file, textures, destination, compact_effects=False, compact_palettes=False):
+def compact_room(source_file, textures, destination, compact_effects=False, compact_palettes=False, compact_uvs=False):
     """Prepare one smaller qualified .dar through the existing room builder.
 
     Uses the converter's recorded relative offsets, not a second archive parser
@@ -300,9 +367,12 @@ def compact_room(source_file, textures, destination, compact_effects=False, comp
     if destination.exists():
         raise FileExistsError(destination)
     rel='st1/r100.das';arc='st1/r100.arc'
-    source=source_file.read_bytes();references=[];palettes=[];sequences=[]
+    source=source_file.read_bytes();references=[];palettes=[];sequences=[];models=[]
     previous_tpl,previous_offsets,previous_seq=mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER,mirror.SEQUENCE_OBSERVER
+    previous_model=mirror.MODEL_OBSERVER
     start=len(mirror.REPORT)
+    if compact_uvs:
+        mirror.MODEL_OBSERVER=lambda file,off,size,ctx,layout: models.append((off,size,ctx,layout)) if file==arc else None
     mirror.TPL_OBSERVER=lambda file,off,data,ctx: palettes.append((off,data,ctx))
     mirror.OFFSET_OBSERVER=lambda file,field,base,value: references.append((field,base,value)) if file==arc else None
     mirror.SEQUENCE_OBSERVER=lambda file,off,data,ctx: sequences.append((off,data,ctx)) if file==arc else None
@@ -311,6 +381,7 @@ def compact_room(source_file, textures, destination, compact_effects=False, comp
         container=bytearray(source);mirror.convert_file(rel,container)
     finally:
         mirror.TPL_OBSERVER,mirror.OFFSET_OBSERVER,mirror.SEQUENCE_OBSERVER=previous_tpl,previous_offsets,previous_seq
+        mirror.MODEL_OBSERVER=previous_model
     coverage=mirror.REPORT[start:]
     # This is the existing whole-archive + sound qualification gate, before any
     # candidate transformation. It cannot be replaced by sidecar existence.
@@ -355,7 +426,13 @@ def compact_room(source_file, textures, destination, compact_effects=False, comp
     # CPU noise ID FE, mip chains, all other palettes and families stay resident.
     def indexed_allowed(ctx):
         return compact_palettes and ctx.startswith(arc+'#8/tpl') and allowed(ctx)
-    out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed,effect_ranges,effect_entries,indexed_allowed)
+    model_ranges=[];model_entries=[];model_retained=[]
+    if compact_uvs:
+        model_ranges,model_entries,model_retained=compact_model_uvs(decoded,models)
+        if not model_entries:raise ValueError('no qualified scenery UV saving')
+    out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed,
+        effect_ranges,effect_entries,indexed_allowed,model_ranges,model_entries)
+    if compact_uvs:stats['model_uvs']['retained']=model_retained
     if compact_effects:stats['effects']['skipped']=skipped
     _,packaged=mirror.prepare_native_room(rel,container,out,coverage)
     report={'contract':'r100-resident-effects-v1' if compact_effects else 'r100-upload-only-v1','source_file':str(source_file),
@@ -363,7 +440,7 @@ def compact_room(source_file, textures, destination, compact_effects=False, comp
             **stats,
             'qualification':coverage,'loading':'source DVD queue reads compact type-0 directly; original sound container retained',
             'limits':'No mip/CLUT/CPU-noise removal; optional immutable r100 EFF index images use existing native packages. No source-archive saving accepted before target measurement.',
-            'compact_palettes':compact_palettes}
+            'compact_palettes':compact_palettes,'compact_uvs':compact_uvs}
     destination.mkdir()
     (destination/'r100.dar').write_bytes(packaged)
     (destination/'r100.arc').write_bytes(out)
@@ -532,6 +609,7 @@ if __name__=='__main__':
         parser.add_argument('--compact-core-est',action='store_true',help='lossless resident packing for qualified core EST #1/#16')
         parser.add_argument('--compact-room-est',action='store_true',help='lossless resident packing for qualified r100 EST owners')
         parser.add_argument('--compact-room-palettes',action='store_true',help='externalize reviewed r100 EFF index images; keep source palettes and existing native VRAM format')
+        parser.add_argument('--compact-room-uvs',action='store_true',help='share exact source UV records in qualified rigid r100 scenery')
         parser.add_argument('--textures',type=Path,required=True)
         parser.add_argument('--output',type=Path,required=True)
         args=parser.parse_args()
@@ -539,9 +617,10 @@ if __name__=='__main__':
         if args.compact_core_est and not args.compact_core:parser.error('--compact-core-est requires --compact-core')
         if args.compact_room_est and not args.compact_room:parser.error('--compact-room-est requires --compact-room')
         if args.compact_room_palettes and not args.compact_room:parser.error('--compact-room-palettes requires --compact-room')
+        if args.compact_room_uvs and not args.compact_room:parser.error('--compact-room-uvs requires --compact-room')
         if args.compact_option:report=compact_option(args.compact_option,args.textures,args.output)
         elif args.compact_core:report=compact_core(args.compact_core,args.textures,args.output,args.core_effects,args.compact_core_est)
-        else:report=compact_room(args.compact_room,args.textures,args.output,args.compact_room_est,args.compact_room_palettes)
+        else:report=compact_room(args.compact_room,args.textures,args.output,args.compact_room_est,args.compact_room_palettes,args.compact_room_uvs)
         print('compact archive:',report['original_archive_bytes'],'->',report['resident_archive_bytes'],
               'recovery',report['archive_recovery_bytes'],'identities',len(report['selected']))
     else:

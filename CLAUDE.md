@@ -73,7 +73,30 @@ The shared PVR owner, storage/texture ownership and completed source skinning
 remain the boundaries. Source lighting state and native pass organization are
 part of this candidate, not deferred post-performance polish.
 
-## D361 current - retained preparation measured; asset budget still unresolved
+## D362 current - UV sharing complete; implement substantial static replacement
+
+Final lossless step measured in the recovered game: selectable source UV sharing
+shrinks r100 payload3607360->3573344 B; actual free/largest82688->116704 B
+(**34016 B**), same423 allocations and required block/enemy/preparation cells.
+127 matched ticks show unchanged~1368ms render, packet and lighting work. Exact
+D361 ELF, fixture and native textures were reused.79 focused tests pass. Evidence
+`C:/Flycast-Evidence/re4-dreamcast/d362-shared-uv`; private assets
+`/root/probe/d362-uv-room`, mirror`/root/probe/d362-mirror`. No new gameplay gate.
+
+User correction: **stop lossless scavenging now**. The next deliverable is one
+budgeted r100 static-render replacement using existing converter/prelighting
+machinery, measured inside re4dc-game against D361~1.368s. Substantial visual
+compromises are explicitly activated for this candidate; no additional lossless
+optimization campaign is a prerequisite. Replace qualified source-owned normal/
+lighting backing with compact baked RGB; do not import the flattened historical
+scene, retain a duplicate, change source gameplay/activation/lifetimes, or freeze
+Leon/Ganado. Handle camera-relative/dynamic lighting explicitly. Reuse isolated
+D353 bake code at`/root/work/re4-r100-prelit-d353` and current source adapters.
+Keep full-candidate timing/memory/visual acceptance and private references.
+See [D362](port/dreamcast/docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d362---final-lossless-uv-sharing-static-replacement-activated-2026-09-22)
+and [authorized profile](port/dreamcast/docs/PS2_INSPIRED_DREAMCAST_PROFILE.md).
+
+## Previous D361 - retained preparation measured; asset budget unresolved
 
 Commit candidate extends the existing PreparedModelBatch with a room-owned
 128KiB direct-source-index workspace:896 positions,2560 normals/complete lit

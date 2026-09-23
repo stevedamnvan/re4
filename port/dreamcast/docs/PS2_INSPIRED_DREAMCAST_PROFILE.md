@@ -1,6 +1,14 @@
-# Future gated phase: PS2-inspired Dreamcast visual profile
+# PS2-inspired Dreamcast visual profile
 
-Authorized by the user, 2026-09-22. **Persisted direction; not an active experiment.**
+Authorized by the user, 2026-09-22. **The bounded r100 static-render replacement
+is now active by explicit user correction after D362.** Finish the measured UV
+candidate, then replace qualified source-owned static normals/lighting using the
+existing baking/conversion machinery and compare to D361~1.368s. Do not require
+another lossless optimization campaign or further cache tuning first. Actors
+remain dynamic; source ownership/gameplay and explicit dynamic/camera-light
+handling remain mandatory. This scoped activation supersedes earlier "do not
+start prelighting" text below for this candidate only. The remaining catalogue
+and hardware/gameplay acceptance gates are unchanged.
 This extends the existing playable/performance/residency backlogs. It does not
 replace the current renderer integration or the menu-plus-three-room objective.
 

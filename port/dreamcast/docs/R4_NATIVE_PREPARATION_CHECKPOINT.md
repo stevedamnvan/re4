@@ -1340,3 +1340,79 @@ cheaper. Preserve the explicit future visual-profile gate and source gameplay
 contracts. The841824-byte fallback decode and remaining repeated identities are
 still open integration costs; this result does not erase them or authorize a
 second renderer. Menu/r100-r101-r103 playability remains the objective.
+
+## D362 - final lossless UV sharing; static replacement activated (2026-09-22)
+
+Default-off `prepare_native_ui.py --compact-room-uvs` shares byte-identical
+four-byte UV records in the18 qualified resident r100 scenery BINs. Existing
+`le_mirror.fmt_bin` now publishes its validated layout and records its internal
+relative offsets for `compact_spans`. Source geometry/normals/colors, material
+headers, GX commands/order, seams, transforms and native textures remain intact.
+Only UV IDs change. All18 models have independently equal ordered draw values.
+The candidate replaces backing inside the directly loaded source archive; it
+adds no runtime table, scratch, decoder, resource owner or second scene.
+
+Source source-UV readers audited: commonModelTrans, mirror and shadow drawing bind
+`pTex` as a read-only GX array; calcModelAddr/calcModelOffset/slideModelAddr own
+relocation. Other pTex symbols are unrelated texture owners. Non-rigid/morph/
+motion-linked model contracts and nonselected families remain unchanged. Savings
+are multiples of32; archive/BIN offsets and downstream texture identities rebase.
+Source sound-container preparation is unchanged.
+
+| Quantity | D361 retained baseline | D362 UV sharing |
+|---|---:|---:|
+| Loaded room payload |3607360 B|3573344 B|
+| Actual room allocator cell |3607424 B|3573408 B|
+| Source free / largest block |82688 B|116704 B|
+| Source heap capacity |8840576 B|same|
+| Allocated cells |423|same|
+| Required block / enemy cells |1126336 /1105216 B|same|
+| Retained preparation cell |131136 B|same|
+| Render p50 /p95 |1368.081 /1370.789 ms|1368.093 /1370.801 ms|
+| Presentation p50 /p95 |1389.601 /1406.282 ms|1389.602 /1406.282 ms|
+
+Actual recovered heap=**34016 B**, including alignment and unchanged metadata.
+The smaller final allocation is loaded directly; there is no full-reference
+loading overlap. Instantaneous load/transition peaks remain unmeasured.127
+matched source snapshots have zero recorded state mismatches; no sampled queue
+drops/aborts, queue peak25536/26624. Position/light/GX/packet/VRAM counts are
+unchanged. Disabled normal-build allocation/texture-failure counters remain
+unmeasured. This is no meaningful speedup and no new gameplay/audio/hardware
+acceptance. Source menu and final outdoor Leon/cabin/HUD were inspected.
+
+79 focused compaction/endian tests pass, including nested source offset
+relocation, both corner formats, attribute seams, forbidden live references and
+unsupported-owner rejection. An earlier bounded reuse of the existing stripifier
+on239 captured streams found **zero** smaller candidates preserving ordered
+triangles/winding; that route is rejected. No new duplicate/unused-array or strip
+hunt follows this checkpoint.
+
+Exact runtime ELF is unchanged from D361:
+`7a8bc93843d2faf3236d2bece64b7d6b691a705bd952b31f79c20490c4889fb6`.
+Candidate DAR:
+`a717496e74c5b987afc363ec0f70f158fe5e0c9ceacad4150a27574c987a2f30`.
+Private builder output `/root/probe/d362-uv-room`, selected mirror
+`/root/probe/d362-mirror`, fixture `/root/probe/d354v7-fixtures`.
+Evidence `C:/Flycast-Evidence/re4-dreamcast/d362-shared-uv` contains exact
+executable/toolchain/emulator/assets/fixture identities, sealed timing/source
+samples, allocator comparison, source captures and final RAM. Capture ended at
+its340-second harness deadline, not a game crash. The superseded D360 disc is
+losslessly archived against the intact D361 disc with streamed SHA verification;
+its `disc-compression.json` records restoration. No source/evidence was discarded.
+
+### Next authorized deliverable
+
+The user explicitly activated substantial **r100 static-render replacement**
+after this final lossless step. This supersedes using the earlier general
+visual-profile gate to postpone this bounded candidate. Preserve D361's~1.368s
+full integrated baseline. Reuse the existing D353/D349 offline lighting evaluator
+and source placement/light-volume conversion, but adapt to current source-owned
+BIN/archives: replace qualified render-only normals/lighting with compact baked
+RGB, keep source model/object activation, camera, gameplay and lifetimes. Do not
+load the flattened historical scene or retain two normal/color representations.
+Leon/Ganado stay dynamic. Explicitly qualify/exclude camera-relative or dynamic
+lighting or label the intentional profile compromise. Measure complete-candidate
+CPU/presentation, lighting/normal work, packet bytes, actual RAM and VRAM plus
+matched appearance. The milestone is materially cheaper rendering, not more free
+KiB. No second renderer, renewed metadata/cache tuning or new inventory campaign.
+Stock-hardware and broader gameplay gates remain open.
