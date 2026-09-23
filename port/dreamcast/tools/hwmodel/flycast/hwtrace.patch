@@ -1,0 +1,439 @@
+diff --git a/core/hw/aica/aica_if.cpp b/core/hw/aica/aica_if.cpp
+index 92bfa83..8003c69 100644
+--- a/core/hw/aica/aica_if.cpp
++++ b/core/hw/aica/aica_if.cpp
+@@ -5,6 +5,7 @@
+ */
+ 
+ #include "aica_if.h"
++#include "hw/sh4/interpr/hwtrace.h"
+ #include "aica_mem.h"
+ #include "hw/holly/sb.h"
+ #include "hw/holly/holly_intc.h"
+@@ -395,6 +396,7 @@ static void Write_SB_ADST(u32 addr, u32 data)
+ 			else
+ 				DEBUG_LOG(AICA, "AICA-DMA : SB_ADDIR==0:DMA Write to 0x%X from 0x%X %x bytes", dst, src, SB_ADLEN);
+ 
++			hwtrace::dma(SB_ADDIR == 1 ? dst : src, len, 4);
+ 			WriteMemBlock_nommu_dma(dst, src, len);
+ 
+ 			// indicate that dma is in progress
+diff --git a/core/hw/gdrom/gdromv3.cpp b/core/hw/gdrom/gdromv3.cpp
+index 4021a25..182b8f4 100644
+--- a/core/hw/gdrom/gdromv3.cpp
++++ b/core/hw/gdrom/gdromv3.cpp
+@@ -4,6 +4,7 @@
+ */
+ 
+ #include "gdromv3.h"
++#include "hw/sh4/interpr/hwtrace.h"
+ #include "gdrom_if.h"
+ #include "cfg/option.h"
+ #include "hw/holly/holly_intc.h"
+@@ -1320,6 +1321,7 @@ static void GDROM_DmaStart(u32 addr, u32 data)
+ 		SB_GDSTARD = SB_GDSTAR;
+ 		SB_GDLEND = 0;
+ 		DEBUG_LOG(GDROM, "GDROM-DMA start addr %08X len %d fad %x", SB_GDSTAR, SB_GDLEN, read_params.start_sector);
++		hwtrace::dma(SB_GDSTAR, SB_GDLEN, 5);
+ 
+ 		int ticks = getGDROMTicks();
+ 		if (ticks < SH4_TIMESLICE)
+diff --git a/core/hw/pvr/pvr_sb_regs.cpp b/core/hw/pvr/pvr_sb_regs.cpp
+index dd5535f..a5c761c 100644
+--- a/core/hw/pvr/pvr_sb_regs.cpp
++++ b/core/hw/pvr/pvr_sb_regs.cpp
+@@ -4,6 +4,7 @@
+ */
+ 
+ #include "pvr_sb_regs.h"
++#include "hw/sh4/interpr/hwtrace.h"
+ #include "ta.h"
+ #include "hw/holly/holly_intc.h"
+ #include "hw/holly/sb.h"
+@@ -33,6 +34,7 @@ static void do_pvr_dma()
+ 		return;
+ 	}
+ 	DEBUG_LOG(PVR, "PVR-DMA %x %s %x len %x", src, SB_PDDIR ? "<-" : "->", dst, len);
++	hwtrace::dma(src, len, 3);
+ 
+ 	if (SB_PDDIR)
+ 		//PVR -> System
+diff --git a/core/hw/sh4/interpr/hwtrace.h b/core/hw/sh4/interpr/hwtrace.h
+new file mode 100644
+index 0000000..5f8b38e
+--- /dev/null
++++ b/core/hw/sh4/interpr/hwtrace.h
+@@ -0,0 +1,53 @@
++/*
++	hwtrace: interpreter-only SH-4 address/instruction trace for offline cache and
++	pipeline modelling (RE4DC D367 hwmodel). Inactive unless HWTRACE_DIR is set
++	and the dynarec is disabled. Never changes guest-visible behaviour.
++
++	Env:
++	  HWTRACE_DIR        output directory (required to enable)
++	  HWTRACE_FRAMEADDR  physical address of the guest frame-marker word (hex);
++	                     a 32-bit store of value V there means "frame V ended"
++	  HWTRACE_COUNT      A:B  per-PC execution counts for frames A..B
++	  HWTRACE_TRACE      A:B:S full trace of frames A, A+S, ... <= B
++	  HWTRACE_EXIT       1: terminate the emulator after the last window frame
++
++	Trace file trace-<frame>.bin: little-endian u32 pairs (w0, w1)
++	  w1 >> 28 == 1: RUN   w0 = start pc, w1 & 0x0fffffff = sequential instruction count
++	  otherwise  : EVENT w0 = address, w1 = type<<28 | sizecode<<24 | (pc>>1 & 0xffffff)
++	      type 2 read, 3 write, 4 pref, 5 ocbi, 6 ocbp, 7 ocbwb, 8 movca.l write,
++	      9 store-queue flush (pref to 0xe0000000), 10 sleep,
++	      11 DMA start (w0 = RAM address, sizecode = kind), always followed by
++	      12 DMA length (w0 = bytes)
++	      sizecode 0..3 = 1, 2, 4, 8 bytes
++	  Events belong to the run that is flushed after them (runs are written when
++	  they end), in program order.
++*/
++#pragma once
++#include "types.h"
++
++namespace hwtrace
++{
++extern bool enabled;
++extern bool tracing;
++extern bool counting;
++extern u32 frameAddr;
++extern u32 curPc;
++extern bool movca;
++extern u64 insns;
++
++void init();
++void fetchSlow(u32 pc);
++void event(u32 addr, u32 type, u32 sizecode);
++void frameWrite(u32 value);
++void op(u16 op, u32 rn);
++// DMA from/to system RAM started by hardware (kind: 1 ch2 TA, 2 ch2 texture, 3 PVR-DMA, 4 G2/AICA, 5 GD-ROM)
++void dma(u32 ramAddr, u32 len, u32 kind);
++
++static inline void fetch(u32 pc)
++{
++	curPc = pc;
++	insns++;
++	if (tracing || counting)
++		fetchSlow(pc);
++}
++}
+diff --git a/core/hw/sh4/interpr/sh4_interpreter.cpp b/core/hw/sh4/interpr/sh4_interpreter.cpp
+index 54a2b02..37f5d20 100644
+--- a/core/hw/sh4/interpr/sh4_interpreter.cpp
++++ b/core/hw/sh4/interpr/sh4_interpreter.cpp
+@@ -13,6 +13,12 @@
+ #include "../sh4_cache.h"
+ #include "debug/gdb_server.h"
+ #include "../sh4_cycles.h"
++#include "hwtrace.h"
++#include "cfg/option.h"
++#include <cstdio>
++#include <cstdlib>
++#include <string>
++#include <vector>
+ 
+ Sh4ICache icache;
+ Sh4OCache ocache;
+@@ -22,7 +28,12 @@ void Sh4Interpreter::ExecuteOpcode(u16 op)
+ {
+ 	if (ctx->sr.FD == 1 && OpDesc[op]->IsFloatingPoint())
+ 		throw SH4ThrownException(ctx->pc - 2, Sh4Ex_FpuDisabled);
++	if (hwtrace::tracing && (op & 0xF00F) == 0x0003)
++		hwtrace::op(op, ctx->r[(op >> 8) & 0xf]);
++	else if (hwtrace::tracing && op == 0x001B)
++		hwtrace::op(op, 0);
+ 	OpPtr[op](ctx, op);
++	hwtrace::movca = false;
+ 	sh4cycles.executeCycles(op);
+ }
+ 
+@@ -35,6 +46,7 @@ u16 Sh4Interpreter::ReadNexOp()
+ 
+ 	ctx->pc = addr + 2;
+ 
++	hwtrace::fetch(addr);
+ 	return IReadMem16(addr);
+ }
+ 
+@@ -190,6 +202,7 @@ void Sh4Interpreter::Init()
+ 	sh4cycles.init(ctx);
+ 	icache.init(ctx);
+ 	ocache.init(ctx);
++	hwtrace::init();
+ }
+ 
+ void Sh4Interpreter::Term()
+@@ -202,3 +215,192 @@ Sh4Executor *Get_Sh4Interpreter()
+ {
+ 	return new Sh4Interpreter();
+ }
++
++// ---------------------------------------------------------------------------
++// hwtrace (RE4DC D367 hwmodel): see hwtrace.h
++// ---------------------------------------------------------------------------
++namespace hwtrace
++{
++bool enabled;
++bool tracing;
++bool counting;
++bool movca;
++u32 frameAddr = 0xffffffff;
++u32 curPc;
++u64 insns;
++
++static std::string dir;
++static u32 cntA = 1, cntB = 0, trA = 1, trB = 0, trS = 1;
++static bool exitAfter;
++static FILE *logf;
++static FILE *tf;
++static std::vector<u32> buf;
++static u32 *counts;
++static u32 runStart, runCount;
++static u64 frameInsns, frameCycles, winInsns;
++static u32 tracedFrames;
++
++static void flushBuf()
++{
++	if (tf != nullptr && !buf.empty())
++		fwrite(buf.data(), 4, buf.size(), tf);
++	buf.clear();
++}
++
++static inline void push(u32 a, u32 b)
++{
++	buf.push_back(a);
++	buf.push_back(b);
++	if (buf.size() >= (16u << 20))
++		flushBuf();
++}
++
++static void flushRun()
++{
++	if (runCount != 0)
++		push(runStart, 0x10000000u | runCount);
++	runCount = 0;
++}
++
++void init()
++{
++	const char *d = getenv("HWTRACE_DIR");
++	if (d == nullptr || *d == 0 || config::DynarecEnabled)
++		return;
++	dir = d;
++	if (const char *s = getenv("HWTRACE_FRAMEADDR"))
++		frameAddr = (u32)strtoul(s, nullptr, 16) & 0x1fffffff;
++	if (const char *s = getenv("HWTRACE_COUNT"))
++		sscanf(s, "%u:%u", &cntA, &cntB);
++	if (const char *s = getenv("HWTRACE_TRACE"))
++		sscanf(s, "%u:%u:%u", &trA, &trB, &trS);
++	if (trS == 0)
++		trS = 1;
++	if (const char *s = getenv("HWTRACE_EXIT"))
++		exitAfter = atoi(s) != 0;
++	logf = fopen((dir + "/hwtrace.log").c_str(), "a");
++	if (logf != nullptr)
++	{
++		fprintf(logf, "hwtrace init frameaddr=%08x count=%u:%u trace=%u:%u:%u exit=%d\n",
++				frameAddr, cntA, cntB, trA, trB, trS, (int)exitAfter);
++		fflush(logf);
++	}
++	counts = (u32 *)calloc(1u << 23, 4);
++	buf.reserve((16u << 20) + 16);
++	enabled = true;
++}
++
++void fetchSlow(u32 pc)
++{
++	if (counting && (pc & 0x1C000000) == 0x0C000000)
++		counts[(pc & 0xFFFFFF) >> 1]++;
++	if (tracing)
++	{
++		if (runCount != 0 && pc == runStart + 2 * runCount && runCount < 0x0FFFFFFF)
++			runCount++;
++		else
++		{
++			flushRun();
++			runStart = pc;
++			runCount = 1;
++		}
++	}
++}
++
++void event(u32 addr, u32 type, u32 sizecode)
++{
++	if (movca && type == 3)
++		type = 8;
++	push(addr, (type << 28) | (sizecode << 24) | ((curPc >> 1) & 0xFFFFFF));
++}
++
++void op(u16 op, u32 rn)
++{
++	if (op == 0x001B)
++	{
++		event(0, 10, 0);
++		return;
++	}
++	switch (op & 0x00F0)
++	{
++	case 0x80:
++		event(rn, (rn >> 26) == 0x38 ? 9 : 4, 3);
++		break;
++	case 0x90: event(rn, 5, 3); break;
++	case 0xA0: event(rn, 6, 3); break;
++	case 0xB0: event(rn, 7, 3); break;
++	case 0xC0: movca = true; break;
++	default: break;
++	}
++}
++
++void dma(u32 ramAddr, u32 len, u32 kind)
++{
++	if (!tracing)
++		return;
++	const u32 pc = (curPc >> 1) & 0xFFFFFF;
++	push(ramAddr, (11u << 28) | ((kind & 15) << 24) | pc);
++	push(len, (12u << 28) | pc);
++}
++
++void frameWrite(u32 v)
++{
++	if (!enabled)
++		return;
++	const u64 now = sh4_sched_now64();
++	const u32 cur = v + 1;
++	if (logf != nullptr)
++		fprintf(logf, "frame %u insns %llu cycles %llu%s%s\n", v, (unsigned long long)(insns - frameInsns),
++				(unsigned long long)(now - frameCycles), counting ? " counted" : "", tracing ? " traced" : "");
++	if (counting)
++		winInsns += insns - frameInsns;
++	frameInsns = insns;
++	frameCycles = now;
++	if (tracing)
++	{
++		flushRun();
++		flushBuf();
++		fclose(tf);
++		tf = nullptr;
++		tracing = false;
++		tracedFrames++;
++	}
++	if (counting && v >= cntB)
++	{
++		counting = false;
++		FILE *cf = fopen((dir + "/counts.bin").c_str(), "wb");
++		if (cf != nullptr)
++		{
++			fwrite(counts, 4, 1u << 23, cf);
++			fclose(cf);
++		}
++		if (logf != nullptr)
++			fprintf(logf, "counts written frames %u:%u insns %llu\n", cntA, cntB, (unsigned long long)winInsns);
++	}
++	if (cur >= cntA && cur <= cntB)
++		counting = true;
++	if (cur >= trA && cur <= trB && (cur - trA) % trS == 0)
++	{
++		char name[64];
++		snprintf(name, sizeof(name), "/trace-%05u.bin", cur);
++		tf = fopen((dir + name).c_str(), "wb");
++		if (tf != nullptr)
++		{
++			tracing = true;
++			runCount = 0;
++			buf.clear();
++		}
++	}
++	if (logf != nullptr)
++		fflush(logf);
++	if (exitAfter && v >= cntB && v >= trB)
++	{
++		if (logf != nullptr)
++		{
++			fprintf(logf, "hwtrace done: traced %u frames; exiting\n", tracedFrames);
++			fclose(logf);
++		}
++		std::_Exit(0);
++	}
++}
++}	// namespace hwtrace
+diff --git a/core/hw/sh4/modules/dmac.cpp b/core/hw/sh4/modules/dmac.cpp
+index 6fadc99..a061297 100644
+--- a/core/hw/sh4/modules/dmac.cpp
++++ b/core/hw/sh4/modules/dmac.cpp
+@@ -10,6 +10,7 @@
+ #include "hw/sh4/sh4_mem.h"
+ #include "hw/pvr/pvr_mem.h"
+ #include "dmac.h"
++#include "hw/sh4/interpr/hwtrace.h"
+ #include "hw/sh4/sh4_interrupts.h"
+ #include "hw/holly/holly_intc.h"
+ 
+@@ -38,6 +39,7 @@ void DMAC_Ch2St()
+ 	}
+ 
+ 	DEBUG_LOG(SH4, ">> DMAC: Ch2 DMA SRC=%X DST=%X LEN=%X", src, SB_C2DSTAT, SB_C2DLEN);
++	hwtrace::dma(src, len, (dst & 0x01000000) ? 2 : 1);
+ 
+ 	// Direct DList DMA (Ch2)
+ 
+diff --git a/core/hw/sh4/sh4_interpreter.h b/core/hw/sh4/sh4_interpreter.h
+index 47dd2e4..1f2f06a 100644
+--- a/core/hw/sh4/sh4_interpreter.h
++++ b/core/hw/sh4/sh4_interpreter.h
+@@ -32,6 +32,6 @@ private:
+ #ifdef STRICT_MODE
+ 	static constexpr int CPU_RATIO = 1;
+ #else
+-	static constexpr int CPU_RATIO = 8;
++	static constexpr int CPU_RATIO = 1;	// hwtrace: full-speed interpreter timing
+ #endif
+ };
+diff --git a/core/hw/sh4/sh4_mem.cpp b/core/hw/sh4/sh4_mem.cpp
+index 196cdf5..4dcb306 100644
+--- a/core/hw/sh4/sh4_mem.cpp
++++ b/core/hw/sh4/sh4_mem.cpp
+@@ -12,6 +12,7 @@
+ #include "hw/mem/addrspace.h"
+ #include "hw/sh4/modules/mmu.h"
+ #include "cfg/option.h"
++#include "interpr/hwtrace.h"
+ 
+ #ifdef STRICT_MODE
+ #include "sh4_cache.h"
+@@ -290,7 +291,36 @@ u8* GetMemPtr(u32 addr, u32 size)
+ 	return nullptr;
+ }
+ 
++static void SetMemoryHandlersBase();
++
++// hwtrace wrappers (interpreter only)
++static ReadMem8Func o_r8; static ReadMem16Func o_r16; static ReadMem32Func o_r32; static ReadMem64Func o_r64;
++static WriteMem8Func o_w8; static WriteMem16Func o_w16; static WriteMem32Func o_w32; static WriteMem64Func o_w64;
++static u8 DYNACALL t_r8(u32 a) { if (hwtrace::tracing) hwtrace::event(a, 2, 0); return o_r8(a); }
++static u16 DYNACALL t_r16(u32 a) { if (hwtrace::tracing) hwtrace::event(a, 2, 1); return o_r16(a); }
++static u32 DYNACALL t_r32(u32 a) { if (hwtrace::tracing) hwtrace::event(a, 2, 2); return o_r32(a); }
++static u64 DYNACALL t_r64(u32 a) { if (hwtrace::tracing) hwtrace::event(a, 2, 3); return o_r64(a); }
++static void DYNACALL t_w8(u32 a, u8 d) { if (hwtrace::tracing) hwtrace::event(a, 3, 0); o_w8(a, d); }
++static void DYNACALL t_w16(u32 a, u16 d) { if (hwtrace::tracing) hwtrace::event(a, 3, 1); o_w16(a, d); }
++static void DYNACALL t_w32(u32 a, u32 d) {
++	if (hwtrace::tracing) hwtrace::event(a, 3, 2);
++	o_w32(a, d);
++	if ((a & 0x1fffffff) == hwtrace::frameAddr) hwtrace::frameWrite(d);
++}
++static void DYNACALL t_w64(u32 a, u64 d) { if (hwtrace::tracing) hwtrace::event(a, 3, 3); o_w64(a, d); }
++
+ void SetMemoryHandlers()
++{
++	SetMemoryHandlersBase();
++	if (!hwtrace::enabled || config::DynarecEnabled)
++		return;
++	o_r8 = ReadMem8; o_r16 = ReadMem16; o_r32 = ReadMem32; o_r64 = ReadMem64;
++	o_w8 = WriteMem8; o_w16 = WriteMem16; o_w32 = WriteMem32; o_w64 = WriteMem64;
++	ReadMem8 = &t_r8; ReadMem16 = &t_r16; ReadMem32 = &t_r32; ReadMem64 = &t_r64;
++	WriteMem8 = &t_w8; WriteMem16 = &t_w16; WriteMem32 = &t_w32; WriteMem64 = &t_w64;
++}
++
++static void SetMemoryHandlersBase()
+ {
+ #ifdef STRICT_MODE
+ 	static bool interpreterRunning;
