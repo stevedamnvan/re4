@@ -16,3 +16,8 @@ _m3r = m3r;                                       /* pl_knife.cpp: defined under
 /* r100 compact cEm (0x3e0): same source constructor, asm label ignored by SH GCC. */
 __ZN6R100EmC1Ev = __ZN3cEmC1Ev;
 __ZN6R100EmC2Ev = __ZN3cEmC1Ev;
+
+/* r103 corpse cEm (0x3e0, r103_setCorpse): the same source constructor as r100's. Without it the
+ * link stubs the constructor and the default (non-Japanese) r103 room init halts. */
+__ZN6R103EmC1Ev = __ZN3cEmC1Ev;
+__ZN6R103EmC2Ev = __ZN3cEmC1Ev;
