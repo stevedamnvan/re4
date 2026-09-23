@@ -180,7 +180,8 @@ class Cache:
         return Obj(key, final, outputs, info, False)
 
     def _verify(self, name, params, inputs, tools, fn, label, obj):
-        scratch = self.root / "cache" / "verify"
+        # per process: two --verify runs at once must not rebuild into the same scratch dir
+        scratch = self.root / "cache" / "verify" / ("p%d" % os.getpid())
         tmp_cache = Cache(scratch, verify=False, log=lambda *a: None)
         tmp_cache._memo = self._memo
         tmp_cache.canon_root = self.canon_root

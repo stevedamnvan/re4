@@ -150,7 +150,9 @@ def review_room(ctx, room, manifest, pk_built, pk_reset, views, out):
                 jobs.append((pname, k, w, label, eye, tgt, side == "after"))
                 keys.append((key, params, pkg_hash))
                 meta.append((a["id"], side, label))
-    todo = [i for i, (key, _, _) in enumerate(keys) if not (cache.objects / key[:2] / key / "step.json").exists()]
+    # --verify rebuilds cached shots too, so every one of them is rendered again here
+    todo = [i for i, (key, _, _) in enumerate(keys)
+            if cache.verify or not (cache.objects / key[:2] / key / "step.json").exists()]
     global _JOB
     _JOB = (pkgs, jobs, px, K)
     results = {}

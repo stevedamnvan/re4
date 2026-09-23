@@ -311,10 +311,11 @@ modes. Every Standard manifest records heap 4 per package (Original, Standard, d
    28.3) + `base_ms_planned` (2.5) + assets, against 33.3 ms.
 
 r100 prototype (2026-09-23), scenery assets excluding base: Standard named views 5.7-10.7 hw
-ms, grid p95 7.35 / max 10.6, within 5 ms at 159 of 215 views; Original 14.2-24.9, grid p95
+ms, grid p95 7.34 / max 10.6, within 5 ms at 158 of 215 views (159 before the Blender
+`--threads 1` pin re-baked the shells); Original 14.2-24.9, grid p95
 17.6 / max 24.9. Heap 4 -302 KB (every package <= Original), VRAM +170 KB (shells 132 KB,
-atlases 82 KB), second set on disc 1.51 MB (every package differs while biases are baked; a
-runtime per-BIN bias table would limit the second set to geometry-changed packages). Remaining
+atlases 82 KB), second set on disc 1.51 MB (every package differs while biases are baked; section 15
+weighs a runtime per-BIN table that would limit it to geometry-changed packages). Remaining
 cost: PS2 trees nearer than the impostor distance, a tail of terrain pieces, the two shells.
 
 ## 5. Camera model and view set
@@ -365,8 +366,8 @@ tools unchanged:
 | `scenery.r4im` | convert_room_bins.py (`--smd` or `--bins`, `--lod*`, `--lod-substitute`, and W9b's `--lod-floor/--lod-share/--class*` when the converter has them) | `<OWNER>.re4mesh` | r100: `MESHDIR`; others: `MESHROOMS` |
 | `tree.ps2` | ps2_trees.py (`--room`, `--dc-uv`) + ps2_tree_texture.py | replacement OBJs, bark `.re4tex` | via `--lod-substitute`; bark via `TEXDIRS` |
 | `tree.impostor` | bl_impostor_bake.py + tree_impostors.py + mesh_annotate.py (item 20) | atlases `.re4tex`, annotated package | `TEXDIRS`, `MESHDIR` |
-| `house.shell` | bl_house_shell.py + house_shells.py + mesh_annotate.py (item 21) | shell OBJs, 512 VQ `.re4tex`, annotated package | `--lod-substitute`, `TEXDIRS` |
-| `blender.planar` | bl_decimate.py (r100-planar2 spec) | replacement OBJs | `--lod-substitute` |
+| `house.shell` | bl_house_shell.py + house_shells.py (item 21; the checkout's copy when present, else the sha256-checked copies in `assetpipe/vendor/`) + mesh_annotate.py | shell OBJs, 512 VQ `.re4tex`, annotated package | `--lod-substitute`, `TEXDIRS` |
+| `blender.planar` | bl_decimate.py (r100-planar2 spec; Standard's `scenery.decimate` coarse variant) | replacement OBJs | `--lod-substitute` |
 | `texture.vq` | vq_native_ui.py (pinned pvrtex) | `.re4tex` overlay | `TEXDIRS` |
 | `room.release` | room_smd.py release | released `.dar`/`.arc` | `ROOMFILES` |
 | `audio.aica` | aica_banks.py build/streams (cached) | overlay | stage.sh `AICA_CACHE` (same cache) |
@@ -430,30 +431,31 @@ string and code hash, and skips the call when that key is cached.
 
 Pending plug-ins and their stage kinds:
 
-| Plug-in | Design agent | Asset / output | Low mode |
+| Plug-in | Design agent | Asset / output | Standard mode |
 |---|---|---|---|
 | `ganado_lowpoly` | design-ganado (a75b5dc9f0fe43a05) | `actor`: 4 nested levels (L0-L3) per em model, 3 tiers (near <= 7 m or the nearest 3, mid <= 17 m, far); output one archive per enemy type, `em/em12.drs` and `em/em15.drs` | the same in both modes (user decision): L1 / L2 / L2 |
-| `pvs` | design-scenery (a5dd25741b47eff9d) | `pvs`: `r<room>.re4pvs` (R4PV v1) from room .das + MAINSCENARIO package + classes | conservative in Standard, aggressive in Low |
+| `pvs` | design-scenery (a5dd25741b47eff9d) | `pvs`: `r<room>.re4pvs` (R4PV v1) from room .das + MAINSCENARIO package + classes | conservative in Original, aggressive in Standard |
 | `lowmode_sets` | design-lowmode (af92085074ca55b28) | the Standard (ex-Low) set's runtime layout | defines the `--mode standard` staging layout |
 
-### Standard and Low staging
+### Original and Standard staging
 
-Both modes are built from the same inventory with different budgets and option sets.
+Both modes are built from the same inventory with different budgets and option sets. The disc
+paths keep design-lowmode's names (`low/`, `texlow/`), which predate the renaming.
 
-- Standard outputs stage as today (`/cd/dc/native/<room>/`, `/cd/dc/tex/<d>/`).
-- Low outputs that differ from Standard stage under `/cd/dc/native/<room>/low/` and
+- Original outputs stage as today (`/cd/dc/native/<room>/`, `/cd/dc/tex/<d>/`).
+- Standard outputs that differ from Original stage under `/cd/dc/native/<room>/low/` and
   `/cd/dc/texlow/<d>/<key>.re4tex`.
-- Each Low directory carries an index (`native/<room>/low/index.txt`: file names;
+- Each Standard directory carries an index (`native/<room>/low/index.txt`: file names;
   `texlow/index.txt`: texture keys). The runtime reads it once at room entry and opens only the
-  listed Low files, otherwise the Standard path. There are no probe-opens: a failed iso9660
+  listed Standard files, otherwise the Original path. There are no probe-opens: a failed iso9660
   lookup re-reads the directory from the disc, which caused the ~0.2 s texture hitch.
 - Actor meshes are per enemy type, not per room, and are the same in both modes (user
   decision): one prepared archive per enemy type, `em/em12.drs` and `em/em15.drs`, with levels
   L1 near / L2 mid / L2 far as pre-converted v4 blobs. They stage as mirror files
-  (`ROOMFILES`-style), with no Low variant and no Low index. design-ganado owns the format:
+  (`ROOMFILES`-style), with no Standard variant and no Standard index. design-ganado owns the format:
   per-BIN v4 blobs with nested levels over the source vertex arrays, carrying a converter-hash
   check. That converter hash is part of the plug-in's cache key.
-- A Low file is never larger than the Standard file it replaces.
+- A Standard file is never larger than the Original file it replaces.
 
 design-lowmode confirmed this layout (DESIGN.md A5).
 
@@ -568,10 +570,25 @@ manifest hash.
 | ps2_trees, ps2_tree_texture, vq_native_ui (pvrtex) | yes | bark `5b403509...` |
 | aica_banks | yes | already content-cached |
 | room_smd release, prepare_native_ui, convert_tpl | yes | |
-| Blender steps (planar decimation, impostor bake, house shell bake) | yes with pins | Cycles/Eevee bakes need a fixed sample count and seed and `--threads 1`; `--verify` checks it. If a bake is ever not byte-stable, it becomes a pinned artifact (below). |
+| Blender steps (planar decimation, house shell bake) | yes with pins (measured) | run as `blender -b --threads 1 --factory-startup`; fixed seeds and sample counts in the scripts; inputs sorted. Without `--threads 1` the same shell came out with the same metrics but a different vertex order (and so different OBJ/PNG/JSON bytes) than with a different thread count, so a machine with another core count would not reproduce it. `blender_threads` is part of the fingerprint. |
+| impostor bake (item 20) | pinned artifact | the r100 atlases are a pinned input (sources.toml `r100_impostors`), hashed by content like an AI output |
 | convert_route_movies (ffmpeg) | yes with pins | `-threads 1`, pinned version |
 | review renders | yes | pure-Python rasteriser |
 | **ai-upscale** (ComfyUI + PBRify, local, port 7860) | **no** | opt-in only |
+
+Measured (2026-09-23, r100, `--jobs 12`): `build r100 --verify` rebuilds every cached step and
+compares output hashes. Standard: 142 of 142 steps byte-identical, including the 8 house-shell
+rungs, the 600-face shells and `decimate coarse (95 BINs)` (Blender, `--threads 1`), the PS2
+trees and bark, and every package. Original: 798 of 798 (18 build steps plus 780 review
+renders). The two modes also verify byte-identically when run at the same time (each `--verify`
+rebuilds into its own `cache/verify/p<pid>/`).
+
+Two causes of non-reproduction were found and fixed:
+- Blender's default thread count (above).
+- convert_room_bins records its `--lod-substitute` paths in `.re4mesh.json`, and those paths
+  contained other steps' cache keys. A tool change re-keyed those steps without changing their
+  bytes, and the package JSON still changed. Substitute dirs are now linked into the step's
+  `$WORK/subst<i>` and passed from there, so only content reaches the output.
 
 `ai-upscale` is opt-in: an override action, never picked by the solver. Its output is stored as a
 **pinned artifact** (`cache/pinned/<asset>/<sha256>`) keyed by the source image hash and the
@@ -628,6 +645,68 @@ weights).
 | b | tool skeleton, cache, r100 wired to the existing generators, review sheet | done: `build r100 --plan recipe` reproduces the LFV r100 inputs byte for byte; `--verify` passes |
 | b2 | Standard (budget-first) prototype for r100: classes, shells, coarse variants, impostor/cull options, solver, textured Standard vs Original review | done (prototype; 4.9.1) |
 | c | solver (`--plan solve` for Original) + `calibrate` | solver done in budget.py; calibrate open |
-| d | r101, r103 | |
+| d | r101, r103 (Standard, built together: user decision 2026-09-23) | in progress |
 | e | overrides + upscale (source) + opt-in ai-upscale | |
 | f | `assets.sh audit <room>`: bring-up gaps (missing-module stubs, missing packages, events without PS2 FMV, unported systems, heap/image estimate), seeded from R4_FIRST_STAGE_GAP_AUDIT.md and the next-room dependency brief | |
+
+## 15. Design note: runtime per-BIN mode table (not built)
+
+**Problem.** Standard bakes its per-BIN choices (bias x recipe bias, LOD chain) into the
+package, so every r100 package differs from Original's. The second set on disc is 1.51 MB for
+r100; only FILE_01 (the shelled houses) and the coarse-variant owners differ in geometry.
+
+**Proposal.** One package per owner for both modes, plus a small per-mesh table the runtime
+applies for the active mode.
+- **Where:** LOD header word 7 (unused today) holds the offset of an `R4MT` block appended to
+  the package. The block has a count and 2 modes x n meshes x 8 bytes.
+- **Entry (8 B):**
+  - u8 bias code: bias = 2^(-v/8), with 0 meaning 1.0;
+  - u8 max level (0xFF = the chain's own);
+  - u16 impostor centre depth / 64 mm (0 = the room default, `RE4DC_TREE_IMPOSTOR_MM`);
+  - u16 cull centre depth / 64 mm (0 = never);
+  - u16 reserved (0).
+- **Original** is the identity table; a package without a table behaves as today.
+
+**Costs.**
+- **Disc and heap:** r100 has 130 meshes across its 7 packages, so the table is 2 x 130 x 8 =
+  ~2 KB. Only the active mode's half needs to stay resident (~1 KB of heap 4 per room;
+  r103, with ~2x the scenery, ~2 KB), against
+  1.51 MB of disc saved.
+- **hw ms:** ~0. The mode is fixed at `titleExit`, so package load folds the table into each
+  mesh's effective `px` threshold and distances once. The per-frame rule is unchanged (a
+  precomputed per-mesh `px_eff` in place of the global `px`). The worst case is a per-part
+  multiply if it has to live in the draw loop: ~200 parts x ~1.5 cycles, ~0.0015 ms.
+
+**Feeding it from plan.json.**
+- `plan.json` (`re4dc-standard-plan/1`) already lists the runtime choices per BIN (`class`,
+  `imp_mm`, `cull_mm`, `geom`).
+- It would gain `bias` and `max_level` per BIN, and the final-package step would stop baking the
+  bias and pass the table instead: a converter flag `--mode-table plan.json` or a
+  `mesh_annotate.py --mode-table` pass on the recipe package.
+- The runtime reads per-mesh values in place of `RE4DC_TREE_IMPOSTOR_MM` and the W9b class
+  distance rules.
+
+**What it cannot do.** Geometry swaps still need a per-mode package or in-package alternates:
+- house shells;
+- the Blender coarse variants;
+- Standard's coarser LOD chain.
+Alternates cost heap in both modes, and heap is what Original lacks.
+
+**Measured trade (r100, a shared-package build in which only FILE_01 differs).**
+
+| | Shared-package build | Current Standard |
+|---|---|---|
+| Asset hw ms, grid p95 / max | 10.30 / 14.26 | 7.34 / 10.6 |
+| Named views | 8.2-14.3 | 5.7-10.7 |
+| Heap 4 vs Original | -50 KB (FILE_01 only) | -302 KB |
+| Second set on disc | ~0.41 MB (FILE_01 only) | 1.51 MB |
+
+The shared build loses ~3-3.7 ms at the worst views and ~250 KB of heap savings.
+
+**Recommendation.** Keep two package sets.
+- Disc is cheap: at ~1.5 MB x 85 rooms, the second sets are ~130 MB of a ~1 GB GD-ROM.
+- Heap and hw ms are what is scarce.
+
+Build the table only if the disc gets tight. If it is built, make it an addition rather than a
+replacement: the table carries bias, impostor and cull, and the per-mode packages remain for
+geometry.

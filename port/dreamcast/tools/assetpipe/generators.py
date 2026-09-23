@@ -5,6 +5,7 @@ The wrapped tools are run unchanged as subprocesses with a deterministic
 environment; their outputs are hashed and staged from the cache.
 """
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -18,6 +19,15 @@ PY = sys.executable
 
 def tool(name, tools_dir=None):
     return Path(tools_dir or TOOLS) / name
+
+
+def item_tool(name):
+    """A lane tool the pipeline runs: the checkout's copy once its lane item has landed,
+    else the vendored copy (assetpipe/vendor; see its FILES table)."""
+    from .vendor import FILES, HERE
+    rel = FILES[name][0]
+    p = Path(TOOLS) / rel
+    return p if p.exists() else HERE / name
 
 
 def converter_dir(cfg):
@@ -139,15 +149,28 @@ class Gen:
             raise RuntimeError("%s needs W9b converter options (%s); set RE4DC_SRC_CONVERTER to a tools dir "
                                "with w9b-scenery-share-classes.patch" % (room.name, " ".join(w9b[:2])))
         args += w9b
+        subst_dirs = []
         for i, s in enumerate(substitutes):
-            args += ["--lod-substitute", s.out if hasattr(s, "out") else s]
+            subst_dirs.append(Path(s.out if hasattr(s, "out") else s))
             inputs["subst%d" % i] = s
         name = owner["name"] + ".re4mesh"
         params = dict(room=room.name, owner=owner["name"], spec=spec, argv=[str(a) for a in args
-                      if not str(a).startswith("/")])
+                      if not str(a).startswith("/")], substitutes=len(subst_dirs))
 
         def fn(out, work):
-            run([PY, "-B", tool("convert_room_bins.py", conv), out / name] + args, cwd=work, log=work / "log.txt")
+            # substitutes are linked into the work dir, so the converter's report names
+            # $WORK/subst<i>, not another step's cache location (which changes with that
+            # step's key even when its content does not)
+            sub = []
+            for i, d in enumerate(subst_dirs):
+                w = work / ("subst%d" % i)
+                w.mkdir()
+                for f in sorted(d.iterdir()):
+                    if f.is_file():
+                        os.link(f, w / f.name) if os.stat(f).st_dev == os.stat(work).st_dev else shutil.copy2(f, w / f.name)
+                sub += ["--lod-substitute", w]
+            run([PY, "-B", tool("convert_room_bins.py", conv), out / name] + args + sub, cwd=work,
+                log=work / "log.txt")
             summary = json.loads(Path(str(out / name) + ".json").read_text())
             return {k: summary.get(k) for k in ("package_bytes", "meshes", "parts", "meshlets", "vertices",
                                                 "clusters", "levels", "level0_triangles", "version",
@@ -243,7 +266,8 @@ class Gen:
         objs = self.bin_objs(room, keys)
         st = blender.stat()
         script = tool("blender/bl_decimate.py")
-        fp = fingerprint([script], dict(blender="%s:%d:%d" % (blender.name, st.st_size, int(st.st_mtime))))
+        fp = fingerprint([script], dict(blender="%s:%d:%d" % (blender.name, st.st_size, int(st.st_mtime)),
+                                        blender_threads="1"))
         spec = {variant: dict(keys=keys, ops=[list(o) for o in ops])}
 
         def win(p):
@@ -260,7 +284,7 @@ class Gen:
             shutil.copy2(script, w / "bl_decimate.py")
             (w / "spec.json").write_text(json.dumps(spec, indent=1, sort_keys=True))
             try:
-                run([blender, "-b", "--factory-startup", "--python", win(w / "bl_decimate.py"), "--",
+                run([blender, "-b", "--threads", "1", "--factory-startup", "--python", win(w / "bl_decimate.py"), "--",
                      win(w / "in"), win(w / "out"), win(w / "spec.json")], cwd=w, log=work / "blender.txt",
                     timeout=7200)
                 for f in sorted((w / "out" / variant).glob("*.obj")):
@@ -279,17 +303,20 @@ class Gen:
         """One baked low-poly render shell for BIN `key` (e.g. FILE_01_17). Blender 5.2 (Windows) runs
         on copies in sources [paths] blender_work; Cycles CPU bake, fixed seeds (bl_house_shell.py).
         Outputs: <key>.obj/.png/.json (Blender), replace/<key>.obj, tex/<crc>-<fnv>.re4tex,
-        preview/<key>.png (as pvrtex decodes it), textures.json (house_shells.py)."""
+        preview/<key>.png (as pvrtex decodes it), textures.json (house_shells.py).
+        Every Blender step runs with --threads 1: with the default (one per CPU) the same shell comes
+        out with a different vertex order on a machine with a different core count (measured
+        2026-09-23)."""
         import os
         import subprocess
-        ext = self.pinned("item2x_tools")
+        shell_py, pack_py = item_tool("bl_house_shell.py"), item_tool("house_shells.py")
         blender = Path(self.cfg.src["blender"])
         bwork = Path(self.cfg.src["blender_work"])
         objs = self.bin_objs(room, [key])
         tpl = self.tpl_png(room)
         st = blender.stat()
-        fp = fingerprint([ext / "blender/bl_house_shell.py", ext / "house_shells.py", tool("convert_tpl.py"),
-                          self.pvrtex], dict(python=sys.version.split()[0],
+        fp = fingerprint([shell_py, pack_py, tool("convert_tpl.py"),
+                          self.pvrtex], dict(python=sys.version.split()[0], blender_threads="1",
                                              blender="%s:%d:%d" % (blender.name, st.st_size, int(st.st_mtime))))
         args = ["--keep-alpha", "--cull-hidden", "--faces", str(int(faces)), "--tex-size", str(int(tex_size))]
         args += [str(a) for a in extra]
@@ -307,9 +334,9 @@ class Gen:
             shutil.copy2(objs.path(key + ".obj"), w / (key + ".obj"))
             for f in sorted(tpl.out.glob("*.png")):
                 shutil.copy2(f, w / "tex" / f.name)
-            shutil.copy2(ext / "blender/bl_house_shell.py", w / "bl_house_shell.py")
+            shutil.copy2(shell_py, w / "bl_house_shell.py")
             try:
-                run([blender, "-b", "--factory-startup", "--python", win(w / "bl_house_shell.py"), "--",
+                run([blender, "-b", "--threads", "1", "--factory-startup", "--python", win(w / "bl_house_shell.py"), "--",
                      win(w / (key + ".obj")), win(w / "tex"), win(w / "out")] + args, cwd=w, log=work / "blender.txt",
                     timeout=3600)
                 shells = work / "shells"
@@ -319,7 +346,7 @@ class Gen:
                     shutil.copy2(w / "out" / (key + suf), out / (key + suf))
             finally:
                 shutil.rmtree(w, ignore_errors=True)
-            run([PY, "-B", ext / "house_shells.py", work / "pkg", shells, "--pvrtex", self.pvrtex], cwd=work,
+            run([PY, "-B", pack_py, work / "pkg", shells, "--pvrtex", self.pvrtex], cwd=work,
                 log=work / "log.txt", env=det_env(dict(PYTHONPATH=str(TOOLS))))
             for d in ("replace", "tex", "preview"):
                 shutil.copytree(work / "pkg" / d, out / d)

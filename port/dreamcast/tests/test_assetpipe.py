@@ -148,5 +148,13 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(len(v.mismatches), 1)
 
 
+class VendorTests(unittest.TestCase):
+    def test_vendored_files_unmodified(self):
+        from assetpipe import util
+        from assetpipe.vendor import FILES, HERE
+        for name, (_, _, sha) in FILES.items():
+            self.assertEqual(util.sha256_file(HERE / name), sha, name)
+
+
 if __name__ == "__main__":
     unittest.main()
