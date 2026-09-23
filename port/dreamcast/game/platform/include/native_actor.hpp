@@ -62,9 +62,19 @@ int re4dc_actor_skin_register(unsigned frame, const void* info, const void* posi
 const float* re4dc_actor_skin_palette(const void* info, const void* position_buffer, unsigned* entries);
 // trans.cpp: run the source's own CalcSk1_x/_x2 for a registered info into
 // its pPosBuf/pNrmBuf from the saved palette (generic-path fallback).
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+int re4dc_skin_materialize(const void* info, const float* palette);  // 0: no arrays could be allocated
+#else
 void re4dc_skin_materialize(const void* info, const float* palette);
+#endif
 // native_model.cpp: before the generic path reads pPosBuf, make it valid.
 void re4dc_actor_materialize(const Re4dcModelPart* p);
+// NATIVE_ACTOR_SKIN_LAZY: a part of an info registered without arrays
+// (positions NULL): allocate and skin them, set p->positions/normals; 0 if
+// that is impossible (the generic path then rejects the part).
+int re4dc_actor_materialize_lazy(Re4dcModelPart* p);
+// model_bridge.cpp: p->positions/normals from the info current pPosBuf/pNrmBuf.
+int re4dc_actor_model_buffers(Re4dcModelPart* p);
 }
 
 #if defined(RE4DC_ACTOR_TEST)

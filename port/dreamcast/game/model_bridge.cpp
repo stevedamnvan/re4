@@ -62,6 +62,16 @@ extern "C" int re4dc_actor_model_source(const void* info_ptr,Re4dcActorSource* o
     return 1;
 }
 #endif
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+// NATIVE_ACTOR_SKIN_LAZY: after re4dc_skin_materialize() gave a lazily
+// deferred info its arrays, the part view takes them as this bridge would.
+extern "C" int re4dc_actor_model_buffers(Re4dcModelPart* p){
+    auto* info=(const cModelInfo*)p->info;
+    p->positions=(const unsigned char*)info->pPosBuf[pG->vtx_buf_no];
+    p->normals=(const unsigned char*)info->pNrmBuf[pG->vtx_buf_no];
+    return p->positions && p->normals;
+}
+#endif
 extern "C" void re4dc_model_material(const void* object,float u,float v,unsigned flags){
     selected={};mask={};mask_ref=256;mask_same_uv=0;
     if(!object || (flags&4))return; // multi-texture blend needs its own native path

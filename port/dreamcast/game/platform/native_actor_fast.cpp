@@ -38,6 +38,9 @@
 #endif
 
 // TA_DIRECT store-queue submission (needs the frame owner's direct API).
+#ifndef RE4DC_NATIVE_ACTOR_SKIN_LAZY
+#define RE4DC_NATIVE_ACTOR_SKIN_LAZY 0
+#endif
 #ifndef RE4DC_ACTOR_DIRECT
 #define RE4DC_ACTOR_DIRECT 0
 #endif
@@ -1417,6 +1420,17 @@ void pass_lights_exact(Part& e, const Lights& L, const Records& r, unsigned n) {
     stats.slow_light_vertices += n;
 }
 
+// A part of a lazily deferred info (no arrays yet) qualifies only if it will
+// run in skin mode (prepare_frame's conditions), so no array is ever read.
+bool lazy_skin(const Re4dcModelPart& p) {
+    if (!RE4DC_NATIVE_ACTOR_SKIN_LAZY || p.positions || p.position_stride != 6) return false;
+    const SkinEntry* e = find_skin(p.info, nullptr);
+    Re4dcActorSource src{};
+    return e && !e->materialized && e->palette && e->entries && re4dc_actor_model_source(p.info, &src) &&
+           src.positions && src.normals && src.position_count == p.position_count &&
+           src.normal_count == p.normal_count && bool(src.small_normals) == (p.normal_shift == 6);
+}
+
 bool qualifies(const Re4dcModelPart& p) {
     return p.lighting && p.alpha_state <= 511 &&
            (!(p.alpha_state & 256) || ((p.flags & 0x80000000U) && p.colors)) &&
@@ -1425,8 +1439,9 @@ bool qualifies(const Re4dcModelPart& p) {
            p.shift <= 30 && (p.position_stride == 6 || p.position_stride == 8) &&
            (p.normal_shift == 6 || p.normal_shift == 14) && p.normal_stride >= 3 &&
            p.position_count && p.normal_count && p.stream_bytes <= 1024 * 1024 && p.stream_bytes >= 32 &&
-           ram(p.positions, p.position_count * p.position_stride) &&
-           ram(p.normals, p.normal_count * p.normal_stride) && ram(p.stream, p.stream_bytes) && p.uv &&
+           ((ram(p.positions, p.position_count * p.position_stride) &&
+             ram(p.normals, p.normal_count * p.normal_stride)) || lazy_skin(p)) &&
+           ram(p.stream, p.stream_bytes) && p.uv &&
            p.projection[0] == 0 && p.viewport[2] > 0 && p.viewport[3] > 0;
 }
 
@@ -1482,7 +1497,15 @@ extern "C" const Re4dcActorStats* re4dc_actor_stats() { return &stats; }
 extern "C" int re4dc_actor_skin_register(unsigned frame, const void* info, const void* position_buffer,
                                          const float* palette, unsigned entries) {
     if (frame != skin_frame) { skin_frame = frame; skin_count = 0; }
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+    if (!palette || !entries) return 0;
+    // Lazy (no arrays): the info's latest Trans() wins, as its pPosBuf would.
+    if (!position_buffer)
+        if (SkinEntry* e = find_skin(info, nullptr)) { *e = {info, nullptr, palette, entries, 0}; ++stats.skin_registered; return 1; }
+    if (skin_count == kSkins) return 0;
+#else
     if (skin_count == kSkins || !palette || !entries) return 0;
+#endif
     skins[skin_count++] = {info, position_buffer, palette, entries, 0};
     ++stats.skin_registered;
     return 1;
@@ -1503,6 +1526,20 @@ extern "C" void re4dc_actor_materialize(const Re4dcModelPart* p) {
     e->materialized = 1;
     ++stats.materialized_infos;
 }
+
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+extern "C" int re4dc_actor_materialize_lazy(Re4dcModelPart* p) {
+    if (!p || p->positions) return 1;
+    SkinEntry* e = find_skin(p->info, nullptr);
+    if (!e) return 0;
+    if (!e->materialized) {
+        if (!re4dc_skin_materialize(e->info, e->palette)) return 0;
+        e->materialized = 1;
+        ++stats.materialized_infos;
+    }
+    return re4dc_actor_model_buffers(p);
+}
+#endif
 
 extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
     ++stats.parts;

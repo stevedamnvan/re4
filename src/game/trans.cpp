@@ -880,6 +880,38 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
         if (m->be_flag & 0x4000) {
             continue;
         }
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+        // D367 actors30 (NATIVE_ACTOR_SKIN_LAZY): the weight palette first; an
+        // info the native actor path takes (unmorphed, palette copy registered)
+        // skins at draw time and gets no pPosBuf/pNrmBuf here at all (NULL,
+        // allocated and filled at Render() only if one of its parts declines).
+        // Those arrays are read only by renderers. GQR6 ends as below.
+        int dc_palette_built = 0;
+        if (!(info->be_flag & 2)) {
+            int re4dc_skin_defer_lazy(cModelInfo* info, ModelData* d);
+#if defined(__sh__)
+            dc_stamp=re4dc_model_source_stamp();
+#endif
+            if (d->weight_ext_num > 0xFF) {
+                MakeWeightPaletteExt((WeightExt*) d->pWeight, d->weight_ext_num);
+            } else {
+                MakeWeightPalette((Weight*) d->pWeight, d->weight_palette_num);
+            }
+#if defined(__sh__)
+            re4dc_model_source_span(1,dc_stamp);
+#endif
+            dc_palette_built = 1;
+            if (re4dc_skin_defer_lazy(info, d)) {
+                info->pPosBuf[pG->vtx_buf_no] = 0;
+                info->pNrmBuf[pG->vtx_buf_no] = 0;
+                setupGQR6(0x32073207);
+                if (d->flags & 0x20000000) {
+                    setupGQR6(0x20062006);
+                }
+                continue;
+            }
+        }
+#endif
         size = d->nVtx * 6;
         asize = size + 31;
         asize = asize >> 5 << 5;
@@ -909,6 +941,9 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
             return 0;
         }
         info->pNrmBuf[pG->vtx_buf_no] = buf;
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+        if (!dc_palette_built) {
+#endif
 #if defined(__sh__)
         dc_stamp=re4dc_model_source_stamp();
 #endif
@@ -919,6 +954,9 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
         }
 #if defined(__sh__)
         re4dc_model_source_span(1,dc_stamp);
+#endif
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+        }
 #endif
         setupGQR6(((d->shift << 24) | (d->shift << 8)) | 0x00070007);
         src = d->vtxOrig;
@@ -948,7 +986,7 @@ int commonScreenMatSub(cModel* m, cModelInfo* info)
         // Native model/shadow/mirror adapters consume these arrays on SH-4;
         // only newly packed PVR commands are transferred to TA. Keep all other
         // cache/DMA boundaries, including the separate primStart flush, intact.
-#if RE4DC_NATIVE_ACTOR_SKIN
+#if RE4DC_NATIVE_ACTOR_SKIN && !RE4DC_NATIVE_ACTOR_SKIN_LAZY
         // D367 actors30: pPosBuf/pNrmBuf are read only by renderers. When the
         // native actor path takes this info (the palette just built is copied
         // and registered), it skins at draw time and this render-only pass is
@@ -3257,13 +3295,49 @@ int re4dc_skin_defer(cModelInfo* info, ModelData* d)
     return re4dc_actor_skin_register(pG->Frame_cnt, info, info->pPosBuf[pG->vtx_buf_no], (const float*) copy, n);
 }
 
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+// NATIVE_ACTOR_SKIN_LAZY: as above, before Trans() allocates the info's
+// arrays; the registration key is (info, NULL) and pPosBuf/pNrmBuf stay NULL.
+// 16 KiB must remain after the palette copy (the actor workspace reserve).
+int re4dc_skin_defer_lazy(cModelInfo* info, ModelData* d)
+{
+    const u32 n = d->weight_ext_num > 0xFF ? d->weight_ext_num : d->weight_palette_num;
+    if (!n || !re4dc_model_diagnostic_enabled()) {
+        return 0;
+    }
+    void* copy = re4dc_prim_tail(n * 0x30, 16 * 1024);
+    if (!copy) {
+        return 0;
+    }
+    memcpy(copy, (const void*) RE4DC_LC_PALETTE, n * 0x30);
+    return re4dc_actor_skin_register(pG->Frame_cnt, info, 0, (const float*) copy, n);
+}
+#endif
+
 // Render(): the generic path needs this info's pPosBuf/pNrmBuf after all.
 // The source's own CalcSk1_x/_x2 from the saved palette, into the buffers
 // Trans() allocated; the locked cache and GQR6 state are left untouched.
+// NATIVE_ACTOR_SKIN_LAZY: a NULL pPosBuf is allocated here first (primitive
+// buffer, same lifetime; no allocation -> 0 and the part is not drawn).
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+extern "C" int re4dc_skin_materialize(const void* info_ptr, const float* palette)
+#else
 extern "C" void re4dc_skin_materialize(const void* info_ptr, const float* palette)
+#endif
 {
     cModelInfo* info = (cModelInfo*) info_ptr;
     ModelData* d = info->pData;
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+    if (!info->pPosBuf[pG->vtx_buf_no]) {
+        const u32 nb = (d->flags & 0x20000000) ? d->nNrm * 3 : d->nNrm * 6;
+        void* pos = re4dc_prim_tail(d->nVtx * 6 + 31 + nb + 31, 0);
+        if (!pos) {
+            return 0;
+        }
+        info->pPosBuf[pG->vtx_buf_no] = pos;
+        info->pNrmBuf[pG->vtx_buf_no] = (u8*) pos + ((d->nVtx * 6 + 31) & ~31U);
+    }
+#endif
     const u32 saved = g_gqr6;
     g_skin_palette = (u32) palette;
     setupGQR6(((d->shift << 24) | (d->shift << 8)) | 0x00070007);
@@ -3277,6 +3351,9 @@ extern "C" void re4dc_skin_materialize(const void* info_ptr, const float* palett
     }
     g_skin_palette = 0;
     g_gqr6 = saved;
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+    return 1;
+#endif
 }
 #endif
 

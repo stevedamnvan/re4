@@ -666,6 +666,14 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
 #if RE4DC_NATIVE_ACTOR_SKIN
     // Declined part of an info whose source CalcSk1_x pass was deferred
     // (trans.cpp): fill its pPosBuf/pNrmBuf now, before the walker reads them.
+#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
+    // NATIVE_ACTOR_SKIN_LAZY: a part of an info Trans() gave no arrays (NULL
+    // positions): allocate and skin them now; on failure the checks below
+    // reject the part.
+    Re4dcModelPart lazy_part;
+    if(p && !p->positions){lazy_part=*p;re4dc_actor_materialize_lazy(&lazy_part);p=&lazy_part;}
+    else
+#endif
     if(p)re4dc_actor_materialize(p);
 #endif
     if(!p || p->alpha_state>511 || ((p->alpha_state&256) && (!(p->flags&0x80000000U) || !p->colors)) || p->shift>30 || (p->position_stride!=6 && p->position_stride!=8) ||

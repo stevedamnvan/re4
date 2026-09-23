@@ -79,6 +79,10 @@ endif
 # NATIVE_ACTOR_DIRECT=1: store-queue submission (needs the TA_DIRECT=1 API).
 NATIVE_ACTOR_FAST ?= 0
 NATIVE_ACTOR_SKIN ?= 0
+# NATIVE_ACTOR_SKIN_LAZY=1 (needs NATIVE_ACTOR_SKIN=1): a deferred-skin info
+# also takes no pPosBuf/pNrmBuf in Trans() (about 20 KiB of primitive buffer
+# per Ganado); they are allocated at Render() only if one of its parts declines.
+NATIVE_ACTOR_SKIN_LAZY ?= 0
 NATIVE_ACTOR_DIRECT ?= 0
 ifeq ($(NATIVE_ACTOR)$(NATIVE_ACTOR_FAST),11)
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor.o,$(PLATFORM_OBJS))
@@ -87,6 +91,9 @@ PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor_fast.o,$(PLATFORM_
 ifneq ($(NATIVE_ACTOR_SKIN)$(NATIVE_ACTOR_DIRECT),00)
 $(error NATIVE_ACTOR_SKIN/NATIVE_ACTOR_DIRECT require NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1)
 endif
+endif
+ifeq ($(NATIVE_ACTOR_SKIN_LAZY)$(NATIVE_ACTOR_SKIN),10)
+$(error NATIVE_ACTOR_SKIN_LAZY=1 requires NATIVE_ACTOR_SKIN=1)
 endif
 # D367 audio: AICA_AUDIO=1 plays the recovered sound driver on the AICA
 # (platform/audio_aica.cpp); default images keep the silent audio_stub.cpp.
@@ -596,7 +603,7 @@ endif
 .PHONY: native-actor-force
 $(OBJDIR)/native-actor.h: native-actor-force
 	@mkdir -p $(dir $@)
-	@printf '#define RE4DC_NATIVE_ACTOR %s\n#define RE4DC_NATIVE_ACTOR_FAST %s\n#define RE4DC_NATIVE_ACTOR_SKIN %s\n#define RE4DC_ACTOR_DIRECT %s\n' '$(NATIVE_ACTOR)' '$(NATIVE_ACTOR_FAST)' '$(NATIVE_ACTOR_SKIN)' '$(NATIVE_ACTOR_DIRECT)' > $@.tmp
+	@printf '#define RE4DC_NATIVE_ACTOR %s\n#define RE4DC_NATIVE_ACTOR_FAST %s\n#define RE4DC_NATIVE_ACTOR_SKIN %s\n#define RE4DC_ACTOR_DIRECT %s\n#define RE4DC_NATIVE_ACTOR_SKIN_LAZY %s\n' '$(NATIVE_ACTOR)' '$(NATIVE_ACTOR_FAST)' '$(NATIVE_ACTOR_SKIN)' '$(NATIVE_ACTOR_DIRECT)' '$(NATIVE_ACTOR_SKIN_LAZY)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_model.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/native-actor.h
