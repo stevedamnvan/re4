@@ -119,7 +119,7 @@ ReadModule WepReadModule __attribute__((aligned(32)));
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 #define DVD_READ(no, dst, a, b, c, mode) DvdRead(no, dst, a, b, c, mode, __FILE__, __LINE__)

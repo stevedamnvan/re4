@@ -33,7 +33,7 @@ char* strcpy(char* dst, const char* src);
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 // The debug bar primitive is 0x20 bytes here (tile[2] is 0x40).

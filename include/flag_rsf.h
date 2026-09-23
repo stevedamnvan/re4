@@ -30,7 +30,7 @@ static inline void RsfSet(u16 room, int no)
     if (no > 0x1F) {
 #line 17 "D:/Bio4/Prog/flag_rsf.h"
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);
-        *(volatile u32*) 0x11111111 = 0;
+        RE4DC_HALT_STORE();
     }
     *RsfFlagWord(room, no) |= 0x80000000 >> (no & 31);
 }
@@ -40,7 +40,7 @@ static inline void RsfClear(u16 room, int no)
     if (no > 0x1F) {
 #line 21 "D:/Bio4/Prog/flag_rsf.h"
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);
-        *(volatile u32*) 0x11111111 = 0;
+        RE4DC_HALT_STORE();
     }
     *RsfFlagWord(room, no) &= ~(0x80000000 >> (no & 31));
 }
@@ -52,7 +52,7 @@ static inline u32 RsfCheck(u16 room, int no)
     if (no > 0x1F) {
 #line 25 "D:/Bio4/Prog/flag_rsf.h"
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);
-        *(volatile u32*) 0x11111111 = 0;
+        RE4DC_HALT_STORE();
     }
     return RsfFlags(room)[(u32) no >> 5] & (0x80000000 >> (no & 31));
 }

@@ -74,7 +74,7 @@ public:
     do {                                                          \
         const char* file_ = __FILE__;                             \
         OSReport("HALT %s(%d)\n", file_, __LINE__);               \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     } while (0)
 
 #define DVD_READ_N(name, dst, a, b, c, mode) DvdReadN(name, dst, a, b, c, mode, __FILE__, __LINE__)

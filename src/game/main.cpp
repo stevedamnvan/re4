@@ -122,7 +122,7 @@ void DbmenuModuleInit();  // game/db_menu.cpp
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 // Stores through a scalar reference are not struct-member MEMs, so GCC 2.95 assumes they may

@@ -110,7 +110,7 @@ struct Weight {
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 // u8 -> f32 through GQR2 straight from memory: the compiler only emits psq_l from a stack slot.

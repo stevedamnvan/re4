@@ -42,7 +42,7 @@ extern u8 PlFormMode;   // game/player.cpp
 #define HALT(cond)                                                           \
     if (cond) {                                                              \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);                        \
-        *(volatile u32*) 0x11111111 = 0;                                     \
+        RE4DC_HALT_STORE();                                                  \
     }
 
 // 0x20-byte tile primitive (TILE padded to the array stride used by the debug bars)

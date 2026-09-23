@@ -18,7 +18,7 @@ extern "C" void OSReport(const char* fmt, ...);
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 // Store through a reference: a scalar (non-struct) MEM, so pG is reloaded after every store.

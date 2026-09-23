@@ -21,7 +21,7 @@ char* strncpy(char* dst, const char* src, unsigned int n);
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 // Debug break with the source location.

@@ -30,6 +30,20 @@ typedef int BOOL;
 #define RE4_INLINE
 #endif
 
+// HALT(): the original stores to 0x11111111 to stop the game. On the SH-4 that address is in
+// area 4 (TA FIFO): Flycast takes the misaligned store as a TA/YUV input word and the game runs
+// on, and real hardware raises an address error. The port stops explicitly instead
+// (platform/fault.cpp re4dc_halt: file:line to the log, then a deterministic stop).
+#if defined(__PPC__)
+#define RE4DC_HALT_STORE() (*(volatile u32*) 0x11111111 = 0)
+#else
+#ifdef __cplusplus
+extern "C"
+#endif
+void re4dc_halt(const char* file, int line);
+#define RE4DC_HALT_STORE() re4dc_halt(__FILE__, __LINE__)
+#endif
+
 #ifndef NULL
 #define NULL 0
 #endif

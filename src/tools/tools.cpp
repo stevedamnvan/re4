@@ -11,7 +11,7 @@ extern "C" void OSReport(const char* fmt, ...);
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 // _ctors/_dtors: the linker script's labels on the .ctors/.dtors lists (null terminated)

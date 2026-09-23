@@ -53,6 +53,20 @@ static void onFault(irq_t code, irq_context_t* ctx, void* data)
     }
 }
 
+// Source HALT() (types.h RE4DC_HALT_STORE): the game decided to stop. Log where, then stop
+// deterministically like an unhandled fault (stage 0xDEAD0111, interrupts off, spin). Never
+// touches area 4. Game logic is unchanged: this only runs after the game has chosen to halt.
+extern "C" unsigned re4dc_ui_frame();
+extern "C" void re4dc_halt(const char* file, int line)
+{
+    re4dc_log("HALT stop: %s(%d) ui_frame=%u thread=%d inside_int=%d\n", file ? file : "?", line, re4dc_ui_frame(),
+              thd_current ? thd_current->tid : -1, (int) irq_inside_int());
+    re4dc_set_stage(0xDEAD0111ul);
+    irq_disable();
+    for (;;) {
+    }
+}
+
 extern "C" void re4dc_fault_init(void)
 {
     dbgio_add_handler(&g_ringHandler);

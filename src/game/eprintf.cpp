@@ -22,7 +22,7 @@ int vsprintf(char* buf, const char* fmt, va_list ap);
 #define HALT()                                                    \
     {                                                             \
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
-        *(volatile u32*) 0x11111111 = 0;                          \
+        RE4DC_HALT_STORE();                                       \
     }
 
 // System work (game/main.cpp `pSys`); only the flag word is known.
