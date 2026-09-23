@@ -187,7 +187,7 @@ Performance work is serialized: one integrated build, one change at a time.
 | 0 | FRONT_NATIVE v1, RELEASE_FLAGS | landed (c881fba, ecbea1f) |
 | 1 | Texture preload per room, O(1) handles, no runtime CRC (movement hitches; crowd texture cost) | finishing |
 | 2 | Game-logic cuts (game30 LH recipe, then tick cuts) | LH recipe + GAME_TRIG landed (7dd50e7, 28ef388): hw game-logic 25.8 -> **12.0 ms/tick**, inside the ~15 budget; frame 157.8 -> 120.3 hw. STRICT. Next, ranked: D-cache prefetch in the logic list walks (EmAtCheck, partsWorldCalc; ceiling -3.25), EmAtCheck prefilter (<1), Hermite/vector maths (~0.5). Skip: I-cache relink (makes it worse), reciprocal fdiv (not bit-exact). Visual sims stay: cloth and pendulum write the parts chain; effects share the RNG. |
-| 3 | Enemies: Leon <=5 ms, CROWD_LOD tiers, ACT_CAP, safe cuts (CUT_GORE, FX caps, static car/cops) | queued |
+| 3 | Enemies: Leon <=5 ms, CROWD_LOD tiers, ACT_CAP, safe cuts (CUT_GORE, FX caps, static car/cops), Leon fewer-bone rebuild, low-poly Ganado meshes | queued. actors30-v3 ready: NATIVE_ACTOR_SKIN_LAZY also fixes a 128 KiB prim-buffer overflow that made Leon vanish with 6+ Ganados. Per Ganado: 7.4 hw ms full, 4.5 with tiers. Any Ganado in view also adds ~93 hw ms of texture CRC/reload, which is step 1's fix. Logic trace STRICT at 4 and 8 Ganados. |
 | 4 | Render front end: EFFECT_LEAN, EMIT_DIRECT, FRONT_NATIVE v2 | queued |
 | 5 | Scenery: fog distance, tree cap, house from halfway, W9 worst views and per-room fog | queued. Trials done: 25 m far plane (room's own curve) is scenery 29.9 -> 18.7 hw ms, frame 158.3 -> 140.1. 20 m fails the enemy rule (a Ganado at 20 m is 100% fogged). Rule for other rooms: min(room far, 25 m). House from halfway (~21 m) needs per-object building fog: open. LOD 5 px (-2.9 at 42.7 m) and TREE_THIN are unmeasured on top. |
 
@@ -223,6 +223,8 @@ User decisions (2026-09-23):
   - Simplified house shells (item 21, MESH_TEXTURES=1): the mid mesh with a 512 VQ texture (66 KB per house), used everywhere with no near swap. -0.71 hw ms for FILE_01/17+18; ~-1.6 to -1.8 projected for all FILE_01. Step 5.
   - Effects: bring back native sprites for muzzle flash, blood and fire (+0.5 to 1.0 hw ms), together with EFFECT_LEAN. Step 4.
   - Cutscene subtitles: no, for now.
+  - Added to the lane: outdoor occlusion/PVS (hide houses and trees behind buildings; est. -3 to -6 hw ms in r101/r103), step 5. Leon render rebuild with fewer skinned bones (render skin weights only; the game skeleton, attach points and hit zones untouched; ~5-6 -> ~3 hw ms), step 3. Lower-poly Ganado render meshes (heads kept), step 3.
+  - **Rejected:** reduced animation/skin update rates for any actor ("might throw off gameplay"). Crowd tiers vary geometry and shading only; every actor's pose updates every frame. This supersedes the earlier "skinned every other/3rd-4th frame" crowd tiers.
 - **Enemy/object census (aligned):**
   - Take the SAFE cuts: r103 corpses and the r100 gore object off via the JP path (CUT_GORE); effect and decal caps; no foot shadows; car and police props static.
   - Cap concurrent active Ganados in r101 (ACT_CAP, N=4/6/8 trials, ~12 hw ms estimate). Parked Ganados stay alive for every counter; engaged or visible threats are never parked.
