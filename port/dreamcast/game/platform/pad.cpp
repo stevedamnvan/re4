@@ -281,6 +281,26 @@ void re4dc_audio_frame(void);
 int re4dc_pad_context(void);      // ui_bridge.cpp: RE4DC_PAD_CTX_* from the game state of the last frame
 int re4dc_pad_debug_state(void);  // ui_bridge.cpp: RE4DC_PAD_DBG_* (which debug chords would fire)
 
+#if RE4DC_ROUTE_MOVIES
+static u16 movie_skip_latch;
+void re4dc_pad_consume_movie_skip(unsigned mask) { movie_skip_latch |= mask & 0x1200; }
+// Port 0 as GameCube PAD bits while a movie owns the frame (no PADRead, so no
+// audio-frame callback and no source Key update): the fixture script plus
+// the controller's START/B/A.
+unsigned re4dc_pad_movie_buttons(void)
+{
+    unsigned b = scriptButtons();
+    maple_device_t* dev = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+    const cont_state_t* st = dev ? (const cont_state_t*) maple_dev_status(dev) : NULL;
+    if (st) {
+        if (st->buttons & CONT_START) b |= 0x1000;
+        if (st->buttons & CONT_B) b |= 0x0200;
+        if (st->buttons & CONT_A) b |= 0x0100;
+    }
+    return b;
+}
+#endif
+
 u32 PADRead(PADStatus* status)
 {
     // The sound driver's audio-frame callback (audio_stub.cpp): once per game
@@ -333,6 +353,11 @@ u32 PADRead(PADStatus* status)
             u16 real = mapped.button | ((st->buttons & CONT_Z) ? PAD_TRIGGER_Z : 0);
             p->button = (u16) (re4dcBlockDebugChords(real, re4dc_pad_debug_state(), &maps[0]) | scripted);
         }
+#if RE4DC_ROUTE_MOVIES
+        // A consumed movie skip stays masked until its buttons are released
+        // (after the debug-chord filter, which rewrites p->button).
+        if (i == 0) { movie_skip_latch &= p->button; p->button &= (u16) ~movie_skip_latch; }
+#endif
         p->stickX = mapped.stickX;       // SDK-clamped; maple Y already flipped
         p->stickY = mapped.stickY;
         p->substickX = mapped.substickX;

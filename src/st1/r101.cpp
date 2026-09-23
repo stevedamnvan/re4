@@ -110,6 +110,32 @@ static void r101_Event00();
 static void r101_callGanadoVoice();
 extern "C" void Evt_R101S21_Func(Event* e);
 extern "C" void Evt_R101S30_Func(Event* e);
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_ROUTE_MOVIES
+// Route cutscenes: each story event below is presented by its PS2 movie; the
+// surrounding source code (flags, enemy sets, positions, doors, traps, areas)
+// runs unchanged. docs/ROUTE_CUTSCENES.md lists the per-event contract.
+#include "route_movie.h"
+#define R101_ROUTE_MOVIES 1
+#else
+#define R101_ROUTE_MOVIES 0
+#endif
+#if R101_ROUTE_MOVIES
+// r101_Event20's per-frame hook: cut 0xA frame 0x20 breaks window 0. PS2
+// r101s21.evd camera cuts put cut 10 at picture 603, so the hook is 635.
+static int r101MovieS21Break;
+static void r101MovieS21Tick(unsigned picture)
+{
+    cEm* win;
+
+    if (r101MovieS21Break || picture < 635) {
+        return;
+    }
+    r101MovieS21Break = 1;
+    if (getRoomEtcWindow(0, &win, 1)) {
+        ((cEmWindow*) win)->SetBreakModel();
+    }
+}
+#endif
 
 // Marks list entry `no` alive; clears its death bit of the loaded list.
 static inline void r101_emListOn(int no)
@@ -501,11 +527,17 @@ static void r101_Event30()
         } else {
             EspDataRelease(0x10, 0, 1);
             InitModule(m);
+#if R101_ROUTE_MOVIES
+            if (RouteMoviePlay(0x10130, ROUTE_MOVIE_SND_EVENT, (RouteEvtFunc) Evt_R101S30_Func, 0) ==
+                RE4DC_MOVIE_UNHANDLED)
+#endif
+            {
             r101_work->evt30->setCommand(CMND_MRAM_LOAD, 0, 1);
             SceExec(0x12, (TaskFunc) r101_Event30_TitleCall, 0, 2, SCE_PRIO_DEF_2, 0);
             EvtMgr.SetEvt(r101_work->evt30->m_addr, 0);
             while (EvtMgr.IsAliveEvt(&EvtMgr.NowExeEvtKey, 0, 0)) {
                 SceSleep(1);
+            }
             }
             pG->System_flg &= ~0x400;
         }
@@ -659,6 +691,13 @@ static void r101_Event20()
     SceDestroyEm(0x10, 0x20);
     SceSleep(2);
     m = SearchEmModule(0x15);
+#if R101_ROUTE_MOVIES
+    r101MovieS21Break = 0;
+    if (RouteMoviePlay(0x10121, ROUTE_MOVIE_SND_EVENT, (RouteEvtFunc) Evt_R101S21_Func, r101MovieS21Tick) !=
+        RE4DC_MOVIE_UNHANDLED) {
+        BitOff(pG->System_flg, 0x400);
+    } else
+#endif
     if (fail != 1) {
         if (r101_work->evt21->m_size > m->size) {
             pLog->err(0, 0, "r101_Event20 exec error");
@@ -993,6 +1032,10 @@ static void r101_Event00()
         RsfSet(G_ROOM_ID, 5);
         SceEventStart(0);
         r101_setEmSuspend(1);
+#if R101_ROUTE_MOVIES
+        if (RouteMoviePlay(0x10100, ROUTE_MOVIE_SND_EVENT, 0, 0) != RE4DC_MOVIE_UNHANDLED) {
+        } else
+#endif
         if (r101_work->evt00->waitLoadOk() == 1) {
             ReadModule* m;
 

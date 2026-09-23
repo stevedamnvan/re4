@@ -104,6 +104,39 @@ $(OBJDIR)/aica-audio.h: aica-audio-force
 $(OBJDIR)/platform/audio_stub.o: $(OBJDIR)/aica-audio.h
 $(OBJDIR)/platform/audio_stub.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/aica-audio.h
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
+# Route cutscenes (default off): PS2 prerecorded movies present source events
+# (/cd/dc/movie/*.seq, docs/ROUTE_CUTSCENES.md). Default images carry none of it.
+ROUTE_MOVIES ?= 0
+.PHONY: route-movies-force
+$(OBJDIR)/route-movies.h: route-movies-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_ROUTE_MOVIES %s\n' '$(ROUTE_MOVIES)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+ROUTE_MOVIE_PLATFORM = $(OBJDIR)/platform/native_movie.o $(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/pad.o
+ROUTE_MOVIE_GAME = $(OBJDIR)/src/game/game.o $(OBJDIR)/mod/st1_0/src/st1/r100.o $(OBJDIR)/mod/st1_1/src/st1/r101.o $(OBJDIR)/route_movie_bridge.o
+$(ROUTE_MOVIE_PLATFORM) $(ROUTE_MOVIE_GAME): $(OBJDIR)/route-movies.h
+$(ROUTE_MOVIE_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/route-movies.h
+$(ROUTE_MOVIE_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/route-movies.h
+$(OBJDIR)/platform/native_movie.o: PLATFORM_CPPFLAGS += -O3 -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ipa-cp-clone
+ifeq ($(ROUTE_MOVIES),1)
+OBJS += $(OBJDIR)/platform/native_movie_stream.o $(OBJDIR)/route_movie_bridge.o
+# r100's s03/s20 are presented by their movies, not the deferred evd path.
+override R100_DEFER_EVENTS := 0
+# Movie cadence (one picture per two fields) needs an asynchronous present.
+ifeq ($(filter 1 2,$(PVR_PIPELINE)),)
+$(warning ROUTE_MOVIES=1 without PVR_PIPELINE=1/2: the blocking flip halves movie frame rate (docs/ROUTE_CUTSCENES.md))
+endif
+else
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_movie.o,$(PLATFORM_OBJS))
+endif
+# Isolated recompile of the pinned KOS stream (spike A5): no writes under KOS_BASE.
+$(OBJDIR)/platform/native_movie_stream.o: platform/native_movie_stream.c $(OBJDIR)/route-movies.h $(KOS_BASE)/kernel/arch/dreamcast/sound/snd_stream.c
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -Os -include $(OBJDIR)/route-movies.h -I$(KOS_BASE)/kernel/arch/dreamcast/sound -I$(KOS_BASE)/kernel/arch/dreamcast/include/dc/sound -MMD -MP -c $< -o $@
+$(OBJDIR)/route_movie_bridge.o: route_movie_bridge.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@
 
 GAME_OPT ?= -O1
 # -fpermissive: cManager<T>::arrayPush names Debug_alloc before its

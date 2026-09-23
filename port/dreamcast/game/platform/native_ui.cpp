@@ -279,6 +279,16 @@ pvr_list_t select_model_pass(const Re4dcModelPart* p){
 #endif
 unsigned dropped,unsupported,missing,drawn,culled,loads,reclaimed; bool ready,frame_ready;
 extern "C" int re4dc_vi_black();
+#if RE4DC_ROUTE_MOVIES
+// Route cutscenes (native_movie.cpp): one 512x256 UYVY texture owned here, so
+// all display submission stays with this frame owner. While a picture exists
+// it replaces the UI quads and is presented even when the source holds its
+// picture (System_flg 0x400) or requests VI black.
+pvr_ptr_t movie_texture; bool movie_picture; unsigned movie_width,movie_height;
+unsigned movie_upload_serial,movie_shown_serial,movie_presentations;
+uint64_t movie_first_picture_us;
+void movie_draw();
+#endif
 // Diagnostic only: 64 KiB of copied native packets, allocated on first model.
 // Roll back an entire part on overflow. No deferred source/primitive pointers.
 constexpr unsigned kModelSlabBytes=64*1024;
@@ -1162,7 +1172,13 @@ extern "C" void re4dc_ui_present(){
         if(model_presented++<3)re4dc_log("native model DIAGNOSTIC presented: frame=%u bytes=%u\n",frame,model_used*32);
     }
 #endif
-    for(unsigned i=0;i<nquad && !re4dc_vi_black();++i){
+#if RE4DC_ROUTE_MOVIES
+    const bool movie_override=movie_texture && movie_picture;
+    if(movie_override)movie_draw();
+#else
+    constexpr bool movie_override=false;
+#endif
+    for(unsigned i=0;i<nquad && !movie_override && !re4dc_vi_black();++i){
         if(!handles[i])continue;
         const auto& q=quads[i];const auto& t=handles[i]->package.textures()[0];
         unsigned fmt=re4dc::texture::pvr_format(t);
@@ -1211,6 +1227,12 @@ extern "C" void re4dc_ui_present(){
 #endif
 #if RE4DC_PVR_STREAM
     stream_close(true);
+#if RE4DC_ROUTE_MOVIES
+    if(movie_override && movie_shown_serial!=movie_upload_serial){
+        movie_shown_serial=movie_upload_serial;++movie_presentations;
+        if(!movie_first_picture_us)movie_first_picture_us=timer_us_gettime64();
+    }
+#endif
     if(stream_model_bytes && model_presented++<3)
         re4dc_log("native model DIAGNOSTIC presented: frame=%u bytes=%u\n",frame,stream_model_bytes);
     if(frame%120==0 || (stream_model_bytes && model_presented<=3)){
@@ -1253,7 +1275,13 @@ extern "C" void re4dc_ui_end_frame(int present){
     re4dc_model_draw_plan_frame(frame);
 #if RE4DC_PVR_STREAM
     if(!frame_ready)return;
+#if RE4DC_ROUTE_MOVIES
+    const bool movie_shown=movie_texture && movie_picture;
+    if(movie_shown)present=1;
+    const bool black=re4dc_vi_black()!=0 && !movie_shown;
+#else
     const bool black=re4dc_vi_black()!=0;
+#endif
     if(present && !stream_aborted && !black)re4dc_ui_present();
     else {
         if(stream_scene)stream_close(false);
@@ -1706,3 +1734,88 @@ extern "C" void* re4dc_model_deferred_storage(unsigned* bytes){
     *bytes=model_packets?kModelDeferredSpillBytes:0;
     return *bytes?reinterpret_cast<unsigned char*>(model_packets)+kModelPacketBytes+kModelPreparationBytes+kModelStaticLightBytes:nullptr;
 }
+
+#if RE4DC_ROUTE_MOVIES
+extern "C" int re4dc_ui_movie_open(unsigned width,unsigned height){
+    // Macroblock sizes inside the 512x256 texture; rows load as 32-byte blocks.
+    if(movie_texture || !ready || !width || !height || width>512 || height>256 || (width&15))return 0;
+    movie_texture=pvr_mem_malloc(512*256*2);movie_picture=false;movie_width=width;movie_height=height;
+    movie_upload_serial=movie_shown_serial=movie_presentations=0;movie_first_picture_us=0;
+    return movie_texture!=nullptr;
+}
+// The previous scene must have finished sampling the texture before rows change.
+extern "C" int re4dc_ui_movie_upload_begin(){
+    if(!movie_texture)return 0;
+#if RE4DC_PVR_STREAM
+    // A movie-owned presentation interrupts a source frame: its open (hidden
+    // world) scene is discarded first, or the render fence below never completes.
+    if(stream_scene)stream_close(false);
+#endif
+#if RE4DC_PVR_PIPELINE
+    present_fence();
+#endif
+    return re4dc::gpu::quiesce()==re4dc::gpu::FenceResult::ready;
+}
+// movie_width active UYVY pixels per 1024-byte texture row; padding is never sampled.
+extern "C" void re4dc_ui_movie_upload_rows(const void* uyvy,unsigned y,unsigned rows){
+    const auto* src=static_cast<const unsigned char*>(uyvy);const unsigned bytes=movie_width*2;
+    for(unsigned r=0;r<rows && y+r<movie_height;++r)pvr_txr_load(src+r*bytes,(char*)movie_texture+(y+r)*1024,bytes);
+}
+extern "C" void re4dc_ui_movie_upload_end(){movie_picture=true;++movie_upload_serial;}
+extern "C" unsigned re4dc_ui_movie_presented(){return movie_presentations;}
+extern "C" uint64_t re4dc_ui_movie_first_picture_us(){return movie_first_picture_us;}
+extern "C" int re4dc_ui_movie_last_presented(){return movie_picture && movie_upload_serial==movie_shown_serial;}
+// Movie-owned presentation (native_movie.cpp re4dc_movie_play): the source task
+// playing the movie does not return to the frame loop, so the picture is
+// presented here as a scene of its own. An open stream scene of the
+// interrupted frame (hidden world) is discarded; that frame reopens one.
+extern "C" int re4dc_ui_movie_present_now(){
+    if(!ready || !movie_texture || !movie_picture)return 0;
+#if RE4DC_PVR_STREAM
+    if(stream_scene)stream_close(false);
+#if RE4DC_D349_RENDERER_STACK
+    const pvr_list_t list=desired_list;desired_list=PVR_LIST_TR_POLY;
+#endif
+    stream_open();
+    movie_draw();
+    stream_close(true);
+#if RE4DC_D349_RENDERER_STACK
+    desired_list=list;
+#endif
+    if(movie_shown_serial!=movie_upload_serial){
+        movie_shown_serial=movie_upload_serial;++movie_presentations;
+        if(!movie_first_picture_us)movie_first_picture_us=timer_us_gettime64();
+    }
+    return 1;
+#else
+    return 0;
+#endif
+}
+extern "C" int re4dc_ui_movie_close(){
+    if(!movie_texture)return 1;
+#if RE4DC_PVR_PIPELINE
+    present_fence();
+#endif
+    if(re4dc::gpu::quiesce()!=re4dc::gpu::FenceResult::ready){re4dc_log("route movie texture retirement fence pending\n");return 0;}
+    pvr_mem_free(movie_texture);movie_texture=nullptr;movie_picture=false;return 1;
+}
+namespace {
+void movie_draw(){
+    pvr_poly_cxt_t c;pvr_poly_cxt_txr(&c,PVR_LIST_TR_POLY,
+        PVR_TXRFMT_YUV422|PVR_TXRFMT_NONTWIDDLED,512,256,movie_texture,PVR_FILTER_BILINEAR);
+    c.gen.culling=PVR_CULLING_NONE;c.depth.comparison=PVR_DEPTHCMP_ALWAYS;c.depth.write=PVR_DEPTHWRITE_DISABLE;
+    c.blend.src=PVR_BLEND_ONE;c.blend.dst=PVR_BLEND_ZERO;c.txr.uv_clamp=PVR_UVCLAMP_UV;
+    pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);
+    alignas(32) pvr_vertex_t packet[5]{};std::uint32_t count;
+    re4dc::render::begin_pvr_packet(packet,count,header);
+    const float x[]={0,640,0,640},y[]={0,0,480,480};
+    for(unsigned i=0;i<4;++i){auto& v=packet[count+i];v.flags=i==3?PVR_CMD_VERTEX_EOL:PVR_CMD_VERTEX;
+        v.x=x[i];v.y=y[i];v.z=1;v.u=(i&1)?(movie_width-0.5f)/512:0.5f/512;v.v=i>=2?(movie_height-0.5f)/256:0.5f/256;v.argb=0xffffffff;}
+#if RE4DC_PVR_STREAM
+    stream_send(packet,sizeof(packet));
+#else
+    re4dc::render::submit_pvr(packet,sizeof(packet));
+#endif
+}
+}
+#endif // RE4DC_ROUTE_MOVIES

@@ -108,6 +108,21 @@ bool read_chunks(file_t file, std::size_t bytes, ChunkConsumer consume, void* co
     return ok;
 }
 
+bool read_aligned_chunk(file_t file, void* destination, std::size_t bytes) {
+    if(!destination || (reinterpret_cast<std::uintptr_t>(destination)&31U) ||
+       !bytes || (bytes&31U) || bytes>kReadChunkBytes) return false;
+    ReaderGuard guard;
+    if(!guard.acquired || bounce_busy) return false;
+    auto* out=static_cast<std::uint8_t*>(destination);
+    std::size_t done=0;
+    while(done<bytes) {
+        const ssize_t got=fs_read(file,out+done,bytes-done);
+        if(got<=0 || static_cast<std::size_t>(got)>bytes-done || (got&31)) return false;
+        done+=static_cast<std::size_t>(got);
+    }
+    return true;
+}
+
 bool read_exact(file_t file, void* destination, std::size_t bytes) {
     auto* out = static_cast<std::uint8_t*>(destination);
     return read_chunks(file, bytes, [](const std::uint8_t* p, std::size_t n, void* ctx) {

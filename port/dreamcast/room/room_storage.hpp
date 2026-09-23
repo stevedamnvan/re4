@@ -73,6 +73,11 @@ ReadResult read_file(Arena& arena, const char* path);
 using ChunkConsumer = bool (*)(const std::uint8_t*, std::size_t, void*);
 bool read_chunks(file_t file, std::size_t bytes, ChunkConsumer consume, void* context);
 bool read_exact(file_t file, void* destination, std::size_t bytes);
+// One <=64KiB aligned streaming chunk. Caller owns an open, sector-positioned
+// file and 32-byte-aligned destination; size must be a multiple of32. Reuses
+// ReaderGuard; no second reader/cache or whole-file allocation. A short final
+// non-aligned tail belongs to read_exact(). Failure never reports completion.
+bool read_aligned_chunk(file_t file, void* destination, std::size_t bytes);
 
 } // namespace re4dc::storage
 

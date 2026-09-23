@@ -400,14 +400,41 @@ void gameStageInit()
 // then sets System.0x400 and jumps to r100. Carry the persistent effects of
 // room completion / sceAtFunc_door / gameDoordemo into the normal stage loader.
 // NG+ has a merchant interaction before the movie and must retain that path.
+#if RE4DC_ROUTE_MOVIES
+#include "native_movie.h"
+#endif
 static bool nativeSkipOpeningRoom()
 {
     if (pG->room_id != 0x120 || pG->game_cnt != 0 ||
         !(pG->System_flg & 0x2000) || pG->pl_type != 0) {
         return false;
     }
+#if RE4DC_ROUTE_MOVIES
+    // R120Event's two events, presented by their PS2 movies before any
+    // cinematic room allocation (no car/light/mirror resources are created).
+    // Source order: s00, then s01 unless s00 was skipped. A skip runs the
+    // handler's cancel mode (Evt_R120S0x_Func funcMode 3: Scenario[0].0x10),
+    // which also omits r100's entry event s40; natural completion keeps it
+    // clear (R120Event clears it first). Error/no media: the skip policy.
+    // Each movie owns presentation until it ends; skip = START/B (cSofdec 0x1200).
+    const int s00 = re4dc_movie_play(0x12000, 0x1200, 0);
+    OSReport("route intro: r120s00 terminal=%d\n", s00);
+    const int s01 = s00 == RE4DC_MOVIE_EOF ? re4dc_movie_play(0x12001, 0x1200, 0) : RE4DC_MOVIE_SKIP;
+    if (s00 == RE4DC_MOVIE_EOF) {
+        OSReport("route intro: r120s01 terminal=%d\n", s01);
+    }
+    const int intro_natural = s00 == RE4DC_MOVIE_EOF && s01 == RE4DC_MOVIE_EOF;
+#endif
     RoomData.setPassed(0x120, pG->Part);
+#if RE4DC_ROUTE_MOVIES
+    if (intro_natural) {
+        pG->Scenario_flg[0] &= ~0x10;
+    } else {
+        pG->Scenario_flg[0] |= 0x10;
+    }
+#else
     pG->Scenario_flg[0] |= 0x10;
+#endif
     pG->System_flg |= 0x400;
     pG->System_flg &= ~(0x2000 | 0x100 | 0x80000 | 0x400000 | 0x40);
     pG->room_id_prev = 0x120;

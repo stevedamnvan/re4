@@ -555,6 +555,81 @@ extern "C" void freeEvent(int no, int swap)
     }
 }
 
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_ROUTE_MOVIES
+// Route cutscenes (docs/ROUTE_CUTSCENES.md): every r100 story event that has a
+// PS2 movie is presented by it. The callers below are unchanged: the event
+// starts where the source calls readEvent(no, 1, &evt); a presented event
+// returns 0 there, so the caller skips only its SetEvt/wait/freeEvent block and
+// runs everything around it (flags, enemy sets, positions, traps) in source
+// order. RouteMoviePlay applies the lasting ExeBeginEvt/RunEvtCancel/ExeEndEvt
+// effects. Preloads (wait 0) and events without a movie take the source path.
+#include "route_movie.h"
+extern "C" void Evt_R100S03_Func(Event* e);
+extern "C" void Evt_R100S20_Func(Event* e);
+extern "C" void Evt_R100S40_Func(Event* e);
+
+// Evt_R100S20_Func funcMode 1, cut 2 frame 0: ambush Ganados 1/2 keep updating.
+// PS2 r100s20.evd camera cuts are 60 and 90 frames, so cut 2 is picture 150.
+static int r100MovieS20Cut2;
+static void r100MovieS20Tick(unsigned picture)
+{
+    if (r100MovieS20Cut2 || picture < 150) {
+        return;
+    }
+    r100MovieS20Cut2 = 1;
+    if (!(pG->Debug_flg[0] & 0x02000000)) {
+        W->ems[1]->setNoSuspend(1);
+        W->ems[2]->setNoSuspend(1);
+    }
+}
+
+static int r100RouteReadEvent(int no, int wait, void** out)
+{
+    // r100_evtName index -> PS2 movie. sndFlag bit31 (s41/s43/s44) = no SndEvent.
+    static const struct {
+        int no;
+        unsigned id, flags;
+        RouteEvtFunc func;
+        RouteMovieTick tick;
+    } table[] = {
+        {0, 0x10003, ROUTE_MOVIE_SND_EVENT, (RouteEvtFunc) Evt_R100S03_Func, 0},
+        // The s20 caller sets StatusFlag 0x800: the player keeps its pose.
+        {3, 0x10020, ROUTE_MOVIE_SND_EVENT | ROUTE_MOVIE_KEEP_POSE, (RouteEvtFunc) Evt_R100S20_Func, r100MovieS20Tick},
+        {4, 0x10030, ROUTE_MOVIE_SND_EVENT, 0, 0},
+        {5, 0x10041, 0, 0, 0},
+        {7, 0x10043, 0, 0, 0},
+        {8, 0x10044, 0, 0, 0},
+        // Skip = Evt_R100S40_Func cancel (Scenario[0].0x10), as the source.
+        {9, 0x10040, ROUTE_MOVIE_SND_EVENT, (RouteEvtFunc) Evt_R100S40_Func, 0},
+    };
+    if (wait) {
+        for (unsigned i = 0; i < sizeof(table) / sizeof(table[0]); ++i) {
+            if (table[i].no != no) {
+                continue;
+            }
+            r100MovieS20Cut2 = 0;
+            if (RouteMoviePlay(table[i].id, table[i].flags, table[i].func, table[i].tick) == RE4DC_MOVIE_UNHANDLED) {
+                break;
+            }
+            // The caller's freeEvent(no, 1) is skipped with its block: nothing
+            // was swapped in, so only the unit is cleared. s44's caller frees it.
+            if (no != 8) {
+                freeEvent(no, 0);
+            }
+            if (no == 9) {
+                FadeSetW(0x80000002, 30, 0, 0);  // s40's in-event fade, after the picture
+            }
+            if (out) {
+                *out = 0;
+            }
+            return 0;
+        }
+    }
+    return readEvent(no, wait, out);
+}
+#define readEvent r100RouteReadEvent
+#endif
+
 // The ambush after the officer's death.
 extern "C" void r100_em_set()
 {
