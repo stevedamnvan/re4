@@ -1,8 +1,9 @@
-# Active persistent architecture goal: beat D349 with the recovered game
+# Persistent architecture goal: beat D349 with the recovered game
 
-User-directed architecture and roadmap, updated 2026-09-23. Status: four-owner
-v4 format/CPU fixture qualified at D364; recovered-game cutover is in progress,
-not accepted. This update does not interrupt the current implementation sequence.
+User-directed architecture and roadmap, updated 2026-09-23. Status: **paused by
+user request**, not complete. The four-owner v4 format/CPU fixture is qualified
+at D364; recovered-game cutover remains unaccepted. Resume from
+[R4_D366_CLAUDE_HANDOFF.md](R4_D366_CLAUDE_HANDOFF.md) only when instructed. The architecture and accepted implementation sequence remain unchanged while paused.
 Current primary reference is D362
 62414dc39feccc949af4b3ed29053be9fde4d5fc; preserve all newer/inherited work.
 Historical optimized renderer: 5f42caa634c0e6124c48842e21570033738adfda (D349).

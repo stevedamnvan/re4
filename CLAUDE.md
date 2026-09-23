@@ -2,7 +2,14 @@
 
 Updated 2026-09-23. Project rules: [AGENTS.md](AGENTS.md).
 
-## Active persistent goal and model handoff
+**Paused by the user on 2026-09-23; persistent goal paused, not complete.**
+For Claude or another implementer, start with the [D366 pause handover](port/dreamcast/docs/R4_D366_CLAUDE_HANDOFF.md).
+It records exact worktrees, the rejected FILE_01 candidate, inherited edits and
+the next unimplemented source/native connection. Do not resume until instructed.
+Owned changes were committed; no reduced assets were promoted and no new game
+build was accepted. The architecture and accepted sequence below are unchanged.
+
+## Persistent goal and model handoff
 
 North star: **beat D349, do not merely recreate it**. The recovered game drives
 a cheaper native visual workload while retaining its real source state systems.
@@ -24,8 +31,8 @@ Continue AoS20 integration/reader qualification -> source-backing accounting ->
 FILE_01 PS2/DC reduction -> complete static cutover -> residual CPU/PVR measurement
 -> native actors -> broader visual reductions -> SH-4 tuning. The goal document
 owns the detailed roadmap and historical comparison thresholds.
-The persistent goal remains active; passing an isolated adapter or host test
-does not complete it.
+The persistent goal is paused at the operator's request; it is not complete.
+Passing an isolated adapter or host test does not complete it.
 
 Recovered GameCube source is the simulation/state authority. Productionize the
 existing D349 preparation/converter -> `.re4room` -> native renderer pipeline.
