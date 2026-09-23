@@ -17,11 +17,16 @@
 #                 instead of fdiv in the scenery transform and the clipper projection (render only).
 #   RELEASE_FLAGS=N  debug-disc boot displays off (debug.cpp ConfigSet): 1 heap/process-bar overlay
 #                 (Debug_flg[2] 0x40000000), 2 + pad monitor (0x8000), 3 + debug_mode 0.
+#   FRONT_NATIVE=1 models drawn with only the GX state the native bridge reads (trans.cpp): no TEV /
+#                 tex-gen / specular / vertex-format stub traffic, no specular matrices; same lights,
+#                 matrices, texture objects and parts. 2 = source draw + native replay compared per
+#                 part (model_bridge.cpp, "front_native:" log). Render only.
 COPY_LEAN ?= 0
 FRONT_LEAN ?= 0
 MESH_DIRECT ?= 0
 HW_LEAN ?= 0
 RELEASE_FLAGS ?= 0
+FRONT_NATIVE ?= 0
 ifeq ($(MESH_DIRECT),1)
 ifneq ($(TA_DIRECT),1)
 $(error MESH_DIRECT=1 requires TA_DIRECT=1 (pipeline30 direct TA API))
@@ -30,12 +35,13 @@ endif
 .PHONY: frontend30-force
 $(OBJDIR)/frontend30.h: frontend30-force
 	@mkdir -p $(dir $@)
-	@printf '#define RE4DC_COPY_LEAN %s\n#define RE4DC_FRONT_LEAN %s\n#define RE4DC_MESH_DIRECT %s\n#define RE4DC_HW_LEAN %s\n#define RE4DC_RELEASE_FLAGS %s\n' '$(COPY_LEAN)' '$(FRONT_LEAN)' '$(MESH_DIRECT)' '$(HW_LEAN)' '$(RELEASE_FLAGS)' > $@.tmp
+	@printf '#define RE4DC_COPY_LEAN %s\n#define RE4DC_FRONT_LEAN %s\n#define RE4DC_MESH_DIRECT %s\n#define RE4DC_HW_LEAN %s\n#define RE4DC_RELEASE_FLAGS %s\n#define RE4DC_FRONT_NATIVE %s\n' '$(COPY_LEAN)' '$(FRONT_LEAN)' '$(MESH_DIRECT)' '$(HW_LEAN)' '$(RELEASE_FLAGS)' '$(FRONT_NATIVE)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 FRONTEND30_PLATFORM = $(OBJDIR)/native-reuse/pvr_geometry.o $(OBJDIR)/platform/native_static.o \
 	$(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/gx_stub.o $(OBJDIR)/platform/native_draw_plan_owner.o
-FRONTEND30_GAME = $(OBJDIR)/model_asset_bridge.o $(OBJDIR)/src/game/trans.o $(OBJDIR)/src/game/eprintf.o $(OBJDIR)/src/game/main_mem.o $(OBJDIR)/src/game/debug.o
+FRONTEND30_GAME = $(OBJDIR)/model_asset_bridge.o $(OBJDIR)/src/game/trans.o $(OBJDIR)/src/game/eprintf.o $(OBJDIR)/src/game/main_mem.o $(OBJDIR)/src/game/debug.o \
+	$(OBJDIR)/model_bridge.o
 $(FRONTEND30_PLATFORM) $(FRONTEND30_GAME): $(OBJDIR)/frontend30.h
 $(FRONTEND30_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/frontend30.h
 $(FRONTEND30_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/frontend30.h

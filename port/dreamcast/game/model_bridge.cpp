@@ -83,6 +83,76 @@ extern "C" void re4dc_model_alpha_material(const void* object,unsigned ref,unsig
     (void)object;(void)ref;(void)same_uv;
 #endif
 }
+#if RE4DC_FRONT_NATIVE>=2
+// D367 FRONT_NATIVE=2 (trans.cpp ModelRender): the source path records a hash per field group of
+// every part it submits for one model (mode 1); the native replay (mode 2) is compared part by
+// part and not drawn. Groups: 0 geometry/arrays/modes, 1 modelview, 2 projection+viewport,
+// 3 texture+uv, 4 alpha state, 5 alpha mask, 6 static binding, 7 lighting contents.
+extern "C" void re4dc_log(const char* fmt,...);
+namespace {
+constexpr unsigned kFrontParts=512,kFrontGroups=8;
+unsigned front_mode,front_n,front_k,front_model_bad,front_block=~0U,front_logged;
+unsigned front_hash[kFrontParts][kFrontGroups];
+unsigned front_models,front_parts,front_bad_parts,front_bad_models,front_group_bad[kFrontGroups];
+inline unsigned fnv(unsigned h,const void* p,unsigned n){
+    auto* b=(const unsigned char*)p;for(unsigned i=0;i<n;++i)h=(h^b[i])*16777619U;return h;
+}
+template<class T> inline unsigned fv(unsigned h,const T& v){return fnv(h,&v,sizeof(v));}
+inline unsigned fimg(unsigned h,const Re4dcUiImage& i){
+    h=fv(h,i.pixels);h=fv(h,i.palette);h=fv(h,i.width);h=fv(h,i.height);h=fv(h,i.format);
+    h=fv(h,i.palette_format);return fv(h,i.palette_bytes);
+}
+void front_hash_part(const Re4dcModelPart* p,unsigned* g){
+    const unsigned s=2166136261U;unsigned h=s;
+    h=fv(h,p->model);h=fv(h,p->info);h=fv(h,p->part);h=fv(h,p->positions);h=fv(h,p->normals);
+    h=fv(h,p->uv);h=fv(h,p->stream);h=fv(h,p->position_count);h=fv(h,p->normal_count);
+    h=fv(h,p->position_stride);h=fv(h,p->stream_bytes);h=fv(h,p->shift);h=fv(h,p->flags);
+    h=fv(h,p->cull);h=fv(h,p->blend);h=fv(h,p->depth_mode);h=fv(h,p->material_flags);
+    h=fv(h,p->colors);h=fv(h,p->normal_stride);h=fv(h,p->normal_shift);g[0]=fv(h,p->static_geometry);
+    g[1]=fnv(s,p->modelview,sizeof(p->modelview));
+    g[2]=fnv(fnv(s,p->projection,sizeof(p->projection)),p->viewport,sizeof(p->viewport));
+    h=fimg(s,p->image);h=fv(h,p->uv_offset[0]);h=fv(h,p->uv_offset[1]);h=fv(h,p->wrap_s);g[3]=fv(h,p->wrap_t);
+    g[4]=fv(s,p->alpha_state);
+    h=fimg(s,p->mask);h=fv(h,p->mask_ref);g[5]=fv(h,p->mask_same_uv);
+    h=fv(s,p->serial);h=fv(h,p->world);h=fv(h,p->view);g[6]=fnv(h,p->source_key,sizeof(p->source_key));
+    g[7]=p->lighting?fnv(s,p->lighting,sizeof(*p->lighting)):0;
+}
+int front_verify_part(const Re4dcModelPart* p){
+    if(!front_mode)return 0;
+    unsigned g[kFrontGroups];front_hash_part(p,g);
+    if(front_mode==1){
+        if(front_n<kFrontParts)memcpy(front_hash[front_n],g,sizeof(g));
+        ++front_n;return 0;
+    }
+    const unsigned k=front_k++;++front_parts;
+    unsigned bad=k<front_n && k<kFrontParts?0U:0x100U;
+    for(unsigned i=0;!bad && i<kFrontGroups;++i)if(g[i]!=front_hash[k][i]){bad|=1U<<i;++front_group_bad[i];}
+    if(bad){
+        ++front_bad_parts;front_model_bad=1;
+        if(front_logged<24){++front_logged;
+            re4dc_log("front_native: MISMATCH frame=%u model=%p info=%p part=%p k=%u groups=0x%x\n",
+                      pG->Frame_cnt,p->model,p->info,p->part,k,bad);}
+    }
+    return 1;
+}
+}
+extern "C" void re4dc_front_verify(int mode){
+    if(mode==1)front_n=0;
+    else if(mode==2){front_k=0;front_model_bad=0;}
+    else if(front_mode==2){
+        ++front_models;
+        if(front_k!=front_n){front_model_bad=1;
+            if(front_logged<24){++front_logged;re4dc_log("front_native: COUNT frame=%u source=%u native=%u\n",pG->Frame_cnt,front_n,front_k);}}
+        front_bad_models+=front_model_bad;
+        const unsigned block=pG->Frame_cnt/600;
+        if(block!=front_block){front_block=block;
+            re4dc_log("front_native: frame=%u models=%u parts=%u bad_models=%u bad_parts=%u groups=%u,%u,%u,%u,%u,%u,%u,%u\n",
+                pG->Frame_cnt,front_models,front_parts,front_bad_models,front_bad_parts,front_group_bad[0],front_group_bad[1],
+                front_group_bad[2],front_group_bad[3],front_group_bad[4],front_group_bad[5],front_group_bad[6],front_group_bad[7]);}
+    }
+    front_mode=(unsigned)mode;
+}
+#endif
 extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
  const void* part_ptr,const float mv[3][4],unsigned pass){
     if(!re4dc_model_diagnostic_enabled() || pass)return;
@@ -135,6 +205,9 @@ extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
         p.serial=m->serial;p.world=&m->mat[0][0];p.view=&pG->Cam.v_mat[0][0];
         p.source_key[0]=part->texId;p.source_key[1]=(part->flags&4)?part->alphaTex:0xff;
     }
+#endif
+#if RE4DC_FRONT_NATIVE>=2
+    if(front_verify_part(&p))return;  // native replay: compared, not drawn
 #endif
     re4dc_model_submit(&p);
 }

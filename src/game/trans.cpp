@@ -182,6 +182,27 @@ static int frontLean(cModel* m)
     return FRONT_LEAN_LIGHTS | (rigidAll ? FRONT_LEAN_WEIGHTS : 0);
 }
 #endif
+// D367 frontend30 FRONT_NATIVE (obj/frontend30.h; default off = previous image). On Dreamcast the
+// GX calls of the model draw are stubs: only the texture objects, the channel / light / normal
+// matrix state (g_lighting, material alpha), the final colour-stage scale and the projection /
+// viewport reach the native bridge (model_bridge.cpp); TEV stages, tex gens, vertex descriptors,
+// blend / z / cull / alpha-compare modes and display lists are sinks. FRONT_NATIVE=1 draws a model
+// with only the state the bridge reads: the same lights, info walk, matrices, texture objects,
+// material / alpha-mask selection and colour scale in the same order, then the same
+// re4dc_draw_model_part per part. Thermal scope, refraction / EFB shaders, self shadow, cast-shadow
+// candidates, the flat colour mode (be_flag 0x20000) and unlit models keep the source path.
+// FRONT_NATIVE=2 draws with the source path and replays the native path without drawing,
+// comparing every part the bridge would submit field by field (model_bridge.cpp). Render-only.
+#ifndef RE4DC_FRONT_NATIVE
+#define RE4DC_FRONT_NATIVE 0
+#endif
+#if RE4DC_FRONT_NATIVE && defined(__sh__)
+extern "C" int re4dc_model_diagnostic_enabled();
+extern "C" void re4dc_log(const char* fmt, ...);
+extern "C" void re4dc_front_verify(int mode);  // model_bridge.cpp: 1 record, 2 compare, 0 off
+static int frontNativeOk(cModel* m);
+static void frontNativeRender(cModel* m, int dry);
+#endif
 
 // Bit test as 0 / 1 (matching helper).
 static inline int isBit(u32 f, u32 b)
@@ -1187,6 +1208,25 @@ void ModelRender(cModel* m)
     if (m->invisible_factor * m->invisible_factor2 == 0.0f) {
         return;
     }
+#if RE4DC_FRONT_NATIVE && defined(__sh__)
+    int frontNative = frontNativeOk(m);
+#if RE4DC_FRONT_NATIVE < 2
+    if (frontNative) {
+        frontNativeRender(m, 0);
+        return;
+    }
+#else
+    // The replay must meet the texture objects / TPL cache the source path met.
+    static GXTexObj frontTexObj[0xF8];
+    u32 frontBeFlag = m->be_flag;
+    void* frontTpl = g_prev_tpl_addr;
+    void* frontAddTpl = g_prev_add_tpl_addr;
+    if (frontNative) {
+        memcpy(frontTexObj, GXWORK()->texObj, sizeof(frontTexObj));
+        re4dc_front_verify(1);
+    }
+#endif
+#endif
     GXSetAlphaCompare(7, 0, 1, 7, 0);
     if (m->z_mode == 0) {
         GXSetZMode(1, 3, 1);
@@ -1234,6 +1274,22 @@ void ModelRender(cModel* m)
     if (pG->Debug_flg[1] & 0x40000000) {
         m->drawAllBoundingBox(m->pModelInfo);
     }
+#if RE4DC_FRONT_NATIVE >= 2 && defined(__sh__)
+    if (frontNative) {
+        // Replay natively without drawing and compare each part with the one just submitted.
+        // The replay starts from the source path's inputs: its end-of-draw mark (ot_type 7,
+        // be_flag 0x08000000) would steer the info walk, so it is set aside meanwhile.
+        u32 after = m->be_flag;
+        m->be_flag = frontBeFlag;
+        memcpy(GXWORK()->texObj, frontTexObj, sizeof(frontTexObj));
+        PSet(g_prev_tpl_addr, frontTpl);
+        PSet(g_prev_add_tpl_addr, frontAddTpl);
+        re4dc_front_verify(2);
+        frontNativeRender(m, 1);
+        re4dc_front_verify(0);
+        m->be_flag = after;
+    }
+#endif
 }
 
 // Draws every model info of `m`: the shadow-cast light when a shadow light covers it, material
@@ -1514,6 +1570,266 @@ void commonModelTrans(cModel* m, cModelInfo* info, Mtx viewMat, int flag)
         }
     }
 }
+
+#if RE4DC_FRONT_NATIVE && defined(__sh__)
+// FRONT_NATIVE: a model the native path draws exactly as the source would. Everything else
+// (thermal scope, refraction / EFB, self shadow, cast-shadow candidates, flat colour mode, unlit
+// light info, an invalid light type, bridge off) keeps the source path.
+static int frontNativeWhy(cModel* m)
+{
+    if (!re4dc_model_diagnostic_enabled()) {
+        return 1;
+    }
+    if (m->be_flag & 0x00020000) {
+        return 2;  // flat colour mode
+    }
+    if (m->LightInfo.Flag & 4) {
+        return 3;  // unlit (LightDisable)
+    }
+    if (pG->Status_flg[1] & 0x04000000) {
+        return 4;  // thermal scope
+    }
+    if (m->Shader_type == 1 || m->Shader_type == 2) {
+        return 5;  // refraction / EFB
+    }
+    if ((pG->Status_flg[2] & 0x00100000) && (m->be_flag & 0x02000000) && !(pG->Disp_flg & 0x00040000) &&
+        (pG->Status_flg[1] & 0x200) && !(pG->Status_flg[1] & 0x100)) {
+        return 6;  // cast-shadow candidate
+    }
+    if ((pGS->Status_flg[0] & 1) && isSelfUse) {
+        for (u32 i = 0; i < (u32) g_SelfShdNum; i++) {
+            if (GetSelfShadowMng(i)->pModel[0] == m) {
+                return 7;  // self shadow
+            }
+        }
+    }
+    if (!(m->be_flag & 0x8000)) {
+        cLight** list = m->LightInfo.pLight;
+        for (int i = 0; i < 8; i++) {
+            if (list[i] != NULL && list[i]->xD > 7) {
+                return 8;  // invalid light type (the source clears the light)
+            }
+        }
+    }
+    return 0;
+}
+
+// Per model: native or the source path's reason (frontNativeWhy); counts logged every 600 frames.
+static int frontNativeOk(cModel* m)
+{
+    static u32 count[9];
+    static u32 block = ~0U;
+    int why = frontNativeWhy(m);
+    count[why]++;
+    if (pG->Frame_cnt / 600 != block) {
+        block = pG->Frame_cnt / 600;
+        re4dc_log("front_native: frame=%u native=%u source=%u,%u,%u,%u,%u,%u,%u,%u\n", pG->Frame_cnt, count[0], count[1],
+                  count[2], count[3], count[4], count[5], count[6], count[7], count[8]);
+    }
+    return why == 0;
+}
+
+// commonModelTrans(m, info, viewMat, 0) for a frontNativeOk model, keeping only what reaches the
+// bridge: per info the material colour, the position / normal matrices, the texture objects (same
+// TPL cache, wrap fix-up and cTexChg swaps); per part the material texture (animated frame, UV
+// scroll), the alpha mask (part flags 4), the model's colour-stage scale and the faded material
+// alpha. `dry` (FRONT_NATIVE=2 replay): no foot shadow or draw mark.
+static void frontNativeModelTrans(cModel* m, Mtx viewMat, int dry)
+{
+    GxWork* gx = GXWORK();
+    cModelInfo* info = m->pModelInfo;
+    int matSet = 0;
+    int scale;
+    const f32 fade = m->invisible_factor * m->invisible_factor2;
+
+    PSet(g_pShdMng, 0);
+    // shaderSetup's last colour stage (the value the bridge reads after every part's setup).
+    switch (m->TevScaleGroup) {
+    case 0:
+    case 1:
+        switch (gxCsScale[m->TevScaleGroup]) {
+        case 0:
+            scale = 0;
+            break;
+        case 1:
+            scale = 1;
+            break;
+        case 2:
+            scale = 2;
+            break;
+        default:
+            scale = 0;
+            pLog->err(0, 0, "ShaderSetup() TEV_SCALE ERROR %d", gxCsScale[m->TevScaleGroup]);
+            break;
+        }
+        break;
+    case 4:
+        scale = 0;
+        break;
+    case 5:
+        scale = 1;
+        break;
+    case 6:
+        scale = 2;
+        break;
+    default:
+        scale = 0;
+        pLog->err(0, 0, "ShaderSetup() TEV_SCALE ERROR %d", m->TevScaleGroup);
+        break;
+    }
+    while (info != 0) {
+        ModelData* d;
+        u16 nParts;
+        ModelPart* part;
+        u32 i;
+
+        if (!(pG->Status_flg[1] & 0x100) && m->ot_type == 7) {
+            if ((m->be_flag & 0x08000000) ? !(info->be_flag & 0x40) : (info->be_flag & 0x40)) {
+                info = info->pList;
+                continue;
+            }
+        }
+        if (info->be_flag & 0x20) {
+            GXSetChanMatColor(4, *(GXColor*) info->color);
+            matSet = 1;
+        } else if (matSet == 1) {
+            GXSetChanMatColor(4, *(GXColor*) m->pModelInfo->color);
+        }
+        if (PTR_INVALID(info)) {
+            pLog->err(0, 0, "commonModelTrans() pModelInfo INVALID PTR %08X", info);
+            break;
+        }
+        if (!(info->be_flag & 8)) {
+            info = info->pList;
+            continue;
+        }
+        d = info->pData;
+        if (PTR_INVALID(d)) {
+            pLog->err(0, 0, "commonModelTrans() pHead PTR ERR %08x", d);
+            return;
+        }
+        if (d->nTex > 0xF7) {
+            pLog->err(0, 0, "commonModelTrans() TEXOBJ OVERFLOW %d", d->nTex);
+            return;
+        }
+        Mtx pm;
+        Mtx mv;
+        if (m->be_flag & 0x4000) {
+            PSMTXConcat(m->mat, (f32(*)[4]) &info->x5C, pm);
+        } else if (d->weight_palette_num <= 1 && d->weight_ext_num <= 0xFF && !(info->be_flag & 2) && d->nParts == 1) {
+            PSMTXConcat(m->getPartsPtr(d->pHead->partsNo)->mat, (f32(*)[4]) &info->x5C, pm);
+        } else {
+            PSMTXConcat(m->pParts->mat, (f32(*)[4]) &info->x5C, pm);
+        }
+        PSMTXConcat(viewMat, pm, mv);
+#if RE4DC_FRONT_LEAN
+        if (!g_leanRender)
+#endif
+        {
+            Mtx inv;
+            Mtx nrm;
+            PSMTXInverse(mv, inv);
+            PSMTXTranspose(inv, nrm);
+            GXLoadNrmMtxImm(nrm, 0);
+        }
+        if (g_prev_tpl_addr != info->tpl_addr || g_prev_add_tpl_addr != info->pAddTpl) {
+            for (i = 0; i < ((TEXPalette*) info->tpl_addr)->numDescriptors + info->nAddTex; i++) {
+                TEXPalette* tpl = (TEXPalette*) info->tpl_addr;
+                TEXDescriptor* td;
+                if (tpl->numDescriptors == 0) {
+                    td = TEXGet(info->pAddTpl, i);
+                } else if (i < tpl->numDescriptors) {
+                    td = TEXGet(tpl, i);
+                } else {
+                    td = TEXGet(info->pAddTpl, i - tpl->numDescriptors);
+                }
+                if ((s32) d->flags < 0) {
+                    TEXHeader* wh = td->textureHeader;
+                    wh->wrapT = 1;
+                    wh->wrapS = 1;
+                }
+                // GXInitTexObjLOD is a sink: only the base object is kept.
+                GXInitTexObj(&gx->texObj[i], td->textureHeader->data, td->textureHeader->width, td->textureHeader->height,
+                             td->textureHeader->format, td->textureHeader->wrapS, td->textureHeader->wrapT,
+                             td->textureHeader->minLOD == td->textureHeader->maxLOD ? 0 : 1);
+            }
+            if (MODEL_EXT(m)->pTexChg != 0) {
+                MODEL_EXT(m)->pTexChg->move(gx->texObj);
+            }
+        }
+        PSet(g_prev_tpl_addr, info->tpl_addr);
+        PSet(g_prev_add_tpl_addr, info->pAddTpl);
+        nParts = d->displist_num;
+        part = d->pParts;
+        ModelTexInfo* t = MODEL_TEX(info);
+        const f32 a = fade * info->invisible_factor;
+        for (i = 0; i < nParts; i++) {
+            u8* p;
+            u8 texId = part->texId;
+            if ((t->flags & 2) && t->anim != 0) {
+                texId = (t->anim + 4)[t->frame];
+            }
+            re4dc_model_material(texId <= 0xF7 ? &gx->texObj[texId] : 0, t->u, t->v, t->flags);
+            if (part->flags & 4) {
+                u8 ref = m->alpha_omit;
+                re4dc_model_alpha_material(part->alphaTex <= 0xF7 ? &gx->texObj[part->alphaTex] : 0,
+                                          ref == 0xFF ? part->alphaRef : ref, !(info->flagsDC & 8));
+            }
+            GXSetTevColorOp(0, 0, 0, scale, 1, 0);
+            if (a < 1.0f) {
+                GXColor c = *(GXColor*) info->color;
+                c.a = (u8) ((f32) (int) c.a * a);
+                GXSetChanMatColor(4, c);
+            }
+            p = (u8*) part + 0x20;
+            if ((u32) p & 0x1F) {
+                HALT();
+            }
+            re4dc_draw_model_part(m, info, part, mv, 0);
+            part = (ModelPart*) (p + part->size);
+        }
+        info = info->pList;
+    }
+    if (dry) {
+        return;
+    }
+    if (!(pG->Status_flg[1] & 0x100)) {
+        if (MODEL_EXT(m)->pFootShadowTbl != 0 && (m->be_flag & 0x10)) {
+            DrawFootShadow((cEm*) m);
+        }
+        if (m->ot_type == 7) {
+            m->be_flag |= 0x08000000;
+        }
+    }
+}
+
+// ModelRender for a frontNativeOk model: projection, lights, the native model walk, then
+// shaderReset's channel-0 state (its other GX calls are sinks).
+static void frontNativeRender(cModel* m, int dry)
+{
+    CameraCurrentProjection();
+#if RE4DC_FRONT_LEAN
+    g_leanRender = frontLean(m) & FRONT_LEAN_LIGHTS;
+    if (!g_leanRender && !dry) {
+        for (u32 k = 0; k < g_leanSkippedNum; k++) {
+            if (g_leanSkipped[k] == m) {
+                LightMgr.setModel2(m);
+                break;
+            }
+        }
+    }
+#endif
+    LightSetModel(m);
+    frontNativeModelTrans(m, pG->Cam.v_mat, dry);
+#if RE4DC_FRONT_LEAN
+    g_leanRender = 0;
+#endif
+    GXSetChanCtrl(0, 0, 0, 0, 0, 0, 2);
+    if (!dry && (pG->Debug_flg[1] & 0x40000000)) {
+        m->drawAllBoundingBox(m->pModelInfo);
+    }
+}
+#endif
 
 // Applies the model's texture replacements (texture object `from` -> `to` pairs).
 void cTexChg::move(GXTexObj* texObj)
