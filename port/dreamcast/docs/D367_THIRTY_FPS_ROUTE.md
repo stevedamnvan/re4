@@ -143,7 +143,7 @@ console calibrate them.
 | 6 | PVR pipeline, fast wake, lean bridge | 217 -> 200 | overlaps render on hardware | Done (a1db43d) |
 | 7 | Scenery LOD + source fog + far cull | 200 -> 150 | scenery ~9-11 ms | Done (64b25dd) |
 | 8 | Fast actor path + deferred skinning | 150 -> 117 (actors 51 -> 18) | actors ~16 ms | Done (4fa839d) |
-| 9 | PS2 trees | -2.5 ms work, heap +370 KB | worst views 61.7k -> 35.7k corners | Done, staged data (ps2-blender) |
+| 9 | PS2 trees | -2.5 ms work, heap +370 KB | worst views 61.7k -> 35.7k corners | Done; tooling committed (7a7036a) |
 | 10 | Async present (PVR_PIPELINE=2, private KOS) | removes part of ~19 ms pacing waste | overlaps CPU and render | Done: LF, adopted as default (neutral in Flycast) |
 | 11 | Actors pass 2: static room objects, whole-part LOD, 16-bit UV | ~18 -> ~8 | ~16 -> 3-5 | In progress |
 | 12 | Game CPU: SH-4 matrix kernels, PS alias links, room index, rot cache | ~-6 | more (call overhead, cache) | Code proven; Flycast validation running |
@@ -154,8 +154,8 @@ console calibrate them.
 | 17 | Hardware projection model (pairing + I/D-cache simulation) | - | ranks items 18-21 | In progress |
 | 18 | pref / OC-RAM transform cache / fsrra in render code | ~0 in Flycast | est. several ms | Waiting on #17 ranking |
 | 19 | I-cache hot/cold code layout | ~0 in Flycast | potentially large (8 KB IC, large code) | Waiting on #17 |
-| 20 | Tree impostors beyond ~8 m | modelled scenery 16 -> 12 | -2 to -3 | Not started (needs a textured-quad path) |
-| 21 | Lighter near-camera FILE_01 houses | ~8 of 16 ms modelled scenery | -2 to -4 | Open: PS2 gives no gain; needs custom meshes |
+| 20 | Tree impostors beyond ~12-15 m (16 views x 128, 4bpp VQ, 82 KB VRAM) | - | -1.0 to -1.2 (heavy mean 8.62 -> 7.39-7.64 ms with PS2 trees) | Designed; needs a batched punch-through quad path. Flat at 8 m |
+| 21 | Lighter near-camera FILE_01 houses (5.18 of 8.6 ms hardware scenery; 17.1k corners in 3.9k strips) | - | automatic Blender reduction only -0.17 at acceptable error; new low-poly shells with a baked texture could save most of ~4 ms | Open: needs package-supplied textures + new house meshes |
 | 22 | Bytes-based TA guard + 32-byte limits (Sega rules) | 0 | correctness | After #16 |
 | - | Costs being added: music + SFX, FMV decode (cutscenes only) | +1-3 ms in gameplay | +1-3 ms | Audio and cutscene agents |
 
