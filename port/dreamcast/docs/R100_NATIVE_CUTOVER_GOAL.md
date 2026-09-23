@@ -1,5 +1,9 @@
 # Persistent architecture goal: beat D349 with the recovered game
 
+**Superseded 2026-09-23 by [D367_THIRTY_FPS_ROUTE.md](D367_THIRTY_FPS_ROUTE.md)**
+(30 fps on hardware, three-room route, frame time leads every decision). The
+contract below is kept as history; where they conflict, D367 wins.
+
 User-directed architecture and roadmap, updated 2026-09-23. Status: **paused by
 user request**, not complete. The four-owner v4 format/CPU fixture is qualified
 at D364; recovered-game cutover remains unaccepted. Resume from

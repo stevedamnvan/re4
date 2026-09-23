@@ -2,12 +2,16 @@
 
 Updated 2026-09-23. Project rules: [AGENTS.md](AGENTS.md).
 
-**Paused by the user on 2026-09-23; persistent goal paused, not complete.**
-For Claude or another implementer, start with the [D366 pause handover](port/dreamcast/docs/R4_D366_CLAUDE_HANDOFF.md).
-It records exact worktrees, the rejected FILE_01 candidate, inherited edits and
-the next unimplemented source/native connection. Do not resume until instructed.
-Owned changes were committed; no reduced assets were promoted and no new game
-build was accepted. The architecture and accepted sequence below are unchanged.
+**Active again since 2026-09-23 (D367, Claude, user-directed).** Current goal:
+30 fps on real Dreamcast hardware, and the recovered game playing r100 -> r101
+-> r103 with cutscenes (PS2 FMV), music, inventory and retry. Start with
+[D367_THIRTY_FPS_ROUTE.md](port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md).
+It holds the user's decision rules (frame time leads), the official hardware
+budget, measured progress (1390 -> 117 ms/frame in Flycast) and the route plan.
+The sections below (D366 pause, the four-owner "beat D349" sequence, Sol/Max
+assignment) are historical context; where they conflict, D367 wins. The
+[D366 pause handover](port/dreamcast/docs/R4_D366_CLAUDE_HANDOFF.md) still
+describes the inherited dirty overlay.
 
 ## Persistent goal and model handoff
 
