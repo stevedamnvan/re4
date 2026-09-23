@@ -14,6 +14,10 @@
 # recorded in <disc-dir>/stage-inputs.txt.
 # GDI=1 also writes the GDEMU image (mkgdi.sh) from the same tree to GDI_OUT
 # (default <disc-dir>/gdi; put it on /mnt/d when WSL's host drive is short).
+# AICA_BANKS=1 (default) converts the route's sound banks to AICA ADPCM in place and
+# adds bgm/aica_str.dat (the disc streams), tools/aica_banks.py disc, for AICA_AUDIO=1
+# images (the silent audio_stub.cpp never reads either). AICA_CACHE (private, default
+# /root/probe/d367-aica-cache) keeps the conversions: ~25 s the first time, ~2 s after.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 build=${1:?usage: stage.sh <build-dir> <disc-dir>}
@@ -22,7 +26,8 @@ base=${D367_BASE:-/root/probe/d367-native-static}
 mirror=${MIRROR:-/root/probe/d362-mirror}
 fixtures=$(mktemp -d "${TMPDIR:-/tmp}/re4dc-fixtures.XXXXXX")
 overlay=
-trap 'rm -rf "$fixtures" ${overlay:+"$overlay"}' EXIT
+aica=
+trap 'rm -rf "$fixtures" ${overlay:+"$overlay"} ${aica:+"$aica" "$aica.json"}' EXIT
 export RE4DC_KOS_BASE=${RE4DC_KOS_BASE:-/root/work/kos-re4dc-d336}
 set +u; source "$here/../../kos-env.sh"; set -u
 rmdir "$fixtures"; cp -al "${FIXTURES_SRC:-/root/probe/d354v7-fixtures}" "$fixtures"
@@ -82,7 +87,14 @@ if [ -n "${ROOMFILES:-}" ]; then
   done
   mirror=$overlay
 fi
+if [ "${AICA_BANKS:-1}" = 1 ]; then
+  aica=$(mktemp -d "${TMPDIR:-/tmp}/re4dc-aica.XXXXXX"); rmdir "$aica"
+  python3 "$here/../aica_banks.py" disc --mirror "$mirror" --out "$aica" \
+    --cache "${AICA_CACHE:-/root/probe/d367-aica-cache}" --json "$aica.json" | tail -1
+  mirror=$aica
+fi
 bash "$here/mkdisc-hardlink.sh" "$build/re4dc-game.elf" "$mirror" "$out" "$fixtures"
+if [ -n "$aica" ]; then mv "$aica.json" "$out/aica-budget.json"; fi
 {
   echo "build=$build candidate=$(cat "$build/candidate.txt" 2>/dev/null || echo '?')"
   echo "MIRROR=${MIRROR:-/root/probe/d362-mirror} ROOMFILES=${ROOMFILES:-} FIXTURES_SRC=${FIXTURES_SRC:-/root/probe/d354v7-fixtures} KEYED=${KEYED:-$base/keyed12} MESHDIR=${MESHDIR:-} MESHROOMS=${MESHROOMS:-}"
