@@ -97,6 +97,7 @@ drawn. Kamui never overflows.
 | LD | 117 | PS2 trees (ps2-blender stage.sh overlay). About 2.5 ms less work; COMMON package 507 -> 136 KB, so heap 4 gains ~370 KB. **Chosen.** |
 | LE | 117-119 | PS2 "groves" variant. 6% more TA data; a few more background trunks; the visual gain is negligible. Rejected by the frame-time rule. |
 | LF | 117 | LD + async present (PVR_PIPELINE=2, KOS patch `kos-804b319-async-present`). Work ~96 ms plus ~6 ms fence wait still lands on the 100 ms+ vblank step, so Flycast shows no change. **Adopted as the default**: the better architecture (CPU no longer waits on render), per the user's rule. |
+| FE | 100 | LD + frontend30 (COPY_LEAN, FRONT_LEAN, MESH_DIRECT+TA_DIRECT+NATIVE_ACTOR_DIRECT; de03f28): work 95.9 -> 79.9 ms, one vblank step fewer. The logic trace is STRICT. Being re-validated on LF. |
 
 Remaining work in LC is about 98 ms. It rounds up to 7 vblanks.
 
@@ -147,8 +148,8 @@ console calibrate them.
 | 11 | Actors pass 2: static room objects, whole-part LOD, 16-bit UV | ~18 -> ~8 | ~16 -> 3-5 | In progress |
 | 12 | Game CPU: SH-4 matrix kernels, PS alias links, room index, rot cache | ~-6 | more (call overhead, cache) | Code proven; Flycast validation running |
 | 13 | FP 6B (contract-off + FDLIBM), then O2 on hot objects | ~0 to -2 | -1 to -3 | Validation running |
-| 14 | Memory-copy audit (~15 ms) | -8 to -12 | more (cache thrash) | In progress |
-| 15 | GC render front-end removal (objTrans ~13, EspTrans ~3, light setup, GX stubs) | -10 to -15 | similar | In progress (same agent as 14) |
+| 14 | Memory-copy audit (~15 ms) | -7.5 (COPY_LEAN) | more (cache thrash) | Done (de03f28); validating on LF |
+| 15 | GC render front-end removal (objTrans, light setup, normal matrices, draw-plan walk) + direct TA meshes | -6.4 (FRONT_LEAN) -3.6 (MESH_DIRECT) | similar | Done (de03f28); validating on LF |
 | 16 | UI VRAM diet -> 1.5-2 MiB vertex banks | 0 | required so hardware doesn't overflow | Patch proven: title peak 3.95 MB -> 1.04 MB, r100 0 upload failures at 1536/2048 KB (LRU + fail-fast + VQ). Validating on LF |
 | 17 | Hardware projection model (pairing + I/D-cache simulation) | - | ranks items 18-21 | In progress |
 | 18 | pref / OC-RAM transform cache / fsrra in render code | ~0 in Flycast | est. several ms | Waiting on #17 ranking |
@@ -196,7 +197,7 @@ run in it; "r101 works" commits are the separate room viewer.
 | W6 | Door lifecycle: relink-overlap hazard, module .bss reset, ARAlloc reset, KOS headroom | In progress (relink vs reload captures) |
 | W7 | r101 events with FMV presentation | In progress (PS2 FMV, ROUTE_MOVIES=1) |
 | W8 | r101 -> r103 | Not started |
-| W9 | r101/r103 scenery packages | Not started |
+| W9 | r101/r103 scenery packages | In progress (converter generalised to r101/r103; drops ~2.05 MB of GC geometry from heap 4) |
 | W10 | GDEMU image | Not started |
 | W11 | Inventory backing and retry | Not started |
 | W12 | Audio (music and sound effects) | In progress (AICA SFX + music) |
