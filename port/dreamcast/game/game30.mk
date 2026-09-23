@@ -363,6 +363,7 @@ GAME30_HOT_OBJS = \
 	$(OBJDIR)/src/game/view.o
 GAME30_HOT_MODULE_PATTERNS = \
 	$(OBJDIR)/mod/em12/%.o \
+	$(OBJDIR)/mod/em10g/%.o \
 	$(OBJDIR)/mod/em23/%.o \
 	$(OBJDIR)/mod/wep02/%.o
 
@@ -424,6 +425,32 @@ $(OBJDIR)/platform/mtx.o: GAME30_OBJ_FLAGS = $(GAME30_O2_FLAGS)
 else
 $(error GAME_O2 must be 0, hot or game)
 endif
+endif
+# GAME_COLD_OS=1 (needs GAME_FP_CONTRACT=off): -Os for code that never runs in the frame loop of
+# the route's gameplay (title/save/options/merchant/puzzle/debug screens and the Sscrn sub-screen
+# REL, SUBSCREEN=1). Image bytes are heap-4 bytes (ARENA_FIT=1); with contraction off the FP
+# results are the same at any -O level, and the decomp guards are kept as for -O2.
+GAME_COLD_OS ?= 0
+GAME30_COLD_OBJS = \
+	$(OBJDIR)/src/game/title.o \
+	$(OBJDIR)/src/game/card.o \
+	$(OBJDIR)/src/game/option.o \
+	$(OBJDIR)/src/game/t_option.o \
+	$(OBJDIR)/src/game/merchant.o \
+	$(OBJDIR)/src/game/puzzle.o \
+	$(OBJDIR)/src/game/db_cam.o \
+	$(OBJDIR)/src/game/debug.o \
+	$(OBJDIR)/src/game/dbmodule.o \
+	$(OBJDIR)/src/game/t_bugcheck.o \
+	$(OBJDIR)/src/game/mercenaries.o
+GAME30_COLD_MODULE_PATTERNS = $(OBJDIR)/mod/Sscrn/%.o
+ifeq ($(GAME_COLD_OS),1)
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_COLD_OS changes fmac formation unless GAME_FP_CONTRACT=off)
+endif
+$(GAME30_COLD_OBJS) $(GAME30_COLD_MODULE_PATTERNS): GAME30_OBJ_FLAGS = -Os $(GAME30_DECOMP_SAFE)
+else ifneq ($(GAME_COLD_OS),0)
+$(error GAME_COLD_OS must be 0 or 1)
 endif
 
 # GAME_FDLIBM=1 (needs GAME_FP_CONTRACT=off; part of 6B step 1, before the baseline is recaptured):

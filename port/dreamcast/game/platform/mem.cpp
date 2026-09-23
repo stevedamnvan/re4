@@ -17,7 +17,11 @@
 
 struct Re4dcMemLayout re4dc_mem;
 
-static const unsigned long kSoundSize = 0x80000;    // SND_DATA_TOP 0x80370000 to GX FIFO 0x803F0000
+// SND_DATA_TOP 0x80370000 to GX FIFO 0x803F0000 on the GameCube (512 KiB). SndInit fills it from
+// the bottom (stream header, tables, 4 x 16 KiB blocks, 64 KiB block/BGM zone, 4 x 32 KiB stream
+// buffers, sub data) and nothing uses the rest; SOUND_REGION_BYTES (Makefile) may carve less.
+static const unsigned long kSoundSize = RE4DC_SOUND_REGION_BYTES;
+static_assert(kSoundSize >= 0x40000 && kSoundSize <= 0x80000 && kSoundSize % 32 == 0);
 // Makefile regenerates the one-object budget header when the selected profile
 // changes. Default remains the full reference; candidate bytes come from the
 // compact-core report, including identity records/table and 32-byte alignment.
@@ -51,13 +55,32 @@ void re4dc_mem_init(void)
     // A selected candidate may leave RE4DC_ARENA_KOS_BYTES more to KOS (Makefile).
     unsigned long want = 13 * 1024 * 1024 - kArenaKosBytes;
     printf("re4dc_mem: arena request %lu bytes (%lu left to KOS)\n", want, kArenaKosBytes);
+    unsigned long step = 0x40000;
+#if defined(RE4DC_ARENA_FIT) && RE4DC_ARENA_FIT
+    // ARENA_FIT=1: when the full request does not fit under the KOS break limit, take what does,
+    // leaving RE4DC_ARENA_FIT_KOS_BYTES to KOS, in 4 KiB steps. The 256 KiB fallback below turns
+    // an image a few KB too large for the full arena into 256 KiB less heap 4 (the arena's top).
+    {
+        const struct mallinfo mi = mallinfo();
+        const unsigned long limit = (unsigned long) _arch_mem_top - THD_KERNEL_STACK_SIZE;
+        const unsigned long brk = (unsigned long) sbrk(0);
+        const unsigned long room = (brk < limit ? limit - brk : 0) + (unsigned long) mi.keepcost;
+        const unsigned long reserve = RE4DC_ARENA_FIT_KOS_BYTES + 64;  // + chunk header, alignment
+        const unsigned long fit = room > reserve ? (room - reserve) & ~0xFFFUL : 0;
+        if (fit < want) {
+            want = fit;
+            printf("re4dc_mem: arena fit %lu bytes (%lu left to KOS)\n", want, room - want);
+        }
+        step = 0x1000;
+    }
+#endif
     void* p = NULL;
     while (want >= fixed + kMinHeap) {
         p = memalign(32, want);
         if (p) {
             break;
         }
-        want -= 0x40000;
+        want -= step;
     }
     if (!p) {
         printf("re4dc_mem_init: no arena (need %lu)\n", fixed + kMinHeap);
@@ -80,6 +103,17 @@ void re4dc_mem_init(void)
            re4dc_mem.arena_lo, re4dc_mem.arena_hi, re4dc_mem.dvd, re4dc_mem.sound, re4dc_mem.core,
            re4dc_mem.option, re4dc_mem.player, re4dc_mem.weapon, re4dc_mem.heap, re4dc_mem.heap_end,
            (re4dc_mem.heap_end - re4dc_mem.heap) / 1024);
+}
+
+// SndInit's layout end (the sub data's end) against the carved sound region (SOUND_REGION_BYTES).
+void re4dc_sound_region_check(unsigned long end)
+{
+    const unsigned long used = end - re4dc_mem.sound;
+    printf("re4dc_mem: sound region used %lu of %lu bytes\n", used, kSoundSize);
+    if (used > kSoundSize) {
+        printf("re4dc_mem: sound region overflow into core (SOUND_REGION_BYTES too small)\n");
+        arch_exit();
+    }
 }
 
 void* re4dc_frame_buffer(int index)

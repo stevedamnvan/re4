@@ -68,6 +68,7 @@ static inline u32 RefU32(u32& x)
 #define SND_DATA_TOP 0x80370000
 #else
 #define SND_DATA_TOP (re4dc_mem.sound)
+extern "C" void re4dc_sound_region_check(unsigned long end);  // platform/mem.cpp (SOUND_REGION_BYTES)
 #endif
 #define LOOP_IDX(x, max) ((x) < 0 ? (max) : ((x) > (max) ? 0 : (x)))
 #define CLAMP(x, lo, hi) ((x) < (lo) ? (lo) : ((x) > (hi) ? (hi) : (x)))
@@ -173,6 +174,7 @@ void SndInit()
     SndMem.sub_end = SndMem.sub_adr + len;
 #if !defined(__PPC__)
     re4dc_watch_set((const void*) SndMem.sub_adr, 64);
+    re4dc_sound_region_check((unsigned long) SndMem.sub_end);
 #endif
 
     SndDriverInit();

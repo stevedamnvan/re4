@@ -96,13 +96,29 @@ static int moduleIndex(u32 id)
     return -1;
 }
 
+// RELs linked as one group object (gen_modules.py group_rules, EM10_SHARED=1) share one state
+// span: the pristine .data is captured once for the span, at the first link of any member, and
+// a member linked while another is still linked resets the state that member is using.
+static bool sameSpan(const Re4dcModule& a, const Re4dcModule& b)
+{
+    return a.data == b.data && a.data_end == b.data_end && a.bss == b.bss && a.bss_end == b.bss_end &&
+           a.pristine == b.pristine && (a.data_end != a.data || a.bss_end != a.bss);
+}
+
 // Fresh link: pristine .data, zero .bss (the GameCube OSLink of a newly read REL).
 static void freshState(unsigned i)
 {
     const Re4dcModule& m = g_modules[i];
     ModuleState& s = g_state[i];
     const unsigned data = unsigned(m.data_end - m.data);
-    if (!s.captured) {
+    for (unsigned j = 0; j < kModules; j++) {
+        if (j == i || !sameSpan(m, g_modules[j])) continue;
+        if (g_state[j].captured) s.captured = true;
+        if (g_state[j].header)
+            re4dc_log("module state: %s shares its state span with linked %s (reset)\n", m.name, g_modules[j].name);
+    }
+    const bool capture = !s.captured;
+    if (capture) {
         __builtin_memcpy(m.pristine, m.data, data);
         s.captured = true;
     } else {
@@ -111,7 +127,7 @@ static void freshState(unsigned i)
     __builtin_memset(m.bss, 0, unsigned(m.bss_end - m.bss));
     ++s.fresh_links;
     re4dc_log("module state: %s fresh link %u data=%u bss=%u %s\n", m.name, s.fresh_links, data,
-              unsigned(m.bss_end - m.bss), s.fresh_links == 1 ? "captured" : "restored");
+              unsigned(m.bss_end - m.bss), capture ? "captured" : "restored");
 }
 
 // Binds the header the game read (include/main_sub.h OSModuleHeader: id at 0,

@@ -48,6 +48,13 @@ OBJDIR = obj
 # global symbols are its renamed entry points (obj/modules.mk), and
 # platform/modules.cpp maps the REL header ids to them for OSLink.
 MODULES = st1_0 st1_1 st1_2 st1_3 wep02 em12 em23 em15 em26 em28 em21
+# EM10_SHARED=1 (default 0): the Ganado RELs em12 (r100/r103) and em15 (r101) are both
+# em10.cpp + their own <em>_set.cpp; link them as one object (gen_modules.py group em10g) so the
+# image holds one em10.cpp (-254 KB of image = +254 KB of heap 4). Both keep their REL ids and
+# entry points and share one state span (a fresh link restores it); only one Ganado REL may be
+# live at a time, which holds on the r100 -> r101 -> r103 route (platform/modules.cpp logs it).
+EM10_SHARED ?= 0
+MODULE_ARGS = $(if $(filter 1,$(EM10_SHARED)),$(filter-out em12 em15,$(MODULES)) em10g=em12+em15,$(MODULES))
 MODULE_OBJS =
 MODULES_MK = $(OBJDIR)/modules.mk
 GAME_OBJS = $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS))
@@ -221,9 +228,13 @@ $(OBJDIR)/sdk/%.o: platform/sdk/gen/%.c
 
 -include $(OBJS:.o=.d) $(CENSUS_OBJS:.o=.d)
 
-$(MODULES_MK): Makefile tools/gen_modules.py $(ROOT)/config/G4BE08/modules.py $(ROOT)/config/G4BE08/modules/*/splits.txt $(ROOT)/src/st1/st1.cpp
+.PHONY: module-args-force
+$(OBJDIR)/module-args.txt: module-args-force
+	@mkdir -p $(dir $@)
+	@echo '$(MODULE_ARGS)' > $@.tmp; cmp -s $@.tmp $@ || mv $@.tmp $@; rm -f $@.tmp
+$(MODULES_MK): Makefile tools/gen_modules.py $(ROOT)/config/G4BE08/modules.py $(ROOT)/config/G4BE08/modules/*/splits.txt $(ROOT)/src/st1/st1.cpp $(OBJDIR)/module-args.txt
 	@mkdir -p $(OBJDIR)
-	python3 tools/gen_modules.py $(ROOT)/config/G4BE08/modules $(ROOT) $(OBJDIR) $@ $(MODULES)
+	python3 tools/gen_modules.py $(ROOT)/config/G4BE08/modules $(ROOT) $(OBJDIR) $@ $(MODULE_ARGS)
 include $(MODULES_MK)
 # D367 W10: platform/gdrom_mount.cpp wraps cdrom_read_toc so /cd mounts track 3
 # of a GD-ROM (a GDI on GDEMU, tools/d367/mkgdi.sh). CD-R images are unaffected.
@@ -276,6 +287,16 @@ WEAPON_RESIDENT_BYTES ?= 0x70000
 # PC_SAMPLER=1 adds its ring plus 4 KiB of code slack (PC_SAMPLER_KOS_BYTES
 # below) so the sampler's .bss/.text never comes out of the KOS heap.
 ARENA_KOS_BYTES ?= $(shell expr $(if $(filter 1,$(NATIVE_STATIC)),32768,0) + $(PC_SAMPLER_KOS_BYTES))
+# ARENA_FIT=1 (default 0): if the full arena does not fit under the KOS break limit (image too
+# large), take the largest that does, leaving ARENA_FIT_KOS_BYTES to KOS, instead of falling back
+# a whole 256 KiB step (which heap 4, the arena's top, loses). Each image byte then costs heap 4
+# one byte. The PC sampler's ring is .bss (part of the image), so it needs no extra reserve here.
+ARENA_FIT ?= 0
+ARENA_FIT_KOS_BYTES ?= 131072
+# The source's sound region (SND_DATA_TOP, 512 KiB on the GameCube; the arena's bottom). SndInit
+# uses ~366 KiB of it with the route's bgm/bio4str.hed and etc/memcard.das (boot log "sound region
+# used"); SOUND_REGION_BYTES=0x60000 gives the unused 128 KiB to heap 4. Too small exits at boot.
+SOUND_REGION_BYTES ?= 0x80000
 .PHONY: core-budget-force
 $(OBJDIR)/core-budget.h: core-budget-force
 	@mkdir -p $(dir $@)
@@ -283,6 +304,8 @@ $(OBJDIR)/core-budget.h: core-budget-force
 	@printf '#define RE4DC_OPTION_RESIDENT_BYTES %s\n' '$(OPTION_RESIDENT_BYTES)' >> $@.tmp
 	@printf '#define RE4DC_PLAYER_RESIDENT_BYTES %s\n#define RE4DC_WEAPON_RESIDENT_BYTES %s\n' '$(PLAYER_RESIDENT_BYTES)' '$(WEAPON_RESIDENT_BYTES)' >> $@.tmp
 	@printf '#define RE4DC_ARENA_KOS_BYTES %s\n' '$(ARENA_KOS_BYTES)' >> $@.tmp
+	@printf '#define RE4DC_ARENA_FIT %s\n#define RE4DC_ARENA_FIT_KOS_BYTES %s\n' '$(ARENA_FIT)' '$(ARENA_FIT_KOS_BYTES)' >> $@.tmp
+	@printf '#define RE4DC_SOUND_REGION_BYTES %s\n' '$(SOUND_REGION_BYTES)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/mem.o: $(OBJDIR)/core-budget.h
