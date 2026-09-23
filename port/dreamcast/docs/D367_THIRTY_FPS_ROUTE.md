@@ -109,6 +109,43 @@ Remaining work in LC is about 98 ms. It rounds up to 7 vblanks.
 | Memory copies | ~12-15 |
 | Vblank pacing waste | ~19 idle |
 
+## Hardware projection (SH-4 model, 2026-09-23)
+
+The model: an interpreter-mode Flycast trace of LD, frames 2401-2520 (30 frames fully traced), replayed through an SH-4 timing model built from the Sega/SH-4 manuals. It covers pairing and latencies, the 8 KB I-cache and 16 KB D-cache with copy-back, miss penalties, the shared bus, and store queues. PVR/DMA bus contention is not modelled, so the figures lean low. Uncalibrated until console microbenchmarks run.
+
+**LD work projects to ~158 ms/frame on hardware (137-187; quote 130-195) against ~96 ms in Flycast: real hardware costs about 1.65x Flycast.** That is ~4.7x over the 33 ms budget, not ~2.9x.
+
+| Area | Flycast | HW nominal (range) | of which I-miss / D-miss |
+|---|---|---|---|
+| GC code on render thread (model/light setup, matrices, GX stubs) | 19.7 | 37.3 (31.6-44.9) | 8.3 / 2.0 |
+| Actors | 20.6 | 34.5 (31.2-38.9) | 3.0 / 3.7 |
+| Scenery | 17.7 | 31.4 (27.6-36.2) | 3.9 / 5.0 |
+| Game logic | 15.5 | 25.8 (22.3-30.5) | 5.4 / 1.2 |
+| UI / texture cache (native_ui.cpp) | 5.5 | 12.3 (10.0-15.1) | 2.3 / 0.5 |
+| Copies | 10.9 | 8.3 (7.6-9.1) | 0.5 / 1.1 |
+| TA submission | 4.0 | 5.0 (3.7-7.7) | |
+| KOS | 0.6 | 3.3 | |
+| **Total** | **~95** | **157.8 (136.7-186.6)** | 24.8 / 14.2 |
+
+Ranked hardware levers:
+1. copies, up to 8.75 ms;
+2. direct store-queue vertex writes and movca.l staging, 7-8 ms;
+3. instruction scheduling and FTRV in hot render asm, ceiling 28.8 ms, realistic 30-50% of it;
+4. UI texture-cache O(1) handles, 8-10 ms;
+5. fsrra, ~1.4 ms;
+6. GC render front-end reduction, worth ~1.7x its Flycast gain.
+
+Not worth doing:
+- hot/cold link ordering (+1.2 ms worse);
+- OC-RAM (net 1.4-3.2 ms);
+- OIX (+17.8 ms; never enable it);
+- pref in loops (0.4 ms);
+- game-object data packing (at most ~1 ms).
+
+Game logic alone is ~26 ms on hardware, so a 33 ms frame leaves almost nothing for rendering. See "Plan to 30 fps".
+
+Tools: /root/probe/d367-agents/hwmodel (hwsim.c, run_whatifs.sh); a repo patch is pending.
+
 ## Asset decisions
 
 - **Trees:** PS2 trees for r100, with the source key texture replaced by the
@@ -150,10 +187,10 @@ console calibrate them.
 | 13 | FP 6B (contract-off + FDLIBM), then O2 on hot objects | ~0 to -2 | -1 to -3 | Validation running |
 | 14 | Memory-copy audit (~15 ms) | -7.5 (COPY_LEAN) | more (cache thrash) | Done (de03f28); validating on LF |
 | 15 | GC render front-end removal (objTrans, light setup, normal matrices, draw-plan walk) + direct TA meshes | -6.4 (FRONT_LEAN) -3.6 (MESH_DIRECT) | similar | Done (de03f28); validating on LF |
-| 16 | UI VRAM diet -> 1.5-2 MiB vertex banks | 0 | required so hardware doesn't overflow | Patch proven: title peak 3.95 MB -> 1.04 MB, r100 0 upload failures at 1536/2048 KB (LRU + fail-fast + VQ). Validating on LF |
-| 17 | Hardware projection model (pairing + I/D-cache simulation) | - | ranks items 18-21 | In progress |
-| 18 | pref / OC-RAM transform cache / fsrra in render code | ~0 in Flycast | est. several ms | Waiting on #17 ranking |
-| 19 | I-cache hot/cold code layout | ~0 in Flycast | potentially large (8 KB IC, large code) | Waiting on #17 |
+| 16 | UI VRAM diet -> 2 MiB vertex bank | 0 | required: r100 needs ~1,031 KB of TA params per frame, overflowing 1024 KB | Done (700e2d0, UI_VRAM=1 + TA_VERTBUF_KB=2048 + tex-vq3) |
+| 17 | Hardware projection model (pairing + I/D-cache simulation) | - | LD = ~158 ms on hardware (1.65x Flycast) | Done; see Hardware projection |
+| 18 | fsrra, movca.l staging, SQ-direct writes, instruction scheduling (OC-RAM and pref dropped by the model) | ~0 in Flycast | fsrra -1.4, SQ/movca.l -7 to -8, scheduling up to -29 ceiling | Assigned (frontend30 pass 2, actors) |
+| 19 | I-cache hot/cold code layout | ~0 in Flycast | model: +1.2 ms worse; ideal packing only -1.8 | Dropped (the per-frame code footprint of 216 KB is the problem, not layout) |
 | 20 | Tree impostors beyond ~12-15 m (16 views x 128, 4bpp VQ, 82 KB VRAM) | - | -1.0 to -1.2 (heavy mean 8.62 -> 7.39-7.64 ms with PS2 trees) | Designed; needs a batched punch-through quad path. Flat at 8 m |
 | 21 | Lighter near-camera FILE_01 houses (5.18 of 8.6 ms hardware scenery; 17.1k corners in 3.9k strips) | - | automatic Blender reduction only -0.17 at acceptable error; new low-poly shells with a baked texture could save most of ~4 ms | Open: needs package-supplied textures + new house meshes |
 | 22 | Bytes-based TA guard + 32-byte limits (Sega rules) | 0 | correctness | After #16 |
