@@ -149,7 +149,7 @@ console calibrate them.
 | 13 | FP 6B (contract-off + FDLIBM), then O2 on hot objects | ~0 to -2 | -1 to -3 | Validation running |
 | 14 | Memory-copy audit (~15 ms) | -8 to -12 | more (cache thrash) | In progress |
 | 15 | GC render front-end removal (objTrans ~13, EspTrans ~3, light setup, GX stubs) | -10 to -15 | similar | In progress (same agent as 14) |
-| 16 | UI VRAM diet -> 1.5-2 MiB vertex banks | 0 | required so hardware doesn't overflow | In progress |
+| 16 | UI VRAM diet -> 1.5-2 MiB vertex banks | 0 | required so hardware doesn't overflow | Patch proven: title peak 3.95 MB -> 1.04 MB, r100 0 upload failures at 1536/2048 KB (LRU + fail-fast + VQ). Validating on LF |
 | 17 | Hardware projection model (pairing + I/D-cache simulation) | - | ranks items 18-21 | In progress |
 | 18 | pref / OC-RAM transform cache / fsrra in render code | ~0 in Flycast | est. several ms | Waiting on #17 ranking |
 | 19 | I-cache hot/cold code layout | ~0 in Flycast | potentially large (8 KB IC, large code) | Waiting on #17 |
@@ -185,21 +185,21 @@ Steps are ordered by expected frame-time gain.
 Assessment: the recovered game reaches r100 gameplay. r101 and r103 have never
 run in it; "r101 works" commits are the separate room viewer.
 
-| Unit | Work |
-|---|---|
-| W0 | Frozen private baseline |
-| W1 | Extract route files from the debug ISO; build r101/r103 DARs; compact em15/26/28/21 |
-| W2 | Register the enemy modules |
-| W3 | First r101 entry fixture and measured census |
-| W4 | Fit r101 memory and VRAM |
-| W5 | r100 events |
-| W6 | Door lifecycle: relink-overlap hazard, module .bss reset, ARAlloc reset, KOS headroom |
-| W7 | r101 events with FMV presentation |
-| W8 | r101 -> r103 |
-| W9 | r101/r103 scenery packages |
-| W10 | GDEMU image |
-| W11 | Inventory backing and retry |
-| W12 | Audio (music and sound effects) |
+| Unit | Work | Status (2026-09-23) |
+|---|---|---|
+| W0 | Frozen private baseline | Done (private tree; hashes in frontier notes) |
+| W1 | Extract route files from the debug ISO; build r101/r103 DARs; compact em15/26/28/21 | Done: tools ded299f; mirror complete for all 18 route files; em15 resident 3.86 -> 1.14 MB |
+| W2 | Register the enemy modules | Patch ready (em15/26/28/21, slot audit). Held: +282 KB image comes out of heap 4, lands with W4 |
+| W3 | First r101 entry fixture and measured census | Entered r101, then HALT: heap 4 short (s30 event 2.37 MB; em15 motion keys). Census: room archive 5.47 MB = 62% of heap 4 |
+| W4 | Fit r101 memory and VRAM | In progress: ~1.2 MB short after dropping cutscene assets. Levers: event code without cutscene assets, room archive GC-render payload release, em15 hot motion |
+| W5 | r100 events | Not started |
+| W6 | Door lifecycle: relink-overlap hazard, module .bss reset, ARAlloc reset, KOS headroom | In progress (relink vs reload captures) |
+| W7 | r101 events with FMV presentation | In progress (PS2 FMV, ROUTE_MOVIES=1) |
+| W8 | r101 -> r103 | Not started |
+| W9 | r101/r103 scenery packages | Not started |
+| W10 | GDEMU image | Not started |
+| W11 | Inventory backing and retry | Not started |
+| W12 | Audio (music and sound effects) | In progress (AICA SFX + music) |
 
 ## Working rules carried forward
 
