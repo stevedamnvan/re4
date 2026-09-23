@@ -16,6 +16,12 @@ re4dc::profile::State re4dc::profile::state;
 #ifndef RE4DC_D349_RENDERER_STACK
 #define RE4DC_D349_RENDERER_STACK 0
 #endif
+#ifndef RE4DC_NATIVE_ACTOR
+#define RE4DC_NATIVE_ACTOR 0
+#endif
+#if RE4DC_NATIVE_ACTOR
+#include "native_actor.hpp"
+#endif
 #ifndef RE4DC_MODEL_DRAW_PLANS
 #define RE4DC_MODEL_DRAW_PLANS 0
 #endif
@@ -650,6 +656,12 @@ extern "C" void re4dc_model_submit(const Re4dcModelPart* p){
     Re4dcModelPart plain;
     if(p && p->world){plain=*p;plain.serial=0;plain.world=plain.view=nullptr;
         plain.source_key[0]=0;plain.source_key[1]=0xff;p=&plain;}
+#endif
+#if RE4DC_NATIVE_ACTOR
+    // Non-scenery parts (actors, weapons, room SMD objects): dense per-info
+    // preparation (native_actor.cpp). It declines before any side effect and
+    // the generic path below then runs unchanged.
+    if(p && !p->static_geometry && re4dc_actor_submit(p))return;
 #endif
     if(!p || p->alpha_state>511 || ((p->alpha_state&256) && (!(p->flags&0x80000000U) || !p->colors)) || p->shift>30 || (p->position_stride!=6 && p->position_stride!=8) ||
        !p->position_count || !p->normal_count || p->stream_bytes>1024*1024 ||

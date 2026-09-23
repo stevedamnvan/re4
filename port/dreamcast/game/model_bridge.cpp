@@ -12,7 +12,27 @@ static_assert(offsetof(ModelData,pParts)==0x1c && offsetof(ModelData,nVtx)==0x38
 static_assert(sizeof(void*)==4 && sizeof(GXTexObj)==32);
 extern "C" void GXGetProjectionv(float*);
 extern "C" void GXGetViewportv(float*);
+#if RE4DC_NATIVE_ACTOR
+#include "native_actor.hpp"
+extern "C" void* re4dc_prim_tail(unsigned bytes,unsigned reserve);
+#endif
 namespace {
+#if RE4DC_NATIVE_ACTOR
+// Once per source Render(): the actor workspace is the unused tail of this
+// frame's primitive buffer. Trans() filled the buffer before Render(); the next
+// SetPrimBuffPtr() (after Render() and its translucent drain) releases it, so
+// nothing stays resident. 56 KiB covers the largest D358 actor info
+// (3622 positions x 12 + 2785 normals x 4 = 54,604 B); a larger or unfunded
+// info declines to the generic path.
+unsigned actor_frame=~0U;
+void bind_actor_frame(){
+    if(actor_frame==pG->Frame_cnt)return;
+    actor_frame=pG->Frame_cnt;
+    constexpr unsigned kBytes=56*1024,kReserve=16*1024;
+    void* w=re4dc_prim_tail(kBytes,kReserve);
+    re4dc_actor_frame(w,w?kBytes:0);
+}
+#endif
 Re4dcUiImage selected{},mask{};
 unsigned mask_ref=256,mask_same_uv;
 unsigned wrap_s,wrap_t;
@@ -42,6 +62,9 @@ extern "C" void re4dc_model_alpha_material(const void* object,unsigned ref,unsig
 extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
  const void* part_ptr,const float mv[3][4],unsigned pass){
     if(!re4dc_model_diagnostic_enabled() || pass)return;
+#if RE4DC_NATIVE_ACTOR
+    bind_actor_frame();
+#endif
     auto* m=(const cModel*)model;auto* info=(const cModelInfo*)info_ptr;
     auto* part=(const ModelPart*)part_ptr;const auto* d=info->pData;
     Re4dcModelPart p{};p.model=m;p.info=info;p.part=part;

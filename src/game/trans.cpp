@@ -2573,6 +2573,27 @@ void* GetPrimBuff(int size)
     return p;
 }
 
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+// Native actor scratch (render-only, D367 PROPOSAL option A): the unused tail
+// of this frame's primitive buffer, requested during Render() after Trans()
+// finished filling it. Taken only when `reserve` bytes remain afterwards, so
+// it never triggers GetPrimBuff's OVERFLOW report. D358: 37% peak use of 312 KiB.
+extern "C" void* re4dc_prim_tail(unsigned bytes, unsigned reserve)
+{
+    GxWork* gx = GXWORK();
+    u8* base = (u8*) pG->prim_cnt;
+    if (PTR_INVALID(base)) {
+        return 0;
+    }
+    u8* limit = base + pG->nPrim * (pG->vtx_buf_no + 1);
+    u32 size = (bytes + 0x1F) / 32 * 32;
+    if (gx->prim + size + reserve > limit) {
+        return 0;
+    }
+    return GetPrimBuff(size);
+}
+#endif
+
 // Resets the TEV / indirect / texgen state and the allocation counters (tev_stage, tev_reg,
 // tex_coord, tex_map, tev_kcolor) between models.
 void shaderReset()

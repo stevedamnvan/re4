@@ -61,6 +61,11 @@ NATIVE_REUSE_OBJS += $(OBJDIR)/native-reuse/room_package.o
 else
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_static.o,$(PLATFORM_OBJS))
 endif
+# D367 actor path (probe PROPOSAL option A); default images carry none of it.
+NATIVE_ACTOR ?= 0
+ifneq ($(NATIVE_ACTOR),1)
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor.o,$(PLATFORM_OBJS))
+endif
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1
