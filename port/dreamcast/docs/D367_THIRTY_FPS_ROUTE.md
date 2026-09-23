@@ -145,7 +145,10 @@ Not worth doing:
 
 Game logic alone is ~26 ms on hardware, so a 33 ms frame leaves almost nothing for rendering. See "Plan to 30 fps".
 
-Tools: /root/probe/d367-agents/hwmodel (hwsim.c, run_whatifs.sh); a repo patch is pending.
+Tools: port/dreamcast/tools/hwmodel (24ba078). `hwproject.sh <dir>` projects any candidate in about 6 minutes.
+
+Current stack (LF + frontend30 + UI_VRAM 2048 + tex-vq3) projects to **130.3 ms (114.7-151.1)** against LD's 157.8. Hardware keeps 172% of the Flycast gain.
+By area: render-side 32.3, actors 31.1, scenery 27.2, logic 24.7, UI 8.5, copies 3.6, TA 0.3, KOS 2.5.
 
 ## 20 fps hardware budget (2026-09-23)
 
@@ -267,7 +270,7 @@ run in it; "r101 works" commits are the separate room viewer.
 | W4 | Fit r101 memory and VRAM | In progress: ~1.2 MB short after dropping cutscene assets. Levers: event code without cutscene assets, room archive GC-render payload release, em15 hot motion |
 | W5 | r100 events | Not started |
 | W6 | Door lifecycle: relink-overlap hazard, module .bss reset, ARAlloc reset, KOS headroom | Done (a575a76): r100->r100 relink round trips repeat with 0 heap/VRAM/KOS change; 0 ms. Reload/continue hangs in SndRoomBgmLoad until audio lands (W12) |
-| W7 | r101 events with FMV presentation | In progress (PS2 FMV, ROUTE_MOVIES=1) |
+| W7 | r101 events with FMV presentation | Working in Flycast: the r120 intro and r100 s40 play as 288x192 PS2 movies with audio; the source effects apply and gameplay continues (c6). Open: only 14-15 of 29.97 fps shown; s03/s20/s30/s41/s43/s44 not yet exercised; 57 KB heap margin during s40 |
 | W8 | r101 -> r103 | Not started |
 | W9 | r101/r103 scenery packages | In progress (converter generalised to r101/r103; drops ~2.05 MB of GC geometry from heap 4) |
 | W10 | GDEMU image | Done (93a03e3): GDI boots title -> r100 in Flycast; HD-area mount wrap; 61% of HD area used. Next: IO probe (VMU/HUD) and async prioritised disc reads (all reads block today) |
