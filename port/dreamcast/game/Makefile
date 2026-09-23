@@ -81,6 +81,20 @@ ifneq ($(NATIVE_ACTOR_SKIN)$(NATIVE_ACTOR_DIRECT),00)
 $(error NATIVE_ACTOR_SKIN/NATIVE_ACTOR_DIRECT require NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1)
 endif
 endif
+# D367 audio: AICA_AUDIO=1 plays the recovered sound driver on the AICA
+# (platform/audio_aica.cpp); default images keep the silent audio_stub.cpp.
+AICA_AUDIO ?= 0
+ifneq ($(AICA_AUDIO),1)
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/audio_aica.o,$(PLATFORM_OBJS))
+endif
+.PHONY: aica-audio-force
+$(OBJDIR)/aica-audio.h: aica-audio-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_AICA_AUDIO %s\n' '$(AICA_AUDIO)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/audio_stub.o: $(OBJDIR)/aica-audio.h
+$(OBJDIR)/platform/audio_stub.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/aica-audio.h
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
 
 GAME_OPT ?= -O1

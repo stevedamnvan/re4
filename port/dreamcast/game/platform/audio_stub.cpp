@@ -15,18 +15,25 @@ typedef signed long s32;
 typedef unsigned long u32;
 typedef float f32;
 
-typedef void (*AXCallback)(void);
 typedef void (*ARQCallback)(u32);
+// AICA_AUDIO=1 (Makefile) replaces the AX / MIX / SYN / SEQ interfaces below
+// with platform/audio_aica.cpp and routes ARAM sound uploads to it.
+#if !RE4DC_AICA_AUDIO
+typedef void (*AXCallback)(void);
 struct AXVPB { u32 w[128]; };  // 0x200: larger than the SDK's voice block
 
 static AXVPB g_voices[64];
 static u8 g_voiceUsed[64];
 static AXCallback g_axCallback;
+#endif
 static u32 g_aramNext = 0x4000;
 
 extern "C" {
 
 u32 re4dc_vi_retrace_count(void);
+#if RE4DC_AICA_AUDIO
+void re4dc_audio_arq(u32 src, u32 dst, u32 len);
+#else
 
 // Runs from the vblank interrupt (vi.cpp): the driver's audio frame.
 void re4dc_audio_frame(void)
@@ -127,6 +134,7 @@ void SYNSetMasterVolume(void* s, s32 dB) { (void) s; (void) dB; }
 void SEQInit(void) {}
 void SEQQuit(void) {}
 void SEQRunAudioFrame(void) {}
+#endif  // !RE4DC_AICA_AUDIO
 
 // ARAM: addresses are handed out, requests complete without a transfer.
 // The allocator is the SDK's (src/lib/ar.c): a stack of at most the
@@ -218,6 +226,11 @@ void ARQPostRequest(void* req, u32 owner, u32 type, u32 prio, u32 src, u32 dst, 
     r->dest = dst;
     r->length = len;
     r->callback = cb;
+#if RE4DC_AICA_AUDIO
+    if (type == 0) {  // ARQ_TYPE_MRAM_TO_ARAM: sound blocks are converted into AICA RAM
+        re4dc_audio_arq(src, dst, len);
+    }
+#endif
     if (cb) {
         cb((u32) req);
     }
