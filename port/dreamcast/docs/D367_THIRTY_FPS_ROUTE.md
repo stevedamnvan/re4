@@ -216,7 +216,13 @@ Game logic is a fixed 30 Hz tick: one update per frame (main.cpp, 2 vsyncs), wit
 User decisions (2026-09-23):
 - **Approved:** shorter fog/draw distance, ~43 m -> 20-30 m ("most of the game is outdoors"). It must never hide an enemy within engagement range; trials pick the distance.
 - **Approved, "more drastic":** Ganado crowd rules. Near 2-3 full detail; mid tier about 1/4 vertices, rigid parts, skinned every other frame; far tier a few hundred triangles, skinned every 3rd-4th frame. Leon always full; threats are never culled.
-- **Open:** visual-only simulations (cloth, pendulum, some particles) at half rate.
+- **Closed, not possible:** visual-only simulations at half rate. Cloth and pendulum write the model parts chain, which feeds hit and attach points, and effects draw from the shared game random-number stream, so both change game state.
+- **Decided (2026-09-23):**
+  - Fog: 25 m confirmed ("34% fogged at 20 m seems right"). For reference, PS2 draws r100 to 78.9 m (EXP fog, end 263 m, ratio 0.70) and r101 to 38.4 m in most cuts; GC draws 42.7 m and 70 m.
+  - House appearance: ~40% of the approach under the 25 m wall is fine; no per-object building fog.
+  - Simplified house shells (item 21, MESH_TEXTURES=1): the mid mesh with a 512 VQ texture (66 KB per house), used everywhere with no near swap. -0.71 hw ms for FILE_01/17+18; ~-1.6 to -1.8 projected for all FILE_01. Step 5.
+  - Effects: bring back native sprites for muzzle flash, blood and fire (+0.5 to 1.0 hw ms), together with EFFECT_LEAN. Step 4.
+  - Cutscene subtitles: no, for now.
 - **Enemy/object census (aligned):**
   - Take the SAFE cuts: r103 corpses and the r100 gore object off via the JP path (CUT_GORE); effect and decal caps; no foot shadows; car and police props static.
   - Cap concurrent active Ganados in r101 (ACT_CAP, N=4/6/8 trials, ~12 hw ms estimate). Parked Ganados stay alive for every counter; engaged or visible threats are never parked.
