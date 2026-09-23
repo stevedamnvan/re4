@@ -39,6 +39,17 @@
 #if RE4DC_NATIVE_MESH
 #include "../../room/instanced_mesh.hpp"
 #endif
+// Transform-once meshlet path for R4IM meshes (room/mesh_fastpath.hpp). 0 keeps
+// the per-strip-corner Emitter path for every meshlet (A/B reference).
+#ifndef RE4DC_MESH_FASTPATH
+#define RE4DC_MESH_FASTPATH 1
+#endif
+#ifndef RE4DC_MESH_CLASSIFY
+#define RE4DC_MESH_CLASSIFY 0 // 1: skip outcodes in wholly visible meshlets (+1.5 KiB image)
+#endif
+#if RE4DC_NATIVE_MESH && RE4DC_MESH_FASTPATH
+#include "../../room/mesh_fastpath.hpp"
+#endif
 
 namespace {
 using re4dc::room::Package;
@@ -187,6 +198,7 @@ struct Emitter {
     const std::uint32_t* palette=nullptr;
     Re4dcModelPacket packet{}; pvr_vertex_t* dst=nullptr;
     unsigned used=0,input=0,output=0,alpha=0;
+    unsigned limit=0; // packet slots strips may use: packet.capacity less any borrowed tail
     bool streaming=false,bound=false,submitted=false;
     bool vertex_alpha=false; // corner alpha from the colour palette (source vertex alpha)
     re4dc::render::ClipParameters clip{};
@@ -202,7 +214,7 @@ struct Emitter {
     bool bind(){
         if(bound)return true;
         if(!re4dc_model_packet_begin(&p,&packet))return false;
-        dst=static_cast<pvr_vertex_t*>(packet.vertices);bound=true;
+        dst=static_cast<pvr_vertex_t*>(packet.vertices);bound=true;limit=packet.capacity;
         load_screen(mvq,p.projection,p.viewport); // binding may yield
         return true;
     }
@@ -247,8 +259,8 @@ struct Emitter {
     int strip(const Vertex* base,const re4dc::room::CompactBatch& batch,
               const Index* index,unsigned count){
         input+=count-2;
-        if(count<=packet.capacity){
-            if(count>packet.capacity-used && !flush())return submitted?-1:0;
+        if(count<=limit){
+            if(count>limit-used && !flush())return submitted?-1:0;
             unsigned outside=15;
             const bool ready=re4dc::render::prepare_direct_strip(dst+used,count,near,far,
                 [&](std::uint32_t local,re4dc::render::DirectStripVertex& out){
@@ -265,8 +277,14 @@ struct Emitter {
                 return 1;
             }
         }
-        // Near/far crossing or oversize: the shared clipper, triangle by triangle,
-        // keeping strip winding (odd triangles swap their first two corners).
+        return clip_strip(base,batch,index,count);
+    }
+    // Near/far crossing or oversize: the shared clipper, triangle by triangle,
+    // keeping strip winding (odd triangles swap their first two corners).
+    // input was already counted by the caller.
+    template<class Vertex,class Index>
+    int clip_strip(const Vertex* base,const re4dc::room::CompactBatch& batch,
+                   const Index* index,unsigned count){
         ++stats.strips_clipped;
         float alphas[3]={float(alpha>>24)/255.0f,float(alpha>>24)/255.0f,float(alpha>>24)/255.0f};
         for(unsigned i=2;i<count;++i){
@@ -277,7 +295,7 @@ struct Emitter {
                 clip_vertex(corners[k],batch,tri[k]);
                 if(vertex_alpha)alphas[k]=float(corners[k].argb>>24)/255.0f;
             }
-            if(packet.capacity-used<6 && !flush())return submitted?-1:0;
+            if(limit-used<6 && !flush())return submitted?-1:0;
             const unsigned emitted=re4dc::render::clip_projected_triangle(tri,dst+used,p.cull,clip,nullptr,alphas);
             used+=emitted*3;output+=emitted;stats.triangles_clipped+=emitted;
         }
@@ -346,14 +364,20 @@ struct MeshView {
     re4dc::room::MeshPackage package;
     unsigned char* storage=nullptr; unsigned bytes=0;
     MeshEntry* entries=nullptr; // owner views only
+    const std::uint32_t* lut=nullptr; // ARGB1555 -> 8888 halves, same allocation
     unsigned room=0; bool attempted=false;
 };
 MeshView mesh_views[kMeshViews];
+#if RE4DC_MESH_FASTPATH
+constexpr unsigned kLutBytes=512*4;
+#else
+constexpr unsigned kLutBytes=0;
+#endif
 
 void retire(MeshView& v){
     v.package.close();
     if(v.storage){re4dc_static_free(v.storage);stats.package_bytes-=v.bytes;--stats.owners_open;}
-    v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.attempted=false;v.room=0;
+    v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.lut=nullptr;v.attempted=false;v.room=0;
 }
 
 bool open(MeshView& v,unsigned index,unsigned room){
@@ -370,7 +394,7 @@ bool open(MeshView& v,unsigned index,unsigned room){
     const unsigned package_bytes=(size+31U)&~31U;
     const unsigned table=index==kCommonView?0U:kEntries*unsigned(sizeof(MeshEntry));
     stats.heap_before=re4dc_static_heap_free();
-    auto* storage=static_cast<unsigned char*>(re4dc_static_alloc(package_bytes+table));
+    auto* storage=static_cast<unsigned char*>(re4dc_static_alloc(package_bytes+table+kLutBytes));
     if(!storage)++stats.alloc_rejects;
     else if(fs_read(file,storage,size)!=ssize_t(size)){re4dc_static_free(storage);storage=nullptr;}
     fs_close(file);
@@ -380,8 +404,12 @@ bool open(MeshView& v,unsigned index,unsigned room){
         re4dc_log("native mesh: %s rejected: %s\n",path,v.package.error());
         re4dc_static_free(storage);++stats.open_failures;return false;
     }
-    v.storage=storage;v.bytes=package_bytes+table;
+    v.storage=storage;v.bytes=package_bytes+table+kLutBytes;
     if(table){v.entries=reinterpret_cast<MeshEntry*>(storage+package_bytes);std::memset(v.entries,0,table);}
+#if RE4DC_MESH_FASTPATH
+    auto* lut=reinterpret_cast<std::uint32_t*>(storage+package_bytes+table);
+    re4dc::vp::build_lut(lut);v.lut=lut;
+#endif
     ++stats.owners_open;stats.package_bytes+=v.bytes;
     const struct mallinfo kos=mallinfo();
     const auto& h=v.package.header();
@@ -481,6 +509,67 @@ void light_part(MeshView& v,const re4dc::room::MeshRecord& mesh,re4dc::room::Mes
 
 struct MeshDraw : Emitter {
     const re4dc::room::MeshPackage& package; const re4dc::room::MeshPart& part;
+    const std::uint32_t* lut; // mesh view's colour LUT (nullptr: per-corner path)
+#if RE4DC_MESH_FASTPATH
+    // Transform-once state: the cache borrows the last kCacheSlots slots of
+    // the bound packet range (never sent: strips stop at 'limit').
+    pvr_vertex_t* cache=nullptr; std::uint8_t* outcodes=nullptr;
+    re4dc::vp::Constants k{};
+    bool borrow(){
+        if(cache)return true;
+        if(!lut || limit<re4dc::vp::kCacheSlots+64U)return false; // small slab: per-corner path
+        limit-=re4dc::vp::kCacheSlots;
+        cache=dst+limit;outcodes=reinterpret_cast<std::uint8_t*>(cache+re4dc::vp::kCacheEntries);
+        re4dc::vp::prime(cache,re4dc::vp::kCacheEntries);
+        // After bind(): packet.u_scale/v_scale are the bound texture's.
+        k={part.uv_scale[0],part.uv_bias[0],p.uv_offset[0],packet.u_scale,
+           part.uv_scale[1],part.uv_bias[1],p.uv_offset[1],packet.v_scale,near,far,
+           vertex_alpha?~0U:0x00ffffffU,vertex_alpha?0U:alpha,lut,{}};
+        k.finish();
+        return true;
+    }
+    // One visible meshlet: every vertex once through XMTRX, then each strip is
+    // accepted (copied from the cache), culled (all corners outside one screen
+    // edge) or handed to the unchanged clipper (a corner outside near/far),
+    // the same three outcomes, in the same order, as Emitter::strip().
+    int meshlet(const re4dc::room::Meshlet& l,const re4dc::room::CompactBatch& batch){
+        namespace vp=re4dc::vp;
+        const float bmin[3]={float(l.bounds_min[0]),float(l.bounds_min[1]),float(l.bounds_min[2])};
+        const float bmax[3]={float(l.bounds_max[0]),float(l.bounds_max[1]),float(l.bounds_max[2])};
+        // RE4DC_MESH_CLASSIFY=0 (default) saves ~1.5 KiB of image, i.e. KOS heap,
+        // at ~8 cycles per vertex for outcodes in every meshlet.
+        const unsigned checks=RE4DC_MESH_CLASSIFY?vp::classify(bmin,bmax,mvq,p.projection,p.viewport,near,far):vp::kChecksAll;
+        const auto* base=package.vertices()+l.first_vertex;
+        const auto* in=reinterpret_cast<const vp::Vertex12*>(base);
+        if(checks==vp::kChecksNone)vp::transform<vp::kChecksNone>(in,l.vertex_count,cache,outcodes,k);
+        else if(checks==vp::kChecksScreen)vp::transform<vp::kChecksScreen>(in,l.vertex_count,cache,outcodes,k);
+        else vp::transform<vp::kChecksAll>(in,l.vertex_count,cache,outcodes,k);
+        const unsigned screen=vp::screen_mask(checks),depth=vp::depth_mask(checks);
+        const std::uint8_t* s=package.strips()+l.first_strip;
+        const std::uint8_t* const end=s+l.strip_bytes;
+        while(s<end){
+            const unsigned n=*s++;
+            input+=n-2;
+            vp::StripCodes c{0,0};
+            if(screen)c=vp::codes(outcodes,s,n);
+            if((c.any&depth) || n>limit){
+                if(n<=limit)stats.vertices+=n;
+                const int result=clip_strip(base,batch,s,n);
+                if(result<=0)return result;
+            }else {
+                stats.vertices+=n;
+                if(c.all&screen)++stats.strips_culled;
+                else {
+                    if(n>limit-used && !flush())return submitted?-1:0;
+                    vp::emit(dst+used,cache,s,n);
+                    used+=n;output+=n-2;++stats.strips;
+                }
+            }
+            s+=n;
+        }
+        return 1;
+    }
+#endif
     int run(){
         if(!re4dc_model_packet_reserve(&p,&packet)){++stats.reserve_rejects;return 0;}
         streaming=re4dc_model_packet_streaming()!=0;
@@ -499,6 +588,13 @@ struct MeshDraw : Emitter {
             ++stats.groups_visible;
             if(!bind()){++stats.bind_rejects;return submitted?-1:0;}
             ++stats.batches;
+#if RE4DC_MESH_FASTPATH
+            // A slab too small to lend the cache behaves like any other
+            // capacity failure: generic fallback, or abort once published.
+            if(!borrow()){++stats.reserve_rejects;return submitted?-1:0;}
+            const int result=meshlet(l,batch);
+            if(result<=0)return result;
+#else
             const auto* base=package.vertices()+l.first_vertex;
             const std::uint8_t* s=package.strips()+l.first_strip;
             const std::uint8_t* const end=s+l.strip_bytes;
@@ -508,6 +604,7 @@ struct MeshDraw : Emitter {
                 if(result<=0)return result;
                 s+=n;
             }
+#endif
         }
         if(used)re4dc_model_packet_commit(used);
         re4dc_model_result(0,input,output);
@@ -651,7 +748,7 @@ int mesh_submit(const Re4dcModelPart& p){
     if(!re4dc::render::is_finite(near)||!re4dc::render::is_finite(far)||near<=0||far<=near)return 0;
     // Queued translucent parts replay through this function in pass order.
     if(re4dc_model_defer_part(drawn))return 1;
-    MeshDraw d{{*drawn,{},near,far},v.package,*part};
+    MeshDraw d{{*drawn,{},near,far},v.package,*part,v.lut};
     d.alpha=(drawn->alpha_state&255U)<<24;d.vertex_alpha=vertex_alpha;
     // Mesh grid -> source model space -> live source view (node matrix included).
     const float grid[12]={mesh.step[0],0,0,mesh.origin[0], 0,mesh.step[1],0,mesh.origin[1],
