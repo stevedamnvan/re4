@@ -168,7 +168,9 @@ Worth porting (with estimated hardware savings):
    - **v1 landed as FRONT_NATIVE=1 (c881fba): -4.1 hw ms** (129.0 -> 124.9; band -3.7 to -4.6). ModelRender draws from only the state the bridge reads.
    - Proof: FRONT_NATIVE=2 compares every model part bit-exactly (0 mismatches over 349,713 parts); the logic trace is STRICT.
    - Ceiling: -11.8 if the whole model front end goes. Left for v2: per-TPL texture objects (~0.9), bridge build, and the HUD unitTrans O(n^2) scan (0.46).
-   - Finding: effects are never drawn on DC. EspCommonTrans ends in a no-op GXCallDisplayList stub, so its ~1.5-2 hw ms is dead work. EFFECT_LEAN will skip it; native effect billboards are a separate, costed user decision.
+   - Finding: effects are never drawn on DC. EspCommonTrans ends in a no-op GXCallDisplayList stub, so part of its ~1.5-2 hw ms is dead work. Most of it must be kept, because the bridge reads the m_Mat and ChannelSet colour results, so EFFECT_LEAN is estimated at only -0.4 to -0.6 hw ms (another -0.4 to -0.5 if nothing reads m_Mat).
+   - Native effect sprites (the default and sub-rectangle sprite paths: fire, smoke, blood, sparks, muzzle flash, weather) are estimated at +0.3 to +0.5 hw ms in r100 (~200-230 sprites, ~20 KB TA) and +0.5 to +1.0 in an r101 fight (300-450 sprites). That's roughly cost-neutral with EFFECT_LEAN. Effect VRAM and translucent fill (large fog sheets, ~1.5 ms PVR each) are unmeasured. User decision pending.
+   - Effect creation and movement draw from the shared game random-number stream, so logic-side effect caps break the STRICT trace. Only the draw side is safe to gate.
 2. one straight per-part emission loop instead of the packet/defer layer (-5 to -6);
 3. precompiled HUD headers (~-1.5);
 4. a small grouped render hot path (-1 to -2);
@@ -187,7 +189,7 @@ Performance work is serialized: one integrated build, one change at a time.
 | 2 | Game-logic cuts (game30 LH recipe, then tick cuts) | queued |
 | 3 | Enemies: Leon <=5 ms, CROWD_LOD tiers, ACT_CAP, safe cuts (CUT_GORE, FX caps, static car/cops) | queued |
 | 4 | Render front end: EFFECT_LEAN, EMIT_DIRECT, FRONT_NATIVE v2 | queued |
-| 5 | Scenery: fog distance, tree cap, house from halfway, W9 worst views and per-room fog | queued |
+| 5 | Scenery: fog distance, tree cap, house from halfway, W9 worst views and per-room fog | queued. Trials done: 25 m far plane (room's own curve) is scenery 29.9 -> 18.7 hw ms, frame 158.3 -> 140.1. 20 m fails the enemy rule (a Ganado at 20 m is 100% fogged). Rule for other rooms: min(room far, 25 m). House from halfway (~21 m) needs per-object building fog: open. LOD 5 px (-2.9 at 42.7 m) and TREE_THIN are unmeasured on top. |
 
 Parallel tracks (off the frame path; needed for the console gate):
 - r101/r103 bring-up (frontier W4, W9 packages);
