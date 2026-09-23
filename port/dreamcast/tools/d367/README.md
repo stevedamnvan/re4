@@ -23,6 +23,7 @@ Capture with `port/dreamcast/tools/flycast-harness/` (see its README).
 |---|---|---|
 | LD | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=1 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1` |
 | LF (default) | 117 | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1`. Async present; `build.sh` selects `/root/work/kos-re4dc-d367` (see `patches/README.md`). Neutral in Flycast; adopted because it stops the CPU waiting on render. |
+| LH | 83 (hw 120.3) | `NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1 COPY_LEAN=1 FRONT_LEAN=1 MESH_DIRECT=1 TA_DIRECT=1 NATIVE_ACTOR_DIRECT=1 UI_VRAM=1 TA_VERTBUF_KB=2048 GAME_FP_CONTRACT=off GAME_CPU=1 GAME_ROT_CACHE=1 GAME_O2=hot GAME_TRIG=1 AICA_AUDIO=1 RELEASE_FLAGS=1`. Build TEXDIRS with tex-vq3 first, then the PS2 bark (they share a texture key). Logic trace STRICT vs the TR-OFF baseline; hw game-logic 12.0 ms/tick. The integrated perf lane's base; FRONT_NATIVE=1 is not yet measured on it. |
 
 LD packages: the scenery30 LOD packages with the PS2 tree substitution (`MESHDIR`), and
 the PS2 bark texture overlay (`TEXDIRS`). The generation steps are documented with the
