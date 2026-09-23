@@ -193,7 +193,9 @@ WEAPON_RESIDENT_BYTES ?= 0x70000
 # Bytes of the fixed 13 MiB source arena left to the KOS heap instead. The KOS
 # heap funds native code/staging and had only a few KiB spare at D362; the
 # native static candidate's code needs this. Zero keeps the reference layout.
-ARENA_KOS_BYTES ?= $(if $(filter 1,$(NATIVE_STATIC)),32768,0)
+# PC_SAMPLER=1 adds its ring plus 4 KiB of code slack (PC_SAMPLER_KOS_BYTES
+# below) so the sampler's .bss/.text never comes out of the KOS heap.
+ARENA_KOS_BYTES ?= $(shell expr $(if $(filter 1,$(NATIVE_STATIC)),32768,0) + $(PC_SAMPLER_KOS_BYTES))
 .PHONY: core-budget-force
 $(OBJDIR)/core-budget.h: core-budget-force
 	@mkdir -p $(dir $@)
@@ -332,6 +334,26 @@ $(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/nativ
 
 $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o $(OBJDIR)/native-reuse/pvr_geometry.o: $(OBJDIR)/native-profile.h platform/include/native_render_profile.hpp
 $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o $(OBJDIR)/native-reuse/pvr_geometry.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-profile.h
+# Default-off statistical PC sampler: TMU1 interrupt -> fixed RAM ring
+# (re4dc_pcs) streamed out by the harness. Off: platform/pc_sampler.cpp is an
+# empty unit and the OSInit/end-frame hooks are empty inlines.
+# PC_SAMPLER_BYTES is a power of two (8-byte records); see ARENA_KOS_BYTES.
+PC_SAMPLER ?= 0
+PC_SAMPLER_HZ ?= 1000
+PC_SAMPLER_BYTES ?= 16384
+PC_SAMPLER_KOS_BYTES = $(if $(filter 1,$(PC_SAMPLER)),$(shell expr $(PC_SAMPLER_BYTES) + 4096),0)
+.PHONY: pc-sampler-force
+$(OBJDIR)/pc-sampler.h: pc-sampler-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_PC_SAMPLER %s\n#define RE4DC_PC_SAMPLER_HZ %s\n#define RE4DC_PC_SAMPLER_BYTES %s\n' '$(PC_SAMPLER)' '$(PC_SAMPLER_HZ)' '$(PC_SAMPLER_BYTES)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+PC_SAMPLER_OBJS = $(OBJDIR)/platform/pc_sampler.o $(OBJDIR)/platform/os.o $(OBJDIR)/platform/native_ui.o
+$(PC_SAMPLER_OBJS): $(OBJDIR)/pc-sampler.h platform/include/pc_sampler.h
+$(PC_SAMPLER_OBJS): PLATFORM_CPPFLAGS += -include $(OBJDIR)/pc-sampler.h
+# With NATIVE_RENDER_PROFILE=1 each sample also carries the active render stage.
+$(OBJDIR)/platform/pc_sampler.o: $(OBJDIR)/native-profile.h
+$(OBJDIR)/platform/pc_sampler.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-profile.h
 # Historical native-only kernel policy; source gameplay retains its current flags.
 ifeq ($(D349_RENDERER_STACK),1)
 $(OBJDIR)/platform/native_model.o $(OBJDIR)/native-reuse/source_lighting.o $(OBJDIR)/native-reuse/pvr_geometry.o: PLATFORM_CPPFLAGS += -O3 -fno-predictive-commoning

@@ -58,6 +58,7 @@
 #include "native_model.h"
 #include "native_static.h"
 #include "native_render_profile.hpp"
+#include "pc_sampler.h"
 #include "re4dc_platform.h"
 #include "../../room/texture_package.hpp"
 #include "../../room/room_storage.hpp"
@@ -1077,6 +1078,7 @@ extern "C" void re4dc_ui_end_frame(int present){
     for(const auto& e:entries)if(e.valid){RE4DC_PROFILE_COUNT(TextureResidentCount,1);
         if(e.frame==frame){RE4DC_PROFILE_COUNT(TexturePinnedCount,1);RE4DC_PROFILE_COUNT(TexturePinnedBytes,e.package.vram_bytes());}}
     re4dc::profile::finish(completed_render_profile,frame,render_source_begin);
+    re4dc_pcs_frame(frame); // PC_SAMPLER=1 only: frame boundary in the sample ring
     completed_frame.sequence=completed_frame.sequence+1;
     asm volatile("" ::: "memory");
     completed_frame.frame=frame;

@@ -19,6 +19,7 @@
 #include <time.h>
 
 #include "re4dc_platform.h"
+#include "pc_sampler.h"
 
 typedef signed char s8;
 typedef unsigned char u8;
@@ -593,6 +594,7 @@ void OSInit(void)
     g_arenaHi = (void*) re4dc_mem.arena_hi;
     re4dc_log("OSInit: arena %08lx-%08lx (%lu KB)\n", re4dc_mem.arena_lo, re4dc_mem.arena_hi,
               (re4dc_mem.arena_hi - re4dc_mem.arena_lo) / 1024);
+    re4dc_pcs_start();  // PC_SAMPLER=1 only; empty inline otherwise
 }
 
 void OSInitAlarm(void) {}
