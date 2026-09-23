@@ -65,7 +65,8 @@ public:
     // dimensions/palette context. A rejected external record must never be hashed
     // as though its original (discarded) texel range were still present.
     int lookup(const void* pixels, unsigned width, unsigned height, unsigned format,
-                unsigned& crc, unsigned& fnv) const;
+                unsigned& crc, unsigned& fnv, const void* palette = nullptr,
+                unsigned palette_format = 0xffffffffU, unsigned palette_bytes = 0) const;
     unsigned count() const { return count_; }
 private:
     const std::uint8_t* data_ = nullptr;

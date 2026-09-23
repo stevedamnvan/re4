@@ -70,8 +70,14 @@ bool SourceIdentityTable::adopt(const void* archive, std::size_t bytes) {
            (record&31) || (header&3) || (tpl&3)) return false;
         const auto* p=data+record;const auto* h=data+header;
         const unsigned w=word(p+16),ht=word(p+20),fmt=word(p+24);
-        if(std::memcmp(p,"R4NREF\0",8) || !w || !ht || w>1024 || ht>1024 ||
-           (fmt>6 && fmt!=14) || h[33] || h[34] || h[35] ||
+        const bool indexed=!std::memcmp(p,"R4PREF\0",8);
+        if(indexed) {
+            if(record>bytes-64 || (fmt!=8 && fmt!=9) || word(p+32)>2 ||
+               !word(p+36) || (word(p+36)&1) || word(p+36)>(fmt==8?32U:512U) ||
+               word(p+28)<64 || word(p+48) || word(p+52) || word(p+56) || word(p+60))return false;
+        }
+        if((!indexed && (std::memcmp(p,"R4NREF\0",8) || (fmt>6 && fmt!=14))) || !w || !ht || w>1024 || ht>1024 ||
+           h[33] || h[34] || h[35] ||
            w!=half(h+2) || ht!=half(h) || fmt!=word(h+4) ||
            std::uint64_t(tpl)+word(h+8)!=record) return false;
     }
@@ -80,17 +86,24 @@ bool SourceIdentityTable::adopt(const void* archive, std::size_t bytes) {
 }
 
 int SourceIdentityTable::lookup(const void* pixels,unsigned width,unsigned height,unsigned format,
-                                  unsigned& crc,unsigned& fnv) const {
+                                  unsigned& crc,unsigned& fnv,const void* palette,unsigned palette_format,unsigned palette_bytes) const {
     const auto address=reinterpret_cast<std::uintptr_t>(pixels);
     const auto base=reinterpret_cast<std::uintptr_t>(data_);
     if(!data_ || address<base || address-base>=bytes_) return false;
     const auto offset=address-base;
     for(unsigned i=0;i<count_;++i) {
         const auto start=word(table_+12*i);
-        if(offset<start || offset-start>=32) continue;
+        const bool indexed=!std::memcmp(data_+start,"R4PREF\0",8);
+        if(offset<start || offset-start>=(indexed?64U:32U)) continue;
         if(offset!=start) return -1;
         const auto* p=data_+offset;
         if(word(p+16)!=width || word(p+20)!=height || word(p+24)!=format) return -1;
+        if(indexed) {
+            if(!palette || palette_format!=word(p+32) || palette_bytes!=word(p+36))return -1;
+            auto* bytes=static_cast<const std::uint8_t*>(palette);unsigned fingerprint=2166136261U;
+            for(unsigned j=0;j<palette_bytes;++j)fingerprint=(fingerprint^bytes[j])*16777619U;
+            if(fingerprint!=word(p+44) || crc32(bytes,palette_bytes)!=word(p+40))return -1;
+        } else if(palette || palette_bytes)return -1;
         crc=word(p+8);fnv=word(p+12);return true;
     }
     return false;

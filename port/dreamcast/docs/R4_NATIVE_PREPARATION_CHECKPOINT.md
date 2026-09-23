@@ -1076,3 +1076,124 @@ PS2/Dreamcast visual-profile phase remains explicitly authorized at its existing
 gate. This checkpoint does not activate static prelighting/mesh substitutions to
 hide the unresolved preparation contract. Menu/three-room work and all existing
 backlogs remain in force.
+
+## D360 - selectable indexed texture backing release (2026-09-22)
+
+This is a memory prerequisite for retained D349 preparation, not a renderer
+speedup or complete room acceptance. The integrated stack remains intact and
+`--compact-room-palettes` is default-off. The primary mirror/fixture is unchanged.
+
+Existing `prepare_native_ui.compact_room` + qualified DAR transport now support
+three immutable r100 EFF index images through `SourceIdentityTable`, the existing
+native image-key resolver, `Package::open_streamed/upload/release_payload`, and
+shared storage/GPU ownership. The only new representation is a 64-byte R4PREF
+identity/fingerprint record replacing each removed source index image. The CLUT,
+TPL descriptors, animation tables, offsets, effect packing and sound remain.
+Changed palette format/length/content is rejected before cached-key reuse; it
+cannot hash discarded indices or silently reuse stale native artwork. Mips,
+CPU-noise ID FE and unqualified indexed families remain resident.
+
+The source EFF entries are TPL2/4/7, IDs CB/D8/F3. Existing native packages are
+byte-identical to the current fixture: twiddled ARGB4444, respectively
+262,144 / 32,768 / 131,072 payload bytes. This is **not PAL4/PAL8 native support**
+and no VRAM saving is claimed. No textures, meshes or gameplay were substituted.
+Source readers audited include `espTexRegist`, `EspGetTexObj`/`EspGetTlutObj`,
+mask bindings in esp_sub/esp08/esp18/espgen45, and `EspGetTplAddr` ->
+`ClothTexSetUp`. They retain descriptor/CLUT references; the CPU noise readers
+in Espgen42/45 use excluded ID FE. The debug texture viewer still has a native
+rendering dependency, not permission to read discarded index bytes directly.
+
+### Actual allocation result
+
+The rebuilt reference DAR matches the CURRENT selected DAR byte-for-byte,
+including its newer resident effect packing. Its informational .arc is stale
+and still has the D320 size; it must not be used as the baseline allocation.
+
+| Quantity | Reference | Candidate |
+| --- | ---: | ---: |
+| Loaded room type-0 bytes | 3,754,592 | 3,607,360 |
+| Final source heap capacity | 8,840,576 | 8,840,576 |
+| Free / largest source block | 66,592 | 213,824 |
+| Live allocations in source heap4 | 422 | 422 |
+| Required block pool requested bytes | 1,126,272 | 1,126,272 |
+| Resident enemy/event body requested bytes | 1,105,152 | 1,105,152 |
+| Sampled texture VRAM bytes | 3,682,304 | 3,682,304 |
+| Queue high-water / capacity | 25,536 / 26,624 | 25,536 / 26,624 |
+
+147,456 source index bytes become 192 record bytes plus 32 additional table
+bytes: **147,232 bytes recovered**, with 1,056 palette bytes retained. Both
+required large allocations remain present and tagged in captured allocator
+lists. Free/allocated links, alignment, bounds and the total heap-capacity sum
+were checked against OSAlloc.c/main_mem.h; there is one free block. This is a
+real final allocation change, not a smaller file inside an unchanged reservation.
+The ELF text grows 644 bytes; data/BSS and source capacity are unchanged. Native
+package metadata/staging remain the existing 144-byte package metadata and
+shared 16 KiB bounce path. The source loader allocates the smaller final type-0
+body directly; it never first loads the full reference room. Instantaneous free
+bytes AT each earlier block/enemy request and a complete loading peak were not
+sampled in this normal build. Do not present final allocator evidence as those
+missing time-specific measurements.
+
+### Evidence and limits
+
+Private capture: `C:/Flycast-Evidence/re4-dreamcast/d360-indexed-room`.
+Executable SHA256:
+`02b16f90b9fe1bd02077dcd8dceb3610fa8b2483e66756d105bc00e941c9b6aa`.
+Candidate DAR SHA256:
+`506ea32111d4a20bd3da4655dddf5bcab7269a3d631136967b1f0b3bcb406424`.
+Reference DAR SHA256:
+`9449a8a7de018483ca12394e15b5511bdbf774267dd997f788773f040f5afed5`.
+The existing normal D359 stack profile, pinned KOS/GCC/Flycast, 640x480,
+`d354v7-fixtures` and corrected framebuffer reader are reused. Fixture manifests
+are exactly equal. The candidate build is HEAD 16d5579 plus the recorded inherited
+source/fixture overlay and these changes; a clean HEAD is not the recorded build.
+
+The source menu and outdoor Leon/cabin/HUD remain visible in inspected captures.
+The three newly externalized effect images were NOT sampled uploading in this
+route. Their exact packages, identity resolution, palette mismatch rejection and
+three owner adopt/use/clear cycles are qualified by focused host tests. This
+checkpoint does not certify the effects' missing native draw paths or appearance.
+
+The capture has 106 common global source ticks, with no sampled queue drops or
+aborts, but same-tick source equality FAILS: loading completes one update earlier.
+All 27 other recorded source fields match the reference's following update in 106
+pairs. That is a diagnostic, not permission to relabel ticks or claim complete
+RNG/enemy equivalence. Render p50 remains about 1.563 seconds and pageflip p50
+about 1.590 seconds; no speedup or matched performance pass is claimed. Profile-
+only allocation/upload metrics are disabled and remain unmeasured. Sparse logs
+and final RAM show unchanged 111 uploads/0 UI missing/1 warmup discard over their
+covered interval; do not extend that evidence beyond its stated brackets.
+
+`d360-comparison.json`, `d360-state-differences.json`, the capture's
+`allocator-comparison.json`, `room-comparison.json`, and
+`loading-phase-diagnostic.json` preserve the results and limitations. No physical
+hardware, combat/death/retry/transition or whole-encounter acceptance is implied.
+
+### Reproduction and next boundary
+
+- Private source/reference/candidate outputs: `/root/probe/d360-room-v2`.
+- Selectable mirror: `/root/probe/d360-mirror`; current `/root/probe/d343-mirror`
+  remains untouched. Use `compact_room(..., compact_effects=True,
+  compact_palettes=True)` or the existing CLI with `--compact-room-est
+  --compact-room-palettes`; the source input is the private original r100.das.
+- Actual existing native textures are in `/root/probe/d354v7-fixtures/tex`;
+  the prepared identities match the reference converter output in
+  `/root/probe/d318d-room-textures`.
+- Build/capture recipes and patch: `/root/probe/d360-arm-b`,
+  `/root/probe/d360-prepare-capture.py`; scratch scripts under
+  `C:/Game Dev/Emulators/re4-session-scripts/d360-*`.
+- Disc preparation reused mkdisc.sh with read-only hardlink staging instead of
+  copying the whole mirror, recorded in `d360-staging-recipe.json`. Initial
+  staging failed for lack of host space; its truncated new disc was removed.
+  Completed ELF/RAM evidence and one historical disc were transparently NTFS-
+  compressed with byte hashes verified; paths/content remain unchanged.
+
+Keep as a **selectable measured memory candidate**, without changing default
+assets. Now connect genuinely retained static preparation through the existing
+room/model owner. The 147,232 recovered bytes bound the new net room-owned data
+budget; preserve at least the previous source free headroom INCLUDING allocation
+headers/alignment. This does not enlarge the 8 KiB topology-metadata limit or
+justify per-corner remapping, a new cache, fixed lights, or another pipeline.
+Source light provenance/invalidation still needs integration. Run the next full
+renderer-stack A/B with the SAME selected assets in both arms; the loading-phase
+comparison above cannot serve as that gate. Stop admission-ranking experiments.

@@ -90,6 +90,58 @@ class CompactRoom(unittest.TestCase):
                 self.assertEqual(small[h+r1:h+r1+300],raw)
             self.assertEqual(ui.mirror.SEQUENCE_OBSERVER,None)
 
+    def test_selectable_index_release_keeps_source_palette_and_mips(self):
+        original,container,_=fixture()
+        offsets=struct.unpack_from('>51I',original,16)
+        bodies=[original[a:b] for a,b in zip(offsets,offsets[1:]+(len(original),))]
+        # Existing EFF ownership and animation table, now with a non-noise ID.
+        eff=bytearray(bodies[8][:128]);struct.pack_into('>H',eff,52,7)
+        tex=bytearray(96+256+512)
+        struct.pack_into('>3I',tex,0,tpl.TPL_MAGIC,1,12)
+        struct.pack_into('>2I',tex,12,20,56)
+        struct.pack_into('>HHII',tex,20,16,16,9,96)
+        struct.pack_into('>HBBII',tex,56,256,0,0,2,352)
+        tex[96:352]=bytes(range(256));tex[352:]=bytes(range(256))*2
+        eff+=tex;bodies[8]=eff
+        rebuilt=bytearray(original[:448])
+        for i,body in enumerate(bodies):
+            struct.pack_into('>I',rebuilt,16+4*i,len(rebuilt));rebuilt+=body
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'r100.das';source.write_bytes(container);textures=root/'tex';textures.mkdir()
+            for raw in (tex,bodies[26]):
+                for image in tpl.parse_tpl(raw):
+                    key,_=ui.image_identity(image)
+                    package,_=tpl.build_package([image],[tpl.MaterialBinding('source',0,None)],twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
+                    (textures/(key+'.re4tex')).write_bytes(package)
+            with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:rebuilt)}):
+                baseline=ui.compact_room(source,textures,root/'baseline')
+                candidate=ui.compact_room(source,textures,root/'candidate',compact_palettes=True)
+            added=[e for e in candidate['selected'] if e.get('palette_bytes')]
+            self.assertEqual(len(added),1);entry=added[0]
+            self.assertEqual(entry['source_bytes'],256);self.assertEqual(entry['record_bytes'],64)
+            # The additional descriptor fits this fixture's existing table padding.
+            self.assertEqual(baseline['resident_archive_bytes']-candidate['resident_archive_bytes'],192)
+            small=(root/'candidate/r100.arc').read_bytes()
+            rec=small[entry['resident_payload']:entry['resident_payload']+64]
+            self.assertEqual(rec[:8],b'R4PREF\0\0')
+            self.assertEqual(struct.unpack_from('<2I',rec,32),(2,512))
+            owner=entry['resident_tpl'];desc=owner+struct.unpack_from('<I',small,owner+8)[0]
+            clut=owner+struct.unpack_from('<I',small,desc+4)[0]
+            pal=owner+struct.unpack_from('<I',small,clut+8)[0]
+            self.assertEqual(small[pal:pal+512],tex[352:])
+            for slot in (28,): # the source mip owner survives byte-for-byte
+                def body(data):
+                    n=struct.unpack_from('<I',data)[0];ofs=struct.unpack_from('<%dI'%n,data,16)
+                    return data[ofs[slot]:min([o for o in ofs if o>ofs[slot]]+[len(data)])]
+                self.assertEqual(body(small),body((root/'baseline/r100.arc').read_bytes()))
+            self.assertEqual(source.read_bytes(),container)
+            # Preparation refuses mismatched native artwork; no reference resizing
+            # or source index elimination without an existing exact package.
+            key=entry['key'];(textures/(key+'.re4tex')).write_bytes(b'bad')
+            with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:rebuilt)}):
+                with self.assertRaisesRegex(ValueError,'non-reference'):
+                    ui.compact_room(source,textures,root/'bad',compact_palettes=True)
+
     def test_offset_identity_and_retained_cpu_mip_data(self):
         original,container,image=fixture()
         with tempfile.TemporaryDirectory() as d:

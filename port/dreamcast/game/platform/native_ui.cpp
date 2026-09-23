@@ -243,22 +243,31 @@ bool same_image(const Re4dcUiImage& a,const Re4dcUiImage& b) {
     return a.pixels==b.pixels && a.palette==b.palette && a.width==b.width && a.height==b.height &&
            a.format==b.format && a.palette_format==b.palette_format && a.palette_bytes==b.palette_bytes;
 }
-bool image_key(const Re4dcUiImage& image,Key& key) {
-    for(unsigned n=0;n<nsource;++n) if(same_image(sources[n].image,image)) {key=sources[n].key;return true;}
-    Key external{};
-    int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
-    if(!native)native=core_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
-    if(!native)native=option_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
-    if(!native)native=player_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
-    if(!native)native=weapon_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
+int external_image_key(const Re4dcUiImage& image,Key& external) {
+    int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
+    if(!native)native=core_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
+    if(!native)native=option_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
+    if(!native)native=player_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
+    if(!native)native=weapon_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
     for(auto& e:enemy_identities)if(!native && e.archive)
-        native=e.table.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv);
-    if(native<0 || (native && (image.palette || image.palette_bytes))) {
-        re4dc_log("native source identity: incompatible descriptor rejected\n");return false;
-    }
+        native=e.table.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
+    return native;
+}
+bool image_key(const Re4dcUiImage& image,Key& key) {
+    Key external{};int native=0;
+    const bool indexed=image.format==8 || image.format==9;
+    // Indexed external records must qualify the CURRENT retained palette before
+    // a pointer-key cache hit. A changed palette cannot reuse an old upload or
+    // hash the discarded source indices. Ordinary resident images retain their
+    // existing fast path. No cache entries or extra allocation are introduced.
+    if(indexed)native=external_image_key(image,external);
+    if(native<0){re4dc_log("native source identity: incompatible palette rejected\n");return false;}
+    if(!native)for(unsigned n=0;n<nsource;++n) if(same_image(sources[n].image,image)) {key=sources[n].key;return true;}
+    if(!indexed)native=external_image_key(image,external);
+    if(native<0){re4dc_log("native source identity: incompatible descriptor rejected\n");return false;}
     if(native) {
         if(identity_hits++<3)re4dc_log("native source identity: %08x-%08x (no source-texel hash)\n",external.crc,external.fnv);
-        if(nsource<kSourceCount)sources[nsource++]={image,external};
+        if(!indexed && nsource<kSourceCount)sources[nsource++]={image,external};
         key=external;return true;
     }
     const unsigned metadata[]={image.width,image.height,image.format,image.palette_format,image.palette_bytes};

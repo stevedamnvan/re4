@@ -114,6 +114,14 @@ class NativeUi(unittest.TestCase):
             entries=struct.pack('<3I',128,88,64)
             table[160:192]=struct.pack('<8s6I',b'R4NTBL\0\0',1,1,12,zlib.crc32(entries)&0xffffffff,1024,224)
             table[192:204]=entries;(root/"identities").write_bytes(table)
+            pal=bytes(range(32));pf=2166136261
+            for v in pal:pf=((pf^v)*16777619)&0xffffffff
+            indexed=bytearray(256);indexed[:128]=table[:128]
+            struct.pack_into('<I',indexed,20,192)
+            struct.pack_into('<HHI',indexed,88,16,16,8)
+            indexed[128:192]=struct.pack('<8s14I',b'R4PREF\0\0',0x12345678,0xabcdef01,16,16,8,128,2,32,zlib.crc32(pal)&0xffffffff,pf,0,0,0,0)
+            indexed[192:224]=struct.pack('<8s6I',b'R4NTBL\0\0',1,1,12,zlib.crc32(entries)&0xffffffff,1024,256)
+            indexed[224:236]=entries;(root/"indexed").write_bytes(indexed)
             fixture=r"""
 #include "texture_package.hpp"
 #include "gpu_lifecycle.hpp"
@@ -256,6 +264,25 @@ assert(identities.adopt(room.data(),room.size()));
 memset(room.data()+96,0xab,4);
 assert(identities.lookup(room.data()+128,8,8,14,crc,fnv));
 identities.clear();room[28]='X';assert(identities.adopt(room.data(),room.size()) && !identities.count());
+// New indexed record keeps source palette bytes and rejects changes even after
+// successful lookup. No source texel read or native palette allocation occurs.
+std::ifstream ip(argv[10],std::ios::binary);
+std::vector<unsigned char> ir((std::istreambuf_iterator<char>(ip)),{});
+unsigned char palette[32];for(unsigned i=0;i<32;++i)palette[i]=i;
+for(unsigned cycle=0;cycle<3;++cycle){
+ assert(identities.adopt(ir.data(),ir.size()));
+ assert(identities.lookup(ir.data()+128,16,16,8,crc,fnv,palette,2,32)==1);
+ assert(crc==0x12345678U && fnv==0xabcdef01U);
+ assert(identities.lookup(ir.data()+160,16,16,8,crc,fnv,palette,2,32)==-1);
+ assert(identities.lookup(ir.data()+128,16,16,8,crc,fnv)==-1);
+ assert(identities.lookup(ir.data()+128,16,16,8,crc,fnv,palette,1,32)==-1);
+ assert(identities.lookup(ir.data()+128,16,16,8,crc,fnv,palette,2,30)==-1);
+ palette[4]^=1;assert(identities.lookup(ir.data()+128,16,16,8,crc,fnv,palette,2,32)==-1);palette[4]^=1;
+ identities.clear();assert(!identities.lookup(ir.data()+128,16,16,8,crc,fnv,palette,2,32));
+}
+for(unsigned byte:{152U,160U,164U,176U,180U,184U,188U}){
+ ir[byte]^=0x80;assert(!identities.adopt(ir.data(),ir.size()));ir[byte]^=0x80;
+}
 // Real shared storage: short reads, unchanged native bytes, sharing, and no
 // whole-file allocation/release accounting. CRC rejection precedes any VRAM.
 std::ifstream sf(argv[7],std::ios::binary);
@@ -303,7 +330,7 @@ render=0;assert(re4dc::gpu::quiesce()==FenceResult::ready);
             scene=ROOT/"port/dreamcast/room";exe=root/"fixture"
             subprocess.run(["g++","-std=c++17","-DRE4DC_STORAGE_BOUNCE_BYTES=16384","-fsanitize=address,undefined","-fno-omit-frame-pointer","-I"+str(root),"-I"+str(scene),str(cpp),
                             str(scene/"texture_package.cpp"),str(scene/"gpu_lifecycle.cpp"),str(scene/"room_storage.cpp"),"-o",str(exe)],check=True)
-            subprocess.run([str(exe)]+[str(root/name) for name in ("asset","vq","unknown","oversized","palette","identities","stream","bad_crc","small_vq")],check=True)
+            subprocess.run([str(exe)]+[str(root/name) for name in ("asset","vq","unknown","oversized","palette","identities","stream","bad_crc","small_vq","indexed")],check=True)
 
 
     @unittest.skipUnless(shutil.which("g++"), "host compiler required")
@@ -379,7 +406,7 @@ int main(){
         key,_=UI.image_identity(image);crc,fnv=[int(x,16) for x in key.split("-")]
         fixture='#include "native_ui.h"\n#include <cassert>\n'
         fixture+='struct Key{unsigned crc,fnv;};struct Source{Re4dcUiImage image;Key key;};constexpr unsigned kSourceCount=128;Source sources[kSourceCount];unsigned nsource;\n'
-        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&)const{return state;}} room_identities,core_identities,option_identities,player_identities,weapon_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
+        fixture+='struct Identity {int state=0;int lookup(const void*,unsigned,unsigned,unsigned,unsigned&,unsigned&,const void* =nullptr,unsigned =0xffffffffU,unsigned =0)const{return state;}} room_identities,core_identities,option_identities,player_identities,weapon_identities; unsigned identity_hits; void re4dc_log(const char*,...){}\n'
         fixture+='struct EnemyIdentity {void* archive=nullptr;Identity table;};EnemyIdentity enemy_identities[4];\n'
         fixture+=body
         fixture+=r"""
@@ -391,7 +418,7 @@ Re4dcUiImage image{pixels,palette,8,4,9,0,16};Key key{};assert(image_key(image,k
 assert(image_size(image)==32);
 """
         fixture+=f"assert(key.crc=={crc}U && key.fnv=={fnv}U);"
-        fixture+='assert(nsource==1);assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;image.pixels=(void*)1;assert(!image_key(image,key));assert(nsource==0);room_identities.state=0;core_identities.state=-1;assert(!image_key(image,key));assert(nsource==0);core_identities.state=1;image.palette=nullptr;image.palette_bytes=0;assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;assert(!image_key(image,key));}\n'
+        fixture+='assert(nsource==1);assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;image.pixels=(void*)1;assert(!image_key(image,key));assert(nsource==0);room_identities.state=0;core_identities.state=-1;assert(!image_key(image,key));assert(nsource==0);core_identities.state=1;image.format=14;image.palette=nullptr;image.palette_bytes=0;assert(image_key(image,key));assert(nsource==1);nsource=0;room_identities.state=-1;assert(!image_key(image,key));}\n'
         fixture=fixture.rsplit('}',1)[0]+r"""
 room_identities.state=core_identities.state=0;nsource=0;
 option_identities.state=-1;assert(!image_key(image,key) && !nsource);

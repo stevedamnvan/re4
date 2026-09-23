@@ -73,6 +73,31 @@ The shared PVR owner, storage/texture ownership and completed source skinning
 remain the boundaries. Source lighting state and native pass organization are
 part of this candidate, not deferred post-performance polish.
 
+## D360 current - actual room memory recovered; preparation remains next
+
+A default-off `--compact-room-palettes` extension to the existing compact/native
+path releases three immutable r100 EFF index images while retaining checked CLUTs,
+descriptors, animation, packed effects and sound. The real loaded room allocation
+falls 3,754,592->3,607,360 bytes; captured source heap free AND largest block rise
+66,592->213,824. The required block/enemy bodies remain allocated, with 422 live
+allocations and unchanged heap capacity. Existing native textures/VRAM are unchanged;
+this is not native PAL support or a rendering speedup.
+
+Private candidate `/root/probe/d360-mirror` and capture
+`C:/Flycast-Evidence/re4-dreamcast/d360-indexed-room` preserve the visible source
+menu and outdoor Leon/cabin/HUD. The three new effect uploads are not sampled in
+that route. Focused host tests cover identity, retained palettes and owner cycles.
+Same-global-tick comparison fails by one loading update; do not call it a matched
+performance pass. Full rendering remains ~1.56 seconds. Current assets stay default.
+
+Next: use the measured 147,232-byte replacement to fund genuinely retained D349
+static preparation at the existing owner boundary, preserving net source headroom,
+source-selected light dependencies and the 8 KiB metadata cap. No admission tuning
+or PS2-profile activation. The next renderer A/B must use the same selected assets
+in both arms. See [D360](port/dreamcast/docs/R4_NATIVE_PREPARATION_CHECKPOINT.md#d360---selectable-indexed-texture-backing-release-2026-09-22)
+for recipes, exact identities, failed gates and remaining qualification. Inherited
+dirty integration edits remain separate; HEAD alone is not the captured executable.
+
 ## D359 current - implementation committed; stop admission tuning
 
 Renderer cohort `8bdb4dd` is pushed. Both selector arms link from a separate clean

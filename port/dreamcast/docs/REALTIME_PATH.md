@@ -1,5 +1,18 @@
 # Performance policy for the boot-forward RE4 Dreamcast port
 
+Current D360 storage prerequisite: a selectable source-index externalization
+recovers 147,232 actual source heap bytes (free/largest66,592->213,824) while
+preserving the integrated renderer, current native textures and required large
+block/enemy allocations. It is not a speedup: render remains ~1.56 seconds.
+The source timing comparison differs by one loading update, so it is not a
+matched performance pass. Use identical selected assets in the next full-stack
+A/B. Keep the candidate default-off; source CLUT/mip/CPU semantics and unsampled
+effect presentation limits are recorded in [D360](R4_NATIVE_PREPARATION_CHECKPOINT.md#d360---selectable-indexed-texture-backing-release-2026-09-22).
+The next task remains retained preparation at the existing owner boundary, now
+with a measured net storage replacement; do not return to admission tuning or
+enlarge the topology metadata budget.
+
+
 Current D359 priority (2026-09-22): stop admission-ranking changes and restore
 retained preparation at the existing native asset/resource boundary. The current
 full candidate is committed as8bdb4dd. A normal-build paired capture, with detailed

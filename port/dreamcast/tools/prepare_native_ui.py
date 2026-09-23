@@ -180,7 +180,7 @@ def compact_spans(decoded, references, ranges):
     return out,mapped
 
 
-def select_upload_only(decoded, palettes, textures, allowed):
+def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=None):
     """Existing qualified image selection, shared by room/core/enemy producers."""
     selected=[];retained=[];seen={}
     for tpl_off,raw,ctx in palettes:
@@ -194,9 +194,13 @@ def select_upload_only(decoded, palettes, textures, allowed):
             pixel=struct.unpack_from('>I',raw,header+8)[0]
             lo,hi=raw[header+33:header+35]
             reason=None
-            if clut or image.palette_data:reason='palette/CPU semantics retained'
+            indexed=bool(indexed_allowed and indexed_allowed(ctx) and clut and
+                         image.format in (8,9) and image.palette_data and
+                         image.palette_format in (0,1,2) and
+                         len(image.palette_data)<= (32 if image.format==8 else 512))
+            if (clut or image.palette_data) and not indexed:reason='palette/CPU semantics retained'
             elif lo or hi:reason='source mip chain retained'
-            elif image.format in (8,9):reason='indexed source retained'
+            elif image.format in (8,9) and not indexed:reason='indexed source retained'
             if reason:
                 retained.append({'context':ctx,'image':i,'reason':reason});continue
             key,identity=image_identity(image)
@@ -212,10 +216,22 @@ def select_upload_only(decoded, palettes, textures, allowed):
                 raise ValueError('external texture payload violates source alignment/range')
             crc,fnv=(int(x,16) for x in key.split('-'))
             record=_NATIVE_RECORD.pack(_NATIVE_MAGIC,crc,fnv,image.width,image.height,image.format,len(image.data))
+            if indexed:
+                # Keep the source CLUT and descriptors resident. Only the immutable
+                # index image goes away; runtime binds the existing expanded native
+                # image after checking the retained palette against this fingerprint.
+                pal=image.palette_data;pf=2166136261
+                for v in pal:pf=((pf^v)*16777619)&0xffffffff
+                record=b'R4PREF\0\0'+record[8:]+struct.pack('<8I',image.palette_format,len(pal),zlib.crc32(pal)&0xffffffff,pf,0,0,0,0)
+                if len(image.data)<len(record):raise ValueError('indexed payload is smaller than identity record')
             entry={'context':ctx,'image':i,'key':key,'source_header':tpl_off+header,
                    'source_tpl':tpl_off,'source_payload':a,'source_bytes':len(image.data),
                    'source_sha256':hashlib.sha256(identity).hexdigest(),
                    'native_package_sha256':hashlib.sha256(reference).hexdigest()}
+            if indexed:
+                entry.update(record_bytes=64,palette_bytes=len(image.palette_data),
+                    palette_format=image.palette_format,palette_sha256=hashlib.sha256(image.palette_data).hexdigest(),
+                    policy='immutable index image externalized; source CLUT retained and checked; native VRAM format unchanged')
             if a in seen:
                 if seen[a][0]!=b or seen[a][1]!=record:raise ValueError('incompatible shared payload')
             else:seen[a]=(b,record)
@@ -237,7 +253,7 @@ def native_identity_index(selected, mapped, original_bytes, resident_bytes):
     return header+table+bytes(table_size-32-len(table))
 
 
-def _compact_upload_only(decoded, references, palettes, textures, allowed, effect_ranges=(), effect_entries=()):
+def _compact_upload_only(decoded, references, palettes, textures, allowed, effect_ranges=(), effect_entries=(), indexed_allowed=None):
     """Shared source-layout transform, using the existing converter's offsets."""
     import compact_effect_records as effects
     n=struct.unpack_from('<I',decoded)[0]
@@ -246,7 +262,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     extra=1+bool(effect_entries)
     if min(x for x in offsets if x)<16+8*(n+extra):
         raise ValueError('archive lacks spare native-identity header slot')
-    ranges,selected,retained=select_upload_only(decoded,palettes,textures,allowed)
+    ranges,selected,retained=select_upload_only(decoded,palettes,textures,allowed,indexed_allowed)
     if not ranges:raise ValueError('no qualified upload-only payloads')
     out,mapped=compact_spans(decoded,references,sorted(ranges+list(effect_ranges)))
     table_size=(32+12*len(selected)+31)&~31
@@ -263,7 +279,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     out[16+4*(n+extra):16+8*(n+extra)]=b''.join(tags+new_tags)
     report={'original_archive_bytes':len(decoded),'resident_archive_bytes':len(out),
         'archive_recovery_bytes':len(decoded)-len(out),'identity_table_bytes':table_size,
-        'replacement_record_bytes':32*len(ranges),'selected':selected,'retained':retained}
+        'replacement_record_bytes':sum(len(record) for _,_,record in ranges),'selected':selected,'retained':retained}
     if effect_entries:
         for e in effect_entries:e['resident_offset']=mapped(e['source_offset'])
         report['effects']={'entries':effect_entries,'index_bytes':effect_size,
@@ -272,7 +288,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     return out,report
 
 
-def compact_room(source_file, textures, destination, compact_effects=False):
+def compact_room(source_file, textures, destination, compact_effects=False, compact_palettes=False):
     """Prepare one smaller qualified .dar through the existing room builder.
 
     Uses the converter's recorded relative offsets, not a second archive parser
@@ -335,14 +351,19 @@ def compact_room(source_file, textures, destination, compact_effects=False):
             effect_ranges+=er;effect_entries+=ee
         effect_ranges.sort();effect_entries.sort(key=lambda e:e['source_offset'])
         if not effect_entries:raise ValueError('no qualified room sequences')
-    out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed,effect_ranges,effect_entries)
+    # Existing r100 EFF texture consumers retain their CLUT/animation tables.
+    # CPU noise ID FE, mip chains, all other palettes and families stay resident.
+    def indexed_allowed(ctx):
+        return compact_palettes and ctx.startswith(arc+'#8/tpl') and allowed(ctx)
+    out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed,effect_ranges,effect_entries,indexed_allowed)
     if compact_effects:stats['effects']['skipped']=skipped
     _,packaged=mirror.prepare_native_room(rel,container,out,coverage)
     report={'contract':'r100-resident-effects-v1' if compact_effects else 'r100-upload-only-v1','source_file':str(source_file),
             'source_sha256':hashlib.sha256(source).hexdigest(),
             **stats,
             'qualification':coverage,'loading':'source DVD queue reads compact type-0 directly; original sound container retained',
-            'limits':'No mip/palette/CPU-noise removal; no source-archive saving accepted before target measurement.'}
+            'limits':'No mip/CLUT/CPU-noise removal; optional immutable r100 EFF index images use existing native packages. No source-archive saving accepted before target measurement.',
+            'compact_palettes':compact_palettes}
     destination.mkdir()
     (destination/'r100.dar').write_bytes(packaged)
     (destination/'r100.arc').write_bytes(out)
@@ -510,15 +531,17 @@ if __name__=='__main__':
         parser.add_argument('--core-effects',action='store_true',help='also externalize qualified core EFF #1 upload-only images')
         parser.add_argument('--compact-core-est',action='store_true',help='lossless resident packing for qualified core EST #1/#16')
         parser.add_argument('--compact-room-est',action='store_true',help='lossless resident packing for qualified r100 EST owners')
+        parser.add_argument('--compact-room-palettes',action='store_true',help='externalize reviewed r100 EFF index images; keep source palettes and existing native VRAM format')
         parser.add_argument('--textures',type=Path,required=True)
         parser.add_argument('--output',type=Path,required=True)
         args=parser.parse_args()
         if args.core_effects and not args.compact_core:parser.error('--core-effects requires --compact-core')
         if args.compact_core_est and not args.compact_core:parser.error('--compact-core-est requires --compact-core')
         if args.compact_room_est and not args.compact_room:parser.error('--compact-room-est requires --compact-room')
+        if args.compact_room_palettes and not args.compact_room:parser.error('--compact-room-palettes requires --compact-room')
         if args.compact_option:report=compact_option(args.compact_option,args.textures,args.output)
         elif args.compact_core:report=compact_core(args.compact_core,args.textures,args.output,args.core_effects,args.compact_core_est)
-        else:report=compact_room(args.compact_room,args.textures,args.output,args.compact_room_est)
+        else:report=compact_room(args.compact_room,args.textures,args.output,args.compact_room_est,args.compact_room_palettes)
         print('compact archive:',report['original_archive_bytes'],'->',report['resident_archive_bytes'],
               'recovery',report['archive_recovery_bytes'],'identities',len(report['selected']))
     else:
