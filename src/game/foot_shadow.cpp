@@ -49,6 +49,12 @@ void DrawFootShadow(cEm* em)
     cLight* l;
     int cnt;
 
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_FX_LEAN
+    // FX_LEAN (D367 safe cut S5, safecuts.mk): no foot shadow blobs. Render only: this function
+    // writes no game state (its floor query is read-only) and draws through GX.
+    return;
+#endif
+#line 52
     if (pG->Disp_flg & 0x02000000) {
         return;
     }
