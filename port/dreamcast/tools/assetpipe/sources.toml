@@ -1,0 +1,32 @@
+# Private inputs of the asset pipeline. Paths only: no game data is tracked.
+# Every key can be overridden by the environment variable RE4DC_SRC_<KEY> (upper case),
+# e.g. RE4DC_SRC_GC_ISO=/path/disc1.iso. "${key}" expands another key.
+
+[paths]
+assets_root = "/root/probe/d367-agents/assets"          # also RE4DC_ASSETS_ROOT
+gc_iso = "/root/work/re4-dreamcast/orig/G4BE08/re4_debug_disc1.iso"   # GC debug disc 1 (FST: St1/St2/St4 rooms)
+gc_iso2 = ""                                             # disc 2 when available (St3/St5 ...)
+ps2_iso = "/mnt/c/Game Dev/Emulators/re4_helpers/Resident Evil 4 (USA)/Resident Evil 4 (USA).iso"
+gc_rooms = "/root/work/re4-dreamcast/orig/G4BE08/rooms"  # per-room extraction (PS2 scenario OBJs for r100/r101)
+r100_export = "${gc_rooms}/r100/stream/r100_full_export"
+mirror = "/root/probe/d367-mirror"                       # route disc mirror (stage.sh MIRROR)
+route_src = "/root/probe/d367-agents/frontier/iso-src"   # route files extracted from the debug ISO (W1)
+fixtures = "/root/probe/d354v7-fixtures"                 # stage.sh FIXTURES_SRC (tex/, mot/)
+keyed = "/root/probe/d367-native-static/keyed12"         # r100 keyed .re4room (stage.sh KEYED)
+reclaim = "/root/probe/d367-agents/backing-lod/backing-reclaim.json"   # r100 placements
+ps2_rooms = "/root/probe/ps2-asset-experiment"          # PS2 TPL PNG extraction per room
+ps2_r100 = "/root/probe/d353-ps2-r100-prelit/r100/r100"   # PS2 r100_004 scenario OBJ + .idx_ps2_smd (SMD tool 1.3.0)
+ps2_r101 = "/root/probe/ps2-asset-complete/extract"       # PS2 r101_004 scenario OBJ + .idx_ps2_smd
+ps2_r103 = "/root/probe/d367-agents/w9/ps2/r103"         # PS2 r103_004 scenario OBJ + .idx_ps2_smd
+ui_logs = "/root/probe/d367-agents/ui-vram/logs"         # run logs naming loaded textures (vq_native_ui.py)
+evidence = "/mnt/d/Flycast-Evidence/re4-dreamcast"
+kos = "/root/work/kos-re4dc-d336"
+blender = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe"
+aica_cache = "/root/probe/d367-aica-cache"
+
+[pinned]
+# Outputs of earlier manual or Windows-side steps, used as content-hashed inputs.
+# A generator that can rebuild one records it; `assets.sh --verify` compares.
+r100_planar2 = "/root/probe/d367-agents/ps2-blender/subst/planar2"          # bl_decimate.py r100-planar2.json (Blender 5.2)
+r100_bark_png = "/root/probe/d367-agents/ps2-blender/texture/ps2/r100_004/0023.PNG"   # RE4_PS2_TPL_EXTRACT B.1.1.1
+vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq5"                      # README: tex-vq5 (vq_native_ui.py)

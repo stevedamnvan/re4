@@ -1,0 +1,97 @@
+# D367 asset pipeline cost model (docs/D367_ASSET_PIPELINE.md section 4).
+# One value per line, each with where it came from. `assets.sh calibrate` writes a
+# re-fit to costmodel.fit.toml plus a diff; copy values in here by hand. Units:
+# hardware ms at 200 MHz (SH-4 model, tools/hwmodel), bytes, source mm.
+
+[screen]
+width = 640
+height = 480
+fovy_deg = 60.0            # scenery_model.py FOVY; K = (height/2) / tan(fovy/2) = 415.7
+znear_mm = 100.0
+eye_mm = 1600.0
+
+[lod]
+px = 3.0                   # MESH_LOD_PX (LFV recipe)
+fog_far_mm = 25000.0       # approved 25 m (min with the room's own far)
+bias_options = [1.0, 0.75, 0.5, 0.375, 0.25]
+floor_options_mm = [0.0, 2.0]   # W9b --lod-floor 2: -14..16% level-0 triangles
+cluster_mm = 20000.0       # convert_room_bins defaults
+lod_args = ["--lod", "--lod-min-gain", "0.4", "--lod-max-levels", "4", "--lod-eps", "24,48,96,192,384"]
+
+[scenery]
+# Structured per-view cost (section 4.2):
+#   ms = base_ms(room) + (c_rec*records + c_strip*strips + c_meshlet*meshlets + c_test*tests
+#                         + c_part*parts + c_obj*objects) / (clock_mhz*1000)
+clock_mhz = 200.0
+allin_ms_per_krec = 1.42   # LD r100 all-in (hwmodel vs D349 2.20); sanity check only
+c_rec = 138.0              # cycles/record; first fit, scenery-trials arms A-G25 (0.69 ms/1k)
+c_strip = 0.0              # folded into c_rec by the first fit (strips ~ records/4); prior 58 (Flycast)
+c_meshlet = 460.0          # prior: scenery_model.py (Flycast cycles)
+c_test = 120.0             # prior: scenery_model.py
+c_part = 1500.0            # prior: scenery_model.py; the arms fit gives ~5.2k cycles per cluster in all
+c_obj = 0.0                # object sphere test + ModelTrans share: in base_ms until fitted
+base_ms_default = 12.2     # r100 arms-fit intercept at 25 m; per-room values below override
+hw_cycles_per_record = [30.0, 45.0]   # HW-BUDGET.md band, reported next to the fit
+
+[scenery.base_ms]
+r100 = 12.2                # arms A-G25 intercept (placement walk, part setup, pool lighting)
+
+[actors]
+allin_ms_per_krec = 1.28   # hwmodel LD (D349 2.69)
+tier_ms_per_krec = 0.86    # design-ganado DESIGN.md s3: tiered (unlit-far) parts
+tier_ms_per_kcorner = 0.08 # design-ganado DESIGN.md s3
+ganado_full_ms = 7.4       # actors30-v3 per Ganado, full
+ganado_tier_ms = 4.5       # actors30-v3 per Ganado, with tiers
+leon_ms = 5.0              # step 3 target (<= 5; fewer-bone rebuild ~3)
+fight_ganados = 6          # r101 worst case in view (ACT_CAP trials 4/6/8)
+tiers_m = [7.0, 17.0]      # design-ganado: near <= 7 m (or nearest 3), mid <= 17 m, far beyond
+engagement_m = [3.0, 8.0, 20.0]
+
+[texture]
+vq_codebook_bytes = 2048   # full 256-entry codebook, pvrtex
+psnr_ref_db = 48.0         # quality loss = coverage * max(0, (ref - psnr)/ref)
+vq_min_bytes = 16384       # tex-vq5 rule: model textures VQ from 16 KiB padded
+pool_bytes = 2641920       # PVR texture pool at TA_VERTBUF_KB=2048 (README: 2.58 MB)
+resident_bytes = 0         # UI + Leon + weapons + core; set from a run log (native UI peak) per build
+load_rate_bytes_s = 1500000  # GDEMU planning rate (room-entry load time, report only)
+
+[ta]
+bank_bytes = 2097152       # TA_VERTBUF_KB=2048
+guard_bytes = 131072       # adaptive guard margin
+bytes_per_record = 24      # 20 / 24 / 28 by vertex format (Sega DB 3.7.9)
+bytes_per_substrip = 12
+
+[heap4]
+margin_bytes = 155000      # design-lowmode A5: r100 s40 / r101 margin
+
+[impostor]
+p_imp_px = 20.0            # e_imp = 0.195*r*K/z; 20 px reproduces the approved 12 m (r ~ 3 m)
+view_error = 0.195         # sin(11.25 deg): 16 views
+quad_cycles = 150.0        # frame_ms.py batch model: 4 records + 150 cycles per quad
+atlas_header_cycles = 200.0
+distances_mm = [0.0, 20000.0, 15000.0, 12000.0, 10000.0]
+
+[house]
+policy = "always"          # user decision: mid mesh + 512 VQ everywhere, no near swap
+shell_vram_bytes = 67584   # 512 VQ package (66 KB)
+
+[quality]
+# Class weights for Q = w * sum_v (e_px - e_px_best)+ * area_frac  (section 4.8)
+weights = { landmark = 3.0, structure = 2.0, tree = 1.5, ground = 1.0, clutter = 0.5, default = 1.0 }
+engagement_weight = 2.0
+
+[budgets.standard]          # source-first, faithful look, 20 fps (50 ms hw)
+scenery_ms_p95 = 8.0       # p95 over views, including base_ms
+actors_ms = 7.0
+ta_bytes_max = 1966080     # 2 MiB - 128 KiB
+[budgets.low]               # budget-first "Dreamcast-native look", 30 fps (33 ms hw); user 2026-09-23
+scenery_ms_view_max = 5.0  # EVERY view, excluding base_ms (the fixed runtime overhead is designed away separately)
+scenery_tris_view_max = 18000   # hard per-view triangle budget (15-20k)
+full_ganados_max = 3       # at most 3 full-detail Ganados; the rest on tiers
+ta_bytes_max = 1966080
+heap4_vs_standard = 0      # Low never uses more heap 4 than Standard (per room, per file)
+
+[views]
+grid = 6                   # N x N ground points, 8 yaws, eye 1.6 m (room_model.py)
+yaws = 8
+statistic = 0.95           # p95 over views for budgets

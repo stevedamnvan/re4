@@ -104,6 +104,30 @@ unchanged. `vq-native-ui-report.json` lists every image with its PSNR; the expec
 is 55 images, 9,994,240 -> 1,361,920 bytes. The overlay is required only by the 2 MiB TA
 recipe; the default-flag build ignores it.
 
+## Asset pipeline (assets.sh)
+
+`tools/d367/assets.sh` generates a room's asset set from formulas instead of hand-tuned
+arguments, caches every step by content hash, writes a manifest and a review sheet, and
+stages the result for `stage.sh`. The design, formulas, override format and plug-in interface
+are in `docs/D367_ASSET_PIPELINE.md`. Everything it reads or writes is private: the cache,
+manifests and review sheets live under `RE4DC_ASSETS_ROOT` (default
+`/root/probe/d367-agents/assets`), and the input paths are listed in
+`tools/assetpipe/sources.toml`.
+
+```
+tools/d367/assets.sh rooms                       # every stage room on the GC disc image
+tools/d367/assets.sh inventory r101              # BIN counts, bounds, instances
+tools/d367/assets.sh build r100 [--verify]       # --plan recipe (default today): the accepted packages
+ASSETS=$RE4DC_ASSETS_ROOT/out/standard/r100 bash tools/d367/stage.sh <build> <disc>
+```
+
+`build r100 --plan recipe` reproduces the LFV r100 inputs byte for byte: the seven LD packages
+(`COMMON` `cdeade63...`), the tex-vq5 overlay (137 images) and the PS2 bark. `--verify`
+rebuilds every cached step and compares the output hashes. It also writes
+`review/standard/r100/index.html`: source vs chosen renders at 3, 8 and 20 m, and predicted
+hardware ms per asset. `stage.sh` reads the generated `stage.env` through `ASSETS=`, and
+variables set explicitly still win.
+
 ## Candidate flag sets (Flycast r100, frames 2401-2520)
 
 | Name | ms/frame | EXTRA_MAKE |

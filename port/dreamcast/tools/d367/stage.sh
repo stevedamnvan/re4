@@ -18,8 +18,15 @@
 # adds bgm/aica_str.dat (the disc streams), tools/aica_banks.py disc, for AICA_AUDIO=1
 # images (the silent audio_stub.cpp never reads either). AICA_CACHE (private, default
 # /root/probe/d367-aica-cache) keeps the conversions: ~25 s the first time, ~2 s after.
+# ASSETS=<dir> sources <dir>/stage.env from the asset pipeline (tools/d367/assets.sh; its
+# MESHDIR/MESHROOMS/TEXDIRS/ROOMFILES/KEYED); variables set explicitly still win.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+if [ -n "${ASSETS:-}" ]; then
+  test -f "$ASSETS/stage.env" || { echo "stage: no $ASSETS/stage.env (run tools/d367/assets.sh)" >&2; exit 1; }
+  # shellcheck disable=SC1091
+  . "$ASSETS/stage.env"
+fi
 build=${1:?usage: stage.sh <build-dir> <disc-dir>}
 out=${2:?usage: stage.sh <build-dir> <disc-dir>}
 base=${D367_BASE:-/root/probe/d367-native-static}
@@ -97,6 +104,8 @@ bash "$here/mkdisc-hardlink.sh" "$build/re4dc-game.elf" "$mirror" "$out" "$fixtu
 if [ -n "$aica" ]; then mv "$aica.json" "$out/aica-budget.json"; fi
 {
   echo "build=$build candidate=$(cat "$build/candidate.txt" 2>/dev/null || echo '?')"
+  if [ -n "${ASSETS:-}" ]; then echo "ASSETS=$ASSETS manifest-sha256=$(grep -o '"manifest_sha256": "[0-9a-f]*"' "$ASSETS"/manifest.json 2>/dev/null | cut -d'"' -f4 | cut -c1-16 | tr '
+' ' ')"; fi
   echo "MIRROR=${MIRROR:-/root/probe/d362-mirror} ROOMFILES=${ROOMFILES:-} FIXTURES_SRC=${FIXTURES_SRC:-/root/probe/d354v7-fixtures} KEYED=${KEYED:-$base/keyed12} MESHDIR=${MESHDIR:-} MESHROOMS=${MESHROOMS:-}"
   for d in ${TEXDIRS:-}; do
     echo "TEXDIR $d re4tex=$(ls "$d"/*.re4tex | wc -l)$([ "$d" = "$vq_overlay" ] && echo " vq-report-sha256=$(sha256sum < "$d/vq-native-ui-report.json" | cut -c1-16)")"

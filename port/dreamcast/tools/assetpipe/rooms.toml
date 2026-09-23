@@ -1,0 +1,66 @@
+# Per-room recipes. A room not listed here uses [defaults]: its local SMD BINs
+# (room_smd.py) from St*/<room>.das in the GC disc image, LOD packages, class-auto tags.
+# "recipe" holds the hand-tuned converter arguments that produced the accepted packages
+# (--plan recipe reproduces them byte for byte); --plan solve (default) replaces the
+# per-BIN bias/floor choices by the solver's (costmodel.toml).
+
+[route]
+rooms = ["r100", "r101", "r103"]
+
+[defaults]
+kind = "smd"                 # BINs + placements from the room SMD
+owner = "0xff"
+stage = "MESHROOMS"          # /cd/dc/native/<room>/*.re4mesh
+w9b = true                   # use --lod-floor/--lod-share/--class-auto when the converter has them
+
+[room.r100]
+kind = "export"              # r100: seven owners from the GC export + reclaim placements
+stage = "MESHDIR"
+keyed = true                 # stage.sh KEYED .re4room files (pinned)
+w9b = false                  # LD packages are R4IM v2 without W9b options
+owners = [
+  { name = "MAINSCENARIO", owner = "0xff", bins = "R100.FILE_MAIN" },
+  { name = "FILE_00", owner = "0", bins = "R100.FILE_0" },
+  { name = "FILE_01", owner = "1", bins = "R100.FILE_1" },
+  { name = "FILE_02", owner = "2", bins = "R100.FILE_2" },
+  { name = "FILE_03", owner = "3", bins = "R100.FILE_3" },
+  { name = "FILE_04", owner = "4", bins = "R100.FILE_4" },
+  { name = "COMMON", owner = "0xfe", bins = "R100.FILE_SHARED", common = true },
+]
+
+[room.r100.trees]            # PS2 trees (approved): GC COMMON 0-10 <- r100_004 BIN 139-147
+gc = "0xfe:0-10"
+ps2_obj = "${ps2_r100}/r100_004.scenario.obj"
+bark_png = "${r100_bark_png}"
+bark_key = "f6e54e3e-1ef21097"
+
+[room.r100.recipe]           # LD (README "r100 PS2 tree packages"); COMMON = cdeade63...
+bias = ["0xfe:0-10=0.375"]
+substitute = ["trees", "planar2"]
+expect = { COMMON = "cdeade631a35b6e9514c31d4ec0dbd19f07c66c508b5611270257cebed1191b6", MAINSCENARIO = "f4b31f51940a04987126da3338b0550b0798f65aaf13903894673b1fb0ee646c", FILE_01 = "69c135fdaaa2f7af760ac96f9e67041c03b819d4e464a0d90706be3ac5ddc4c9" }
+
+[room.r101]
+das = "St1/r101.das"
+
+[room.r101.trees]            # GC 13-16 <- PS2 81+82, 78, 79, 80; GC bark kept
+gc = "0xff:13-16"
+ps2_bins = "78-82"
+ps2_obj = "${ps2_r101}/r101_004.scenario.obj"
+
+[room.r101.recipe]           # tools/d367/README.md W9b
+bias = ["0xff:13-17=0.375", "0xff:3,9,12,34,70,64,31,29,38=0.25"]
+floor = 2
+share = true
+classes = ["0xff:13-17=tree"]
+class_auto = true
+substitute = ["trees"]
+
+[room.r103]
+das = "St1/r103.das"
+
+[room.r103.recipe]           # tools/d367/README.md W9b
+bias = ["0xff:38,59,60,62-67=0.375", "0xff:0,18,61,17,24,28=0.375"]
+floor = 2
+share = true
+classes = ["0xff:38,59,60,62-67=tree"]
+class_auto = true
