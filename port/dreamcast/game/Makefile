@@ -123,10 +123,14 @@ OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_O
 # Route cutscenes (default off): PS2 prerecorded movies present source events
 # (/cd/dc/movie/*.seq, docs/ROUTE_CUTSCENES.md). Default images carry none of it.
 ROUTE_MOVIES ?= 0
+# ROUTE_MOVIE_YUV=1: full-range movies go through the PVR YUV converter (0: software UYVY path).
+# ROUTE_MOVIE_TEXHASH=1: verification builds log the texture FNV of pictures 0/1/30/300.
+ROUTE_MOVIE_YUV ?= 1
+ROUTE_MOVIE_TEXHASH ?= 0
 .PHONY: route-movies-force
 $(OBJDIR)/route-movies.h: route-movies-force
 	@mkdir -p $(dir $@)
-	@printf '#define RE4DC_ROUTE_MOVIES %s\n' '$(ROUTE_MOVIES)' > $@.tmp
+	@printf '#define RE4DC_ROUTE_MOVIES %s\n#define RE4DC_ROUTE_MOVIE_YUV %s\n#define RE4DC_ROUTE_MOVIE_TEXHASH %s\n' '$(ROUTE_MOVIES)' '$(ROUTE_MOVIE_YUV)' '$(ROUTE_MOVIE_TEXHASH)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 ROUTE_MOVIE_PLATFORM = $(OBJDIR)/platform/native_movie.o $(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/pad.o

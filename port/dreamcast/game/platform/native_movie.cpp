@@ -19,12 +19,20 @@
 #include <cstring>
 #include <cstdio>
 #include <malloc.h>
+#include <dc/sq.h>
+#include <dc/pvr.h>
 #include "re4dc_platform.h"
 #include "native_ui.h"
 #include "native_io.h"
 #include "native_movie.h"
 #include "../../room/room_storage.hpp"
 #if RE4DC_ROUTE_MOVIES
+#ifndef RE4DC_ROUTE_MOVIE_YUV
+#define RE4DC_ROUTE_MOVIE_YUV 1      // full-range movies go through the PVR YUV converter
+#endif
+#ifndef RE4DC_ROUTE_MOVIE_TEXHASH
+#define RE4DC_ROUTE_MOVIE_TEXHASH 0  // verification: FNV of the texture of pictures 0/1/30/300
+#endif
 namespace { void* plm_alloc(size_t n); }
 // Two I/P reference frames, fixed buffers: no growth path is reachable.
 #define PLM_MALLOC(n) plm_alloc(n)
@@ -54,6 +62,7 @@ extern "C" int re4dc_ui_movie_close();
 extern "C" unsigned re4dc_ui_movie_presented();
 extern "C" uint64_t re4dc_ui_movie_first_picture_us();
 extern "C" int re4dc_ui_movie_last_presented();
+extern "C" void* re4dc_ui_movie_texture();
 namespace {
 // Hard caps: every write is checked against them, nothing grows.
 // snd_stream_fill asks for half the 8 KiB ring per channel: 8 KiB interleaved.
@@ -74,6 +83,7 @@ struct Movie {
     int heap_before=0,heap_active=0,terminal=0; unsigned vram_before=0,width=0,height=0;
     unsigned shown=0,dropped=0,late=0,cadence2=0,cadence_other=0,max_gap=0,last_submit=0,v0=0;
     unsigned long long sum_present=0,max_present=0,sum_idle=0;
+    bool full=false,hw=false; void* tex=nullptr; unsigned yuv_timeouts=0;
 } m;
 void* plm_alloc(size_t n){
     if(m.nallocs==MaxAllocs)return nullptr;
@@ -141,14 +151,15 @@ bool feed(){
 void path_for(unsigned id,char* out,unsigned size){
     snprintf(out,size,"/cd/dc/movie/r%03xs%02x.seq",(id>>8)&0xfff,id&0xff);
 }
-bool header(file_t f,unsigned* video,unsigned* audio_bytes,unsigned* frames,unsigned* width=nullptr,unsigned* height=nullptr){
+bool header(file_t f,unsigned* video,unsigned* audio_bytes,unsigned* frames,unsigned* width=nullptr,unsigned* height=nullptr,bool* full=nullptr){
     unsigned char h[32];
     if(!re4dc::storage::read_exact(f,h,32))return false;
     const unsigned w=little(h+8),hh=little(h+12);
     // Macroblock sizes only (the PVR row load needs 32-byte rows); the 512x256
     // texture and the staging budget bound the rest.
-    if(std::memcmp(h,"R4FMV003",8)||!w||!hh||(w&15)||(hh&15)||w>MaxWidth||hh>MaxHeight||little(h+28)!=0)return false;
+    if(std::memcmp(h,"R4FMV003",8)||!w||!hh||(w&15)||(hh&15)||w>MaxWidth||hh>MaxHeight||little(h+28)>1)return false;
     if(width)*width=w;
+    if(full)*full=little(h+28)&1;  // pre-expanded to full range by the converter
     if(height)*height=hh;
     *video=little(h+16);*audio_bytes=little(h+20);*frames=little(h+24);
     return *video>=4096 && *video<=16000000 && *audio_bytes>=16384 && *audio_bytes<=24000000 &&
@@ -191,7 +202,7 @@ bool open(unsigned id){
     movie_state(0,(int)(id&0xffff));
     {Re4dcIoScope owner;m.file=fs_open(m.path,O_RDONLY);}
     if(m.file<0)return false;
-    {Re4dcIoScope owner;if(!header(m.file,&m.video_left,&m.audio_left,&m.expected_frames,&m.width,&m.height))return false;}
+    {Re4dcIoScope owner;if(!header(m.file,&m.video_left,&m.audio_left,&m.expected_frames,&m.width,&m.height,&m.full))return false;}
     m.audio_bytes=m.audio_left;
     auto size=fs_total(m.file);if(size<2048||size>40000000)return false;
     m.transport_left=size-2048;
@@ -200,8 +211,10 @@ bool open(unsigned id){
     m.duration_us=video_us>audio_us?video_us:audio_us;
     unsigned char* rb=(unsigned char*)plm_alloc(ReadCap+32);
     m.readbuf=rb?(unsigned char*)(((uintptr_t)rb+31)&~(uintptr_t)31):nullptr;
-    m.pcm=(unsigned char*)plm_alloc(AudioCap);m.callback=(unsigned char*)plm_alloc(CallbackCap);m.rows=(unsigned char*)plm_alloc(Rows*m.width*2);
-    if(!m.readbuf||!m.pcm||!m.callback||!m.rows)return false;
+    m.pcm=(unsigned char*)plm_alloc(AudioCap);m.callback=(unsigned char*)plm_alloc(CallbackCap);
+    const bool want_hw=RE4DC_ROUTE_MOVIE_YUV&&m.full;
+    if(!want_hw)m.rows=(unsigned char*)plm_alloc(Rows*m.width*2);
+    if(!m.readbuf||!m.pcm||!m.callback||(!want_hw&&!m.rows))return false;
     m.input=plm_buffer_create_with_capacity(VideoCap);if(!m.input||!m.input->bytes||!record())return false;
     auto* seq=m.input->bytes;
     if(m.input->length<8||std::memcmp(seq,"\0\0\1\xb3",4)||unsigned((seq[4]<<4)|(seq[5]>>4))!=m.width||unsigned(((seq[5]&15)<<8)|seq[6])!=m.height||(seq[7]&15)!=4)return false;
@@ -210,22 +223,26 @@ bool open(unsigned id){
     plm_video_set_no_delay(m.decoder,1); // I/P-only: the newest picture is the output
     if(!re4dc_ui_movie_open(m.width,m.height))return false;
     m.texture=true;
+    m.tex=re4dc_ui_movie_texture();
+    m.hw=want_hw&&m.tex;
+    if(want_hw&&!m.hw)return false;
     m.owns_service=!re4dc_movie_stream_initialized();
     if(snd_stream_init_ex(2,8192)<0)return false;
     m.stream=snd_stream_alloc(audio,8192);if(m.stream<0)return false;
     m.staged+=re4dc_movie_stream_staged;
     m.heap_active=re4dc_ui_heap_free();
     memory("active");
-    re4dc_log("route movie start: id=%05x path=%s size=%ux%u frames=%u media_us=%llu staged=%u heap=%d->%d\n",
-        id,m.path,m.width,m.height,m.expected_frames,m.duration_us,m.staged,m.heap_before,m.heap_active);
+    re4dc_log("route movie start: id=%05x path=%s size=%ux%u frames=%u media_us=%llu staged=%u heap=%d->%d range=%s path=%s\n",
+        id,m.path,m.width,m.height,m.expected_frames,m.duration_us,m.staged,m.heap_before,m.heap_active,
+        m.full?"full":"studio",m.hw?"pvr-yuv-converter":"software-uyvy");
     return true;
 }
 // PVR samples packed UYVY: expand studio range with two small tables, 8 rows
 // at a time into a small staging strip uploaded by the existing frame owner.
 void convert_upload(plm_frame_t* f){
-    static unsigned char yfull[256],cfull[256];static bool initialized;
-    if(!initialized){for(int i=0;i<256;++i){int y=(i-16)*255/219,c=(i-128)*255/224+128;
-        yfull[i]=y<0?0:y>255?255:y;cfull[i]=c<0?0:c>255?255:c;}initialized=true;}
+    static unsigned char yfull[256],cfull[256];static int initialized=-1;
+    if(initialized!=(int)m.full){for(int i=0;i<256;++i){int y=m.full?i:(i-16)*255/219,c=m.full?i:(i-128)*255/224+128;
+        yfull[i]=y<0?0:y>255?255:y;cfull[i]=c<0?0:c>255?255:c;}initialized=(int)m.full;}
     auto t=timer_us_gettime64();
     unsigned long long convert_us=0;
     const unsigned pairs=m.width/2;
@@ -249,6 +266,67 @@ void convert_upload(plm_frame_t* f){
     ++m.uploaded;
 }
 }
+namespace {
+// Full-range movie through the TA YUV converter: the decoded YUV420 planes go
+// out as 16x16 macroblocks (U 8x8, V 8x8, Y 4x 8x8), 4 rows of 8 bytes per
+// 32-byte store-queue burst, and the PVR writes the 512-wide YUV422 texture
+// itself. The texture row is 32 macroblocks wide, so each macroblock row ends
+// with zero dummies (never sampled: the quad's UVs stop at width/512).
+// Per picture: word copies only (no per-pixel CPU work, no separate upload).
+void sq_rows4(uint32_t* o,const unsigned char* s,unsigned stride){
+    for(unsigned r=0;r<4;++r){const auto* w=(const uint32_t*)(s+r*stride);o[r*2]=w[0];o[r*2+1]=w[1];}
+    sq_flush(o);
+}
+bool yuv_upload(plm_frame_t* f){
+    if(((uintptr_t)f->y.data|(uintptr_t)f->cb.data|(uintptr_t)f->cr.data|f->y.width|f->cb.width)&3){
+        re4dc_log("route movie yuv converter: planes not word aligned\n");return false;}
+    auto t=timer_us_gettime64();
+    const unsigned mbw=m.width>>4,mbh=m.height>>4,tw=512>>4,total=tw*mbh;
+    const unsigned yw=f->y.width,cw=f->cb.width;
+    PVR_SET(PVR_YUV_ADDR,((uintptr_t)m.tex)&0xffffff);
+    PVR_SET(PVR_YUV_CFG,((mbh-1)<<8)|(tw-1));  // bit 24 clear: YUV420 macroblocks
+    (void)PVR_GET(PVR_YUV_CFG);
+    uint32_t* d=sq_lock((void*)PVR_TA_YUV_CONV);
+    unsigned q=0;
+    for(unsigned my=0;my<mbh;++my){
+        const unsigned char* yr=f->y.data+my*16*yw;
+        const unsigned char* ur=f->cb.data+my*8*cw;
+        const unsigned char* vr=f->cr.data+my*8*cw;
+        for(unsigned mx=0;mx<mbw;++mx){
+            const unsigned char* u=ur+mx*8;const unsigned char* v=vr+mx*8;const unsigned char* y=yr+mx*16;
+            sq_rows4(d+(q<<3),u,cw);q^=1;sq_rows4(d+(q<<3),u+4*cw,cw);q^=1;
+            sq_rows4(d+(q<<3),v,cw);q^=1;sq_rows4(d+(q<<3),v+4*cw,cw);q^=1;
+            for(unsigned b=0;b<4;++b){const unsigned char* yb=y+(b>>1)*8*yw+(b&1)*8;
+                sq_rows4(d+(q<<3),yb,yw);q^=1;sq_rows4(d+(q<<3),yb+4*yw,yw);q^=1;}
+        }
+        for(unsigned k=0;k<(tw-mbw)*12;++k){uint32_t* o=d+(q<<3);q^=1;
+            o[0]=o[1]=o[2]=o[3]=o[4]=o[5]=o[6]=o[7]=0;sq_flush(o);}
+    }
+    sq_unlock();
+    auto c=timer_us_gettime64();
+    // The quad must not be submitted before the converter has written the texture.
+    unsigned done=0;
+    while((done=PVR_GET(PVR_YUV_STAT))<total&&timer_us_gettime64()-c<8000){}
+    if(done<total&&m.yuv_timeouts++<4)re4dc_log("route movie yuv converter: %u/%u macroblocks after 8 ms\n",done,total);
+    re4dc_ui_movie_upload_end();
+    const auto e=timer_us_gettime64(),convert=c-t,wait=e-c;
+    m.sum_convert+=convert;if(convert>m.max_convert)m.max_convert=convert;
+    m.sum_upload+=wait;if(wait>m.max_upload)m.max_upload=wait;
+    ++m.uploaded;
+    return true;
+}
+#if RE4DC_ROUTE_MOVIE_TEXHASH
+// FNV-1a over the width*2 active bytes of each texture row (UYVY), read back
+// from VRAM with 32-bit loads; compared on the host with the expected texture.
+void texhash(unsigned k){
+    if(k!=0&&k!=1&&k!=30&&k!=300)return;
+    const auto* t=(const volatile uint32_t*)m.tex;unsigned h=2166136261u;
+    for(unsigned y=0;y<m.height;++y)for(unsigned x=0;x<m.width/2;++x){uint32_t w=t[y*256+x];
+        for(unsigned b=0;b<4;++b){h^=(w>>(b*8))&255;h*=16777619u;}}
+    re4dc_log("route movie texhash id=%05x picture=%u path=%s fnv=%08x\n",m.id,k,m.hw?"pvr-yuv-converter":"software-uyvy",h);
+}
+#endif
+}
 extern "C" int re4dc_movie_available(unsigned id){
     char path[40];path_for(id,path,sizeof(path));
     Re4dcIoScope owner;file_t f=fs_open(path,O_RDONLY);if(f<0)return 0;
@@ -265,7 +343,10 @@ plm_frame_t* decode_next(){
 // Upload picture `index` and submit it one field before its flip vblank.
 bool show(plm_frame_t* f,unsigned index,unsigned now,RouteMoviePictureTick tick){
     if(!re4dc_ui_movie_upload_begin())return false;
-    convert_upload(f);
+    if(!m.hw)convert_upload(f);else if(!yuv_upload(f))return false;
+#if RE4DC_ROUTE_MOVIE_TEXHASH
+    if(m.tex)texhash(index);
+#endif
     auto t=timer_us_gettime64();
     if(!re4dc_ui_movie_present_now())return false;
     auto dt=timer_us_gettime64()-t;m.sum_present+=dt;if(dt>m.max_present)m.max_present=dt;

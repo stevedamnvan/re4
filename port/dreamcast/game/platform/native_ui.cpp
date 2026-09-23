@@ -2064,6 +2064,8 @@ extern "C" void re4dc_ui_movie_upload_rows(const void* uyvy,unsigned y,unsigned 
 extern "C" void re4dc_ui_movie_upload_end(){movie_picture=true;++movie_upload_serial;}
 extern "C" unsigned re4dc_ui_movie_presented(){return movie_presentations;}
 extern "C" uint64_t re4dc_ui_movie_first_picture_us(){return movie_first_picture_us;}
+// The PVR YUV converter writes the movie texture directly (native_movie.cpp).
+extern "C" void* re4dc_ui_movie_texture(){return movie_texture;}
 extern "C" int re4dc_ui_movie_last_presented(){return movie_picture && movie_upload_serial==movie_shown_serial;}
 // Movie-owned presentation (native_movie.cpp re4dc_movie_play): the source task
 // playing the movie does not return to the frame loop, so the picture is

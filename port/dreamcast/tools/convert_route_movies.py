@@ -8,13 +8,23 @@ Default 288x192: a uniform 0.56 downscale of the 512x336 PS2 source (aspect
 1.52 -> 1.50, stretched to 4:3 on display as the PS2 did). Two I/P reference
 frames are 166 KB, so the whole player stages ~250 KB and fits the in-room
 source heap (r100 entry: 311 KB free); 320x240 staged 356 KB and did not.
-RE4DC_MOVIE_SIZE=320x240 selects another multiple-of-16 size."""
+RE4DC_MOVIE_SIZE=320x240 selects another multiple-of-16 size.
+
+Default full range: the decoded studio-range picture (Y 16-235, C 16-240) is
+expanded to 0-255 before encoding (the same integer mapping the player's
+software path applies per pixel), and header word 7 bit 0 says so. The PVR
+YUV422 texture decodes full-range YUV, so a full-range movie can go straight
+through the TA YUV converter (YUV420 macroblocks -> YUV422 texture) with no
+per-pixel CPU work. RE4DC_MOVIE_RANGE=studio writes the previous format."""
 import os
 import json,pathlib,struct,subprocess,sys,hashlib,concurrent.futures as cf
 ISO=pathlib.Path('/mnt/c/Game Dev/Emulators/re4_helpers/Resident Evil 4 (USA)/Resident Evil 4 (USA).iso')
 W,H=(int(v) for v in os.environ.get('RE4DC_MOVIE_SIZE','288x192').split('x'))
 assert W%16==0 and H%16==0 and 16<=W<=320 and 16<=H<=240
-OUT=pathlib.Path(f'/root/probe/d367-agents/cutscenes/movies-{W}x{H}')
+FULL=os.environ.get('RE4DC_MOVIE_RANGE','full')=='full'
+OUT=pathlib.Path(f'/root/probe/d367-agents/cutscenes/movies-{W}x{H}'+('-full' if FULL else ''))
+# Player software-path mapping (native_movie.cpp convert_upload), as an ffmpeg lut on raw values.
+FULL_LUT="lutyuv=y='clip(trunc((val-16)*255/219),0,255)':u='clip(trunc((val-128)*255/224)+128,0,255)':v='clip(trunc((val-128)*255/224)+128,0,255)'"
 AFS_SECTOR=1197174
 NAMES=sys.argv[1:] or ['r100c00','r100s03','r100s20','r100s30','r100s40','r100s41','r100s43','r100s44',
                        'r101s00','r101s21','r101s30','r120s00','r120s01']
@@ -40,7 +50,7 @@ def interleave(video,pcm,frames,out):
     assert len(packets)==frames,(len(packets),frames)
     total_audio=pcm.stat().st_size; pos=audio_at=0; maxv=0
     with video.open('rb') as v,pcm.open('rb') as a,out.open('wb') as f:
-        f.write(struct.pack('<8s6I',b'R4FMV003',W,H,video.stat().st_size,total_audio,frames,0)); f.write(bytes(2048-32))
+        f.write(struct.pack('<8s6I',b'R4FMV003',W,H,video.stat().st_size,total_audio,frames,1 if FULL else 0)); f.write(bytes(2048-32))
         for i,p in enumerate(packets):
             n=int(p['size']); assert int(p['pos'])==pos and 0<n<=16384,(i,n); maxv=max(maxv,n)
             end=min(total_audio,(i+1)*32000*1001//30000*4); na=end-audio_at; assert 0<=na<=8192
@@ -60,7 +70,7 @@ def one(name,idx):
             f.seek(AFS_SECTOR*2048+eo); (d/(name+'.ps2.evd')).write_bytes(f.read(es))
     probe=json.loads(run('ffprobe','-v','error','-show_streams','-show_format','-of','json',str(src)))
     video=d/(name+'.m1v'); pcm=d/(name+'.pcm'); seq=d/(name+'.seq')
-    run('ffmpeg','-y','-v','error','-threads','2','-i',str(src),'-map','0:v:0','-vf',f'scale={W}:{H}:flags=lanczos,setsar=1','-r','30000/1001','-c:v','mpeg1video','-bf','0','-g','15','-b:v','650k','-maxrate','900k','-bufsize','128k','-an','-f','mpeg1video',str(video))
+    run('ffmpeg','-y','-v','error','-threads','2','-i',str(src),'-map','0:v:0','-vf',f'scale={W}:{H}:flags=lanczos,setsar=1'+(','+FULL_LUT if FULL else ''),'-r','30000/1001','-c:v','mpeg1video','-bf','0','-g','15','-b:v','650k','-maxrate','900k','-bufsize','128k','-an','-f','mpeg1video',str(video))
     run('ffmpeg','-y','-v','error','-i',str(src),'-map','0:a:0','-c:a','pcm_s16le','-ar','32000','-ac','2','-f','s16le',str(pcm))
     conv=json.loads(run('ffprobe','-v','error','-count_frames','-show_streams','-of','json',str(video)))
     frames=int(conv['streams'][0]['nb_read_frames'])

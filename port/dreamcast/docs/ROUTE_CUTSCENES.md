@@ -44,6 +44,23 @@ decode 13.9-15.0 ms average (36 ms I-frame maximum), convert 3.4 ms, upload
 At the 1.65x hardware model that is about 30-32 ms of the 33.4 ms picture
 budget: steady state fits, and an I-frame over the budget drops one picture.
 
+### PVR YUV converter (default, `ROUTE_MOVIE_YUV=1`)
+
+Movies are encoded full range: the converter applies the player's former per-pixel
+studio->full mapping before encoding, and header word 7 bit 0 marks it. The PVR
+YUV422 texture decodes full-range YUV, so each decoded picture goes straight to the
+TA YUV converter as YUV420 macroblocks (store-queue bursts, zero dummy macroblocks
+to fill the 512-wide texture row) and the PVR writes the texture itself; the player
+waits on `PVR_YUV_STAT` before submitting the quad. `ROUTE_MOVIE_YUV=0` keeps the
+software UYVY path (identity mapping for full-range movies). `ROUTE_MOVIE_TEXHASH=1`
+logs the texture FNV of pictures 0/1/30/300, read back from VRAM.
+
+Flycast (r120 s00/s01): convert 0.71 ms (was 3.37), upload 0 (was 0.69), decode
+14.6-15.0 ms, 0 dropped. Hardware estimate at 1.65x: ~26 ms of 33.4 ms per picture.
+Output: all 8 read-back texture hashes equal the host model; luma PSNR against the
+software path is 39.3-44.4 dB and chroma above 50 dB, and against the encoder input
+the converter path is equal or better on every movie.
+
 ## RouteMoviePlay contract
 
 1. No media (`/cd/dc/movie/rRRRsEE.seq` missing/invalid) -> `UNHANDLED`, the source path runs unchanged.
