@@ -43,6 +43,17 @@ extern float vp_host_xmtrx[4][4]; // [column][row], like KOS matrix_t
 #define VP_ASM_FTRV "ftrv    xmtrx,fv0\n\t"
 #define VP_ASM_FTRV_CLOBBER
 #endif
+#ifndef VP_ASM_FSRRA4
+#define VP_ASM_FSRRA4 "fsrra   fr4\n\t"
+#endif
+// fr4 = 1/w. RE4DC_HW_LEAN (frontend30 pass 2): 1/|w| = fsrra(w*w), the actor path's form
+// (native_actor_fast.cpp), instead of the 12-cycle fdiv; only vertices with near <= w <= far
+// are drawn from the cache (w<=0 is flagged depth<near and goes to the clipper).
+#if defined(RE4DC_HW_LEAN) && RE4DC_HW_LEAN
+#define VP_ASM_RCP "fmov    fr3,fr4\n\t" "fmul fr4,fr4\n\t" VP_ASM_FSRRA4
+#else
+#define VP_ASM_RCP "fldi1   fr4\n\t"    "fdiv fr3,fr4\n\t"
+#endif
 
 namespace re4dc::vp {
 // Field layout shared with room::CompactVertex12 (12 bytes, 4-byte aligned in
@@ -172,7 +183,7 @@ inline void transform_c(const Vertex12* __restrict in,unsigned count,
     "shlr16  r3\n\t"     "extu.b r3,r0\n\t" "shll2 r0\n\t" "mov.l @(r0,%[lo]),r1\n\t" \
     "shlr8   r3\n\t"     "mov r3,r0\n\t"    "shll2 r0\n\t" "mov.l @(r0,%[hi]),r2\n\t" \
     "or      r2,r1\n\t"  "and %[andm],r1\n\t" "or %[orb],r1\n\t" \
-    "fldi1   fr4\n\t"    "fdiv fr3,fr4\n\t"             /* 1/w */ \
+    VP_ASM_RCP                                          /* 1/w */ \
     "mov.l   r1,@-%[dst]\n\t"                            /* argb @24 */ \
     "fmov.s  fr6,@-%[dst]\n\t"                           /* v    @20 */ \
     "fmov.s  fr5,@-%[dst]\n\t"                           /* u    @16 */ \

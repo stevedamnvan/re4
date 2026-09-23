@@ -98,6 +98,9 @@ int EprintfSetCurrentNo()
 void eprintf(int x, int y, int color, int p, const char* fmt, ...)
 {
     va_list ap;
+#if defined(RE4DC_COPY_LEAN) && RE4DC_COPY_LEAN && defined(__sh__)
+    return;  // see eprintf_main: nothing is shown on the Dreamcast; Moji is only read there
+#endif
     if (eprintf_init) {
         va_start(ap, fmt);
         EprintfSetEnv(x, y, color, p, 0);
@@ -110,6 +113,9 @@ void eprintf(int x, int y, int color, int p, const char* fmt, ...)
 void eprintf2(int w, int h, int x, int y, int color, int p, const char* fmt, ...)
 {
     va_list ap;
+#if defined(RE4DC_COPY_LEAN) && RE4DC_COPY_LEAN && defined(__sh__)
+    return;  // see eprintf_main
+#endif
     if (eprintf_init) {
         va_start(ap, fmt);
         EprintfSetEnv(x, y, color, p, 0);
@@ -134,6 +140,13 @@ void eprintf_main(int w, int h, const char* fmt, va_list ap)
     char buf[512];
     int size;
 
+#if defined(RE4DC_COPY_LEAN) && RE4DC_COPY_LEAN && defined(__sh__)
+    // Dreamcast: GXWGFifo is a write sink, so EprintfDrawing's glyph quads are never shown;
+    // the buffered text has no other reader. Skip the vsprintf + buffer copy (D367 frontend30).
+    // EprintfDrawing still runs and leaves the same GX state.
+    (void) w; (void) h; (void) fmt; (void) ap; (void) buf; (void) size;
+    return;
+#endif
     if (Moji.page == pG->debug_mode || Moji.page == 0) {
         if (*fmt != 0) {
             size = vsprintf(buf, fmt, ap) + 1;

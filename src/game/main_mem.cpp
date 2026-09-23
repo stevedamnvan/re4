@@ -442,7 +442,31 @@ void* mem_alloc(u32 size, const char* file, int line, int flag, int heap)
         } else {
             name++;
         }
+#if defined(RE4DC_COPY_LEAN) && RE4DC_COPY_LEAN && defined(__sh__)
+        // Same bytes as sprintf(str, "%s(%d)", name, line) (bounded to str), without newlib's
+        // vfprintf: every tagged allocation paid ~2 us for it (D367 frontend30).
+        {
+            char* o = str;
+            char* const lim = str + sizeof(str) - 1;
+            for (const char* s = name; *s != 0 && o < lim; s++) {
+                *o++ = *s;
+            }
+            char digits[12];
+            int nd = 0;
+            u32 v = line < 0 ? 0u - (u32) line : (u32) line;
+            do {
+                digits[nd++] = (char) ('0' + v % 10);
+                v /= 10;
+            } while (v != 0);
+            if (o < lim) *o++ = '(';
+            if (line < 0 && o < lim) *o++ = '-';
+            while (nd > 0 && o < lim) *o++ = digits[--nd];
+            if (o < lim) *o++ = ')';
+            *o = 0;
+        }
+#else
         sprintf(str, "%s(%d)", name, line);
+#endif
         str[0x1B] = 0;
         if (p != NULL) {
             tag = p + size;

@@ -86,6 +86,15 @@
 #ifndef RE4DC_MESH_DIRECT
 #define RE4DC_MESH_DIRECT 0
 #endif
+#ifndef RE4DC_HW_LEAN
+#define RE4DC_HW_LEAN 0 // frontend30 pass 2: SH-4 hardware-cost trims (fsrra 1/w in the clipper projection)
+#endif
+// Clip-path colour / alpha scaling: HW_LEAN multiplies by 1/255 (no fdiv; <= 1 ulp).
+#if RE4DC_HW_LEAN
+#define RE4DC_INV255 *(1.0f/255.0f)
+#else
+#define RE4DC_INV255 /255.0f
+#endif
 #if RE4DC_MESH_DIRECT
 #if !RE4DC_NATIVE_MESH || !RE4DC_MESH_FASTPATH
 #error MESH_DIRECT extends the NATIVE_MESH fast path
@@ -249,11 +258,33 @@ struct Emitter {
     bool streaming=false,bound=false,submitted=false;
     bool vertex_alpha=false; // corner alpha from the colour palette (source vertex alpha)
     re4dc::render::ClipParameters clip{};
+#if RE4DC_HW_LEAN
+    float proj_bx=0,proj_by=0; // project()'s viewport offsets in 640x480 pixels
+    void set_clip(){
+        const float* v=p.viewport;
+        proj_bx=(v[0]+v[2]*.5f)*640.f/v[2];proj_by=(v[1]+v[3]*.5f)*480.f/v[3];
+        clip={near,far,640,480,project,this};
+    }
+#else
+    void set_clip(){clip={near,far,640,480,project,this};}
+#endif
 
     static void project(float& x,float& y,float& z,void* context){
         const auto& d=*static_cast<const Emitter*>(context);
         const float* p=d.p.projection;const float* v=d.p.viewport;
+#if RE4DC_HW_LEAN && defined(__sh__)
+        // 1/|z| by fsrra(z*z): the clipper only keeps corners with depth=-z >= near > 0.
+        // The viewport terms are per part (proj_setup): v[2]*.5*640/v[2] = 320, v[3]*.5*480/v[3] = 240.
+        float inv=z*z;
+        __asm__("fsrra %0" : "+f"(inv));
+        (void)v;
+        x=320.f*(p[1]*x+p[2]*z)*inv+d.proj_bx;
+        y=-240.f*(p[3]*y+p[4]*z)*inv+d.proj_by;
+        z=inv;
+        return;
+#else
         const float inv=1.0f/(-z);
+#endif
         x=(v[2]*.5f*(p[1]*x+p[2]*z)*inv+v[0]+v[2]*.5f)*640.f/v[2];
         y=(-v[3]*.5f*(p[3]*y+p[4]*z)*inv+v[1]+v[3]*.5f)*480.f/v[3];
         z=inv;
@@ -323,9 +354,9 @@ struct Emitter {
         out.position.x=x;out.position.y=y;out.position.z=z;
         out.u=u(batch.uv_bias[0]+float(in.u)*batch.uv_scale[0]);
         out.v=v(batch.uv_bias[1]+float(in.v)*batch.uv_scale[1]);
-        out.light_red=float((in.argb>>16)&255U)/255.0f;
-        out.light_green=float((in.argb>>8)&255U)/255.0f;
-        out.light_blue=float(in.argb&255U)/255.0f;
+        out.light_red=float((in.argb>>16)&255U)RE4DC_INV255;
+        out.light_green=float((in.argb>>8)&255U)RE4DC_INV255;
+        out.light_blue=float(in.argb&255U)RE4DC_INV255;
     }
     // 1 emitted/culled, 0 failed before anything was published, -1 failed after.
     template<class Vertex,class Index>
@@ -362,14 +393,14 @@ struct Emitter {
     int clip_strip(const Vertex* base,const re4dc::room::CompactBatch& batch,
                    const Index* index,unsigned count){
         ++stats.strips_clipped;
-        float alphas[3]={float(alpha>>24)/255.0f,float(alpha>>24)/255.0f,float(alpha>>24)/255.0f};
+        float alphas[3]={float(alpha>>24)RE4DC_INV255,float(alpha>>24)RE4DC_INV255,float(alpha>>24)RE4DC_INV255};
         for(unsigned i=2;i<count;++i){
             re4dc::render::RenderVertex tri[3];
             const re4dc::render::StaticCorner corners[3]={corner(base[index[i-2+(i&1)]]),
                 corner(base[index[i-1-(i&1)]]),corner(base[index[i]])};
             for(unsigned k=0;k<3;++k){
                 clip_vertex(corners[k],batch,tri[k]);
-                if(vertex_alpha)alphas[k]=float(corners[k].argb>>24)/255.0f;
+                if(vertex_alpha)alphas[k]=float(corners[k].argb>>24)RE4DC_INV255;
             }
             if(limit-used<6 && !flush())return submitted?-1:0;
             const unsigned emitted=re4dc::render::clip_projected_triangle(tri,dst+used,p.cull,clip,nullptr,alphas);
@@ -388,7 +419,11 @@ struct Draw : Emitter {
         const auto& package=view.package;
         if(!re4dc_model_packet_reserve(&p,&packet)){++stats.reserve_rejects;return 0;}
         streaming=re4dc_model_packet_streaming()!=0;
+#if RE4DC_HW_LEAN
+        set_clip();
+#else
         clip={near,far,640,480,project,static_cast<Emitter*>(this)};
+#endif
         const auto* groups=package.compact_groups();
         const auto* batches=package.compact_batches();
         const auto* vertices=package.compact_vertices();
@@ -723,7 +758,11 @@ struct MeshDraw : Emitter {
     int run(){
         if(!re4dc_model_packet_reserve(&p,&packet)){++stats.reserve_rejects;return 0;}
         streaming=re4dc_model_packet_streaming()!=0;
+#if RE4DC_HW_LEAN
+        set_clip();
+#else
         clip={near,far,640,480,project,static_cast<Emitter*>(this)};
+#endif
         palette=nullptr; // lit ARGB1555 corners (light_part)
         batch.uv_bias[0]=part.uv_bias[0];batch.uv_bias[1]=part.uv_bias[1];
         batch.uv_scale[0]=part.uv_scale[0];batch.uv_scale[1]=part.uv_scale[1];
