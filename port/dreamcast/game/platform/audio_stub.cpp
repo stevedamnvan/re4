@@ -134,6 +134,8 @@ void SYNSetMasterVolume(void* s, s32 dB) { (void) s; (void) dB; }
 void SEQInit(void) {}
 void SEQQuit(void) {}
 void SEQRunAudioFrame(void) {}
+// AICA RAM held by the audio backend (movie audio's free-AICA figure); none here.
+unsigned re4dc_aica_used_bytes(void) { return 0; }
 #endif  // !RE4DC_AICA_AUDIO
 
 // ARAM: addresses are handed out, requests complete without a transfer.

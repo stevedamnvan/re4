@@ -87,6 +87,14 @@ AICA_AUDIO ?= 0
 ifneq ($(AICA_AUDIO),1)
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/audio_aica.o,$(PLATFORM_OBJS))
 endif
+# AICA_STREAMS=1 (with AICA_AUDIO=1, not yet verified): the stream player's DVD
+# reads / ARAM DMAs complete at the next audio frame (audio_aica.cpp __wrap_*),
+# as on the GC, instead of inside the call, so disc streams can start.
+AICA_STREAMS ?= 0
+ifeq ($(AICA_AUDIO)$(AICA_STREAMS),11)
+GAME_LDFLAGS += -Wl,--wrap=DVDReadAsyncPrio -Wl,--wrap=ARQPostRequest
+$(OBJDIR)/platform/audio_aica.o: PLATFORM_CPPFLAGS += -DRE4DC_AICA_STREAMS=1
+endif
 .PHONY: aica-audio-force
 $(OBJDIR)/aica-audio.h: aica-audio-force
 	@mkdir -p $(dir $@)

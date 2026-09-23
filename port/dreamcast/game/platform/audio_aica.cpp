@@ -7,10 +7,14 @@
 //
 //  * Sample banks. A sound block's ARAM part reaches ARQPostRequest in 128 KB
 //    pieces after its MRAM part (the SYN wavetable: sample offsets, lengths,
-//    rates, DSP-ADPCM coefficients). Each piece is decoded (GC DSP-ADPCM) and
-//    re-encoded as AICA 4-bit ADPCM into AICA RAM, decimated per sample to a
-//    per-block rate cap chosen to fit the AICA budget (2 MB shared with the
-//    KOS driver and streams). No GameCube ARAM image is kept.
+//    rates, DSP-ADPCM coefficients). Banks converted at build time
+//    (tools/aica_banks.py: AicaBankHeader + AICA 4-bit ADPCM image in place of
+//    the GC image) are copied straight into a fixed AICA layout: one slot per
+//    resident block (CORE, PL, WEP, BGM0/1, DOOR) and one room arena (ROOM,
+//    FOOT, enemies) reset at each room load, all sized by the tool's route
+//    budget, so nothing fragments across room changes and continues. A bank
+//    without the header is still decoded (GC DSP-ADPCM) and re-encoded here,
+//    decimated to a rate cap that fits, into free AICA RAM outside the layout.
 //  * AX voices (SEs) map to AICA channels programmed directly over G2 (32-bit
 //    writes, a FIFO wait every 8 writes, no reads). End of a one-shot voice is
 //    estimated from elapsed time and pitch, so no AICA register is read back.
@@ -19,9 +23,16 @@
 //    DLS envelope mapped onto the AICA hardware envelope.
 //  * The driver's 5 ms audio frame runs on a 200 Hz KOS thread (the GameCube
 //    AI interrupt rate), then all register writes are flushed under one G2 lock.
+//  * Disc streams (snd_str, bio4bgm.sbb) converted at build time
+//    (tools/aica_banks.py streams -> bgm/aica_str.dat, AICA ADPCM, intro then a
+//    seamless loop body) play from a 2 x 12 KB per channel AICA ring in ADPCM
+//    long-stream mode, refilled by a reader thread (DMA reads, no decoding on the
+//    SH-4). The driver's own stream voices keep running silently and drive
+//    start, stop and volume. A stream missing from aica_str.dat stays silent.
+//    Needs AICA_STREAMS=1 (Makefile): not yet verified in a capture; without it
+//    the GC stream player stalls at its first block and streams stay silent.
 //
-// Not covered yet: disc streams (snd_str: GC .sbb / PS2 ADX), AUX reverb,
-// LPF, LFO, DPL2. Stream voices stay silent exactly as with the stub.
+// Not covered yet: AUX reverb, LPF, LFO, DPL2.
 #include <kos.h>
 #include <dc/sound/sound.h>
 #include <dc/sound/sfxmgr.h>
@@ -31,6 +42,10 @@
 #include <string.h>
 
 #include "re4dc_platform.h"
+
+#ifndef RE4DC_AICA_VERIFY
+#define RE4DC_AICA_VERIFY 0   // 1: log an FNV of every block as it sits in AICA RAM (debug)
+#endif
 
 typedef unsigned char u8;
 typedef signed char s8;
@@ -65,7 +80,8 @@ struct VoiceState {
     u32 s0;                          // GC sample index the voice started at
     u32 rate;                        // source sample rate (Hz)
     u8 shift;                        // decimation 1 << shift
-    u8 pad2[3];
+    u8 strm;                         // acquired by the stream player (snd_str3 cb_str_voice_drop)
+    u8 pad2[2];
     f32 ratio;                       // AX src ratio (1.0 = 32 kHz output)
     f32 pos;                         // estimated GC sample position
     MixState mix;
@@ -101,6 +117,39 @@ extern SndMemView SndMem;
 extern u32 UseAramSize[14];
 
 typedef void (*AXCallback)(void);
+
+// Stream player (src/game/snd_str*.cpp): SND_STR_WORK (include/snd_drv.h,
+// Snd_str_work[4], 0x14C bytes), only the fields read here, at their offsets.
+struct Re4dcStrWorkView {
+    u16 status;                  // 0x00  bit 0 open
+    u8 pad0[0x0A];
+    const u32* shd;              // 0x0C  SND_SHD: [0] flag (1 stereo), [7] .sbb offset
+    u8 pad1[0x0C];
+    u32 flag;                    // 0x1C  shd->flag
+    u8 pad2[0xC8 - 0x20];
+    void* voiceL;                // 0xC8
+    void* voiceR;                // 0xCC
+    u8 pad3[0x14C - 0xD0];
+};
+static_assert(sizeof(Re4dcStrWorkView) == 0x14C, "SND_STR_WORK size");
+static_assert(__builtin_offsetof(Re4dcStrWorkView, flag) == 0x1C, "SND_STR_WORK flag");
+static_assert(__builtin_offsetof(Re4dcStrWorkView, voiceL) == 0xC8, "SND_STR_WORK voiceL");
+extern "C" {
+extern Re4dcStrWorkView Snd_str_work[4];
+const u32* Snd_get_shd_adrs(u16 blk_no, u16 req_no);   // SND_SHD*
+void cb_str_voice_drop(void* voice);                   // the stream player's AX voice callback
+void cb_dvd_read_end(s32 result, void* info);          // its DVD read completion (snd_str2.cpp)
+void cb_aram_dma_end(u32 task);                        // its ARAM DMA completion (snd_str2.cpp)
+#ifndef RE4DC_AICA_STREAMS
+#define RE4DC_AICA_STREAMS 0   // Makefile AICA_STREAMS=1: deferred stream-player completions (--wrap)
+#endif
+#if RE4DC_AICA_STREAMS
+// Linker --wrap (Makefile, AICA_STREAMS=1): the port's own implementations.
+s32 __real_DVDReadAsyncPrio(void* fi, void* addr, s32 length, s32 offset, void (*cb)(s32, void*), s32 prio);
+void __real_ARQPostRequest(void* req, u32 owner, u32 type, u32 prio, u32 src, u32 dst, u32 len, void (*cb)(u32));
+#endif
+}
+u32 SndStrReq(int blk, int no, int req, int time, int vol, f32 pos);   // snd.cpp (C++ linkage)
 
 // ---------------------------------------------------------------------------
 // AICA access. Registers from the SH-4: 0xA0700000 + ch * 0x80. Only 32-bit
@@ -170,7 +219,7 @@ struct Blk {
     u32 aica, aica_size;         // AICA allocation
     u16 first, count;            // map entries (sample index order)
     u16 rate_cap;
-    u8 valid, pad;
+    u8 valid, slotted;          // slotted: lives in the fixed layout (never freed)
     const WTSAMPLE* smp;
     const WTADPCM* adpcm;
 };
@@ -179,9 +228,41 @@ MapEnt g_map[kMapMax];
 u32 g_mapUsed;
 Blk g_blk[14];
 
-// Conversion of the block currently being uploaded.
+// Build-time converted bank (tools/aica_banks.py) at the start of the ARAM part.
+const u32 kBankMagic = 0x31434941;   // "AIC1"
+struct AicaBankHeader {
+    u32 magic;
+    u16 version, cap_hz;
+    u32 total;            // AICA image bytes (follow the header)
+    u32 nsamples;
+    u32 fnv;              // FNV-1a of the wavetable sample table
+    u32 gc_size;          // GC ARAM part size
+    u32 slot;             // layout slot of this block (8 = room arena)
+    u32 pad;
+    u32 slot_bytes[9];    // the route layout, by block index (8 = room arena)
+    u32 pad2[7];
+};
+static_assert(sizeof(AicaBankHeader) == 96, "AicaBankHeader");
+struct Slot { u32 base, size; };
+Slot g_slot[9];
+u32 g_arenaNext;
+bool g_layout, g_layoutWarned;
+inline u32 slot_of(int t) { return (t == 5 || t == 6 || t >= 8) ? 8 : (u32) t; }
+
+// Disc stream ring in AICA RAM: per channel two halves of 12 KB of 4-bit ADPCM
+// (24576 samples, 0.77 s at 32 kHz); allocated once after the layout, never freed.
+// tools/aica_banks.py budgets it as STREAM_RING.
+const u32 kStrHalfBytes = 12 * 1024;
+const u32 kStrHalfSamples = kStrHalfBytes * 2;
+const u32 kStrChBytes = 2 * kStrHalfBytes;
+const u32 kStrRingBytes = 2 * kStrChBytes;
+u32 g_strRing;
+
+// Conversion (or copy) of the block currently being uploaded.
 struct Conv {
     int blk = -1;
+    u8 prebuilt;
+    u32 img_total;
     u32 next_dst;
     u16 order[512];              // sample indices by offset
     u16 n, cur;                  // samples, cursor into order[]
@@ -229,7 +310,10 @@ struct Stats {
     u32 conv_us, conv_bytes_in, conv_bytes_out, conv_samples;
     u32 se_starts, se_unmapped, se_stops, note_on, note_off, note_steal;
     u32 keyons, regwrites, aica_free, blocks, blocks_skipped;
+    u32 blocks_prebuilt, blocks_runtime, copy_bytes;
     u32 active_voices, active_notes, peak_voices, peak_notes;
+    u32 str_starts, str_underruns, str_read_bytes, str_reads, str_io_us, str_io_max_us, str_load_us;
+    u32 gc_str_reads_skipped, gc_str_dmas;
 };
 
 }  // namespace
@@ -251,7 +335,9 @@ AXCallback g_axCallback;
 AXVPBView g_vpb[64] __attribute__((aligned(32)));
 u64 g_lastTickUs, g_lastFrameUs, g_threadStartUs;
 u32 g_logStarts;
-u32 g_aicaUsed;   // bytes of AICA RAM held by converted sound blocks
+u32 g_aicaUsed;   // bytes of AICA RAM held by the layout and runtime-converted blocks
+int g_chUsed;     // AICA channels held by the backend (at most kMaxChannels)
+const int kMaxChannels = 60;   // of 64: 4 stay free for snd_stream (movies)
 
 // ---------------------------------------------------------------------------
 void aica_init()
@@ -269,7 +355,7 @@ void blk_free(int t)
 {
     Blk& b = g_blk[t];
     if (b.aica) blk_cut(t);
-    if (b.aica) { snd_mem_free(b.aica); g_aicaUsed -= (b.aica_size + 31) & ~31u; }
+    if (b.aica && !b.slotted) { snd_mem_free(b.aica); g_aicaUsed -= (b.aica_size + 31) & ~31u; }
     // compact the map pool
     if (b.count) {
         u32 end = b.first + b.count;
@@ -281,8 +367,8 @@ void blk_free(int t)
     memset(&b, 0, sizeof(b));
 }
 
-// Parses the block's wavetable (MRAM part) and reserves its AICA copy.
-bool blk_begin(int t, u32 dst)
+// The block's wavetable (MRAM part): sample and coefficient tables.
+bool blk_wavetable(int t, const WTSAMPLE*& smp, const WTADPCM*& adpcm, u32& n)
 {
     u8* m = SndMem.blk_mram[t];
     if (!m) return false;
@@ -291,17 +377,160 @@ bool blk_begin(int t, u32 dst)
     const u8* dls = m + iss[1];
     const SndWtHdr* h = (const SndWtHdr*) dls;
     if (h->adpcm_ofs <= h->sample_ofs) return false;
-    u32 n = (h->adpcm_ofs - h->sample_ofs) / sizeof(WTSAMPLE);
+    n = (h->adpcm_ofs - h->sample_ofs) / sizeof(WTSAMPLE);
     if (n == 0 || n > 512) { re4dc_log("aica: blk %d has %u samples, skipped\n", t, (unsigned) n); return false; }
+    smp = (const WTSAMPLE*) (dls + h->sample_ofs);
+    adpcm = (const WTADPCM*) (dls + h->adpcm_ofs);
+    return true;
+}
 
-    if (room_arena(t) && dst == 0x1F4100)
+// A room load (ROOM block at its fixed GC address) empties the room arena.
+void blk_prepare(int t, u32 dst)
+{
+    if (room_arena(t) && dst == 0x1F4100) {
         for (int i = 0; i < 14; i++) if (room_arena(i)) blk_free(i);
+        g_arenaNext = 0;
+    }
     blk_free(t);
+}
+
+// Map entries: sample i at `base` + the bytes of samples 0..i-1 at rate cap `cap`.
+void blk_map(Blk& b, u32 n, u32 cap)
+{
+    b.first = (u16) g_mapUsed;
+    b.count = (u16) n;
+    u32 a = b.aica;
+    for (u32 i = 0; i < n; i++) {
+        u32 sh = sample_shift(b.smp[i], cap);
+        MapEnt& e = g_map[g_mapUsed++];
+        e.gc_nib = b.smp[i].offset;
+        e.len = b.smp[i].length;
+        e.aica = a | (sh << 24);
+        a += sample_bytes(b.smp[i], sh);
+    }
+}
+
+u32 fnv1a(const u8* p, u32 n)
+{
+    u32 h = 0x811C9DC5u;
+    while (n--) h = (h ^ *p++) * 0x01000193u;
+    return h;
+}
+
+// First converted bank: reserve the whole route layout, in slot order.
+bool layout_init(const AicaBankHeader& h)
+{
+    if (g_layout) {
+        for (int i = 0; i < 9; i++)
+            if (h.slot_bytes[i] != g_slot[i].size && !g_layoutWarned) {
+                g_layoutWarned = true;
+                re4dc_log("aica: bank layout differs from the first bank's (slot %d %u vs %u): keeping the first\n",
+                          i, (unsigned) h.slot_bytes[i], (unsigned) g_slot[i].size);
+            }
+        return true;
+    }
+    for (int i = 0; i < 9; i++) {
+        if (!h.slot_bytes[i]) continue;
+        u32 a = snd_mem_malloc(h.slot_bytes[i]);
+        if (!a) {
+            re4dc_log("aica: layout slot %d (%u bytes) does not fit, %u bytes in use\n", i,
+                      (unsigned) h.slot_bytes[i], (unsigned) g_aicaUsed);
+            for (int k = 0; k < i; k++) if (g_slot[k].base) snd_mem_free(g_slot[k].base);
+            memset(g_slot, 0, sizeof(g_slot));
+            return false;
+        }
+        g_slot[i].base = a;
+        g_slot[i].size = h.slot_bytes[i];
+        g_aicaUsed += (h.slot_bytes[i] + 31) & ~31u;
+    }
+    g_layout = true;
+    if (!g_strRing && (g_strRing = snd_mem_malloc(kStrRingBytes)) != 0) g_aicaUsed += kStrRingBytes;
+    re4dc_log("aica: layout core=%06x+%u pl=%06x+%u wep=%06x+%u bgm0=%06x+%u bgm1=%06x+%u door=%06x+%u arena=%06x+%u "
+              "str=%06x+%u, %u bytes\n",
+              (unsigned) g_slot[0].base, (unsigned) g_slot[0].size, (unsigned) g_slot[1].base, (unsigned) g_slot[1].size,
+              (unsigned) g_slot[2].base, (unsigned) g_slot[2].size, (unsigned) g_slot[3].base, (unsigned) g_slot[3].size,
+              (unsigned) g_slot[4].base, (unsigned) g_slot[4].size, (unsigned) g_slot[7].base, (unsigned) g_slot[7].size,
+              (unsigned) g_slot[8].base, (unsigned) g_slot[8].size, (unsigned) g_strRing,
+              (unsigned) (g_strRing ? kStrRingBytes : 0), (unsigned) g_aicaUsed);
+    return true;
+}
+
+// A build-time converted bank: validate it against the wavetable, place it.
+bool blk_begin_prebuilt(int t, u32 dst, const AicaBankHeader& h)
+{
+    const WTSAMPLE* smp;
+    const WTADPCM* adpcm;
+    u32 n;
+    if (!blk_wavetable(t, smp, adpcm, n)) return false;
+    u32 total = 0;
+    for (u32 i = 0; i < n; i++) total += sample_bytes(smp[i], sample_shift(smp[i], h.cap_hz));
+    const char* bad = h.version != 1 ? "version" : h.nsamples != n ? "sample count"
+                    : fnv1a((const u8*) smp, n * sizeof(WTSAMPLE)) != h.fnv ? "wavetable hash"
+                    : ((h.gc_size + 31) & ~31u) != UseAramSize[t] ? "part size"
+                    : total != h.total ? "image size" : h.slot != slot_of(t) ? "slot" : nullptr;
+    if (bad) {
+        re4dc_log("aica: blk %d converted bank rejected (%s), block silent\n", t, bad);
+        ++S.blocks_skipped;
+        return false;
+    }
+    if (!layout_init(h)) { ++S.blocks_skipped; return false; }
+    blk_prepare(t, dst);
+    if (g_mapUsed + n > kMapMax) { re4dc_log("aica: map pool full\n"); return false; }
+    Slot& sl = g_slot[h.slot];
+    u32 base;
+    if (h.slot == 8) {
+        u32 need = (total + 31) & ~31u;
+        if (g_arenaNext + need > sl.size) {
+            re4dc_log("aica: blk %d (%u bytes) does not fit the room arena (%u of %u used), block silent\n", t,
+                      (unsigned) total, (unsigned) g_arenaNext, (unsigned) sl.size);
+            ++S.blocks_skipped;
+            return false;
+        }
+        base = sl.base + g_arenaNext;
+        g_arenaNext += need;
+    } else {
+        if (total > sl.size) {
+            re4dc_log("aica: blk %d (%u bytes) larger than its slot (%u), block silent\n", t, (unsigned) total, (unsigned) sl.size);
+            ++S.blocks_skipped;
+            return false;
+        }
+        base = sl.base;
+    }
+    Blk& b = g_blk[t];
+    b.smp = smp;
+    b.adpcm = adpcm;
+    b.gc_base = dst;
+    b.gc_size = UseAramSize[t];
+    b.aica = base;
+    b.aica_size = total;
+    b.slotted = 1;
+    b.rate_cap = h.cap_hz;
+    blk_map(b, n, h.cap_hz);
+    b.valid = 1;
+    ++S.blocks;
+    ++S.blocks_prebuilt;
+    Conv& c = g_conv;
+    c.blk = t;
+    c.prebuilt = 1;
+    c.img_total = total;
+    re4dc_log("aica: blk %d gc=%06x+%u -> aica=%06x %u bytes, %u samples, %u Hz (prebuilt, slot %u)\n", t, (unsigned) dst,
+              (unsigned) b.gc_size, (unsigned) base, (unsigned) total, (unsigned) n, (unsigned) h.cap_hz, (unsigned) h.slot);
+    return true;
+}
+
+// Parses the block's wavetable (MRAM part) and reserves its AICA copy (runtime conversion).
+bool blk_begin(int t, u32 dst)
+{
+    const WTSAMPLE* smp;
+    const WTADPCM* adpcm;
+    u32 n;
+    if (!blk_wavetable(t, smp, adpcm, n)) return false;
+    blk_prepare(t, dst);
     if (g_mapUsed + n > kMapMax) { re4dc_log("aica: map pool full\n"); return false; }
 
     Blk& b = g_blk[t];
-    b.smp = (const WTSAMPLE*) (dls + h->sample_ofs);
-    b.adpcm = (const WTADPCM*) (dls + h->adpcm_ofs);
+    b.smp = smp;
+    b.adpcm = adpcm;
     b.gc_base = dst;
     b.gc_size = UseAramSize[t];
 
@@ -330,23 +559,15 @@ bool blk_begin(int t, u32 dst)
     b.aica_size = total;
     g_aicaUsed += (total + 31) & ~31u;
     b.rate_cap = (u16) cap;
-    b.first = (u16) g_mapUsed;
-    b.count = (u16) n;
-    u32 a = b.aica;
-    for (u32 i = 0; i < n; i++) {
-        u32 sh = sample_shift(b.smp[i], cap);
-        MapEnt& e = g_map[g_mapUsed++];
-        e.gc_nib = b.smp[i].offset;
-        e.len = b.smp[i].length;
-        e.aica = a | (sh << 24);
-        a += sample_bytes(b.smp[i], sh);
-    }
+    blk_map(b, n, cap);
     b.valid = 1;
     ++S.blocks;
+    ++S.blocks_runtime;
 
     // conversion order: by offset (the ARAM image is written in order)
     Conv& c = g_conv;
     c.blk = t;
+    c.prebuilt = 0;
     c.n = (u16) n;
     c.cur = 0;
     for (u32 i = 0; i < n; i++) {
@@ -358,7 +579,7 @@ bool blk_begin(int t, u32 dst)
     c.out_bytes = 0;
     c.stage_len = 0;
     c.nib_have = 0;
-    re4dc_log("aica: blk %d gc=%06x+%u -> aica=%06x %u bytes, %u samples, cap %u Hz\n", t, (unsigned) dst,
+    re4dc_log("aica: blk %d gc=%06x+%u -> aica=%06x %u bytes, %u samples, cap %u Hz (runtime conversion)\n", t, (unsigned) dst,
               (unsigned) b.gc_size, (unsigned) b.aica, (unsigned) total, (unsigned) n, (unsigned) cap);
     return true;
 }
@@ -507,13 +728,15 @@ void ch_keyoff(RegWriter& w, s8 ch, u32 play_cont)
 {
     w.w(ch, 0x00, (play_cont & ~0x4000u) | 0x8000u);
 }
+// pcms 2: ADPCM (the loop restores the decoder state saved at LSA); 3: ADPCM long
+// stream (the state runs on across the loop: a ring buffer).
 void ch_start(RegWriter& w, s8 ch, u32 aica, u32 len, u32 loop, u32 lsa, u16 freq, u16 tl, u16 pan,
-              u32 env_ar, u32 env_d1r, u32 env_dl, u32 env_rr, u32& play_cont)
+              u32 env_ar, u32 env_d1r, u32 env_dl, u32 env_rr, u32& play_cont, u32 pcms = 2)
 {
     if (len > 65535) len = 65535;
     if (len < 1) len = 1;
     if (lsa >= len) lsa = 0;
-    play_cont = (2u << 7) | ((aica >> 16) & 0x7F) | (loop ? 0x200u : 0);
+    play_cont = (pcms << 7) | ((aica >> 16) & 0x7F) | (loop ? 0x200u : 0);
     ch_keyoff(w, ch, play_cont);
     w.w(ch, 0x04, aica & 0xFFFF);
     w.w(ch, 0x08, loop ? lsa : 0);
@@ -531,8 +754,16 @@ void ch_start(RegWriter& w, s8 ch, u32 aica, u32 len, u32 loop, u32 lsa, u16 fre
 
 s8 chn_alloc()
 {
+    if (g_chUsed >= kMaxChannels) return -1;
     int ch = snd_sfx_chn_alloc();
+    if (ch >= 0) ++g_chUsed;
     return (s8) ch;
+}
+void chn_free(s8 ch)
+{
+    if (ch < 0) return;
+    snd_sfx_chn_free(ch);
+    --g_chUsed;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +982,110 @@ void blk_cut(int t)
 }
 
 // ---------------------------------------------------------------------------
+// Disc streams. The stream player acquires its AX voices with cb_str_voice_drop
+// (marked strm = 1); the reader thread matches an open stream work to an
+// aica_str.dat entry (claim: strm = 2) and prefills the ring; the flush keys the
+// ring channels on when the driver starts voice L, follows the voices' MIX level
+// and keys off when the driver stops (fresh prefill) or frees them (closed).
+// One ring: while a stream plays, another one stays silent.
+struct StrEnt { u32 sbb_ofs, rate, flags, nch, a_samples, b_samples, a_ofs, b_ofs; };  // flags: 1 loops | blk << 8 | no << 16
+const u32 kStrMagic = 0x31534941;   // "AIS1"
+const int kStrEntMax = 16;
+StrEnt g_strEnt[kStrEntMax];
+u32 g_strEntN;
+
+enum { kStrIdle, kStrPrep, kStrReady, kStrPlaying };
+struct Stream {
+    volatile u8 state;           // kStr*; prep: the reader fills the ring from the start
+    volatile u8 want;            // the driver's voice L is running
+    volatile u8 dead;            // the driver freed the voices
+    volatile u8 mute;            // a one-shot stream played out
+    u8 nch, ended;
+    s8 ch[2];
+    volatile u32 gen;            // bumped on every (re)start; the reader drops older fills
+    int slot;                    // Snd_str_work index
+    const StrEnt* e;
+    AXVPBView* v[2];
+    u32 region, pos;             // reader cursor: 0 intro / 1 loop body, bytes per channel
+    u32 filled, end_half;        // ring halves written; half holding a one-shot's end
+    u64 t0, rate_q10;            // key-on time (us); AICA play rate (Hz x 1024)
+    u32 play_cont[2];
+    u16 sent_tl[2];
+};
+Stream g_str;   // channels / voices are set at the claim (state idle until then)
+
+inline u32 str_key(const StrEnt& e) { return e.flags >> 8; }   // blk | no << 8
+
+u16 str_tl(int c)
+{
+    if (re4dc_audio_solo == 2 || g_str.mute) return 255;
+    const MixState& m = g_str.v[c]->vs.mix;
+    return tl_from_db10(m.in + m.fader);
+}
+
+void str_keyoff(RegWriter& w)
+{
+    for (int c = 0; c < 2; c++) {
+        if (g_str.ch[c] < 0) continue;
+        ch_keyoff(w, g_str.ch[c], g_str.play_cont[c]);
+        chn_free(g_str.ch[c]);
+        g_str.ch[c] = -1;
+    }
+}
+
+void str_flush(RegWriter& w)
+{
+    Stream& s = g_str;
+    if (s.state == kStrIdle) return;
+    u32 key = str_key(*s.e);
+    if (s.dead) {
+        str_keyoff(w);
+        s.state = kStrIdle;
+        s.dead = 0;
+        s.want = 0;
+        re4dc_log("aica: t=%u stream %u:%u closed\n", (unsigned) g_nowMs, (unsigned) (key & 255), (unsigned) (key >> 8));
+        return;
+    }
+    if (s.state == kStrPlaying && !s.want) {
+        str_keyoff(w);
+        s.gen = s.gen + 1;
+        s.state = kStrPrep;
+        re4dc_log("aica: t=%u stream %u:%u stopped\n", (unsigned) g_nowMs, (unsigned) (key & 255), (unsigned) (key >> 8));
+        return;
+    }
+    if (s.state == kStrReady && s.want) {
+        for (int c = 0; c < s.nch; c++) {
+            if (s.ch[c] < 0) s.ch[c] = chn_alloc();
+            if (s.ch[c] < 0) { str_keyoff(w); return; }   // no channel now: retry at the next flush
+        }
+        u16 freq = aica_freq_reg(s.e->rate);
+        int oct = (freq >> 11) & 15;
+        if (oct & 8) oct -= 16;
+        u64 r = 44100ull * (1024 + (freq & 1023));
+        s.rate_q10 = oct >= 0 ? r << oct : r >> -oct;
+        for (int c = 0; c < s.nch; c++) {
+            u16 pan = s.nch == 1 ? dipan(s.v[0]->vs.mix.pan) : dipan(c ? 127 : 0);
+            s.sent_tl[c] = str_tl(c);
+            ch_start(w, s.ch[c], g_strRing + c * kStrChBytes, 2 * kStrHalfSamples, 1, 0, freq, s.sent_tl[c], pan,
+                     31, 0, 0, 28, s.play_cont[c], 3);
+        }
+        s.t0 = timer_us_gettime64();
+        s.state = kStrPlaying;
+        ++S.str_starts;
+        re4dc_log("aica: t=%u stream %u:%u start ch=%d/%d tl=%u rate=%u.%03u Hz\n", (unsigned) g_nowMs, (unsigned) (key & 255),
+                  (unsigned) (key >> 8), s.ch[0], s.nch > 1 ? s.ch[1] : -1, (unsigned) s.sent_tl[0],
+                  (unsigned) (s.rate_q10 >> 10), (unsigned) ((s.rate_q10 & 1023) * 1000 >> 10));
+        return;
+    }
+    if (s.state == kStrPlaying) {
+        for (int c = 0; c < s.nch; c++) {
+            u16 tl = str_tl(c);
+            if (tl != s.sent_tl[c]) { w.w(s.ch[c], 0x28, ((u32) tl << 8) | 0x24); s.sent_tl[c] = tl; }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 void flush()
 {
     g2_lock_scoped();
@@ -761,7 +1096,7 @@ void flush()
         if (!v.used || v.ch < 0) continue;
         if (v.dirty & 8) {
             ch_keyoff(w, v.ch, v.play_cont);
-            snd_sfx_chn_free(v.ch);
+            chn_free(v.ch);
             v.ch = -1;
             v.dirty = 0;
             if (v.freed) v.used = 0;
@@ -795,7 +1130,7 @@ void flush()
             n.dirty &= ~1;
             if (n.released) n.dirty |= 8;   // released before it sounded
         }
-        if (n.dirty & 1) { n.used = 0; snd_sfx_chn_free(n.ch); continue; }  // synth gone before start
+        if (n.dirty & 1) { n.used = 0; chn_free(n.ch); continue; }  // synth gone before start
         if (n.dirty & 8) { ch_keyoff(w, n.ch, n.play_cont); n.dirty &= ~8; }
         if (s && !n.released && n.seen_gen != s->gen) {
             n.seen_gen = s->gen;
@@ -808,10 +1143,11 @@ void flush()
         bool done = n.released ? g_nowMs - n.rel_ms > 600 : g_nowMs - n.born_ms > n.life_ms;
         if (done || !s) {
             if (!n.released) ch_keyoff(w, n.ch, n.play_cont);
-            snd_sfx_chn_free(n.ch);
+            chn_free(n.ch);
             n.used = 0;
         }
     }
+    str_flush(w);
     S.regwrites += w.n;
 }
 
@@ -831,6 +1167,97 @@ mutex_t g_lock = MUTEX_INITIALIZER;   // blocks (map) vs the audio step
 u8 g_thread_stack[12 * 1024] __attribute__((aligned(8)));
 kthread_t* g_thread;
 
+// Stream player I/O completions. The GC stream player (snd_str2.cpp) issues a DVD
+// read or an ARAM DMA and only then sets dvd_busy / dma_busy; the GC completes both
+// later, from an interrupt. The port's DVD and ARQ calls complete inside the call,
+// so the busy flag set afterwards would never clear and the player would stall at
+// its first block. Its completions are therefore queued and delivered at the next
+// audio frame, before the driver runs, as the GC interrupt would. Its DVD reads are
+// not performed at all: the AICA plays the stream from aica_str.dat, the GC data
+// would only feed the (silent) GC ring, and skipping them keeps disc I/O off the
+// audio thread (a synchronous 32 KB .sbb read every 0.26 s, 2.5-4.5 ms each).
+struct Pend { void (*dvd)(s32, void*); void (*arq)(u32); void* obj; s32 res; };
+Pend g_pend[8];
+u32 g_pendN;
+
+#if RE4DC_AICA_STREAMS
+void pend_push(const Pend& p)
+{
+    int old = irq_disable();
+    bool ok = g_pendN < 8;
+    if (ok) g_pend[g_pendN++] = p;
+    irq_restore(old);
+    if (!ok) {   // cannot happen with 4 stream works (one read + one DMA each); complete now
+        if (p.dvd) p.dvd(p.res, p.obj);
+        else p.arq((u32) p.obj);
+    }
+}
+#endif
+
+void pend_run()
+{
+    Pend run[8];
+    int old = irq_disable();
+    u32 n = g_pendN;
+    memcpy(run, g_pend, n * sizeof(Pend));
+    g_pendN = 0;
+    irq_restore(old);
+    for (u32 i = 0; i < n; i++) {
+        if (run[i].dvd) {
+            u8* fi = (u8*) run[i].obj;           // DVDFileInfo: cb.state @0x0C, cb.transferredSize @0x20
+            *(s32*) (fi + 0x0C) = 0;             // DVD_STATE_END
+            *(u32*) (fi + 0x20) = (u32) run[i].res;
+            run[i].dvd(run[i].res, run[i].obj);
+        } else {
+            run[i].arq((u32) run[i].obj);
+        }
+    }
+}
+
+// A stream player voice has no sample of its own: its GC ring address advances
+// here the way the DSP would move it (4-bit ADPCM, 14 samples per 8-byte frame),
+// honouring the loop / end addresses the player reprograms block by block, so the
+// player's play position, refills and end detection behave as on the GC.
+void strm_stop(AXVPBView& p)
+{
+    p.state = 0;
+    p.vs.running = 0;
+    if (p.vs.strm == 2 && &p == g_str.v[0]) g_str.want = 0;
+}
+
+void strm_advance(AXVPBView& p, f32 dt)
+{
+    VoiceState& v = p.vs;
+    v.pos += dt * v.ratio * 32000.0f;
+    u32 n = (u32) v.pos;
+    if (!n) return;
+    v.pos -= (f32) n;
+    u32 nib = ((u32) p.addr.currentAddressHi << 16) | p.addr.currentAddressLo;
+    u32 end = ((u32) p.addr.endAddressHi << 16) | p.addr.endAddressLo;
+    u32 lp = ((u32) p.addr.loopAddressHi << 16) | p.addr.loopAddressLo;
+    for (int guard = 0; n && guard < 16; guard++) {
+        u32 r = nib & 15;
+        if (r < 2) { nib = (nib & ~15u) + 2; r = 2; }   // frame header nibbles hold no sample
+        u32 frame = nib & ~15u;
+        if (end < nib) {
+            if (p.addr.loopFlag) { nib = lp; continue; }
+            strm_stop(p);
+            break;
+        }
+        u32 to_end = nib_to_sample(end, frame) + 1 - (r - 2);   // samples up to and including end
+        u32 k = n < to_end ? n : to_end;
+        u32 s = (r - 2) + k;
+        nib = frame + (s / 14) * 16 + 2 + s % 14;
+        n -= k;
+        if (k == to_end) {
+            if (p.addr.loopFlag) nib = lp;
+            else { strm_stop(p); break; }
+        }
+    }
+    p.addr.currentAddressHi = (u16) (nib >> 16);
+    p.addr.currentAddressLo = (u16) nib;
+}
+
 void audio_step()
 {
     u64 now = timer_us_gettime64();
@@ -841,6 +1268,7 @@ void audio_step()
     if ((int) ticks > re4dc_audio_max_ticks) { ticks = re4dc_audio_max_ticks; g_lastTickUs = now; }
     else g_lastTickUs += ticks * 5000ull;
     mutex_lock(&g_lock);
+    pend_run();
     for (u32 i = 0; i < ticks; i++) g_axCallback();
     u64 t1 = timer_us_gettime64();
 
@@ -852,6 +1280,7 @@ void audio_step()
         VoiceState& v = p.vs;
         if (!v.used || !v.running) continue;
         ++active;
+        if (v.strm) { strm_advance(p, dt); continue; }
         v.pos += dt * v.ratio * 32000.0f;
         if (!v.loop && v.pos >= (f32) v.gc_len) {
             p.state = 0;
@@ -884,13 +1313,18 @@ void audio_step()
     if ((S.frames % 2000) == 0) {   // every ~10 s
         S.aica_free = g_aicaUsed;
         u64 wall = now - g_threadStartUs;
-        re4dc_log("aica: steps=%u ticks=%u wall=%ums drv=%uus flush=%uus total (%u+%u us per 33ms) max %u/%u se=%u unm=%u notes on=%u off=%u steal=%u keyon=%u regw=%u act=%u/%u peak=%u/%u used=%u conv=%uus\n",
+        re4dc_log("aica: steps=%u ticks=%u wall=%ums drv=%uus flush=%uus total (%u+%u us per 33ms) max %u/%u se=%u unm=%u notes on=%u off=%u steal=%u keyon=%u regw=%u act=%u/%u peak=%u/%u used=%u conv=%uus blocks pre/rt=%u/%u copy=%u ch=%u "
+                  "str=%u st=%u under=%u rd=%u/%uKB io=%u/%uus g2=%uus gc_skip=%u/%u\n",
                   (unsigned) S.frames, (unsigned) S.ticks, (unsigned) (wall / 1000), (unsigned) S.drv_us, (unsigned) S.flush_us,
                   (unsigned) ((u64) S.drv_us * 33333 / (wall ? wall : 1)), (unsigned) ((u64) S.flush_us * 33333 / (wall ? wall : 1)),
                   (unsigned) S.max_drv_us, (unsigned) S.max_flush_us, (unsigned) S.se_starts, (unsigned) S.se_unmapped,
                   (unsigned) S.note_on, (unsigned) S.note_off, (unsigned) S.note_steal, (unsigned) S.keyons, (unsigned) S.regwrites,
                   (unsigned) active, (unsigned) notes, (unsigned) S.peak_voices, (unsigned) S.peak_notes, (unsigned) S.aica_free,
-                  (unsigned) S.conv_us);
+                  (unsigned) S.conv_us, (unsigned) S.blocks_prebuilt, (unsigned) S.blocks_runtime,
+                  (unsigned) S.copy_bytes, (unsigned) g_chUsed, (unsigned) S.str_starts, (unsigned) g_str.state,
+                  (unsigned) S.str_underruns, (unsigned) S.str_reads, (unsigned) (S.str_read_bytes >> 10),
+                  (unsigned) S.str_io_us, (unsigned) S.str_io_max_us, (unsigned) S.str_load_us,
+                  (unsigned) S.gc_str_reads_skipped, (unsigned) S.gc_str_dmas);
     }
 }
 
@@ -899,6 +1333,201 @@ void* audio_main(void*)
     for (;;) {
         thd_sleep(5);
         if (g_axCallback) audio_step();
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Stream reader: a KOS thread (priority 4, above the game) that sleeps 10 ms at a
+// time. It claims streams, prefills the ring and, while one plays, rewrites each
+// ring half once the play position (time x the AICA rate) has left it: one
+// 12 KB-per-channel refill per 0.77 s at 32 kHz. Reads are whole 2 KB sectors
+// into a 32-byte aligned buffer, so KOS reads them by DMA and the CPU is free
+// while the drive works; the CPU cost is the G2 copy into AICA RAM.
+u8 g_strStack[6 * 1024] __attribute__((aligned(8)));
+u8 g_strCache[8 * 1024] __attribute__((aligned(32)));
+u32 g_strCacheOfs = 0xFFFFFFFFu, g_strCacheLen;
+file_t g_strFile = -1;
+const u32* g_strMissShd;
+
+bool str_index_load()
+{
+    g_strFile = fs_open("/cd/bgm/aica_str.dat", O_RDONLY);
+    if (g_strFile < 0) { re4dc_log("aica: no bgm/aica_str.dat, disc streams stay silent\n"); return false; }
+    const u32* h = (const u32*) g_strCache;
+    if (fs_read(g_strFile, g_strCache, 2048) != 2048 || h[0] != kStrMagic || h[1] > (u32) kStrEntMax) {
+        re4dc_log("aica: bgm/aica_str.dat header invalid, disc streams stay silent\n");
+        fs_close(g_strFile);
+        g_strFile = -1;
+        return false;
+    }
+    g_strEntN = h[1];
+    memcpy(g_strEnt, h + 4, g_strEntN * sizeof(StrEnt));
+    for (u32 i = 0; i < g_strEntN; i++) {
+        const StrEnt& e = g_strEnt[i];
+        re4dc_log("aica: stream %u:%u sbb=%06x %u Hz ch=%u intro=%u loop=%u samples\n", (unsigned) (e.flags >> 8 & 255),
+                  (unsigned) (e.flags >> 16), (unsigned) e.sbb_ofs, (unsigned) e.rate, (unsigned) e.nch,
+                  (unsigned) e.a_samples, (unsigned) e.b_samples);
+    }
+    return true;
+}
+
+AXVPBView* vpb_of(void* p)
+{
+    uintptr_t a = (uintptr_t) p, b = (uintptr_t) g_vpb;
+    if (a < b || a >= b + sizeof(g_vpb) || (a - b) % sizeof(AXVPBView)) return nullptr;
+    return (AXVPBView*) p;
+}
+
+// An open stream work whose voices are the stream player's, matched to an entry.
+void str_scan()
+{
+    if (g_str.state != kStrIdle || !g_strRing) return;
+    for (int i = 0; i < 4; i++) {
+        const Re4dcStrWorkView& w = Snd_str_work[i];
+        if (!(w.status & 1) || !w.shd) continue;
+        u32 nch = (w.flag & 1) ? 2 : 1;
+        AXVPBView* vl = vpb_of(w.voiceL);
+        AXVPBView* vr = nch == 2 ? vpb_of(w.voiceR) : vl;
+        if (!vl || !vr || vl->vs.strm != 1 || vr->vs.strm != 1) continue;
+        const StrEnt* e = nullptr;
+        for (u32 k = 0; k < g_strEntN && !e; k++) {
+            const StrEnt& c = g_strEnt[k];
+            if (c.sbb_ofs == w.shd[7] && c.nch == nch && Snd_get_shd_adrs((u16) (c.flags >> 8 & 255), (u16) (c.flags >> 16)) == w.shd)
+                e = &c;
+        }
+        if (!e) {
+            if (g_strMissShd != w.shd) {
+                g_strMissShd = w.shd;
+                re4dc_log("aica: stream sbb=%06x not in aica_str.dat, silent\n", (unsigned) w.shd[7]);
+            }
+            continue;
+        }
+        mutex_lock(&g_lock);   // the driver frees voices inside the audio step
+        if (Snd_str_work[i].voiceL == (void*) vl && vl->vs.strm == 1 && vr->vs.strm == 1) {
+            Stream& s = g_str;
+            s.slot = i;
+            s.e = e;
+            s.nch = (u8) nch;
+            s.v[0] = vl;
+            s.v[1] = vr;
+            s.ch[0] = s.ch[1] = -1;
+            s.dead = 0;
+            s.want = vl->state != 0;
+            vl->vs.strm = vr->vs.strm = 2;
+            s.gen = s.gen + 1;
+            s.state = kStrPrep;
+        }
+        mutex_unlock(&g_lock);
+        return;
+    }
+}
+
+// Make the 2 KB-per-channel group at file offset `fofs` resident (reads up to 8 KB, not past `fend`).
+bool str_cache(u32 fofs, u32 fend)
+{
+    u32 grp = g_str.nch * 2048u;
+    if (fofs >= g_strCacheOfs && fofs + grp <= g_strCacheOfs + g_strCacheLen) return true;
+    u32 len = fend - fofs;
+    if (len > sizeof(g_strCache)) len = sizeof(g_strCache) / grp * grp;
+    u64 t0 = timer_us_gettime64();
+    bool ok = fs_seek(g_strFile, fofs, SEEK_SET) == (off_t) fofs && fs_read(g_strFile, g_strCache, len) == (ssize_t) len;
+    u32 us = (u32) (timer_us_gettime64() - t0);
+    S.str_io_us += us;
+    if (us > S.str_io_max_us) S.str_io_max_us = us;
+    ++S.str_reads;
+    S.str_read_bytes += len;
+    if (!ok) {
+        g_strCacheOfs = 0xFFFFFFFFu;
+        g_strCacheLen = 0;
+        re4dc_log("aica: aica_str.dat read failed at %u (+%u)\n", (unsigned) fofs, (unsigned) len);
+        return false;
+    }
+    g_strCacheOfs = fofs;
+    g_strCacheLen = len;
+    return true;
+}
+
+// Ring half `h` (both channels) from the reader cursor: intro, then the loop body again and again.
+void str_fill(u32 h, u32 gen)
+{
+    Stream& s = g_str;
+    const StrEnt& e = *s.e;
+    u32 dst = h * kStrHalfBytes, need = kStrHalfBytes;
+    u64 t0 = timer_us_gettime64();
+    u32 io0 = S.str_io_us;
+    while (need && s.gen == gen) {
+        if (s.ended) {   // one-shot played out: alternating +/- steps hold the level (muted once reached)
+            for (u32 c = 0; c < s.nch; c++) spu_memset(g_strRing + c * kStrChBytes + dst, 0x80808080u, need);
+            break;
+        }
+        u32 rbytes = (s.region ? e.b_samples : e.a_samples) / 2;
+        if (s.pos >= rbytes) {
+            if ((e.flags & 1) && e.b_samples) { s.region = 1; s.pos = 0; continue; }
+            s.ended = 1;
+            s.end_half = s.filled;
+            continue;
+        }
+        u32 grp = s.nch * 2048u;
+        u32 base = s.region ? e.b_ofs : e.a_ofs;
+        u32 fend = base + (rbytes + 2047) / 2048 * grp;
+        u32 blk = s.pos / 2048, in = s.pos % 2048;
+        u32 k = 2048 - in;
+        if (k > need) k = need;
+        if (k > rbytes - s.pos) k = rbytes - s.pos;
+        u32 fofs = base + blk * grp;
+        if (!str_cache(fofs, fend)) { s.ended = 1; s.end_half = s.filled; continue; }
+        const u8* src = g_strCache + (fofs - g_strCacheOfs) + in;
+        for (u32 c = 0; c < s.nch; c++) spu_memload(g_strRing + c * kStrChBytes + dst, (void*) (src + c * 2048), k);
+        s.pos += k;
+        dst += k;
+        need -= k;
+    }
+    S.str_load_us += (u32) (timer_us_gettime64() - t0) - (S.str_io_us - io0);
+}
+
+void* str_main(void*)
+{
+    if (!str_index_load()) return nullptr;
+    for (;;) {
+        thd_sleep(10);
+        Stream& s = g_str;
+        if (s.state == kStrIdle) str_scan();
+        u32 gen = s.gen;
+        if (s.state == kStrPrep) {
+            s.region = s.pos = 0;
+            s.ended = 0;
+            s.mute = 0;
+            s.end_half = 0xFFFFFFFFu;
+            s.filled = 0;
+            str_fill(0, gen);
+            s.filled = 1;
+            str_fill(1, gen);
+            mutex_lock(&g_lock);
+            if (s.gen == gen && s.state == kStrPrep) {
+                s.filled = 2;
+                s.state = kStrReady;
+                u32 key = str_key(*s.e);
+                re4dc_log("aica: t=%u stream %u:%u ready (slot %d, %s)\n", (unsigned) g_nowMs, (unsigned) (key & 255),
+                          (unsigned) (key >> 8), s.slot, s.want ? "voice running" : "waiting for play");
+            }
+            mutex_unlock(&g_lock);
+        } else if (s.state == kStrPlaying) {
+            u64 el = timer_us_gettime64() - s.t0;
+            u32 consumed = (u32) (el * s.rate_q10 / (1024ull * 1000000ull) / kStrHalfSamples);
+            if (s.filled < consumed + 1) {
+                if (S.str_underruns < 16)
+                    re4dc_log("aica: t=%u stream underrun: half %u playing, %u written\n", (unsigned) g_nowMs,
+                              (unsigned) consumed, (unsigned) s.filled);
+                ++S.str_underruns;
+                s.filled = consumed + 1;
+            }
+            while (s.filled < consumed + 2 && s.gen == gen && s.state == kStrPlaying) {
+                str_fill(s.filled & 1, gen);
+                ++s.filled;
+            }
+            if (s.ended && consumed > s.end_half) s.mute = 1;
+        }
     }
     return nullptr;
 }
@@ -915,17 +1544,75 @@ void start_thread()
     g_threadStartUs = timer_us_gettime64();
     g_thread = thd_create_ex(&a, audio_main, nullptr);
     re4dc_log("aica: audio thread tid=%d prio=3 period=5ms\n", g_thread ? (int) g_thread->tid : -1);
+    kthread_attr_t r{};
+    r.stack_size = sizeof(g_strStack);
+    r.stack_ptr = g_strStack;
+    r.prio = 4;
+    r.label = "re4dc-aica-str";
+    r.create_detached = true;
+    kthread_t* st = thd_create_ex(&r, str_main, nullptr);
+    re4dc_log("aica: stream reader tid=%d prio=4\n", st ? (int) st->tid : -1);
 }
 
 }  // namespace
 
 extern "C" {
 
+// AICA RAM held by the backend (layout + runtime-converted blocks). Movie audio
+// computes free AICA RAM as 1900544 - this - its own stream buffers (KOS
+// snd_mem_available() reports the largest block, in use or not).
+unsigned re4dc_aica_used_bytes(void) { return g_aicaUsed; }
+
+#ifndef RE4DC_AICA_STR_TEST
+#define RE4DC_AICA_STR_TEST 0   // evidence only: stream number of block 0 to request in every room
+#endif
+
 // Game-frame hook (pad.cpp PADRead): only a fallback when the thread is missing.
+// With RE4DC_AICA_STR_TEST=n it also issues the request a floor attribute makes
+// (snd.cpp SndStrReq(blk, no, 0x80000003, ...)) 5 s after each room bank load and
+// the stop request 75 s later, so an idle capture exercises start, loop and stop.
 void re4dc_audio_frame(void)
 {
     if (!g_thread && g_axCallback) audio_step();
+#if RE4DC_AICA_STR_TEST
+    static u32 room_ms, blocks_seen, phase;
+    u32 now = (u32) (timer_us_gettime64() / 1000);
+    if (g_blk[5].valid && S.blocks != blocks_seen) { blocks_seen = S.blocks; room_ms = now; phase = 0; }   // FOOT: a game room
+    if (!room_ms) return;
+    if (phase == 0 && now - room_ms > 5000) {
+        phase = 1;
+        u32 id = SndStrReq(0, RE4DC_AICA_STR_TEST, (int) 0x80000003, 0, 0, 0.0f);
+        re4dc_log("aica: t=%u test: SndStrReq(0, %d, play) id=%u\n", (unsigned) g_nowMs, RE4DC_AICA_STR_TEST, (unsigned) id);
+    } else if (phase == 1 && now - room_ms > 80000) {
+        phase = 2;
+        SndStrReq(0, RE4DC_AICA_STR_TEST, 8, 0, 0, 0.0f);
+        re4dc_log("aica: t=%u test: SndStrReq(0, %d, stop)\n", (unsigned) g_nowMs, RE4DC_AICA_STR_TEST);
+    }
+#endif
 }
+
+#if RE4DC_AICA_STREAMS
+// Stream player reads (see pend_push): not performed, completed at the next audio frame.
+s32 __wrap_DVDReadAsyncPrio(void* fi, void* addr, s32 length, s32 offset, void (*cb)(s32, void*), s32 prio)
+{
+    if (cb != cb_dvd_read_end || !g_init) return __real_DVDReadAsyncPrio(fi, addr, length, offset, cb, prio);
+    u8* f = (u8*) fi;
+    *(s32*) (f + 0x0C) = 1;   // DVD_STATE_BUSY until the completion
+    *(u32*) (f + 0x20) = 0;
+    ++S.gc_str_reads_skipped;
+    pend_push(Pend{ cb, nullptr, fi, length });
+    return 1;
+}
+
+// Stream player ARAM DMAs: bookkeeping by the port's ARQ, completion at the next audio frame.
+void __wrap_ARQPostRequest(void* req, u32 owner, u32 type, u32 prio, u32 src, u32 dst, u32 len, void (*cb)(u32))
+{
+    if (cb != cb_aram_dma_end || !g_init) { __real_ARQPostRequest(req, owner, type, prio, src, dst, len, cb); return; }
+    __real_ARQPostRequest(req, owner, type, prio, src, dst, len, nullptr);
+    ++S.gc_str_dmas;
+    pend_push(Pend{ nullptr, cb, req, 0 });
+}
+#endif
 
 // ARQ hook (audio_stub.cpp ARQPostRequest): a piece of a sound block's ARAM part.
 void re4dc_audio_arq(u32 src, u32 dst, u32 len)
@@ -937,8 +1624,10 @@ void re4dc_audio_arq(u32 src, u32 dst, u32 len)
         c.blk = -1;
         for (int t = 0; t < 14; t++) {
             if (UseAramSize[t] && SndMem.blk_aram[t] == dst) {
+                const AicaBankHeader* h = (const AicaBankHeader*) src;
+                bool pre = len >= sizeof(AicaBankHeader) && h->magic == kBankMagic;
                 mutex_lock(&g_lock);
-                bool ok = blk_begin(t, dst);
+                bool ok = pre ? blk_begin_prebuilt(t, dst, *h) : blk_begin(t, dst);
                 mutex_unlock(&g_lock);
                 if (!ok) return;
                 break;
@@ -948,11 +1637,35 @@ void re4dc_audio_arq(u32 src, u32 dst, u32 len)
     }
     const Blk& b = g_blk[c.blk];
     u32 lo = dst - b.gc_base;
-    conv_chunk((const u8*) src, lo, lo + len);
+    if (c.prebuilt) {
+        // image bytes are part bytes [96, 96 + total): copy the overlap
+        u32 a0 = lo > sizeof(AicaBankHeader) ? lo : (u32) sizeof(AicaBankHeader);
+        u32 a1 = lo + len < sizeof(AicaBankHeader) + c.img_total ? lo + len : (u32) sizeof(AicaBankHeader) + c.img_total;
+        if (a1 > a0) {
+            spu_memload(b.aica + (a0 - sizeof(AicaBankHeader)), (void*) (src + (a0 - lo)), (a1 - a0 + 3) & ~3u);
+            S.copy_bytes += a1 - a0;
+        }
+    } else {
+        conv_chunk((const u8*) src, lo, lo + len);
+        S.conv_bytes_in += len;
+    }
     c.next_dst = dst + len;
-    S.conv_bytes_in += len;
     if (c.next_dst >= b.gc_base + b.gc_size) {
-        re4dc_log("aica: blk %d converted, %u/%u samples\n", c.blk, (unsigned) c.cur, (unsigned) c.n);
+        if (c.prebuilt) re4dc_log("aica: blk %d copied, %u bytes\n", c.blk, (unsigned) c.img_total);
+        else re4dc_log("aica: blk %d converted, %u/%u samples\n", c.blk, (unsigned) c.cur, (unsigned) c.n);
+#if RE4DC_AICA_VERIFY
+        {   // debug: hash of what AICA RAM now holds (compare with tools/aica_banks.py "fnv")
+            static u8 rb[1024] __attribute__((aligned(32)));
+            u32 h = 0x811C9DC5u;
+            for (u32 o = 0; o < b.aica_size; o += sizeof(rb)) {
+                u32 k = b.aica_size - o < sizeof(rb) ? b.aica_size - o : (u32) sizeof(rb);
+                spu_memread(rb, b.aica + o, (k + 3) & ~3u);
+                for (u32 i = 0; i < k; i++) h = (h ^ rb[i]) * 0x01000193u;
+            }
+            re4dc_log("aica: blk %d image fnv %08x (%u bytes, %u Hz)\n", c.blk, (unsigned) h, (unsigned) b.aica_size,
+                      (unsigned) b.rate_cap);
+        }
+#endif
         c.blk = -1;
     }
     S.conv_us += (u32) (timer_us_gettime64() - t0);
@@ -978,7 +1691,7 @@ void AXRegisterAuxBCallback(void (*cb)(void*, void*), void* ctx) { (void) cb; (v
 
 void* AXAcquireVoice(u32 prio, void (*cb)(void*), u32 user)
 {
-    (void) prio; (void) cb; (void) user;
+    (void) prio; (void) user;
     for (int i = 0; i < 64; i++) {
         AXVPBView& p = g_vpb[i];
         if (!p.vs.used) {
@@ -986,6 +1699,7 @@ void* AXAcquireVoice(u32 prio, void (*cb)(void*), u32 user)
             p.vs.used = 1;
             p.vs.ch = -1;
             p.vs.blk = -1;
+            p.vs.strm = cb == cb_str_voice_drop;
             return &p;
         }
     }
@@ -995,6 +1709,8 @@ void AXFreeVoice(void* vp)
 {
     AXVPBView* p = (AXVPBView*) vp;
     if (!p) return;
+    if (p->vs.strm == 2 && (p == g_str.v[0] || p == g_str.v[1])) g_str.dead = 1;   // closed at the next flush
+    p->vs.strm = 0;
     if (p->vs.ch >= 0) {
         // released through the next flush; the slot is reused afterwards
         p->vs.dirty |= 8;
@@ -1016,6 +1732,14 @@ void AXSetVoiceState(void* vp, u16 st)
     AXVPBView* p = (AXVPBView*) vp;
     VoiceState& v = p->vs;
     p->state = st;
+    // Stream player voices: silent, their address advanced by strm_advance; a claimed
+    // voice L starts / stops the AICA ring.
+    if (v.strm) {
+        if (st && !v.running) v.pos = 0;
+        v.running = st != 0;
+        if (v.strm == 2 && p == g_str.v[0]) g_str.want = st != 0;
+        return;
+    }
     if (st == 0) {
         if (v.ch >= 0) v.dirty |= 8;
         v.running = 0;
@@ -1189,6 +1913,15 @@ void SYNMidiInput(void* sp, u8* in)
         case 101: c.rpn_msb = (u8) d2; break;
         case 6: if (c.rpn_lsb == 0 && c.rpn_msb == 0) { c.bend_range = (u8) d2; ch_update(s, c); } break;
         case 120: case 123: synth_all_off(s, false); break;
+        case 91: case 93: {   // reverb / chorus sends (AUX A/B on the GC): not rendered yet
+            static u32 logged;
+            if (logged < 32) {
+                ++logged;
+                re4dc_log("aica: t=%u synth cc%u ch=%u val=%u (aux send, not rendered)\n", (unsigned) g_nowMs,
+                          (unsigned) d1, (unsigned) ch, (unsigned) d2);
+            }
+            break;
+        }
         default: break;
         }
         break;

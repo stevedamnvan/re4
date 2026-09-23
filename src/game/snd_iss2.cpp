@@ -148,8 +148,9 @@ void seCtrlPauseOn_sub(SND_AXV_WORK* axv, SND_CTRL_WORK* ctrl)
         return;
     }
     if (axv->voice->pb.addr.loopFlag == 0) {
-        cur = *(u32*) &axv->voice->pb.addr.currentAddressHi;
-        end = *(u32*) &axv->voice->pb.addr.endAddressHi;
+        // Hi << 16 | Lo: the GC read both halves as one big-endian u32 (misaligned on the SH-4)
+        cur = ((u32) axv->voice->pb.addr.currentAddressHi << 16) | axv->voice->pb.addr.currentAddressLo;
+        end = ((u32) axv->voice->pb.addr.endAddressHi << 16) | axv->voice->pb.addr.endAddressLo;
         if (end - cur <= 800) {
             return;
         }

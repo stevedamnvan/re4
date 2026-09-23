@@ -164,7 +164,8 @@ void Snd_str_get_now_play_nbl(SND_STR_WORK* str)
     if (str->play_blk == -1) {
         return;
     }
-    cur = *(u32*) &str->voiceL->pb.addr.currentAddressHi;
+    // Hi << 16 | Lo: the GC read both halves as one big-endian u32 (misaligned on the SH-4)
+    cur = ((u32) str->voiceL->pb.addr.currentAddressHi << 16) | str->voiceL->pb.addr.currentAddressLo;
     str->play_nbl = cur - str->aram_L_nbl;
     str->prev_blk = str->play_blk;
     str->play_blk = str->play_nbl / str->blk_size;
