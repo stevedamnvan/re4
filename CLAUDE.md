@@ -1,9 +1,11 @@
 # RE4 Dreamcast working handoff
 
-Updated 2026-09-22. Project rules: [AGENTS.md](AGENTS.md).
+Updated 2026-09-23. Project rules: [AGENTS.md](AGENTS.md).
 
 ## Active persistent goal and model handoff
 
+North star: **beat D349, do not merely recreate it**. The recovered game drives
+a cheaper native visual workload while retaining its real source state systems.
 Complete [the r100 native static cutover](port/dreamcast/docs/R100_NATIVE_CUTOVER_GOAL.md)
 in `re4dc-game.elf`. The app goal was reset to this milestone on 2026-09-22.
 The broader normal-menu -> r100 -> r101 -> r103 playable objective remains open.
@@ -15,10 +17,13 @@ of architectural failure. Reuse existing selection/partition and source block
 ownership; continue implementation if bounded native packages fit that lifetime.
 Follow the [escalation rule](port/dreamcast/docs/R100_NATIVE_CUTOVER_GOAL.md#astramax-escalation-rule)
 only on demonstrated contract/budget failure or a need for different architecture.
-The user-approved next format work is `.re4room` v4: prelit float XYZ with compact UV/color,
-16-bit local indices and a measured AoS-versus-split SH-4 layout comparison.
-SH4ZAM is a pinned optional backend candidate; keep D349 as control and GCC15.2/KOS
-unchanged. See the goal document for the exact scope.
+D364 completed v4's first layout qualification. AoS20 is frozen as the leading
+layout unless integrated evidence disproves it; D349 math stays default. Do not
+repeat Split24/SH4ZAM layout tuning. Keep the accepted four owners and GCC15.2/KOS.
+Continue AoS20 integration/reader qualification -> source-backing accounting ->
+FILE_01 PS2/DC reduction -> complete static cutover -> residual CPU/PVR measurement
+-> native actors -> broader visual reductions -> SH-4 tuning. The goal document
+owns the detailed roadmap and historical comparison thresholds.
 The persistent goal remains active; passing an isolated adapter or host test
 does not complete it.
 
@@ -79,8 +84,11 @@ These are preparation/packet fixture times, not game FPS or a whole-frame win.
 The leading storage candidate is AoS20, pending moving visual/source binding
 acceptance. No v4 package has been activated in re4dc-game.elf or source backing
 reclaimed. The [four-owner budget](port/dreamcast/docs/R4_R100_SOURCE_BLOCK_BUDGET.md)
-prices a remaining known-span shortfall; follow it rather than increasing budgets
-or assuming file savings are source-heap savings. Preserve source readers,
+prices a modeled 746,816-byte shortfall. This activates FILE_01 asset reduction
+now: compare GC v4, qualified PS2 and custom DC input through the same package.
+Target roughly 900 KB-1 MB gross reduction/headroom if feasible, including the
+net allocator and loading-overlap accounting. Do not grow budgets or equate file
+savings with source-heap savings. Preserve source readers,
 generation/rebase/retire boundaries and the single frame owner. Continue the
 cutover; do not return to cache tuning or treat this fixture as room acceptance.
 

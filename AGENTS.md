@@ -7,6 +7,8 @@ r103, including required combat/events, HUD/audio, inventory, transitions, death
 and retry. Cutscene presentation may be skipped through its qualified source
 completion path. Room initialization or a scripted picture is not acceptance.
 
+The north star is to beat D349's visual workload cost with the real recovered
+game, while retaining source simulation/state and the proven native architecture.
 The active milestone is [the r100 native cutover](port/dreamcast/docs/R100_NATIVE_CUTOVER_GOAL.md):
 recovered GameCube source owns simulation/state; the existing D349 converter,
 `.re4room` packages and native renderer own presentation. The live GX/ModelPart

@@ -23,6 +23,13 @@ correctness boundary, not a gate postponing authorized static replacement.
 Dynamic actor packages follow the static cutover and consume the GC skeleton/
 pose/animation decisions; movies, water and effects use the existing scoped work.
 
+The first explicit current cost target is the accepted FILE_01 owner package.
+D364's AoS20-plus-known-source-replacement model leaves 746,816 B of shortfall;
+compare GC v4, qualified PS2 and custom DC input for that exact set. Aim for
+900 KB-1 MB gross reduction/headroom if feasible and account for actual retained
+source allocation, load overlap and runtime work. This is not authorization to
+split owners, launch a broad inventory or silently alter required source state.
+
 ## Authorized candidate compromises
 
 | Area | Candidate representation | Contracts to retain / qualification |

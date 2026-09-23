@@ -1,7 +1,8 @@
-# Active persistent architecture goal: productionize D349 for r100
+# Active persistent architecture goal: beat D349 with the recovered game
 
-User-directed architecture, 2026-09-22. Status: source-block budget qualification
-and implementation in progress; no native static cutover acceptance yet.
+User-directed architecture and roadmap, updated 2026-09-23. Status: four-owner
+v4 format/CPU fixture qualified at D364; recovered-game cutover is in progress,
+not accepted. This update does not interrupt the current implementation sequence.
 Current primary reference is D362
 62414dc39feccc949af4b3ed29053be9fde4d5fc; preserve all newer/inherited work.
 Historical optimized renderer: 5f42caa634c0e6124c48842e21570033738adfda (D349).
@@ -12,6 +13,61 @@ r100 -> r101 -> r103 playable objective remains open in PLAYABLE_PATH.md.
 Implementation is assigned to GPT-6 Sol at Max reasoning after Astra commits the
 architecture lock. Continue through the complete target candidate and measured
 acceptance; do not stop at an isolated adapter or restart architecture selection.
+
+## North star and execution order
+
+Make the real recovered RE4 game drive a Dreamcast-native visual workload that
+is cheaper than historical D349 while preserving the real GameCube gameplay and
+state systems that the prototype simplified. D349 is the proven presentation
+architecture, not a storage ceiling or an equivalent-workload performance promise.
+
+The immediate milestone remains the complete r100 static cutover. Continue in
+this order: **AoS20 reader/integration qualification -> source-backing replacement
+accounting -> FILE_01 PS2/DC reduction -> complete r100 static cutover -> measure
+residual CPU/PVR workload -> native actors -> broader PS2/DC visual reductions
+-> SH-4-specific tuning.** Do not restart work already qualified at D364.
+
+The durable roadmap within this architecture is:
+
+1. **Native static world.** Finish and integrate the four source-owner-aligned
+   v4 packages. Offline strips/batches/material IDs and qualified prelit color
+   replace GC render-only backing. Source object visibility, activation,
+   transforms and current material state drive native SourceGroups directly.
+   Require zero converted-static GX decode, normal transforms where normals are
+   removed, general static light evaluation where baked, and corner remapping.
+2. **Reduce final PVR work.** Emit fewer useful vertices and passes through
+   native strips, early group/batch culling, fewer material splits, no duplicate
+   source/native drawing, qualified reduced geometry/alpha and native actors.
+   Do not attempt to compress PVR packets. Track native static room, dynamic
+   actors, effects, HUD and generic fallback traffic separately.
+3. **Native actor visuals.** Replace visual ModelPart translation with native
+   Leon/Ganado/weapon packages consuming current GC skeleton/bone matrices,
+   animation decisions and combat state. Preserve attachments/hit transforms.
+   Prefer qualified PS2/custom lower-cost meshes and D349 prepared actor lights.
+4. **PS2/DC visual budget.** GC and PS2 are first-class offline inputs now.
+   Qualify lower-poly static/actor meshes, fewer materials, simpler alpha,
+   smaller/native textures, matched PS2 COLOR, simpler shadows/water/effects,
+   and prerecorded movies under GC event/skip/completion authority. Every final
+   runtime resource uses the existing Dreamcast-native representation.
+5. **SH-4 optimization after workload removal.** Once generic visual bridge work
+   has largely disappeared and residual costs justify it, benchmark SH4ZAM/
+   XMTRX, useful actor skinning, positive-depth reciprocal, dynamic-light math,
+   direct versus DMA transfer and compiler tuning. Faster math is not a
+   substitute for removing avoidable GC work. Keep the pinned GCC15.2/KOS;
+   a toolchain-wide change remains a separate measured decision.
+
+Historical reference thresholds, not workload-equivalent acceptance promises:
+
+| Reference | Historical cost |
+|---|---:|
+| D349 whole-trace CPU p50 | about 57.6 ms |
+| D349 mean presentation interval | about 55.2 ms / 18.1 presented FPS |
+| D349 PVR traffic | about 0.97 MB/frame |
+| D353 settled prelit historical room pass | about 17.6 ms |
+
+The strategic stretch objective is to make the real source-driven game cost no
+more than that historical workload, then pursue 33.3 ms / 30 FPS if measured
+hardware limits permit. Retain the historical fixture/workload distinction.
 
 ## Architecture, not another bridge optimization
 
@@ -97,23 +153,49 @@ preserving their source owner/work/BIN mapping. Do not quantize positions in
 this pass. Count duplicated local vertices, padding, metadata and scratch, not
 just the nominal vertex-stride reduction.
 
-Compare 20-byte AoS with a split/aligned XYZ + UV/color representation using
-the actual SH-4 preparation/packet path. Select on resident bytes + transform
-CPU + packet CPU; do not lock the default from file size alone. Preserve the
-D349 renderer/control. SH4ZAM is an authorized, measured target-backend
-candidate, not a new renderer. Inspect/pin its current implementation and PVR
-DMA example. Initial candidates: batch XYZ through XMTRX, positive-depth
-`shz_invf_fsrra`, equivalent near-plane interpolation, and aligned remaining
-packet/header copies. Preserve clipping, error bounds, XMTRX state, DMA/SQ
-ownership and the existing frame owner. Do not replace a proven mechanism
-merely because SH4ZAM also provides it. Keep GCC 15.2 and pinned KOS unchanged.
-After static cutover, evaluate vector normalization/dot for residual dynamic
-lighting and `shz_xmtrx_blend` for native actor skinning. These are later bounded
-backend candidates; current source pose/animation authority is unchanged.
+D364 completed the initial target layout comparison. Freeze **AoS20 as the
+leading v4 layout** unless integrated target evidence disproves it. The four
+packages are 1,992,824 B in v3, 1,299,298 B in AoS20 and 1,478,690 B in Split24.
+AoS20 saves 179,392 B versus Split24 and was slightly faster in that CPU fixture.
+SH4ZAM transform/reciprocal did not improve it; D349/KOS math stays default.
+Stop Split24, SH4ZAM and layout micro-tuning as the primary activity. Preserve
+their reader/tests, pinned source and negative results; do not rerun the initial
+comparison without new integrated evidence. See R4_ROOM_PACKAGE_V4_CHECKPOINT.md.
 
-Record package sections, SH-4/compiler/emulator identities, numerical error and
-timings separately from game-frame acceptance. A CPU fixture does not establish
-GPU throughput, physical-hardware cache cost or recovered-game heap recovery.
+The native source binding, actual ownership replacement and moving visual checks
+remain open. Fixture preparation/packet time is not game-frame, GPU, physical
+hardware or source-heap acceptance. Keep exact package sections and identities.
+
+## Active FILE_01 cost reduction
+
+The four-owner known-span replacement model leaves **746,816 B** beyond D362's
+free/largest block, before adapter and staging costs. This is modeled, not an
+actual failed candidate allocation. It activates authorized PS2/DC asset reduction
+inside the established architecture now; v4 alone is insufficient.
+
+Use FILE_01 as the first explicit cost target. For its exact accepted asset set,
+decompose geometry, textures, material metadata, alpha/translucency, normals/
+colors, owner/lifetime and actual opening residency. Record source backing that
+can really be removed and attributable prepared vertices, passes, PVR traffic
+and CPU. Texture savings in VRAM do not automatically recover source heap.
+
+Compare GC-derived v4, correspondence-qualified PS2 geometry/materials, and a
+custom DC-reduced representation through the same v4/D349 contract. Reuse prior
+inventories/candidates. Investigate lower-cost meshes, verified PS2 RGB, native
+smaller/VQ/16-bit textures, fewer material groups, reviewed simpler alpha and
+removal of unnecessary visual-only detail. Preserve GC identity, pivots/
+transforms, collision, events, activation/visibility, gameplay and owner lifetime.
+
+Aim for roughly **900 KB-1 MB gross reduction/headroom**, if feasible, rather
+than erasing the modeled gap exactly. Show net allocator recovery, loading
+overlap and remaining runtime margin; do not turn this target into a claimed
+saving or a new reservation. Measure whether geometry reduction also removes
+emitted vertices, material passes, packet bytes and preparation work.
+
+Do not create another renderer, general converter, streaming system, ownership
+model, cache campaign or package family. If FILE_01 plus authorized substitutions
+cannot close the measured gap under these existing owners, preserve evidence
+and emit **ASTRA/MAX ARCHITECTURE ESCALATION REQUIRED**. Do not invent a replacement.
 
 ## Definitive visual input policy
 
@@ -158,7 +240,8 @@ Report converted static percentage/identities and native-package coverage;
 remaining static GX bytes/frame (zero for converted work); normal transforms and
 static light evaluations (zero where baked); actual backing removed; package,
 metadata and workspace bytes; loading/transition overlap and largest free block;
-PVR calls/bytes; whole render/presentation distributions against D361/D362; matched
+PVR calls/bytes split into native static, actors, effects, HUD and generic
+fallback; whole render/presentation distributions against D361/D362; matched
 source state, reviewed visuals and deliberate differences; all generic fallback
 content. Keep required source boot/menu/encounter and one frame owner intact.
 Qualify the measured window with matched source ticks/state, no discarded frames
@@ -214,7 +297,10 @@ does not trigger escalation by itself. Reconstruct the existing D349 source/
 spatial slices and map them to the source block create/retire lifetime. Continue
 in Sol/Max if those owners can directly hold bounded native packages. Escalate
 only if a different residency/ownership architecture is required or the measured
-active set cannot fit after replacing corresponding source render backing.
+active set cannot fit after replacing corresponding source render backing and
+qualifying the explicitly authorized FILE_01/PS2/DC asset reductions. D364's
+modeled v4-only shortfall activates that work; it is not itself an instruction
+to stop or design a different owner model.
 
 ## Anti-reinvention rule (carry across compactions and future agents)
 

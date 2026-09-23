@@ -90,6 +90,20 @@ measurement. Escalate only if this accepted representation/lifetime still cannot
 fit after justified replacements/authorized assets, or a new ownership/streaming
 architecture is required. Do not silently enlarge the source heap or budgets.
 
+## Current asset-budget decision
+
+The user activates FILE_01 reduction on this modeled deficit. AoS20 is the
+leading v4 layout; no more Split24/SH4ZAM layout tuning is scheduled. Keep the
+four accepted owners. Compare the exact FILE_01 set as GC v4, qualified PS2
+geometry/materials and custom DC reduction, using the existing conversion path.
+Decompose its geometry/color, textures, materials/alpha, opening residency,
+removable source backing and emitted/prepared work before selecting reductions.
+Target roughly 900 KB-1 MB gross reduction/headroom if feasible, then price
+actual source-pool sizing, archive recovery, staging and remaining margin.
+The detailed sequence and escalation boundary live in R100_NATIVE_CUTOVER_GOAL.md.
+No texture/VRAM saving may be counted as source-heap recovery without its actual
+CPU ownership change. This decision changes no accepted evidence or allocation.
+
 ## Evidence
 
 Private `/root/probe/d364-native-r100/source-block-trace/trace.json` records BLK

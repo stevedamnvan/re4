@@ -53,6 +53,7 @@ Separate these costs instead of summing overlapping aggregates:
 | Source simulation | Input consumption, task/event ordering, collision, actors, camera; no silently discarded time. |
 | CPU rendering | Visibility, deformation, lighting, clipping, packet preparation, and actual transfer costs. |
 | PVR / presentation | Registration/render duration, waits and distinct presented updates; zero wait alone is not proof that GPU cost is zero. |
+| Packet workload | Native static room, dynamic actors, effects, HUD and generic fallback calls/bytes separately; fewer emitted vertices/passes, not compressed packets. |
 | Loading | Read, validation, installation, texture/audio transfers, and retirement measured separately. |
 | Memory | Code/data/reservations, persistent resources, temporary install scratch, heap/stack, VRAM/AICA, and safety margin at simultaneous peak. |
 
@@ -129,19 +130,26 @@ review under the asset policy instead of quietly altering camera or gameplay.
 The next task remains the dependency needed for the boot-forward playable slice,
 not the next letter in a graphics experiment series.
 
-## SH4ZAM target-backend candidate (2026-09-22)
+## D364 decision and historical stretch references (2026-09-23)
 
-The user has now authorized SH4ZAM qualification during package-v4/static cutover,
-superseding the earlier defer-all-until-after-cutover recommendation. Follow
-[the active goal](R100_NATIVE_CUTOVER_GOAL.md#approved-package-v4-and-target-kernel-qualification).
-Compare D349 control versus pinned SH4ZAM batch XMTRX/positive-depth reciprocal,
-equivalent clipping interpolation and remaining aligned copies. Compare compact
-AoS with split/aligned package storage on bytes, transform and packet cost.
-Do not import the DMA example's frame owner, OBJ loader, broad fast-math policy,
-buffer reservation or compiler requirements into the game. No toolchain upgrade.
-Dynamic-light vector math and actor matrix blend follow static cutover.
+AoS20 is the leading layout unless integrated evidence disproves it. Its four
+packages total 1,299,298 B versus Split24 1,478,690 B and v3 1,992,824 B. The
+Flycast preparation/packet fixture p50 was 47.486 ms for AoS/D349, 47.935 ms for
+Split/D349 and 35.293 ms for v3 prelit. This is a storage/CPU trade, not a game
+speedup. SH4ZAM transform/reciprocal did not win; keep D349 math as default.
+Initial qualification is complete; layout/math micro-tuning is not current work.
+Keep its pinned implementation and PVR DMA example review in
+room/sh4zam.lock.json and R4_ROOM_PACKAGE_V4_CHECKPOINT.md.
 
-References: [SH4ZAM source and MIT license](https://github.com/gyrovorbis/sh4zam),
-[PVR DMA example](https://github.com/gyrovorbis/sh4zam/tree/master/example/pvr_dma).
-The exact pin and targeted files are recorded in `room/sh4zam.lock.json`.
-No backend is promoted by source inspection or a file-size result.
+After the generic visual bridge has largely disappeared and remaining costs are
+measured, evaluate useful XMTRX/SH4ZAM transforms, actor skinning, positive-depth
+reciprocal, dynamic-light math, direct/DMA transfer and compiler choices. Preserve
+the pinned GCC15.2/KOS; any toolchain-wide change is a separate measured decision.
+
+The roadmap's historical references are D349 whole-trace CPU p50 ~57.6 ms, mean
+presentation interval ~55.2 ms (~18.1 presented FPS), PVR traffic ~0.97 MB/frame,
+and D353 settled prelit room pass ~17.6 ms. These are different workloads, not
+equivalence promises. The stretch objective is to make the complete source-driven
+game cost no more than D349, then pursue 33.3 ms/30 FPS if hardware permits.
+Measure equivalent candidate/control states and actual presented cadence before
+claiming either threshold. Source gameplay quality is not reduced to hit them.

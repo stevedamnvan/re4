@@ -1,6 +1,20 @@
 # RE4 Dreamcast: boot-forward playable integration
 
-## Active execution: D349 .re4room production cutover (2026-09-22)
+## Active execution: beat D349 through the native r100 cutover (2026-09-23)
+
+The north star is a real source-driven game with a cheaper native visual workload
+than historical D349. Keep its proven architecture and source semantics. D364
+freezes AoS20 as the leading layout; D349 math remains default. The exact four
+owners remain MAINSCENARIO / FILE_00 / FILE_01 / FILE_02. The modeled 746,816-byte
+shortfall activates FILE_01 PS2/DC asset reduction, aiming for 900 KB-1 MB gross
+reduction/headroom if feasible, with net allocator and overlap checks.
+
+Continue reader/integration qualification -> source-backing accounting ->
+FILE_01 reduction -> complete static cutover -> residual CPU/PVR measurement ->
+native actors -> broader visual reductions -> SH-4 tuning. Do not reopen layout
+micro-tuning, cache campaigns or invent a new streaming/ownership mechanism.
+The goal below owns the detailed roadmap; these are current execution directions,
+not a replacement for the existing gameplay, stage-audit or resource backlogs.
 
 The app persistent goal is the complete r100 static native cutover in
 `re4dc-game.elf`; [R100_NATIVE_CUTOVER_GOAL.md](R100_NATIVE_CUTOVER_GOAL.md) is its
