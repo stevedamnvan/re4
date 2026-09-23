@@ -1,5 +1,14 @@
 # RE4 Dreamcast implementation instructions
 
+## Current direction (D367): supersedes the sections below where they conflict
+
+- **Targets:** the route target is unchanged: normal menu/New Game -> r100 -> r101 -> r103 playable. The frame-time target is now 20 fps (50 ms) on real NTSC Dreamcast hardware via GDEMU + VMU, with 15 fps the fallback in fights. The SH-4 hardware model (`tools/hwmodel/hwproject.sh`) is the hardware estimate; Flycast is a proxy.
+- **Rendering:** the user dropped GameCube rendering tech in favour of Dreamcast-native approaches and allows new offline assets.
+- **Never altered:** collision, event sequencing, game state and AI. Render-only changes must keep the logic trace STRICT.
+- **Decisions and work order:** every option is chosen by its hw ms impact. Performance work is one serialized lane (see `port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md`, which also lists every standing user decision).
+- **How to resume:** use the shared skill `re4-dreamcast-d367`, which covers the harness, commit recipe, state files and decisions.
+- **Historical:** the Astra/Sol (GPT-6) assignment and the D349-cutover milestone below are history. Current work is user-directed through that skill. Codex sessions follow the same lane, rules and commit procedure.
+
 ## Objective and architecture
 
 Deliver normal boot/main menu/New Game and consecutive playable r100 -> r101 ->

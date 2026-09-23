@@ -2,18 +2,38 @@
 
 Updated 2026-09-23. Project rules: [AGENTS.md](AGENTS.md).
 
-**Active again since 2026-09-23 (D367, Claude, user-directed).** Current goal:
-30 fps on real Dreamcast hardware, and the recovered game playing r100 -> r101
--> r103 with cutscenes (PS2 FMV), music, inventory and retry. Start with
-[D367_THIRTY_FPS_ROUTE.md](port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md).
-It holds the user's decision rules (frame time leads), the official hardware
-budget, measured progress (1390 -> 117 ms/frame in Flycast) and the route plan.
-The sections below (D366 pause, the four-owner "beat D349" sequence, Sol/Max
-assignment) are historical context; where they conflict, D367 wins. The
-[D366 pause handover](port/dreamcast/docs/R4_D366_CLAUDE_HANDOFF.md) still
-describes the inherited dirty overlay.
+**Active (D367, user-directed, 2026-09-23).** Goals:
+- 20 fps (50 ms/frame) on a real NTSC Dreamcast via GDEMU + VMU. 30 fps was the original target; 15 fps is the fallback in fights.
+- The recovered game playing r100 -> r101 -> r103 with PS2-FMV cutscenes, music, inventory and retry.
 
-## Persistent goal and model handoff
+Resume with the shared skill `re4-dreamcast-d367` (Claude and Codex): it covers the procedure, harness, commit recipe and standing decisions. Then read [D367_THIRTY_FPS_ROUTE.md](port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md):
+- its "Work plan: serialized perf lane" table: one integrated build, steps 1-5, each measured stacked by hwproject hw ms;
+- the 20 fps budget;
+- every user decision.
+
+Build recipes are in [tools/d367/README.md](port/dreamcast/tools/d367/README.md). LH is the integrated base: 83 ms Flycast, 120.3 hw.
+
+State at this update (HEAD 5285bc7 or later):
+- **Perf lane:**
+  - Step 0 (FRONT_NATIVE, RELEASE_FLAGS) landed.
+  - Step 2 (logic, 12.0 hw ms/tick) landed.
+  - Step 1 (texture preload/O(1) handles; r101 slots; ~93 hw ms reload whenever a Ganado is in view) is in progress.
+  - Steps 3-5 are queued. Patches are ready in /root/probe/d367-agents/{actors30,actcap,safecuts,frontend,w9,scenery-trials,ps2-blender}.
+- **Route blockers, in order:**
+  1. Stream waits: fixed, 5285bc7.
+  2. W11 SUBSCREEN (transceiver): pending commit.
+  3. Codec data `op/op01.das` missing from the disc.
+  4. Image/heap regression: the ELF grew 2.06 -> 2.35 MB; source heap free at r100 s40 fell from 310 KB to 48 KB, so movies fail.
+  5. The real r100 -> door -> r101 fixture.
+  6. The r101 fight to the bell, then r103.
+  Also: a room re-entry takes ~15 s (motion-key per-sector reads plus an unprofiled remainder).
+- **Agent state:** each area has `/root/probe/d367-agents/<area>/STATE.md`. Read it before resuming that area.
+
+Evidence goes on D:\Flycast-Evidencee4-dreamcast (new dirs from the C: harness template). Run at most 2 Flycasts per agent, and delete disc images after each run.
+
+The sections below (D366 pause, the four-owner "beat D349" sequence, Sol/Max assignment) are historical context; where they conflict, D367 wins. The [D366 pause handover](port/dreamcast/docs/R4_D366_CLAUDE_HANDOFF.md) still describes the inherited dirty overlay (~75 files; never stage, reset or clean it).
+
+## Historical (pre-D367): persistent goal and model handoff
 
 North star: **beat D349, do not merely recreate it**. The recovered game drives
 a cheaper native visual workload while retaining its real source state systems.
