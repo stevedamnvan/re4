@@ -26,6 +26,18 @@ its inputs in `<disc-dir>/stage-inputs.txt` and warns when a `UI_VRAM=1 TA_VERTB
 build is staged without a VQ overlay (the 2.6 MB texture pool then thrashes: 1,884 upload
 failures and multi-second frames at r100 in Flycast).
 
+### UI image overrides (UI_OVERRIDES)
+
+`UI_OVERRIDES=/root/re4data/overrides/ui` (private, never in Git) replaces source UI images
+with edited PNGs. Name and place each PNG as `extract_ui_images.py` writes it, under the
+archive's path: `ss/eng/title_eff0_tpl31_tex00_CMPR_640x360.png` is the title background
+(ss/eng/title.dat EFF 0, TPL 31, texture 0, key `c67f5c01-63e0879e`). `tools/ui_overrides.py`
+first re-encodes the original through the same path and must reproduce the staged package
+(fixtures 16-bit, or the TEXDIRS VQ overlay) byte for byte, then encodes the PNG the same
+way under the original key; a size or name mismatch fails. The disc's title.dat is unchanged
+(the runtime keys packages by the unmodified source texels). `stage-inputs.txt` and
+`<disc>/ui-overrides-report.json` record each override's sha256. Unset: staging is unchanged.
+
 `UI_HANDLES=1 TEX_RESIDENT=1` (texture hitch fix; Flycast r100 camera tour, frames 2400+):
 - The hitch was the first-sight texture load: ~0.2 s per package at r100 (~0.3-0.4 s at r101),
   almost all of it the iso9660 lookup. The flat `/cd/dc/tex` directory (~550 packages, 17+

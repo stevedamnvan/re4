@@ -491,13 +491,21 @@ def build_package(
     max_dimension: int | None = None, twiddle: bool = False,
     pad_to_power_of_two: bool = False, source_intensity_alpha: bool = False,
     source_mask_alpha: bool = False,
+    source_pixels: dict[int, list[tuple[int, int, int, int]]] | None = None,
 ) -> tuple[bytes, dict[str, object]]:
+    # source_pixels: optional RGBA replacements (e.g. ui_overrides.py) for the decoded
+    # texels of an image index, same width*height; encoded exactly as a decoded image.
     decoded: dict[int, list[tuple[int, int, int, int]]] = {}
     packed: dict[tuple[int, int | None], tuple[int, int, int, int, int, int]] = {}
 
     def get_image(index: int) -> tuple[TplImage, list[tuple[int, int, int, int]]]:
         if index < 0 or index >= len(images):
             raise ValueError(f"MTL references missing TPL image {index}")
+        if index not in decoded and source_pixels and index in source_pixels:
+            pixels = list(source_pixels[index])
+            if len(pixels) != images[index].width * images[index].height:
+                raise ValueError(f"replacement pixels for image {index} do not match its dimensions")
+            decoded[index] = pixels
         if index not in decoded:
             decoded[index] = decode_image(images[index])
             if source_intensity_alpha and images[index].format in (GX_TF_I4, GX_TF_I8):

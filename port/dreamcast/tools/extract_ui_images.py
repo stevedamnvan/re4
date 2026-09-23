@@ -88,14 +88,9 @@ def entries(d):
     return res
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser()
-    ap.add_argument('src'); ap.add_argument('outdir'); ap.add_argument('--prefix')
-    a = ap.parse_args(argv)
-    d = pathlib.Path(a.src).read_bytes()
-    out = pathlib.Path(a.outdir); out.mkdir(parents=True, exist_ok=True)
-    pre = a.prefix or pathlib.Path(a.src).stem
-    rows = ['file\tentry\ttag\tentry_off\ttpl_off\tindex\tformat\twidth\theight']
+def iter_images(d):
+    """Yield (tag, entry, entry_off, tpl_off, tpl_index, tex_index, TplImage) in file order.
+    The scan (and so the tpl/tex numbering in the PNG names) is shared with ui_overrides.py."""
     for tag, ei, start, stop in entries(d):
         pos, k = start, 0
         while True:
@@ -107,15 +102,31 @@ def main(argv=None):
                 pos += 4; continue
             imgs, end = r
             for j, im in enumerate(imgs):
-                px = decode_16(im) if im.format in (4, 5) else ct.decode_image(im)
-                fn = f'{pre}_{tag}{ei}_tpl{k:02d}_tex{j:02d}_{NAMES[im.format]}_{im.width}x{im.height}.png'
-                Image.frombytes('RGBA', (im.width, im.height),
-                                bytes(c for p in px for c in p)).save(out / fn)
-                rows.append(f'{fn}\t{ei}\t{tag}\t0x{start:x}\t0x{pos:x}\t{j}\t'
-                            f'{NAMES[im.format]}\t{im.width}\t{im.height}')
+                yield tag, ei, start, pos, k, j, im
             k += 1
             pos = max(end, pos + 4)
             pos = (pos + 3) & ~3
+
+
+def image_name(prefix, tag, ei, k, j, im):
+    return f'{prefix}_{tag}{ei}_tpl{k:02d}_tex{j:02d}_{NAMES[im.format]}_{im.width}x{im.height}.png'
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument('src'); ap.add_argument('outdir'); ap.add_argument('--prefix')
+    a = ap.parse_args(argv)
+    d = pathlib.Path(a.src).read_bytes()
+    out = pathlib.Path(a.outdir); out.mkdir(parents=True, exist_ok=True)
+    pre = a.prefix or pathlib.Path(a.src).stem
+    rows = ['file\tentry\ttag\tentry_off\ttpl_off\tindex\tformat\twidth\theight']
+    for tag, ei, start, pos, k, j, im in iter_images(d):
+        px = decode_16(im) if im.format in (4, 5) else ct.decode_image(im)
+        fn = image_name(pre, tag, ei, k, j, im)
+        Image.frombytes('RGBA', (im.width, im.height),
+                        bytes(c for p in px for c in p)).save(out / fn)
+        rows.append(f'{fn}\t{ei}\t{tag}\t0x{start:x}\t0x{pos:x}\t{j}\t'
+                    f'{NAMES[im.format]}\t{im.width}\t{im.height}')
     (out / 'index.tsv').write_text('\n'.join(rows) + '\n')
     print(f'{len(rows) - 1} images -> {out}')
     return 0

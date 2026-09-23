@@ -23,6 +23,11 @@
 # /root/probe/d367-aica-cache) keeps the conversions: ~25 s the first time, ~2 s after.
 # ASSETS=<dir> sources <dir>/stage.env from the asset pipeline (tools/d367/assets.sh; its
 # MESHDIR/MESHROOMS/TEXDIRS/ROOMFILES/KEYED); variables set explicitly still win.
+# UI_OVERRIDES=<dir> (private) replaces source UI images with edited PNGs named and placed
+# as extract_ui_images.py writes them (<dir>/ss/eng/title_eff0_tpl31_tex00_CMPR_640x360.png),
+# encoded by tools/ui_overrides.py exactly as the package they replace (16-bit or the
+# TEXDIRS VQ overlay; same size or it fails). It wins over TEXDIRS. UI_SOURCE is the GC
+# source tree (default /root/re4data). Unset: staging is unchanged.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 if [ -n "${ASSETS:-}" ]; then
@@ -65,6 +70,16 @@ for d in ${TEXDIRS:-}; do
   mkdir -p "$fixtures/tex"
   for f in "$d"/*.re4tex; do rm -f "$fixtures/tex/$(basename "$f")"; cp "$f" "$fixtures/tex/"; done
 done
+ui_report=
+if [ -n "${UI_OVERRIDES:-}" ]; then
+  ui_out=$(mktemp -d "${TMPDIR:-/tmp}/re4dc-uiov.XXXXXX"); rmdir "$ui_out"
+  ui_args=(); for d in ${TEXDIRS:-}; do ui_args+=(--texdir "$d"); done
+  python3 -B "$here/../ui_overrides.py" --overrides "$UI_OVERRIDES" --source "${UI_SOURCE:-/root/re4data}" \
+    --textures "${FIXTURES_SRC:-/root/probe/d354v7-fixtures}/tex" "${ui_args[@]}" --output "$ui_out" >&2
+  mkdir -p "$fixtures/tex"
+  for f in "$ui_out"/*.re4tex; do rm -f "$fixtures/tex/$(basename "$f")"; cp "$f" "$fixtures/tex/"; done
+  ui_report=$(cat "$ui_out/ui-overrides-report.json"); rm -rf "$ui_out"
+fi
 # TEX_RESIDENT builds skip the runtime payload CRC: verify every staged texture package here
 # (header payload_crc32 = CRC-32 of the bytes after the header). A mismatch stops staging.
 if [ -d "$fixtures/tex" ]; then
@@ -120,7 +135,14 @@ if [ -n "$aica" ]; then mv "$aica.json" "$out/aica-budget.json"; fi
   for d in ${TEXDIRS:-}; do
     echo "TEXDIR $d re4tex=$(ls "$d"/*.re4tex | wc -l)$([ "$d" = "$vq_overlay" ] && echo " vq-report-sha256=$(sha256sum < "$d/vq-native-ui-report.json" | cut -c1-16)")"
   done
+  if [ -n "$ui_report" ]; then
+    echo "UI_OVERRIDES=$UI_OVERRIDES UI_SOURCE=${UI_SOURCE:-/root/re4data}"
+    printf '%s\n' "$ui_report" | python3 -c 'import json,sys
+for e in json.load(sys.stdin)["overrides"]:
+    print("UI_OVERRIDE %(override)s sha256=%(override_sha256)s key=%(key)s %(encoding)s package-sha256=%(package_sha256)s" % e)'
+  fi
 } > "$out/stage-inputs.txt"
+if [ -n "$ui_report" ]; then printf '%s\n' "$ui_report" > "$out/ui-overrides-report.json"; fi
 if [ -n "${GDI:-}" ]; then
   gdi=${GDI_OUT:-$out/gdi}
   KOS_TOOLS_BASE=${KOS_TOOLS_BASE:-$RE4DC_KOS_BASE} \
