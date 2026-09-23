@@ -443,6 +443,23 @@ GAME_FDLIBM ?= 0
 endif
 GAME30_FDLIBM_UNITS = ef_acos ef_asin ef_atan2 ef_rem_pio2 ef_sqrt kf_cos kf_rem_pio2 kf_sin kf_tan sf_atan sf_cos \
 	sf_sin sf_tan
+# GAME_TRIG=1 (needs GAME_FDLIBM=1): sinf/cosf from game30_trig.c, the same fdlibm source with
+# __kernel_sinf/__kernel_cosf and the |x| <= 2^7*pi/2 part of __ieee754_rem_pio2f inlined, -O2 with
+# the decomp-safety guards and -ffp-contract=off: bit-identical by construction (same operations, same
+# order) and checked for all 2^32 inputs on the host (tools/trig_exhaustive.sh, FTZ/DAZ).
+GAME_TRIG ?= 0
+ifeq ($(GAME_TRIG),1)
+ifneq ($(GAME_FDLIBM),1)
+$(error GAME_TRIG=1 replaces the GAME_FDLIBM sinf/cosf: needs GAME_FDLIBM=1)
+endif
+GAME30_FDLIBM_UNITS := $(filter-out sf_sin sf_cos,$(GAME30_FDLIBM_UNITS))
+PLATFORM_OBJS += $(OBJDIR)/game30_trig.o
+$(OBJDIR)/game30_trig.o: game30_trig.c
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -w $(GAME_OPT) -O2 -ffp-contract=off $(GAME30_DECOMP_SAFE) -I$(ROOT)/include -MMD -MP -c $< -o $@
+else ifneq ($(GAME_TRIG),0)
+$(error GAME_TRIG must be 0 or 1)
+endif
 ifeq ($(GAME_FDLIBM),1)
 ifneq ($(GAME_FP_CONTRACT),off)
 $(error GAME_FDLIBM=1 belongs to 6B step 1: needs GAME_FP_CONTRACT=off)
