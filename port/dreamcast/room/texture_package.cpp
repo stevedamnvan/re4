@@ -77,7 +77,10 @@ bool SourceIdentityTable::adopt(const void* archive, std::size_t bytes) {
                word(p+28)<64 || word(p+48) || word(p+52) || word(p+56) || word(p+60))return false;
         }
         if((!indexed && (std::memcmp(p,"R4NREF\0",8) || (fmt>6 && fmt!=14))) || !w || !ht || w>1024 || ht>1024 ||
-           h[33] || h[34] || h[35] ||
+           // minLOD 0 only: the native package is the base level. A max LOD
+           // is a whole externalized chain (--compact-room-mips); the Dreamcast
+           // renderer samples the base level and never reads source texels.
+           h[33] || (h[34] && indexed) || h[35] ||
            w!=half(h+2) || ht!=half(h) || fmt!=word(h+4) ||
            std::uint64_t(tpl)+word(h+8)!=record) return false;
     }

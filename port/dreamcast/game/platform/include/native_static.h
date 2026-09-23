@@ -16,8 +16,9 @@ struct Re4dcStaticStats {
     unsigned groups_visible, groups_culled, batches, strips, strips_culled;
     unsigned strips_clipped, triangles_clipped, vertices, moved_objects;
     unsigned vertex_alpha, reserve_rejects, bind_rejects, aborts;
-    unsigned vertex_opaque, vertex_alpha_min;
+    unsigned vertex_opaque, vertex_alpha_min, vertex_alpha_unused;
     int heap_before, heap_after;
+    unsigned unowned_binds, locate_misses, parts_lit;
 };
 extern "C" {
 // Called by scroll.cpp setObj after the object's placement matrix is final.

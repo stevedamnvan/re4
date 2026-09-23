@@ -239,8 +239,14 @@ def compact_model_uvs(decoded, models):
     return sorted(ranges),entries,retained
 
 
-def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=None):
-    """Existing qualified image selection, shared by room/core/enemy producers."""
+def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=None, native_mips=False):
+    """Existing qualified image selection, shared by room/core/enemy producers.
+
+    native_mips (D367 native rendering policy): the Dreamcast renderer samples
+    the base level only and re-reads evicted textures from disc, so a base-level
+    (minLOD 0) mip chain is externalized whole: the record keys the existing
+    base-level package and the removed span covers every source mip level.
+    """
     selected=[];retained=[];seen={}
     for tpl_off,raw,ctx in palettes:
         if not allowed(ctx):
@@ -258,7 +264,7 @@ def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=Non
                          image.palette_format in (0,1,2) and
                          len(image.palette_data)<= (32 if image.format==8 else 512))
             if (clut or image.palette_data) and not indexed:reason='palette/CPU semantics retained'
-            elif lo or hi:reason='source mip chain retained'
+            elif (lo or hi) and (not native_mips or lo):reason='source mip chain retained'
             elif image.format in (8,9) and not indexed:reason='indexed source retained'
             if reason:
                 retained.append({'context':ctx,'image':i,'reason':reason});continue
@@ -270,11 +276,26 @@ def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=Non
                 twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
             if not package_path.is_file() or package_path.read_bytes()!=reference:
                 raise ValueError('missing or non-reference native texture: '+key)
-            a=tpl_off+pixel;b=a+len(image.data)
+            chain=len(image.data)
+            if hi:
+                from convert_tpl import _expected_image_size
+                w,h=image.width,image.height
+                for _ in range(hi):
+                    w=max(1,w>>1);h=max(1,h>>1);chain+=_expected_image_size(w,h,image.format)
+                # Source TPLs pack each chain up to the next payload; small non-square
+                # levels are stored in less than the 8x8-block bound above. Remove
+                # exactly this image's span: up to the next record, never past it.
+                others=[struct.unpack_from('>I',raw,struct.unpack_from('>I',raw,desc+j*8)[0]+8)[0]
+                        for j in range(count) if j!=i]+[struct.unpack_from('>I',raw,desc+j*8)[0] for j in range(count)]
+                limit=min([o for o in others if o>pixel]+[len(raw)])
+                chain=min(chain,limit-pixel)
+                if chain<len(image.data) or chain%32:
+                    raise ValueError('mip chain does not fit its source span')
+            a=tpl_off+pixel;b=a+chain
             if len(image.data)<32 or a%32 or b%32 or b>len(decoded):
                 raise ValueError('external texture payload violates source alignment/range')
             crc,fnv=(int(x,16) for x in key.split('-'))
-            record=_NATIVE_RECORD.pack(_NATIVE_MAGIC,crc,fnv,image.width,image.height,image.format,len(image.data))
+            record=_NATIVE_RECORD.pack(_NATIVE_MAGIC,crc,fnv,image.width,image.height,image.format,chain)
             if indexed:
                 # Keep the source CLUT and descriptors resident. Only the immutable
                 # index image goes away; runtime binds the existing expanded native
@@ -284,7 +305,7 @@ def select_upload_only(decoded, palettes, textures, allowed, indexed_allowed=Non
                 record=b'R4PREF\0\0'+record[8:]+struct.pack('<8I',image.palette_format,len(pal),zlib.crc32(pal)&0xffffffff,pf,0,0,0,0)
                 if len(image.data)<len(record):raise ValueError('indexed payload is smaller than identity record')
             entry={'context':ctx,'image':i,'key':key,'source_header':tpl_off+header,
-                   'source_tpl':tpl_off,'source_payload':a,'source_bytes':len(image.data),
+                   'source_tpl':tpl_off,'source_payload':a,'source_bytes':chain,
                    'source_sha256':hashlib.sha256(identity).hexdigest(),
                    'native_package_sha256':hashlib.sha256(reference).hexdigest()}
             if indexed:
@@ -312,7 +333,7 @@ def native_identity_index(selected, mapped, original_bytes, resident_bytes):
     return header+table+bytes(table_size-32-len(table))
 
 
-def _compact_upload_only(decoded, references, palettes, textures, allowed, effect_ranges=(), effect_entries=(), indexed_allowed=None, model_ranges=(), model_entries=()):
+def _compact_upload_only(decoded, references, palettes, textures, allowed, effect_ranges=(), effect_entries=(), indexed_allowed=None, model_ranges=(), model_entries=(), native_mips=False):
     """Shared source-layout transform, using the existing converter's offsets."""
     import compact_effect_records as effects
     n=struct.unpack_from('<I',decoded)[0]
@@ -321,7 +342,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     extra=1+bool(effect_entries)
     if min(x for x in offsets if x)<16+8*(n+extra):
         raise ValueError('archive lacks spare native-identity header slot')
-    ranges,selected,retained=select_upload_only(decoded,palettes,textures,allowed,indexed_allowed)
+    ranges,selected,retained=select_upload_only(decoded,palettes,textures,allowed,indexed_allowed,native_mips)
     if not ranges:raise ValueError('no qualified upload-only payloads')
     out,mapped=compact_spans(decoded,references,sorted(ranges+list(effect_ranges)+list(model_ranges)))
     table_size=(32+12*len(selected)+31)&~31
@@ -355,7 +376,7 @@ def _compact_upload_only(decoded, references, palettes, textures, allowed, effec
     return out,report
 
 
-def compact_room(source_file, textures, destination, compact_effects=False, compact_palettes=False, compact_uvs=False):
+def compact_room(source_file, textures, destination, compact_effects=False, compact_palettes=False, compact_uvs=False, compact_mips=False):
     """Prepare one smaller qualified .dar through the existing room builder.
 
     Uses the converter's recorded relative offsets, not a second archive parser
@@ -431,7 +452,7 @@ def compact_room(source_file, textures, destination, compact_effects=False, comp
         model_ranges,model_entries,model_retained=compact_model_uvs(decoded,models)
         if not model_entries:raise ValueError('no qualified scenery UV saving')
     out,stats=_compact_upload_only(decoded,references,palettes,textures,allowed,
-        effect_ranges,effect_entries,indexed_allowed,model_ranges,model_entries)
+        effect_ranges,effect_entries,indexed_allowed,model_ranges,model_entries,compact_mips)
     if compact_uvs:stats['model_uvs']['retained']=model_retained
     if compact_effects:stats['effects']['skipped']=skipped
     _,packaged=mirror.prepare_native_room(rel,container,out,coverage)
@@ -440,7 +461,7 @@ def compact_room(source_file, textures, destination, compact_effects=False, comp
             **stats,
             'qualification':coverage,'loading':'source DVD queue reads compact type-0 directly; original sound container retained',
             'limits':'No mip/CLUT/CPU-noise removal; optional immutable r100 EFF index images use existing native packages. No source-archive saving accepted before target measurement.',
-            'compact_palettes':compact_palettes,'compact_uvs':compact_uvs}
+            'compact_palettes':compact_palettes,'compact_uvs':compact_uvs,'compact_mips':compact_mips}
     destination.mkdir()
     (destination/'r100.dar').write_bytes(packaged)
     (destination/'r100.arc').write_bytes(out)
@@ -610,6 +631,7 @@ if __name__=='__main__':
         parser.add_argument('--compact-room-est',action='store_true',help='lossless resident packing for qualified r100 EST owners')
         parser.add_argument('--compact-room-palettes',action='store_true',help='externalize reviewed r100 EFF index images; keep source palettes and existing native VRAM format')
         parser.add_argument('--compact-room-uvs',action='store_true',help='share exact source UV records in qualified rigid r100 scenery')
+        parser.add_argument('--compact-room-mips',action='store_true',help='native rendering policy: externalize base-level r100 mip chains whole (Dreamcast samples the base level only)')
         parser.add_argument('--textures',type=Path,required=True)
         parser.add_argument('--output',type=Path,required=True)
         args=parser.parse_args()
@@ -618,9 +640,10 @@ if __name__=='__main__':
         if args.compact_room_est and not args.compact_room:parser.error('--compact-room-est requires --compact-room')
         if args.compact_room_palettes and not args.compact_room:parser.error('--compact-room-palettes requires --compact-room')
         if args.compact_room_uvs and not args.compact_room:parser.error('--compact-room-uvs requires --compact-room')
+        if args.compact_room_mips and not args.compact_room:parser.error('--compact-room-mips requires --compact-room')
         if args.compact_option:report=compact_option(args.compact_option,args.textures,args.output)
         elif args.compact_core:report=compact_core(args.compact_core,args.textures,args.output,args.core_effects,args.compact_core_est)
-        else:report=compact_room(args.compact_room,args.textures,args.output,args.compact_room_est,args.compact_room_palettes,args.compact_room_uvs)
+        else:report=compact_room(args.compact_room,args.textures,args.output,args.compact_room_est,args.compact_room_palettes,args.compact_room_uvs,args.compact_room_mips)
         print('compact archive:',report['original_archive_bytes'],'->',report['resident_archive_bytes'],
               'recovery',report['archive_recovery_bytes'],'identities',len(report['selected']))
     else:

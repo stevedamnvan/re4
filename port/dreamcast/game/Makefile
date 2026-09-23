@@ -307,6 +307,9 @@ $(OBJDIR)/platform/native_ui.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platf
 # bit 0 main scenario, bit n+1 source block n.
 NATIVE_STATIC ?= 0
 NATIVE_STATIC_OWNERS ?= 1
+# NATIVE_MESH=1 draws instanced per-BIN meshes (<owner>.re4mesh, COMMON.re4mesh)
+# instead of placement-baked packages; owner mask bit 6 is the room's common set.
+NATIVE_MESH ?= 0
 ifeq ($(NATIVE_STATIC),1)
 ifneq ($(D349_RENDERER_STACK),1)
 $(error NATIVE_STATIC requires the D349_RENDERER_STACK=1 packet/deferral owner)
@@ -318,7 +321,7 @@ endif
 .PHONY: native-static-force
 $(OBJDIR)/native-static.h: native-static-force
 	@mkdir -p $(dir $@)
-	@printf '#define RE4DC_NATIVE_STATIC %s\n#define RE4DC_NATIVE_STATIC_OWNERS %sU\n' '$(NATIVE_STATIC)' '$(NATIVE_STATIC_OWNERS)' > $@.tmp
+	@printf '#define RE4DC_NATIVE_STATIC %s\n#define RE4DC_NATIVE_STATIC_OWNERS %sU\n#define RE4DC_NATIVE_MESH %s\n' '$(NATIVE_STATIC)' '$(NATIVE_STATIC_OWNERS)' '$(NATIVE_MESH)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 NATIVE_STATIC_PLATFORM = $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o
@@ -326,5 +329,5 @@ NATIVE_STATIC_GAME = $(OBJDIR)/model_bridge.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/sr
 $(NATIVE_STATIC_PLATFORM) $(NATIVE_STATIC_GAME): $(OBJDIR)/native-static.h platform/include/native_static.h
 $(NATIVE_STATIC_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-static.h
 $(NATIVE_STATIC_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/native-static.h
-$(OBJDIR)/platform/native_static.o: $(OBJDIR)/d349-stack.h ../room/room_package.hpp ../room/static_room_prepare.hpp
+$(OBJDIR)/platform/native_static.o: $(OBJDIR)/d349-stack.h ../room/room_package.hpp ../room/static_room_prepare.hpp ../room/instanced_mesh.hpp
 $(OBJDIR)/platform/native_static.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/d349-stack.h

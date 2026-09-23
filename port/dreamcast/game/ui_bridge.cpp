@@ -87,12 +87,40 @@ extern "C" void re4dc_model_preparation_owner(void* owner){
     retained_preparation=nullptr;preparation_owner=owner;preparation_attempted=false;
 #endif
 }
+#if RE4DC_NATIVE_STATIC
+// D367 diagnostic: what occupies the room heap when the room first draws.
+// OSAlloc cells tile the heap; a mem_alloc block ends with "\0MAD" + file(line).
+static void heap4_census(){
+    struct Row { const char* tag; unsigned bytes, count; } rows[40];
+    unsigned n=0,other=0,other_cells=0,total=0;
+    unsigned a=(Heap[4].start+31U)&~31U;const unsigned end=Heap[4].end;
+    while(a+0x20U<=end){
+        const int size=reinterpret_cast<const OSHeapCell*>(a)->size;
+        if(size<0x20 || (size&31) || a+unsigned(size)>end){re4dc_log("heap4 census: stop at %08x size=%d\n",a,size);break;}
+        const auto* t=reinterpret_cast<const unsigned char*>(a+unsigned(size)-0x20U);
+        if(size>=0x40 && !t[0] && t[1]=='M' && t[2]=='A' && t[3]=='D'){
+            const char* tag=reinterpret_cast<const char*>(t+4);unsigned r=0;
+            while(r<n && strcmp(rows[r].tag,tag))++r;
+            if(r==n && n<40)rows[n++]={tag,0,0};
+            if(r<n){rows[r].bytes+=unsigned(size);++rows[r].count;}else{other+=unsigned(size);++other_cells;}
+        }else{other+=unsigned(size);++other_cells;}
+        total+=unsigned(size);a+=unsigned(size);
+    }
+    for(unsigned i=0;i<n;++i)for(unsigned j=i+1;j<n;++j)if(rows[j].bytes>rows[i].bytes){Row x=rows[i];rows[i]=rows[j];rows[j]=x;}
+    re4dc_log("heap4 census: span=%u walked=%u free=%d untagged_or_free=%u cells=%u tags=%u\n",
+        end-Heap[4].start,total,OSCheckHeap(Heap[4].handle),other,other_cells,n);
+    for(unsigned i=0;i<n;++i)re4dc_log("heap4 census: %7u B x%-3u %s\n",rows[i].bytes,rows[i].count,rows[i].tag);
+}
+#endif
 extern "C" void* re4dc_model_retained_storage(unsigned* bytes){
     *bytes=0;
 #if RE4DC_D349_RENDERER_STACK
     if(!preparation_owner || MemGetCurrentHeap()!=4 || !memCheckHeapActive(4))return nullptr;
     if(!preparation_attempted){
         preparation_attempted=true;
+#if RE4DC_NATIVE_STATIC
+        heap4_census();
+#endif
         const int before=OSCheckHeap(Heap[4].handle);
         if(before>=int(kRetainedBytes+kAllocationOverhead+kSourceReserve))
             retained_preparation=mem_calloc(kRetainedBytes,"native model preparation",0,0,4);

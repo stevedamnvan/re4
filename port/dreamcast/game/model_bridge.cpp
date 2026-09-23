@@ -65,7 +65,7 @@ extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
     p.static_geometry=rigid && m->kindid==2 && !d->shapeOfs && !(info->be_flag&2);
     p.normal_stride=nrm8?(rigid?4:3):(rigid?8:6);p.normal_shift=nrm8?6:14;
 #endif
-#if RE4DC_NATIVE_STATIC
+#if RE4DC_NATIVE_STATIC && !RE4DC_NATIVE_MESH
     // Single-node static scroll objects only: a multi-node part's own matrix is
     // not represented by the object-level placement the package was baked at.
     // Every other part keeps these words at their defaults, because translucent

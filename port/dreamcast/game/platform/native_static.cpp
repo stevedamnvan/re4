@@ -33,6 +33,12 @@
 #ifndef RE4DC_NATIVE_STATIC_OWNERS
 #define RE4DC_NATIVE_STATIC_OWNERS 1U // bit 0 main scenario, bit n+1 block n
 #endif
+#ifndef RE4DC_NATIVE_MESH
+#define RE4DC_NATIVE_MESH 0
+#endif
+#if RE4DC_NATIVE_MESH
+#include "../../room/instanced_mesh.hpp"
+#endif
 
 namespace {
 using re4dc::room::Package;
@@ -71,7 +77,7 @@ void retire(View& v){
     v.storage=nullptr;v.bytes=0;v.bindings=nullptr;v.attempted=false;v.room=0;
 }
 
-bool open(View& v,unsigned index,unsigned room){
+[[maybe_unused]] bool open(View& v,unsigned index,unsigned room){
     if(v.storage && v.room==room)return true;
     if(v.attempted && v.room==room)return false;
     retire(v);v.attempted=true;v.room=room;
@@ -172,8 +178,9 @@ bool locate(const Re4dcModelPart& p,Located& out){
     return false;
 }
 
-struct Draw {
-    const Re4dcModelPart& p; View& view; unsigned material;
+// Strip emission shared by package and mesh draws: one source part's packet.
+struct Emitter {
+    const Re4dcModelPart& p;
     float mv[12];  // package -> view: group bounds
     float near,far;
     float mvq[12]={}; // stored corner -> view (mv, or mv with the AoS12 grid folded in)
@@ -181,10 +188,11 @@ struct Draw {
     Re4dcModelPacket packet{}; pvr_vertex_t* dst=nullptr;
     unsigned used=0,input=0,output=0,alpha=0;
     bool streaming=false,bound=false,submitted=false;
+    bool vertex_alpha=false; // corner alpha from the colour palette (source vertex alpha)
     re4dc::render::ClipParameters clip{};
 
     static void project(float& x,float& y,float& z,void* context){
-        const auto& d=*static_cast<const Draw*>(context);
+        const auto& d=*static_cast<const Emitter*>(context);
         const float* p=d.p.projection;const float* v=d.p.viewport;
         const float inv=1.0f/(-z);
         x=(v[2]*.5f*(p[1]*x+p[2]*z)*inv+v[0]+v[2]*.5f)*640.f/v[2];
@@ -211,8 +219,13 @@ struct Draw {
     re4dc::render::StaticCorner corner(const re4dc::room::CompactVertex& in)const{
         return {in.x,in.y,in.z,in.u,in.v,in.argb};
     }
+    // Packages index a palette; lit meshes (palette==nullptr) store ARGB1555.
+    static std::uint32_t argb1555(std::uint16_t c){
+        const std::uint32_t r=(c>>10)&31U,g=(c>>5)&31U,b=c&31U;
+        return ((c&0x8000U)?0xff000000U:0U)|(((r<<3)|(r>>2))<<16)|(((g<<3)|(g>>2))<<8)|((b<<3)|(b>>2));
+    }
     re4dc::render::StaticCorner corner(const re4dc::room::CompactVertex12& in)const{
-        return {float(in.x),float(in.y),float(in.z),in.u,in.v,palette[in.color]};
+        return {float(in.x),float(in.y),float(in.z),in.u,in.v,palette?palette[in.color]:argb1555(in.color)};
     }
     void clip_vertex(const re4dc::render::StaticCorner& in,const re4dc::room::CompactBatch& batch,
                      re4dc::render::RenderVertex& out){
@@ -229,9 +242,9 @@ struct Draw {
         out.light_blue=float(in.argb&255U)/255.0f;
     }
     // 1 emitted/culled, 0 failed before anything was published, -1 failed after.
-    template<class Vertex>
+    template<class Vertex,class Index>
     int strip(const Vertex* base,const re4dc::room::CompactBatch& batch,
-              const std::uint16_t* index,unsigned count){
+              const Index* index,unsigned count){
         input+=count-2;
         if(count<=packet.capacity){
             if(count>packet.capacity-used && !flush())return submitted?-1:0;
@@ -239,7 +252,8 @@ struct Draw {
             const bool ready=re4dc::render::prepare_direct_strip(dst+used,count,near,far,
                 [&](std::uint32_t local,re4dc::render::DirectStripVertex& out){
                     out=re4dc::render::prepare_static_vertex(corner(base[index[local]]),batch,0.0f);
-                    out.u=u(out.u);out.v=v(out.v);out.argb=(out.argb&0xffffffU)|alpha;
+                    out.u=u(out.u);out.v=v(out.v);
+                    if(!vertex_alpha)out.argb=(out.argb&0xffffffU)|alpha;
                     outside&=(out.x<0?1U:0U)|(out.x>640.0f?2U:0U)|(out.y<0?4U:0U)|(out.y>480.0f?8U:0U);
                     return true;
                 });
@@ -253,24 +267,30 @@ struct Draw {
         // Near/far crossing or oversize: the shared clipper, triangle by triangle,
         // keeping strip winding (odd triangles swap their first two corners).
         ++stats.strips_clipped;
-        const float alphas[3]={float(alpha>>24)/255.0f,float(alpha>>24)/255.0f,float(alpha>>24)/255.0f};
+        float alphas[3]={float(alpha>>24)/255.0f,float(alpha>>24)/255.0f,float(alpha>>24)/255.0f};
         for(unsigned i=2;i<count;++i){
             re4dc::render::RenderVertex tri[3];
-            clip_vertex(corner(base[index[i-2+(i&1)]]),batch,tri[0]);
-            clip_vertex(corner(base[index[i-1-(i&1)]]),batch,tri[1]);
-            clip_vertex(corner(base[index[i]]),batch,tri[2]);
+            const re4dc::render::StaticCorner corners[3]={corner(base[index[i-2+(i&1)]]),
+                corner(base[index[i-1-(i&1)]]),corner(base[index[i]])};
+            for(unsigned k=0;k<3;++k){
+                clip_vertex(corners[k],batch,tri[k]);
+                if(vertex_alpha)alphas[k]=float(corners[k].argb>>24)/255.0f;
+            }
             if(packet.capacity-used<6 && !flush())return submitted?-1:0;
             const unsigned emitted=re4dc::render::clip_projected_triangle(tri,dst+used,p.cull,clip,nullptr,alphas);
             used+=emitted*3;output+=emitted;stats.triangles_clipped+=emitted;
         }
         return 1;
     }
+};
+struct Draw : Emitter {
+    View& view; unsigned material;
     // 1 drawn (possibly nothing visible), 0 fallback allowed, -1 frame aborted.
     int run(const re4dc::room::CompactSourceRange& range){
         const auto& package=view.package;
         if(!re4dc_model_packet_reserve(&p,&packet)){++stats.reserve_rejects;return 0;}
         streaming=re4dc_model_packet_streaming()!=0;
-        clip={near,far,640,480,project,this};
+        clip={near,far,640,480,project,static_cast<Emitter*>(this)};
         const auto* groups=package.compact_groups();
         const auto* batches=package.compact_batches();
         const auto* vertices=package.compact_vertices();
@@ -313,20 +333,216 @@ struct Draw {
         return 1;
     }
 };
+
+#if RE4DC_NATIVE_MESH
+// Instanced native meshes (R4IM): one per source BIN in model space, drawn with
+// the part's live source modelview. setObj records object -> mesh in its
+// owner's table (inside the owner's allocation); the room's common BIN set is
+// a seventh view owned with the room.
+constexpr unsigned kMeshViews=kViews+1,kCommonView=kViews,kEntries=128;
+struct MeshEntry { const void* object; std::uint16_t mesh; std::uint8_t common,used; };
+struct MeshView {
+    re4dc::room::MeshPackage package;
+    unsigned char* storage=nullptr; unsigned bytes=0;
+    MeshEntry* entries=nullptr; // owner views only
+    unsigned room=0; bool attempted=false;
+};
+MeshView mesh_views[kMeshViews];
+
+void retire(MeshView& v){
+    v.package.close();
+    if(v.storage){re4dc_static_free(v.storage);stats.package_bytes-=v.bytes;--stats.owners_open;}
+    v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.attempted=false;v.room=0;
+}
+
+bool open(MeshView& v,unsigned index,unsigned room){
+    if(v.storage && v.room==room)return true;
+    if(v.attempted && v.room==room)return false;
+    retire(v);v.attempted=true;v.room=room;
+    char name[16],path[64];
+    if(index==kCommonView)snprintf(name,sizeof(name),"COMMON");
+    else owner_name(index,name,sizeof(name));
+    snprintf(path,sizeof(path),"/cd/dc/native/r%x%02x/%s.re4mesh",room>>8,room&255U,name);
+    const file_t file=fs_open(path,O_RDONLY);
+    if(file==FILEHND_INVALID){++stats.open_failures;re4dc_log("native mesh: %s missing\n",path);return false;}
+    const unsigned size=unsigned(fs_total(file));
+    const unsigned package_bytes=(size+31U)&~31U;
+    const unsigned table=index==kCommonView?0U:kEntries*unsigned(sizeof(MeshEntry));
+    stats.heap_before=re4dc_static_heap_free();
+    auto* storage=static_cast<unsigned char*>(re4dc_static_alloc(package_bytes+table));
+    if(!storage)++stats.alloc_rejects;
+    else if(fs_read(file,storage,size)!=ssize_t(size)){re4dc_static_free(storage);storage=nullptr;}
+    fs_close(file);
+    stats.heap_after=re4dc_static_heap_free();
+    if(!storage){re4dc_log("native mesh: %s not loaded (size=%u heap=%d)\n",path,size,stats.heap_before);return false;}
+    if(!v.package.adopt(storage,size)){
+        re4dc_log("native mesh: %s rejected: %s\n",path,v.package.error());
+        re4dc_static_free(storage);++stats.open_failures;return false;
+    }
+    v.storage=storage;v.bytes=package_bytes+table;
+    if(table){v.entries=reinterpret_cast<MeshEntry*>(storage+package_bytes);std::memset(v.entries,0,table);}
+    ++stats.owners_open;stats.package_bytes+=v.bytes;
+    const struct mallinfo kos=mallinfo();
+    const auto& h=v.package.header();
+    re4dc_log("native mesh: %s bytes=%u meshes=%u parts=%u meshlets=%u vertices=%u heap4=%d->%d kos_free=%d\n",
+        path,v.bytes,h.mesh_count,h.part_count,h.meshlet_count,h.vertex_count,
+        stats.heap_before,stats.heap_after,kos.fordblks);
+    return true;
+}
+
+unsigned entry_slot(const void* object){return unsigned(reinterpret_cast<std::uintptr_t>(object)>>4)%kEntries;}
+const MeshEntry* find_entry(const void* object,unsigned& owner){
+    for(unsigned i=0;i<kViews;++i){
+        const MeshView& v=mesh_views[i];
+        if(!v.entries)continue;
+        for(unsigned k=0,s=entry_slot(object);k<kEntries;++k,s=(s+1)%kEntries){
+            const MeshEntry& e=v.entries[s];
+            if(!e.used)break;
+            if(e.object==object){owner=i;return &e;}
+        }
+    }
+    return nullptr;
+}
+
+void bind_mesh(const void* object,unsigned room,int block,unsigned bin,unsigned common){
+    const unsigned index=view_index(block);
+    if(index>=kViews || !(RE4DC_NATIVE_STATIC_OWNERS&(1U<<index)) ||
+       (common && !(RE4DC_NATIVE_STATIC_OWNERS&(1U<<kCommonView)))){++stats.unowned_binds;return;}
+    MeshView& owner=mesh_views[index];
+    if(!open(owner,index,room))return;
+    MeshView& target=common?mesh_views[kCommonView]:owner;
+    if(common && !open(target,kCommonView,room))return;
+    const unsigned mesh=target.package.find(bin,common!=0);
+    if(mesh>=target.package.header().mesh_count){
+        ++stats.bind_misses;
+        if(stats.bind_misses<=48)re4dc_log("native mesh: bind miss view=%u bin=%u common=%u\n",index,bin,common);
+        return;
+    }
+    for(unsigned k=0,s=entry_slot(object);k<kEntries;++k,s=(s+1)%kEntries){
+        MeshEntry& e=owner.entries[s];
+        if(e.used && e.object!=object)continue;
+        e={object,std::uint16_t(mesh),std::uint8_t(common!=0),1};++stats.binds;return;
+    }
+    ++stats.bind_conflicts;
+    re4dc_log("native mesh: view=%u object table full\n",index);
+}
+
+// 6+6-bit octahedral code -> unit normal (tools/convert_room_bins.py oct12).
+void oct_normal(unsigned code,float n[3]){
+    float x=float(code&63U)*(2.0f/63.0f)-1.0f,y=float((code>>6)&63U)*(2.0f/63.0f)-1.0f;
+    const float z=1.0f-std::fabs(x)-std::fabs(y);
+    if(z<0){
+        const float ox=x;
+        x=(1.0f-std::fabs(y))*(ox>=0?1.0f:-1.0f);
+        y=(1.0f-std::fabs(ox))*(y>=0?1.0f:-1.0f);
+    }
+    const float inverse=1.0f/std::sqrt(x*x+y*y+z*z);
+    n[0]=x*inverse;n[1]=y*inverse;n[2]=z*inverse;
+}
+std::uint16_t pack1555(const float rgb[3],unsigned alpha){
+    const auto c=[](float v){return unsigned((v<0?0.0f:v>1?1.0f:v)*31.0f+0.5f);};
+    return std::uint16_t((alpha>=128?0x8000U:0U)|(c(rgb[0])<<10)|(c(rgb[1])<<5)|c(rgb[2]));
+}
+// Prelights one part once, at its first draw, with the source evaluator and
+// this draw's live light state (view-space, like the generic path): the
+// stored slot becomes ARGB1555. Instances share the result and camera-
+// relative lights stay as first seen - the labelled Dreamcast compromise.
+void light_part(MeshView& v,const re4dc::room::MeshRecord& mesh,re4dc::room::MeshPart& part,
+                const Re4dcModelPart& p){
+    auto* vertices=reinterpret_cast<re4dc::room::CompactVertex12*>(v.storage+v.package.header().vertex_offset);
+    const std::uint32_t* palette=v.package.palette();
+    re4dc::render::PreparedSourceLights lights;
+    if(p.lighting)lights=re4dc::render::prepare_actor_lights(*p.lighting);
+    const float* m=p.modelview;
+    const auto* lets=v.package.meshlets()+part.first_meshlet;
+    for(unsigned i=0;i<part.meshlet_count;++i)
+        for(unsigned k=0;k<lets[i].vertex_count;++k){
+            auto& corner=vertices[lets[i].first_vertex+k];
+            const std::uint32_t argb=palette[corner.color>>12];
+            const std::uint8_t color[4]={std::uint8_t(argb>>16),std::uint8_t(argb>>8),std::uint8_t(argb),std::uint8_t(argb>>24)};
+            float rgb[3]={1.0f,1.0f,1.0f};
+            if(p.lighting){
+                const float x=mesh.origin[0]+float(corner.x)*mesh.step[0];
+                const float y=mesh.origin[1]+float(corner.y)*mesh.step[1];
+                const float z=mesh.origin[2]+float(corner.z)*mesh.step[2];
+                float n[3];oct_normal(corner.color&0xfffU,n);
+                const float* nm=p.lighting->normal_matrix;
+                re4dc::render::evaluate_prepared_source_lighting(
+                    m[0]*x+m[1]*y+m[2]*z+m[3],m[4]*x+m[5]*y+m[6]*z+m[7],m[8]*x+m[9]*y+m[10]*z+m[11],
+                    nm[0]*n[0]+nm[1]*n[1]+nm[2]*n[2],nm[4]*n[0]+nm[5]*n[1]+nm[6]*n[2],nm[8]*n[0]+nm[9]*n[1]+nm[10]*n[2],
+                    *p.lighting,lights,color,rgb);
+            }
+            corner.color=pack1555(rgb,color[3]);
+        }
+    part.reserved=1;
+    ++stats.parts_lit;
+}
+
+struct MeshDraw : Emitter {
+    const re4dc::room::MeshPackage& package; const re4dc::room::MeshPart& part;
+    int run(){
+        if(!re4dc_model_packet_reserve(&p,&packet)){++stats.reserve_rejects;return 0;}
+        streaming=re4dc_model_packet_streaming()!=0;
+        clip={near,far,640,480,project,static_cast<Emitter*>(this)};
+        palette=nullptr; // lit ARGB1555 corners (light_part)
+        re4dc::room::CompactBatch batch{};
+        batch.uv_bias[0]=part.uv_bias[0];batch.uv_bias[1]=part.uv_bias[1];
+        batch.uv_scale[0]=part.uv_scale[0];batch.uv_scale[1]=part.uv_scale[1];
+        const auto* lets=package.meshlets()+part.first_meshlet;
+        for(unsigned i=0;i<part.meshlet_count;++i){
+            const auto& l=lets[i];
+            const re4dc::render::DrawBounds bounds{
+                {float(l.bounds_min[0]),float(l.bounds_min[1]),float(l.bounds_min[2])},
+                {float(l.bounds_max[0]),float(l.bounds_max[1]),float(l.bounds_max[2])}};
+            if(!re4dc::render::group_visible(bounds,mvq,p.projection,p.viewport,near,far,0)){++stats.groups_culled;continue;}
+            ++stats.groups_visible;
+            if(!bind()){++stats.bind_rejects;return submitted?-1:0;}
+            ++stats.batches;
+            const auto* base=package.vertices()+l.first_vertex;
+            const std::uint8_t* s=package.strips()+l.first_strip;
+            const std::uint8_t* const end=s+l.strip_bytes;
+            while(s<end){
+                const unsigned n=*s++;
+                const int result=strip(base,batch,s,n);
+                if(result<=0)return result;
+                s+=n;
+            }
+        }
+        if(used)re4dc_model_packet_commit(used);
+        re4dc_model_result(0,input,output);
+        return 1;
+    }
+};
+#endif
 } // namespace
 
 extern "C" void re4dc_static_bind(const void* object,unsigned room,int block,unsigned work,
                                   unsigned bin,unsigned common,unsigned serial,const float world[12]){
-#if RE4DC_NATIVE_STATIC
+#if RE4DC_NATIVE_MESH
+    (void)work;(void)serial;(void)world;
+    bind_mesh(object,room,block,bin,common);
+#elif RE4DC_NATIVE_STATIC
     const unsigned index=view_index(block);
-    if(index>=kViews || !(RE4DC_NATIVE_STATIC_OWNERS&(1U<<index)))return;
+    if(index>=kViews || !(RE4DC_NATIVE_STATIC_OWNERS&(1U<<index))){
+        ++stats.unowned_binds;
+        if(stats.unowned_binds<=48)re4dc_log("native static: unowned bind block=%d work=%u bin=%u common=%u object=%p\n",block,work,bin,common,object);
+        return;
+    }
     View& v=views[index];
     if(!open(v,index,room))return;
     re4dc::room::CompactSourceRange range;
     if(!v.package.resolve_source(block<0?0xffU:std::uint8_t(block),std::uint16_t(work),
-                                 std::uint16_t(bin),common!=0,range)){++stats.bind_misses;return;}
+                                 std::uint16_t(bin),common!=0,range)){
+        ++stats.bind_misses;
+        if(stats.bind_misses<=48)re4dc_log("native static: bind miss view=%u work=%u bin=%u common=%u object=%p\n",index,work,bin,common,object);
+        return;
+    }
     Binding& b=v.bindings[range.source];
-    if(b.object && (b.object!=object || b.serial!=serial))++stats.bind_conflicts;
+    if(b.object && (b.object!=object || b.serial!=serial)){
+        ++stats.bind_conflicts;
+        if(stats.bind_conflicts<=48)re4dc_log("native static: bind conflict view=%u source=%u work=%u bin=%u common=%u object=%p previous=%p\n",
+            index,range.source,work,bin,common,object,b.object);
+    }
     b={object,serial,~0U,0,0,range.first_group,range.group_count,{}};
     std::memcpy(b.world,world,sizeof(b.world));
     ++stats.binds;
@@ -338,8 +554,16 @@ extern "C" void re4dc_static_bind(const void* object,unsigned room,int block,uns
 extern "C" void re4dc_static_retire_owner(int block){
     const unsigned index=view_index(block);
     if(index<kViews && views[index].attempted)retire(views[index]);
+#if RE4DC_NATIVE_MESH
+    if(index<kViews && mesh_views[index].attempted)retire(mesh_views[index]);
+#endif
 }
-extern "C" void re4dc_static_retire_all(){for(auto& v:views)if(v.attempted)retire(v);}
+extern "C" void re4dc_static_retire_all(){
+    for(auto& v:views)if(v.attempted)retire(v);
+#if RE4DC_NATIVE_MESH
+    for(auto& v:mesh_views)if(v.attempted)retire(v);
+#endif
+}
 extern "C" const Re4dcStaticStats* re4dc_static_stats(){return &stats;}
 
 #if RE4DC_NATIVE_STATIC
@@ -353,23 +577,111 @@ unsigned vertex_alpha_min(const Re4dcModelPart& p){
     for(unsigned i=3;i<bytes;i+=4)if(p.colors[i]<low)low=p.colors[i];
     return low;
 }
+void log_stats(unsigned frame){
+    if(frame!=last_log_frame && frame%600==0){
+        last_log_frame=frame;
+        re4dc_log("native static: frame=%u native=%u skipped=%u fallback=%u key_misses=%u groups=%u/%u strips=%u culled=%u clipped=%u moved=%u stale=%u vertex_alpha=%u opaque=%u alpha_unused=%u alpha_min=%u reserve=%u bind=%u aborts=%u\n",
+            frame,stats.parts_native,stats.parts_skipped,stats.parts_fallback,stats.key_misses,stats.groups_visible,
+            stats.groups_visible+stats.groups_culled,stats.strips,stats.strips_culled,stats.strips_clipped,stats.moved_objects,stats.stale_bindings,
+            stats.vertex_alpha,stats.vertex_opaque,stats.vertex_alpha_unused,stats.vertex_alpha_min,stats.reserve_rejects,stats.bind_rejects,stats.aborts);
+        re4dc_log("native static: frame=%u vertices=%u batches=%u binds=%u misses=%u conflicts=%u unowned=%u unbound=%u lit=%u\n",
+            frame,stats.vertices,stats.batches,stats.binds,stats.bind_misses,stats.bind_conflicts,stats.unowned_binds,
+            stats.locate_misses,stats.parts_lit);
+    }
+}
+#if RE4DC_NATIVE_MESH
+// Source ModelData identity words read from the live BIN (cModelInfo::pData at
+// 0x0C; nVtx 0x38, displist_num 0x1A and the relocated pParts 0x1C after the
+// load-time byte-order mirror).
+const unsigned char* model_data(const Re4dcModelPart& p){
+    const unsigned char* data;
+    std::memcpy(&data,static_cast<const unsigned char*>(p.info)+0x0C,sizeof(data));
+    return data;
+}
+const unsigned char* first_part(const unsigned char* data){
+    const unsigned char* parts;
+    std::memcpy(&parts,data+0x1C,sizeof(parts));
+    return parts;
+}
+int mesh_submit(const Re4dcModelPart& p){
+    if(!p.static_geometry || !p.info || !p.part || !stats.owners_open)return 0;
+    unsigned owner=0;
+    const MeshEntry* e=find_entry(p.model,owner);
+    if(!e){
+        ++stats.locate_misses;
+        if(stats.locate_misses<=32)re4dc_log("native mesh: unbound part model=%p\n",p.model);
+        return 0;
+    }
+    MeshView& v=e->common?mesh_views[kCommonView]:mesh_views[owner];
+    if(!v.package.valid() || e->mesh>=v.package.header().mesh_count){++stats.stale_bindings;return 0;}
+    const auto& mesh=v.package.meshes()[e->mesh];
+    const unsigned char* data=model_data(p);
+    std::uint16_t vertices=0,parts=0;
+    if(data){std::memcpy(&vertices,data+0x38,2);std::memcpy(&parts,data+0x1A,2);}
+    const std::uintptr_t offset=data?reinterpret_cast<std::uintptr_t>(p.part)-reinterpret_cast<std::uintptr_t>(first_part(data)):~std::uintptr_t(0);
+    const auto* part=(data && vertices==mesh.source_vertices && parts==mesh.source_parts && offset<0x100000U)?
+        v.package.part(e->mesh,std::uint32_t(offset),p.stream_bytes):nullptr;
+    if(!part){
+        ++stats.key_misses;
+        if(stats.key_misses<=32)re4dc_log("native mesh: part mismatch bin=%u common=%u vertices=%u/%u parts=%u/%u offset=%u size=%u\n",
+            mesh.bin,mesh.common,vertices,mesh.source_vertices,parts,mesh.source_parts,unsigned(offset),p.stream_bytes);
+        return 0;
+    }
+    // Before any deferral: p.lighting points at the bridge's stack copy.
+    // The package lives in this view's writable heap-4 allocation.
+    if(!part->reserved)light_part(v,mesh,const_cast<re4dc::room::MeshPart&>(*part),p);
+    // Source vertex alpha: the mesh palette carries the authored CLR0 alpha, so
+    // translucent vertex-alpha parts draw natively (and defer like any other).
+    Re4dcModelPart opaque;
+    const Re4dcModelPart* drawn=&p;
+    bool vertex_alpha=false;
+    if(p.alpha_state&256){
+        const unsigned low=vertex_alpha_min(p);
+        const bool alpha_unused=p.blend==0 && !(p.material_flags&4) && p.mask_ref>255;
+        if(low<255 && !alpha_unused){vertex_alpha=true;++stats.vertex_alpha;}
+        else {
+            opaque=p;opaque.alpha_state=255;drawn=&opaque;
+            if(low<255)++stats.vertex_alpha_unused;else ++stats.vertex_opaque;
+        }
+    }
+    if(p.cull==3)return 1;
+    if(p.projection[0]!=0 || p.viewport[2]<=0 || p.viewport[3]<=0)return 0;
+    const float near=p.projection[6]/(p.projection[5]-1),far=p.projection[6]/p.projection[5];
+    if(!std::isfinite(near)||!std::isfinite(far)||near<=0||far<=near)return 0;
+    // Queued translucent parts replay through this function in pass order.
+    if(re4dc_model_defer_part(drawn))return 1;
+    MeshDraw d{{*drawn,{},near,far},v.package,*part};
+    d.alpha=(drawn->alpha_state&255U)<<24;d.vertex_alpha=vertex_alpha;
+    // Mesh grid -> source model space -> live source view (node matrix included).
+    const float grid[12]={mesh.step[0],0,0,mesh.origin[0], 0,mesh.step[1],0,mesh.origin[1],
+                          0,0,mesh.step[2],mesh.origin[2]};
+    concat(drawn->modelview,grid,d.mvq);
+    std::memcpy(d.mv,d.mvq,sizeof(d.mv));
+    load_screen(d.mvq,p.projection,p.viewport);
+    const int result=d.run();
+    if(result>0){++stats.parts_native;return 1;}
+    if(result<0){re4dc_model_packet_abort();++stats.aborts;return 1;}
+    ++stats.parts_fallback;return 0;
+}
+#endif
 }
 #endif
 extern "C" int re4dc_static_submit(const Re4dcModelPart* part){
 #if RE4DC_NATIVE_STATIC
     const Re4dcModelPart& p=*part;
+    const unsigned frame=re4dc_ui_frame();
+    log_stats(frame);
+#if RE4DC_NATIVE_MESH
+    return mesh_submit(p);
+#endif
     if(!p.world || !p.view || !p.static_geometry || !stats.owners_open)return 0;
     Located at;
-    if(!locate(p,at))return 0;
-    Binding& b=*at.binding;View& v=*at.view;
-    const unsigned frame=re4dc_ui_frame();
-    if(frame!=last_log_frame && frame%600==0){
-        last_log_frame=frame;
-        re4dc_log("native static: frame=%u native=%u skipped=%u fallback=%u key_misses=%u groups=%u/%u strips=%u culled=%u clipped=%u moved=%u stale=%u vertex_alpha=%u opaque=%u alpha_min=%u reserve=%u bind=%u aborts=%u\n",
-            frame,stats.parts_native,stats.parts_skipped,stats.parts_fallback,stats.key_misses,stats.groups_visible,
-            stats.groups_visible+stats.groups_culled,stats.strips,stats.strips_culled,stats.strips_clipped,stats.moved_objects,stats.stale_bindings,
-            stats.vertex_alpha,stats.vertex_opaque,stats.vertex_alpha_min,stats.reserve_rejects,stats.bind_rejects,stats.aborts);
+    if(!locate(p,at)){
+        ++stats.locate_misses;
+        if(stats.locate_misses<=32)re4dc_log("native static: unlocated part model=%p serial=%u key=%u/%u\n",p.model,p.serial,p.source_key[0],p.source_key[1]);
+        return 0;
     }
+    Binding& b=*at.binding;View& v=*at.view;
     if(b.frame!=frame){b.frame=frame;b.drawn=b.fallback=0;}
     const auto& header=v.package.header();
     unsigned material=header.material_count;
@@ -388,8 +700,13 @@ extern "C" int re4dc_static_submit(const Re4dcModelPart* part){
     if(p.alpha_state&256){
         const unsigned low=vertex_alpha_min(p);
         if((!stats.vertex_alpha && !stats.vertex_opaque) || low<stats.vertex_alpha_min)stats.vertex_alpha_min=low;
-        if(low<255){b.fallback|=bit;++stats.parts_fallback;++stats.vertex_alpha;return 0;}
-        opaque=p;opaque.alpha_state=255;drawn=&opaque;++stats.vertex_opaque;
+        // Vertex alpha only reaches the image through blending or an alpha
+        // test. An opaque (blend 0), unmasked, non-alpha-texture material draws
+        // the same whatever its vertex alpha, so it is native opaque too.
+        const bool alpha_unused=p.blend==0 && !(p.material_flags&4) && p.mask_ref>255;
+        if(low<255 && !alpha_unused){b.fallback|=bit;++stats.parts_fallback;++stats.vertex_alpha;return 0;}
+        opaque=p;opaque.alpha_state=255;drawn=&opaque;
+        if(low<255)++stats.vertex_alpha_unused;else ++stats.vertex_opaque;
     }
     if(p.cull==3){b.drawn|=bit;return 1;}
     if(p.projection[0]!=0 || p.viewport[2]<=0 || p.viewport[3]<=0){b.fallback|=bit;return 0;}
@@ -398,7 +715,7 @@ extern "C" int re4dc_static_submit(const Re4dcModelPart* part){
     // Queued translucent parts replay through this function in pass order.
     if(re4dc_model_defer_part(drawn))return 1;
 
-    Draw d{*drawn,v,material,{},near,far};
+    Draw d{{*drawn,{},near,far},v,material};
     d.alpha=(drawn->alpha_state&255U)<<24;
     // Package space -> source world (x1000), then the object's movement since
     // it was bound (usually none), then the live source camera.
