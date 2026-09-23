@@ -185,6 +185,52 @@ class CompactRoom(unittest.TestCase):
             with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:original)}):
                 with self.assertRaisesRegex(ValueError,'non-reference'):ui.compact_room(source,textures,root/'wrong-image')
 
+class CompactR101Room(unittest.TestCase):
+    """Frontier W4 L2: the reviewed r101 slot contract (37 slots) externalizes only
+    SMD#4 TPL0, EFF#7/#35 images, ITM#9 items and model TPLs #27/#29/#34."""
+    def build(self):
+        room,container,image=fixture()
+        ofs=struct.unpack_from('>51I',room,16)
+        r100=[room[a:b] for a,b in zip(ofs,ofs[1:]+(len(room),))]
+        texture=r100[26];model=room_fixtures.RoomFormats().model_fixture()
+        upload=bytearray(r100[8]);struct.pack_into('>H',upload,52,7) # EFF#7: upload-only ID; EFF#35 keeps CPU noise 0xFE
+        bodies=[bytes(32) for _ in range(37)];tags=[b'CNS\0']*37
+        for slot,tag,body in [(4,b'SMD\0',r100[5]),(7,b'EFF\0',bytes(upload)),(9,b'ITM\0',r100[10]),(35,b'EFF\0',r100[8]),
+                              (26,b'BIN\0',model),(27,b'TPL\0',texture),(28,b'BIN\0',model),(29,b'TPL\0',texture),
+                              (33,b'BIN\0',model),(34,b'TPL\0',texture)]:
+            bodies[slot]=body;tags[slot]=tag
+        archive=bytearray(320);struct.pack_into('>I',archive,0,37)
+        for i,(tag,body) in enumerate(zip(tags,bodies)):
+            struct.pack_into('>I',archive,16+4*i,len(archive));archive[164+4*i:168+4*i]=tag;archive+=body
+        return archive,container,image
+    def test_r101_contract_keeps_every_other_slot(self):
+        archive,container,image=self.build()
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'r101.das';source.write_bytes(container);textures=root/'tex';textures.mkdir()
+            key,_=ui.image_identity(image)
+            package,_=tpl.build_package([image],[tpl.MaterialBinding('source',0,None)],twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
+            (textures/(key+'.re4tex')).write_bytes(package)
+            with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:bytes(archive))}):
+                report=ui.compact_room(source,textures,root/'out')
+                with self.assertRaisesRegex(ValueError,'r100 only'):
+                    ui.compact_room(source,textures,root/'effects',compact_effects=True)
+            self.assertEqual(report['contract'],'r101-upload-only-v1')
+            owners={e['context'].split('/tpl')[0] for e in report['selected']}
+            self.assertEqual(owners,{'st1/r101.arc#'+s for s in ('4/TPL0','7','9/item','27','29','34')})
+            small=(root/'out/r101.arc').read_bytes();before=bytearray(archive)
+            ui.mirror.convert_file('st1/r101.arc',before)
+            def body(data,i):
+                count,=struct.unpack_from('<I',data);offsets=struct.unpack_from('<%dI'%count,data,16)
+                end=min([x for x in offsets if x>offsets[i]]+[len(data)])
+                return data[offsets[i]:end]
+            self.assertEqual(struct.unpack_from('<I',small)[0],38)
+            for i in set(range(37))-{4,7,9,27,29,34}: # EFF#35 (CPU noise only) stays whole
+                self.assertEqual(body(small,i),body(before,i),i)
+            self.assertEqual(source.read_bytes(),container)
+            other=root/'r102.das';other.write_bytes(container)
+            with self.assertRaisesRegex(ValueError,'reviewed r100/r101'):
+                ui.compact_room(other,textures,root/'r102')
+
 class CompactCore(unittest.TestCase):
     def test_selected_family_compacts_without_qualifying_or_mutating_other_families(self):
         room,_,image=fixture()
