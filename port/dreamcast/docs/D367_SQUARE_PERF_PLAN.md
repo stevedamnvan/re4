@@ -155,7 +155,46 @@ Q3, stacked: dependency tracking removes whole part updates, so it shrinks the b
 Revised best plausible retained work: ~25-31 hw ms/tick. The 14 ms allocation is not credible for the
 square under the gameplay constraints; the 30 fps architecture and budget need an explicit revision.
 
+## Revised approach: bounded architectural investigation (user decision, 2026-09-24)
+
+30 fps stays the objective; 15 fps at full speed stays the intermediate gate. **The 14 ms retained
+allocation is retired** (the audit does not support it). The audit justifies revising the engineering
+approach, not changing encounters or accepting slow motion (both still rejected).
+
+Budget identity, per second of game time with G = retained work per tick (every tick, 30/s) and R =
+drawing cost per image at F images/s: **30 x G + F x R <= 1000 ms.** At G = 28 and R = 25 that is
+6.4 fps, not 11-12. Drawing allowance R per image:
+
+| retained work G | R at 30 fps | R at 15 fps |
+|---|---|---|
+| 20 ms | 13.3 | 26.7 |
+| 25 ms | 8.3 | 16.7 |
+| 28 ms | 5.3 | 10.7 |
+
+Today: G = 39.5, R = 65.0 (sq16 / sq15).
+
+Qualifications: the 1.6-2.4 ms structural skeleton saving is a hypothesis (reader coverage is
+incomplete); 25-31 ms describes the opportunities identified so far, not an architectural limit.
+
+Steps, in order, each measured in full:
+1. **Exact collision candidate collection.** Replace the alive-list walks with maintained candidate
+   data; measure the entire replacement (mutation hooks, invalidation, rebuilds, order preservation).
+   STRICT.
+2. **Compact skeleton processing prototype on one representative actor:** contiguous hot data, fewer
+   pointer traversals, batched matrix work, dependency-aware partial updates. Measure the complete
+   update including gathering inputs and writing results. Before omitting any work, audit direct AND
+   inlined readers.
+3. **Collision spatial structure prototype:** candidate order and exact final tests preserved,
+   maintenance cost included; compared against step 1.
+4. **Reassess the combined retained cost, then run the actor-rendering proof** against the matching
+   allowance above.
+
+Next checkpoint delivers: a measured retained cost G, the rendering allowance it leaves, and the
+quantified remaining gap.
+
 ## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
+
+(Superseded in part by the revised approach above: the 14 ms allocation is retired.)
 
 Engineering budgets (targets, not forecasts) for one tick: required simulation + shared model work
 14, actor presentation 8, scenery 5, packets/copies/submission/HUD/system 3, margin 3.3. Order:
