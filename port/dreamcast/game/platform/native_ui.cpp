@@ -641,11 +641,33 @@ unsigned ta_hash_words[5];
 void ta_hash_reset(){for(unsigned i=0;i<5;++i){ta_hash_h[i]=2166136261u;ta_hash_words[i]=0;}}
 void ta_hash_marker(pvr_list_t list){const std::uint32_t w=0xF00D0000u|(unsigned)list;re4dc_ta_hash(&w,4);}
 #endif
+#if RE4DC_TA_DOUBLEBUF
+// TA double buffering at run time (design-doublebuf, KOS pvr_set_vbuf_doublebuf): on in play, off
+// while the sub-screen backing holds bank 1's vertex buffer (re4dc_ui_ta_single_bank at backing
+// open), back on at the first scene after the backing closed (no extra fence: the single-bank
+// stream_open fenced already).
+bool ta_double=true,ta_double_wanted=false;
+#endif
 void stream_open() {
 #if RE4DC_PVR_PIPELINE
+#if RE4DC_TA_DOUBLEBUF
+    if(!ta_double){
+        present_fence(); // single bank: previous scene flipped/discarded, TA bank and back buffer free
+        if(ta_double_wanted){
+            if(pvr_set_vbuf_doublebuf(true)<0)re4dc_missing("TA double buffer switch refused");
+            ta_double=true;ta_double_wanted=false;
+            re4dc_log("ta bank: double at frame %u" "\n",frame);
+        }
+    }
+#if RE4DC_NATIVE_FOG
+    else if(re4dc_fog_frame_pending())present_fence(); // the render in flight reads the fog registers
+    re4dc_fog_frame();
+#endif
+#else
     present_fence(); // previous scene flipped/discarded: TA bank and back buffer free
 #if RE4DC_NATIVE_FOG
     re4dc_fog_frame(); // fog registers: the previous scene no longer renders
+#endif
 #endif
 #endif
     pvr_scene_begin();
@@ -1359,6 +1381,26 @@ void vram_census(const char* where){
 extern "C" void re4dc_pvr_vram_fence(){present_fence();}
 #endif
 extern "C" void re4dc_ui_invalidate_sources(){sources_reset();re4dc_model_reset_draw_plans();}
+#if RE4DC_TA_DOUBLEBUF && RE4DC_PVR_PIPELINE
+// Sub-screen backing open (subscreen_backing.cpp), before it writes bank 1: the open scene is
+// finished unpresented (its TA input may be in bank 1), its render fenced, then the TA stays on
+// bank 0. A refused switch halts: the backing must never share a bank with the TA.
+extern "C" void re4dc_ui_ta_single_bank(){
+    if(!ta_double){ta_double_wanted=false;return;}
+    const bool open=stream_scene;
+#if RE4DC_PVR_STREAM
+    if(stream_scene)stream_close(false);
+#endif
+    const auto t=timer_us_gettime64();
+    present_fence();
+    if(pvr_set_vbuf_doublebuf(false)<0)re4dc_missing("TA single-bank switch refused");
+    ta_double=false;
+    re4dc_log("ta bank: single at frame %u (sub screen backing) scene_discarded=%d fence_us=%llu" "\n",frame,open?1:0,
+              (unsigned long long)(timer_us_gettime64()-t));
+}
+// Backing closed (bank 1 read back): double buffering returns at the next stream_open.
+extern "C" void re4dc_ui_ta_double_bank_later(){if(!ta_double)ta_double_wanted=true;}
+#endif
 #if RE4DC_SUBSCREEN
 // Sub screen backing (subscreen_backing.cpp): releases the least recently used upload that
 // this frame's scene does not reference, as load() evicts for a new upload (a previous-frame

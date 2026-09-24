@@ -2,8 +2,12 @@
 // sscrn_bridge.cpp decides what to keep; this file only owns the KOS side:
 //  - the backing store, two linear VRAM segments used in order:
 //      1. the second TA vertex bank (32-bit area 0x400000 + TA_VERTBUF_KB KiB). pvr_init()
-//         allocates two banks, but with TA_DOUBLEBUF=0 (vbuf_doublebuf_disabled) the TA
-//         target never leaves bank 0, so bank 1's vertex buffer is never read or written;
+//         allocates two banks; with TA_DOUBLEBUF=0 the TA target never leaves bank 0. With
+//         TA_DOUBLEBUF=1 the TA drops to bank 0 for the backing's lifetime
+//         (re4dc_ui_ta_single_bank at open, re4dc_ui_ta_double_bank_later at close;
+//         design-doublebuf), so bank 1's vertex buffer is never read or written by the TA
+//         while it holds the backing. Its tile matrix and OPBs follow the vertex region and are
+//         never touched (kBankBytes);
 //      2. texture-pool blocks (pvr_mem_malloc, at most kMaxBlocks, halving the request when the
 //         pool is fragmented) for the remainder, freed at close. When the pool is short, the
 //         least recently used native UI uploads that the current scene does not reference are
@@ -29,7 +33,8 @@
 #define RE4DC_TA_DOUBLEBUF 0
 #endif
 #if RE4DC_SUBSCREEN && RE4DC_TA_DOUBLEBUF
-#error SUBSCREEN=1 stores the sub screen backing in the TA bank that TA_DOUBLEBUF=1 uses
+extern "C" void re4dc_ui_ta_single_bank();
+extern "C" void re4dc_ui_ta_double_bank_later();
 #endif
 
 extern "C" int re4dc_dvd_native_path(const char* name, char* output, unsigned capacity);
@@ -91,6 +96,9 @@ int re4dc_ssb_open(unsigned bytes, unsigned* bank_bytes, unsigned* pool_bytes)
         return 0;
     }
     store = Store{};
+#if RE4DC_SUBSCREEN && RE4DC_TA_DOUBLEBUF
+    re4dc_ui_ta_single_bank();  // before the first bank-1 write
+#endif
     store.bytes = bytes;
     store.bank_bytes = bytes < kBankBytes ? bytes : kBankBytes;
     store.pool_bytes = bytes - store.bank_bytes;
@@ -102,6 +110,9 @@ int re4dc_ssb_open(unsigned bytes, unsigned* bank_bytes, unsigned* pool_bytes)
             re4dc_log("subscreen backing: %u blocks cannot hold %u B (short %u)\n", kMaxBlocks, store.pool_bytes, need);
             free_blocks();
             if (store.claimed) re4dc_ui_vram_unclaim();
+#if RE4DC_SUBSCREEN && RE4DC_TA_DOUBLEBUF
+            re4dc_ui_ta_double_bank_later();
+#endif
             return 0;
         }
         // Largest block the pool gives now, down to kMinBlock (or the remainder).
@@ -121,6 +132,9 @@ int re4dc_ssb_open(unsigned bytes, unsigned* bank_bytes, unsigned* pool_bytes)
                       need, (unsigned) pvr_mem_available(), store.nblock, store.reclaimed_uploads);
             free_blocks();
             if (store.claimed) re4dc_ui_vram_unclaim();
+#if RE4DC_SUBSCREEN && RE4DC_TA_DOUBLEBUF
+            re4dc_ui_ta_double_bank_later();
+#endif
             return 0;
         }
         store.reclaimed_bytes += freed;
@@ -169,6 +183,9 @@ void re4dc_ssb_close()
     free_blocks();
     if (store.claimed) re4dc_ui_vram_unclaim();
     store = Store{};
+#if RE4DC_SUBSCREEN && RE4DC_TA_DOUBLEBUF
+    re4dc_ui_ta_double_bank_later();  // bank 1 was read back: the TA may use it from the next scene
+#endif
 }
 
 // Pool blocks in use and native UI uploads released by the last open.

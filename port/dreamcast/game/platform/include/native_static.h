@@ -47,4 +47,7 @@ void re4dc_fog_capture(int type, float start, float end, unsigned rgba);
 unsigned re4dc_fog_enabled();
 void re4dc_fog_note_far(float far);
 void re4dc_fog_frame();
+#if RE4DC_FOG_TA_DOUBLEBUF
+int re4dc_fog_frame_pending();  // TA_DOUBLEBUF: a fog change must fence the render in flight
+#endif
 }

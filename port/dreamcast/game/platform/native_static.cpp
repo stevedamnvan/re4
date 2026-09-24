@@ -1315,6 +1315,14 @@ extern "C" void re4dc_fog_note_far(float far){
 #endif
     fog_now.far=far;
 }
+#if RE4DC_FOG_TA_DOUBLEBUF
+// With a double-buffered TA the previous scene may still render at frame start and reads the fog
+// registers: native_ui fences only when this frame changes them.
+extern "C" int re4dc_fog_frame_pending(){
+    return fog_now.type && !(fog_now.type==fog_loaded.type && fog_now.start==fog_loaded.start &&
+        fog_now.end==fog_loaded.end && fog_now.far==fog_loaded.far && fog_now.rgba==fog_loaded.rgba);
+}
+#endif
 // Frame start (native_ui re4dc_ui_begin, after the previous render's fence):
 // PVR table fog indexes scaled 1/w, entry j <-> depth far/v(j) with
 // v(j)=2^(j>>4)*((j&15)+16)/16 (KOS pvr_fog.c), entry 0 at the far plane.

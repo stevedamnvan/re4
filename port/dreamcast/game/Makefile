@@ -715,6 +715,7 @@ $(OBJDIR)/native-static.h: native-static-force
 	@printf '#define RE4DC_NATIVE_STATIC %s\n#define RE4DC_NATIVE_STATIC_OWNERS %sU\n#define RE4DC_NATIVE_MESH %s\n' '$(NATIVE_STATIC)' '$(NATIVE_STATIC_OWNERS)' '$(NATIVE_MESH)' > $@.tmp
 	@printf '#define RE4DC_MESH_LOD %s\n#define RE4DC_MESH_LOD_PX %s\n#define RE4DC_NATIVE_FOG %s\n#define RE4DC_FOG_FAR %s\n' '$(MESH_LOD)' '$(MESH_LOD_PX)' '$(NATIVE_FOG)' '$(FOG_FAR)' >> $@.tmp
 	@printf '#define RE4DC_NATIVE_PKG_HIGH %s\n' '$(NATIVE_PKG_HIGH)' >> $@.tmp
+	@printf '#define RE4DC_FOG_TA_DOUBLEBUF %s\n' '$(TA_DOUBLEBUF)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 NATIVE_STATIC_PLATFORM = $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o \

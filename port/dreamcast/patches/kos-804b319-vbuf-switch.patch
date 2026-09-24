@@ -1,0 +1,69 @@
+--- a/kernel/arch/dreamcast/hardware/pvr/Makefile
++++ b/kernel/arch/dreamcast/hardware/pvr/Makefile
+@@ -28,6 +28,9 @@
+ # Texture handling
+ OBJS += pvr_texture.o pvr_dma.o
+ 
++# RE4DC D367: run-time TA double-buffer switch
++OBJS += pvr_vbuf.o
++
+ include $(KOS_BASE)/Makefile.prefab
+ 
+ 
+--- a/kernel/arch/dreamcast/include/dc/pvr.h
++++ b/kernel/arch/dreamcast/include/dc/pvr.h
+@@ -1089,6 +1089,10 @@
+ int pvr_present_pending(void);
+ /** Wait until the last decision took effect (flipped or discarded). */
+ int pvr_present_wait(void);
++/** Switch TA vertex double buffering at run time (RE4DC D367). Only between scenes: -1 while a
++    scene is open or in the TA, a render runs or a present decision is pending. false moves the
++    TA to bank 0 until true; the second bank's vertex buffer is then free for the caller. */
++int pvr_set_vbuf_doublebuf(bool enabled);
+ 
+ 
+ /** \brief   Block the caller until the PVR system is ready for another frame to
+diff --git a/kernel/arch/dreamcast/hardware/pvr/pvr_vbuf.c b/kernel/arch/dreamcast/hardware/pvr/pvr_vbuf.c
+new file mode 100644
+--- /dev/null
++++ b/kernel/arch/dreamcast/hardware/pvr/pvr_vbuf.c
+@@ -0,0 +1,39 @@
++/* KallistiOS ##version##
++
++   pvr_vbuf.c
++   RE4DC D367: run-time switch of TA vertex double buffering.
++
++   A game that lends the second TA bank's vertex buffer to other data for a while (the RE4DC
++   sub-screen backing) drops to single-bank operation for that time and returns afterwards.
++   Its own object file, so programs that never call it link nothing new.
++*/
++
++#include <dc/pvr.h>
++#include <arch/irq.h>
++#include "pvr_internal.h"
++
++int pvr_set_vbuf_doublebuf(bool enabled) {
++    irq_disable_scoped();
++
++    /* Only between scenes: no scene open or in the TA, no render, no present decision
++       pending (the async-present patch), no completed render waiting for its flip. */
++    if(!pvr_state.valid || pvr_state.ta_busy || pvr_state.render_busy ||
++       pvr_state.render_completed || pvr_present_pending())
++        return -1;
++
++    if(!!pvr_state.vbuf_doublebuf == enabled)
++        return 0;
++
++    pvr_state.vbuf_doublebuf = enabled ? 1 : 0;
++
++    /* Single bank: the next scene and every later one use bank 0. Bank 0 is idle (no render
++       runs), so its registers can be programmed now, as pvr_render_lists() does after a
++       render start. Enabling keeps bank 0 as the next target; pvr_render_lists() toggles
++       from there. */
++    if(!enabled && pvr_state.ta_target) {
++        pvr_state.ta_target = 0;
++        pvr_sync_reg_buffer();
++    }
++
++    return 0;
++}

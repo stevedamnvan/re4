@@ -40,12 +40,24 @@ completion before starting the next frame. It is required only by the opt-in gam
 git -C /root/work/kos worktree add --detach /root/work/kos-re4dc-d367 804b3195ebd1a06a27cc2b3a5eacf7a2429040a3
 git -C /root/work/kos-re4dc-d367 apply "$PWD/port/dreamcast/patches/kos-804b319-manual-flip.patch"
 git -C /root/work/kos-re4dc-d367 apply "$PWD/port/dreamcast/patches/kos-804b319-async-present.patch"
+git -C /root/work/kos-re4dc-d367 apply "$PWD/port/dreamcast/patches/kos-804b319-vbuf-switch.patch"
 RE4DC_KOS_BASE=/root/work/kos-re4dc-d367 bash -c 'source port/dreamcast/kos-env.sh && make -C "$KOS_BASE" -j8'
 ```
 
 `port/dreamcast/tools/d367/build.sh` selects `/root/work/kos-re4dc-d367` automatically when
 `EXTRA_MAKE` contains `PVR_PIPELINE=2` (unless `RE4DC_KOS_BASE` is set). Check that the library
 defines `_pvr_present_async`, `_pvr_present_wait` and `_pvr_present_pending`.
+
+## TA double-buffer switch (D367)
+
+`kos-804b319-vbuf-switch.patch` applies on top of async-present in the same worktree. It adds
+`pvr_set_vbuf_doublebuf(bool)` in a new object (`hardware/pvr/pvr_vbuf.c`): TA vertex double
+buffering switched at run time, only between scenes (-1 while a scene is open or in the TA, a
+render runs or a present decision is pending). The game's `TA_DOUBLEBUF=1` with `SUBSCREEN=1`
+needs it: the sub-screen backing borrows bank 1's vertex buffer while a sub screen is open, and
+the TA runs on bank 0 for that time (design-doublebuf). subscreen.mk checks the library defines
+`_pvr_set_vbuf_doublebuf`. Programs that never call it link nothing new (the other library
+members are byte-identical).
 
 Run focused checks in `port/dreamcast/tests`:
 `python3 -m unittest test_native_stream test_native_model test_pvr_geometry test_native_ui`.
