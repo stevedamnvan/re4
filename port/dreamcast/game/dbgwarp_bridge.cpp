@@ -10,8 +10,11 @@
 //  - Flags: applied once, at the first room entry (re4dc_room_enter: after gameInit cleared the
 //    new-game state, before the room's init function reads them): room save flags (RsfSet),
 //    Scenario_flg, Item_find_flg, door_unlock.
-//  - Actions: `act <room frame> <button> <hold>` presses a button / pushes the stick in the first
-//    room (door test mode). Every room entry and action is logged with vblank and wall time.
+//  - Actions: `act <frame> <button> <hold>` presses a button / pushes the stick in the first
+//    room (door test mode). Frames count PADRead calls in that room: one per game frame in play,
+//    and they keep counting inside the sub screen (inventory, files), whose loop pauses the game
+//    loop, so `act 300 y 3` + `act 600 b 3` opens and closes the inventory. Every room entry and
+//    action is logged with vblank and wall time.
 //  - Boot: the VMU_SAVE card screen (card=8/1) is answered Up+A, so a warp disc needs no padscript.
 //  - Debug trigger: `trg <no> <room frame> [room]` makes the source's developer shortcut
 //    DebugTrg(no) (retail stub: always 0) return 1 once, at or after that frame of the current room
@@ -69,6 +72,7 @@ struct Warp {
     u16 trg_room;  // 0: any room
     // runtime
     u32 room_frames, first_room_gen, rooms;
+    u32 pad_frames;  // PADRead calls in the current room: the action clock
     int cur_act;
     u32 cur_until;
     unsigned next_act;
@@ -239,6 +243,7 @@ void re4dc_warp_room_enter(void)
     if (!wp.active) return;
     ++wp.rooms;
     wp.room_frames = 0;
+    wp.pad_frames = 0;
     char what[48];
     snprintf(what, sizeof(what), "room enter %03x (#%u)", (unsigned) pG->room_id, (unsigned) wp.rooms);
     stamp(what);
@@ -298,8 +303,8 @@ void re4dc_warp_poll(void)
 // A route movie or an event started (movies pause PADRead): the running action ends there.
 static void re4dc_warp_cut(const char* why)
 {
-    if (!wp.active || wp.rooms != 1 || wp.room_frames >= wp.cur_until) return;
-    wp.cur_until = wp.room_frames;
+    if (!wp.active || wp.rooms != 1 || wp.pad_frames >= wp.cur_until) return;
+    wp.cur_until = wp.pad_frames;
     char what[48];
     snprintf(what, sizeof(what), "act cut by %s", why);
     stamp(what);
@@ -325,22 +330,23 @@ void re4dc_warp_pad(unsigned short* buttons, signed char* stickY)
     }
     if (gap > 30) re4dc_warp_cut("hold");  // a movie or a load held the frame
     if (wp.rooms != 1) return;
+    ++wp.pad_frames;
     // An event took the game (Status_flg[1] 0x10000000): the running action ends there, so a
     // held stick never walks Leon back into the trigger after the event (movies pause PADRead).
     if (pG->Status_flg[1] & 0x10000000) {
         re4dc_warp_cut("event");
         return;
     }
-    if (wp.cur_act >= 0 && wp.cur_act < (int) wp.n_act && wp.room_frames < wp.cur_until) {
+    if (wp.cur_act >= 0 && wp.cur_act < (int) wp.n_act && wp.pad_frames < wp.cur_until) {
         const Act& a = wp.act[wp.cur_act];
         *buttons |= a.buttons;
         if (a.stick) *stickY = a.stick;
         return;
     }
-    if (wp.next_act < wp.n_act && wp.room_frames >= wp.act[wp.next_act].frame) {
+    if (wp.next_act < wp.n_act && wp.pad_frames >= wp.act[wp.next_act].frame) {
         const Act& a = wp.act[wp.next_act];
         wp.cur_act = (int) wp.next_act++;
-        wp.cur_until = wp.room_frames + a.hold;
+        wp.cur_until = wp.pad_frames + a.hold;
         char what[48];
         snprintf(what, sizeof(what), "act %u buttons=%04x stick=%d hold=%u", (unsigned) wp.cur_act,
                  (unsigned) a.buttons, (int) a.stick, (unsigned) a.hold);

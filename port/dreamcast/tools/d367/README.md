@@ -290,7 +290,8 @@ seconds after boot, instead of a whole title -> intro -> r100 walk.
   the room loads through the game's own new-game and room-load code. Quality comes from RE4DCCFG /
   quality.txt. `pos`/`ang` replace the jump point's NextPos/NextY. The flags are set once at the
   first room entry (after gameInit, before the room init reads them). `act` lines press a button or
-  push the stick in the first room (door test mode); an event cuts the running action. `dump` logs
+  push the stick in the first room (door test mode), timed in PADRead calls (one per game frame in
+  play; they keep counting inside the sub screen, so Y then B opens and closes the inventory); an event cuts the running action. `dump` logs
   every AEV area of the room (number, type, trigger, centre, door destination). `trg` makes the
   source's developer shortcut `DebugTrg(no)` (sce_com.cpp; the retail stub returns 0) return 1 once,
   at or after that frame of the current room (of `room` only, when given). r101_checkEmNum rings the
