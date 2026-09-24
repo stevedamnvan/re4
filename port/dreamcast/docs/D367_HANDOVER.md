@@ -120,7 +120,9 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 
 ## Waiting on the user
 
-- **TA_DOUBLEBUF vs option C.** C (single-bank PVR layout) would grow the texture pool 2.64 -> 3.87/4.19 MB but
+- **DECIDED (user, 2026-09-24): TA_DOUBLEBUF; option C is dropped.** Next: sub-screen option (b)
+  (`pvr_set_vbuf_doublebuf()`), a matched-window hwproject pair, then TA_DOUBLEBUF=1 in the canonical recipe. Background:
+  C (single-bank PVR layout) would grow the texture pool 2.64 -> 3.87/4.19 MB but
   rules out TA_DOUBLEBUF. Measured (vram/, SUBSCREEN=0 both arms, 8 live Ganados, Flycast wall ms):
   quiet p50/p99 66.8/68.8 -> 53.9/59.8 (15.0 -> 18.4 fps); fight p50/p99 117.7/213.5 -> 106.7/197.5, mean
   124.7 -> 111.7; frozen crowd 100.2 -> 87.9. The whole wait is the stream_open fence (~12.5 ms/frame); with
