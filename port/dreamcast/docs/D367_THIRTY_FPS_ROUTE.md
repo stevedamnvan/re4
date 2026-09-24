@@ -200,6 +200,10 @@ Parallel tracks (off the frame path; needed for the console gate):
 
 Asset exploration (PS2/Blender) is parked after the house images.
 
+## Frame pacing (2026-09-23, design-pacing/DESIGN.md)
+
+The game runs one logic tick per rendered frame (main.cpp waits for GetSystemVcnt()=2 vsyncs; no catch-up, no delta time), so any frame over 33.3 ms is slow motion: 20 fps = 67% speed. Chosen: render skip / catch-up (PACE_CATCHUP), with logic at 30 Hz by the vsync clock and draws skipped when behind (at most 2 ticks per drawn frame, 15 fps floor knob). ModelRender plus its deferred draws is ~90% of non-logic work and writes nothing logic reads. Trans() can't be skipped (Filter08Trans uses the shared RNG), and ShadowTrans, Espgen45, TexRender, Filter00/03 and drawLaserSight write logic-read state. Stages: v1 (ModelRender + native frame; 24.3 hw ms/tick left, Standard quiet), v2 (+ModelTrans; 20.7), v3 (+effect/HUD callbacks; 16.5; needs trace digests). Estimates: Standard quiet 43 hw ms -> v2 100% speed at 17 fps, v3 at 19 fps (today 78% at 23 fps). Fights: logic alone is 71/82/93% of the CPU at 4/6/8 engaged Ganados, so no pacing gives full speed there: 43-51% speed at 13-15 fps with the floor, 59-71% at 9-11 fps without. The corrected Standard fight frame is ~65 hw ms (the earlier ~53 used area-method logic). Building v1+v2 now.
+
 ## 20 fps hardware budget (2026-09-23)
 
 Game logic is a fixed 30 Hz tick: one update per frame (main.cpp, 2 vsyncs), with no delta-time scaling; only pad repeat timers use GetSystemVcnt. Rendering at 20 fps at the correct game speed therefore needs 1.5 logic ticks per rendered frame, so logic is a fixed per-second tax whatever the frame rate. At the modelled 25.8 ms/tick, logic alone is 77% of the CPU.
