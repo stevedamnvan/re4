@@ -1500,10 +1500,19 @@ void SceDebugDisp(const char* fmt, ...)
 }
 
 // Called from title.cpp with an argument (`DebugTrg(1)`): the parameter exists, the body ignores it.
+#if defined(RE4DC_DBG_WARP) && RE4DC_DBG_WARP
+// Test builds: the warp rig's `trg` line arms one developer shortcut (dbgwarp_bridge.cpp).
+extern "C" int re4dc_warp_debug_trg(int no);
+int DebugTrg(int no)
+{
+    return re4dc_warp_debug_trg(no);
+}
+#else
 int DebugTrg(int)
 {
     return 0;
 }
+#endif
 
 template <class T>
 // beginEvent(mode) on every live unit of the manager.

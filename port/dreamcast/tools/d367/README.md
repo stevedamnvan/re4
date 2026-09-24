@@ -283,14 +283,19 @@ seconds after boot, instead of a whole title -> intro -> r100 walk.
   `python3 port/dreamcast/tools/d367/warp.py <preset> [--door] [--dump] -o <fixtures>/warp.txt`
   (`warp.py list` lists them). Lines: `room 0x100`, `pos x y z`, `ang <rad>` or `dir 0x8000`,
   `rsf <room> <bit>...` (room save flags), `scenario <0|1> <hex>`, `find <hex>` (Item_find_flg),
-  `unlock <0|1> <hex>`, `inv default`, `act <room frame> <a|b|x|y|start|fwd|back> <hold>`, `dump`.
+  `unlock <0|1> <hex>`, `inv default`, `act <room frame> <a|b|x|y|start|fwd|back> <hold>`,
+  `trg <no> <room frame> [room]` (`--trg NO:FRAME[:ROOM]`), `dump`.
 - **What it does:** once the title data is loaded, the title, picker and menus are skipped and
   titleExit takes the debug-start path (config.txt [STAGE]/[ROOM] + START) with the warp room, so
   the room loads through the game's own new-game and room-load code. Quality comes from RE4DCCFG /
   quality.txt. `pos`/`ang` replace the jump point's NextPos/NextY. The flags are set once at the
   first room entry (after gameInit, before the room init reads them). `act` lines press a button or
   push the stick in the first room (door test mode); an event cuts the running action. `dump` logs
-  every AEV area of the room (number, type, trigger, centre, door destination).
+  every AEV area of the room (number, type, trigger, centre, door destination). `trg` makes the
+  source's developer shortcut `DebugTrg(no)` (sce_com.cpp; the retail stub returns 0) return 1 once,
+  at or after that frame of the current room (of `room` only, when given). r101_checkEmNum rings the
+  bell on `DebugTrg(0)`, so the square fight reaches event 30 without 15 kills or the 11,700-frame
+  timer. The fight before it is the game's own; everything after the bell is the game's own too.
 - **Log:** `warp:` lines give vblank and guest time for the title skip, each room entry, the
   placement and each action.
 - **Boot fixture:** a blank harness VMU asks to create RE4DCSYS; stage a padscript with
@@ -306,6 +311,8 @@ seconds after boot, instead of a whole title -> intro -> r100 walk.
 | r100-bridge | 0x100 | rsf 13, Scenario[0] 0x10 | s44 (area 0x1B, r100_EventBrige) |
 | r100-east-door | 0x100 | rsf 13, Scenario[0] 0x10 | r101 door (AEV area 0, no lock) |
 | r101-entry | 0x101 | none | r101 first visit |
+| r101-bell-fight | 0x101 | find 0x2000 | r101 square fight |
+| r101-bell | 0x101 | find 0x2000, trg 0 at 1200 | the fight, then the bell (event 30, r101s30) |
 
 **A warp start is not STRICT against continued play.** The room is entered fresh with synthesized
 flags; the RNG, timers, enemy list state, inventory and play time are those of a new game, not of

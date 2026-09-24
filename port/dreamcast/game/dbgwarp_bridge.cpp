@@ -13,13 +13,18 @@
 //  - Actions: `act <room frame> <button> <hold>` presses a button / pushes the stick in the first
 //    room (door test mode). Every room entry and action is logged with vblank and wall time.
 //  - Boot: the VMU_SAVE card screen (card=8/1) is answered Up+A, so a warp disc needs no padscript.
+//  - Debug trigger: `trg <no> <room frame> [room]` makes the source's developer shortcut
+//    DebugTrg(no) (retail stub: always 0) return 1 once, at or after that frame of the current room
+//    (of `room` only, when given). r101_checkEmNum rings the bell on DebugTrg(0), so a square fight
+//    reaches the bell event without 15 kills or 11,700 fight frames. r100 reads DebugTrg(1) for its
+//    own shortcut; the number keeps the two apart.
 // A warp start is NOT STRICT against continued play (fresh room entry with synthesized flags; the
 // RNG, timers and enemy state are those of a new game). It is for iteration and bring-up only.
 //
 // /cd/dc/warp.txt (tools/d367/warp.py writes it from a named preset):
 //   room 0x100 | jp 0 | pos x y z | dir 0x8000 | ang <rad> | rsf <room> <bit>... |
 //   scenario <0|1> <hex> | find <hex> | unlock <0|1> <hex> | inv default | area <no> [dx dz] |
-//   act <frame> <a|b|x|y|start|fwd|back|none> <hold> | dump | name <preset>
+//   act <frame> <a|b|x|y|start|fwd|back|none> <hold> | trg <no> <frame> [room] | dump | name <preset>
 #if RE4DC_DBG_WARP
 #include "types.h"
 #include "global.h"
@@ -58,6 +63,10 @@ struct Warp {
     u32 scenario[2], find, unlock[2];
     Act act[16];
     unsigned n_act;
+    bool has_trg, trg_fired;
+    int trg_no;
+    u32 trg_frame;
+    u16 trg_room;  // 0: any room
     // runtime
     u32 room_frames, first_room_gen, rooms;
     int cur_act;
@@ -142,6 +151,11 @@ void load()
             else if (!strcmp(b, "start")) a.buttons = 0x1000;
             else if (!strcmp(b, "fwd")) a.stick = 80;
             else if (!strcmp(b, "back")) a.stick = -80;
+        } else if (!strcmp(k, "trg") && n >= 3) {
+            wp.has_trg = true;
+            wp.trg_no = (int) num(tok[1]);
+            wp.trg_frame = num(tok[2]);
+            wp.trg_room = n >= 4 ? (u16) num(tok[3]) : 0;
         } else if (!strcmp(k, "dump")) {
             wp.dump = true;
         } else {
@@ -334,6 +348,20 @@ void re4dc_warp_pad(unsigned short* buttons, signed char* stickY)
         *buttons |= a.buttons;
         if (a.stick) *stickY = a.stick;
     }
+}
+
+// sce_com.cpp DebugTrg (DBG_WARP builds): 1 once for the armed trigger, else 0 (the retail stub).
+int re4dc_warp_debug_trg(int no)
+{
+    if (!wp.active || !wp.has_trg || wp.trg_fired || no != wp.trg_no) return 0;
+    if (wp.trg_room && pG->room_id != wp.trg_room) return 0;
+    if (wp.room_frames < wp.trg_frame) return 0;
+    wp.trg_fired = true;
+    char what[48];
+    snprintf(what, sizeof(what), "trg %d fired in %03x at room frame %u", no, (unsigned) pG->room_id,
+             (unsigned) wp.room_frames);
+    stamp(what);
+    return 1;
 }
 
 }  // extern "C"

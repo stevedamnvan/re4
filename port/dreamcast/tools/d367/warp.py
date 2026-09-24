@@ -58,6 +58,11 @@ PRESETS = {
     # not a flag state, so the preset stops at the fight start.
     "r101-bell-fight": dict(room=0x101, pos=(-7914, 0, -254), ang=2.96, find=0x2000,
                             notes="r101 square, fight about to start (flags 6/7 clear, first visit done)"),
+    # The same fight, then the bell: `trg 0` makes the source's developer shortcut DebugTrg(0) fire in
+    # r101_checkEmNum, which starts event 30 (bell, chapter title, r101s30) as 15 kills would. About
+    # 1,000 fight frames with Ganados engaged come first (the fight starts ~150-250 frames in).
+    "r101-bell": dict(room=0x101, pos=(-7914, 0, -254), ang=2.96, find=0x2000, trg=(0, 1200, 0x101),
+                      notes="r101 square fight, bell forced at room frame 1200 (DebugTrg(0))"),
 }
 
 
@@ -84,6 +89,9 @@ def lines_for(p, door=False, dump=False, name=None):
     if door:
         for kind, frame, hold in p.get("door", []):
             out.append("act %d %s %d" % (frame, kind, hold))
+    if p.get("trg"):
+        no, frame, room = (tuple(p["trg"]) + (0,))[:3]
+        out.append("trg %d %d" % (no, frame) + (" 0x%03x" % room if room else ""))
     if dump:
         out.append("dump")
     return "\n".join(out) + "\n"
@@ -101,6 +109,7 @@ def main(argv=None):
     ap.add_argument("--scenario", action="append", default=[], help="0|1:HEX")
     ap.add_argument("--find", type=lambda s: int(s, 0))
     ap.add_argument("--act", action="append", default=[], help="KIND:FRAME:HOLD")
+    ap.add_argument("--trg", help="NO:FRAME[:ROOM] make DebugTrg(NO) return 1 once (r101 bell: 0)")
     ap.add_argument("-o", "--output")
     a = ap.parse_args(argv)
     if a.preset == "list":
@@ -138,6 +147,9 @@ def main(argv=None):
         kind, frame, hold = act.split(":")
         door.append((kind, int(frame), int(hold)))
     p["door"] = door
+    if a.trg:
+        f = a.trg.split(":")
+        p["trg"] = (int(f[0], 0), int(f[1], 0), int(f[2], 0) if len(f) > 2 else 0)
     text = lines_for(p, door=a.door or bool(a.act), dump=a.dump, name=a.preset or "explicit")
     if a.output:
         open(a.output, "w").write(text)

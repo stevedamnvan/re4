@@ -10,7 +10,7 @@ $(OBJDIR)/dbgwarp.h: dbgwarp-force
 	@printf '#define RE4DC_DBG_WARP %s\n' '$(DBG_WARP)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
-DBGWARP_GAME = $(OBJDIR)/src/game/title.o $(OBJDIR)/ui_bridge.o
+DBGWARP_GAME = $(OBJDIR)/src/game/title.o $(OBJDIR)/src/game/sce_com.o $(OBJDIR)/ui_bridge.o
 $(DBGWARP_GAME): $(OBJDIR)/dbgwarp.h
 $(DBGWARP_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/dbgwarp.h
 $(OBJDIR)/platform/pad.o: $(OBJDIR)/dbgwarp.h

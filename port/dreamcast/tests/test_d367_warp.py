@@ -8,7 +8,8 @@ spec = importlib.util.spec_from_file_location("warp", TOOL)
 warp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(warp)
 
-KEYS = {"name", "room", "jp", "pos", "dir", "ang", "rsf", "scenario", "find", "unlock", "inv", "area", "act", "dump"}
+KEYS = {"name", "room", "jp", "pos", "dir", "ang", "rsf", "scenario", "find", "unlock", "inv", "area", "act", "trg",
+        "dump"}
 
 
 class WarpPresets(unittest.TestCase):
@@ -46,6 +47,15 @@ class WarpPresets(unittest.TestCase):
         self.assertIn("room 0x101", text)
         self.assertIn("rsf 0x101 6 7", text)
         self.assertIn("act 10 a 4", text)
+
+    def test_bell_trigger(self):
+        text = warp.lines_for(warp.PRESETS["r101-bell"], name="r101-bell")
+        self.assertIn("trg 0 1200 0x101", text.splitlines())
+        import io, contextlib
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            warp.main(["r101-bell-fight", "--trg", "0:600"])
+        self.assertIn("trg 0 600", out.getvalue().splitlines())
 
 
 if __name__ == "__main__":
