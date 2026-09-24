@@ -339,6 +339,56 @@ extern "C" void re4dc_subscreen_aram_init(SubScreenWork* wk)
     if (!cmmn_bytes || !pzzl_bytes) re4dc_missing("sub screen files (ss_cmmn.dat / ss_pzzl.dat) not on disc");
 }
 
+
+#if RE4DC_SS_POOL_HIGH
+#include "light.h"
+// Room effect pools above the sub screen window (subscreen.mk SS_POOL_HIGH): a first-fit
+// allocation that lands in [pStFnt, +3 MiB) is held while the next fit is tried, then every
+// held cell is released, so the pool gets the lowest fitting cell above the window. Falls back
+// to the plain allocation when nothing fits above it.
+// C++ linkage and no header declaration: the callers declare it inside their own knob blocks (a
+// declaration in main_mem.h alone changed the code GCC emitted for cModel::matBlend).
+void* re4dc_ss_alloc_above(u32 size, const char* file, int line)
+{
+    const u32 lo = u32(pG->pStFnt), hi = lo + kSsAramSize;
+    void* held[256];
+    unsigned n = 0;
+    void* p = nullptr;
+    for (;;) {
+        p = mem_alloc(size, file, line, 0, 0xD);
+        if (!p || !lo || u32(p) >= hi || u32(p) + size <= lo || n == 256) break;
+        held[n++] = p;
+    }
+    for (unsigned i = 0; i < n; ++i) Mem_free(held[i]);
+    if (!p || (lo && u32(p) < hi && u32(p) + size > lo)) {
+        if (p) Mem_free(p);
+        p = mem_alloc(size, file, line, 1, 0xD);
+        re4dc_log("sub screen: pool %s(%d) %u B not above the window (%08x-%08x): %p held=%u\n", file, line,
+                  unsigned(size), lo, hi, p, n);
+    }
+    return p;
+}
+
+// game.cpp gameRoomInit, right after LightMgr.arrayAlloc: the light works move above the window
+// too (the sub screen loop runs LightMgr.move(), whose virtual calls went through the sub screen's
+// bytes when the array sat inside it). No light exists yet: the new array is only cleared.
+void re4dc_ss_light_array_high()
+{
+    const u32 lo = u32(pG->pStFnt), hi = lo + kSsAramSize;
+    const u32 a = u32(LightMgr.pArray), bytes = LightMgr.size * LightMgr.nArray;
+    if (!lo || !a || !bytes || a >= hi || a + bytes <= lo) return;
+    void* p = re4dc_ss_alloc_above(bytes, "light.h", 285);
+    if (!p) return;
+    if (u32(p) < hi && u32(p) + bytes > lo) {
+        Mem_free(p);
+        return;
+    }
+    LightMgr.memClear(static_cast<cLight*>(p), bytes);
+    LightMgr.memFree(LightMgr.pArray);
+    LightMgr.pArray = static_cast<cLight*>(p);
+}
+#endif
+
 extern "C" void re4dc_subscreen_swap_open(SubScreenWork* wk)
 {
     if (swapped) re4dc_missing("sub screen area swapped twice");

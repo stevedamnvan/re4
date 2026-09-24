@@ -265,8 +265,14 @@ void EspRoomInit()
     if (EFF_OWNER_MAX > 220) {
         pLog->err(0, 0, "EspRoomInit(): EFF_MAX > 220 [%d]", EFF_OWNER_MAX);
     }
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_SS_POOL_HIGH
+    void* re4dc_ss_alloc_above(u32 size, const char* file, int line);  // sscrn_bridge.cpp
+    p = (cEspSystem*) re4dc_ss_alloc_above(sizeof(cEspSystem), "eff_sys.cpp", 200);
+#else
 #line 200 "D:/Bio4/Prog/eff_sys.cpp"
     p = (cEspSystem*) MEM_ALLOC(sizeof(cEspSystem), 1, 13);
+#endif
+#line 201 "D:/Bio4/Prog/eff_sys.cpp"
     g_pEspSys = p;
     memclr_asm(p, sizeof(cEspSystem));
     sys = g_pEspSys;

@@ -27,9 +27,19 @@
 #                  section. Each open reads it into offset 0 of the sub screen area, where the
 #                  GameCube's Sscrn.rel sat, and relocates it (sscrn_bridge.cpp). Heap 4 gains the
 #                  module's size; stage.sh puts sscrn.ovl on the disc as /cd/dc/sscrn.ovl.
+#   SS_POOL_HIGH=1 (needs SUBSCREEN=1) allocates the room's effect pools (cEspSystem, the esp pool,
+#                  the Espgen controller pool) above the 3 MiB sub screen window at pG->pStFnt.
+#                  On the GameCube the stage font and the room archive fill that window, so those
+#                  pools always sit above it; the port's arena fit frees the archive's unused tail
+#                  and they could land inside, where the sub screen's own files overwrite them
+#                  while its main loop keeps running EspgenMove / EspMove (the r101 first-visit
+#                  call reset). The room's light works (LightMgr, moved by the sub screen loop too)
+#                  are moved above it right after their allocation. Same pools, same sizes, only
+#                  the address differs.
 SUBSCREEN ?= 0
 W11_FIXTURE ?= 0
 SUBSCREEN_OVL ?= 0
+SS_POOL_HIGH ?= 0
 ifeq ($(SUBSCREEN),1)
 ifneq ($(TA_DOUBLEBUF),0)
 $(error SUBSCREEN=1 keeps the sub screen backing in the idle second TA vertex bank: needs TA_DOUBLEBUF=0)
@@ -42,16 +52,20 @@ MODULES += Sscrn
 endif
 else ifeq ($(SUBSCREEN_OVL),1)
 $(error SUBSCREEN_OVL=1 needs SUBSCREEN=1)
+else ifeq ($(SS_POOL_HIGH),1)
+$(error SS_POOL_HIGH=1 needs SUBSCREEN=1)
 endif
 .PHONY: subscreen-force
 $(OBJDIR)/subscreen.h: subscreen-force
 	@mkdir -p $(dir $@)
-	@printf '#define RE4DC_SUBSCREEN %s\n#define RE4DC_W11_FIXTURE %s\n#define RE4DC_SUBSCREEN_OVL %s\n' '$(SUBSCREEN)' '$(W11_FIXTURE)' '$(SUBSCREEN_OVL)' > $@.tmp
+	@printf '#define RE4DC_SUBSCREEN %s\n#define RE4DC_W11_FIXTURE %s\n#define RE4DC_SUBSCREEN_OVL %s\n#define RE4DC_SS_POOL_HIGH %s\n' '$(SUBSCREEN)' '$(W11_FIXTURE)' '$(SUBSCREEN_OVL)' '$(SS_POOL_HIGH)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 # A knob change regenerates the module list.
 $(MODULES_MK): $(OBJDIR)/subscreen.h
-SUBSCREEN_GAME = $(OBJDIR)/src/game/sscrn.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/src/game/cDataSwap.o
+SUBSCREEN_GAME = $(OBJDIR)/src/game/sscrn.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/src/game/cDataSwap.o \
+                 $(OBJDIR)/src/game/espgen.o $(OBJDIR)/src/game/esp.o $(OBJDIR)/src/game/eff_sys.o \
+                 $(OBJDIR)/src/game/game.o
 $(SUBSCREEN_GAME) $(OBJDIR)/platform/modules.o: $(OBJDIR)/subscreen.h
 $(SUBSCREEN_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/subscreen.h
 $(OBJDIR)/platform/modules.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/subscreen.h

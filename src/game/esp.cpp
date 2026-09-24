@@ -548,8 +548,14 @@ int EspArrayAlloc(u32 n)
         return 0;
     }
     size = n * 0x150;
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_SS_POOL_HIGH
+    void* re4dc_ss_alloc_above(u32 size, const char* file, int line);  // sscrn_bridge.cpp
+    p = (u8*) re4dc_ss_alloc_above(size, "esp.cpp", 879);
+#else
 #line 879 "D:/Bio4/Prog/esp.cpp"
     p = (u8*) MEM_ALLOC(size, 1, 0xD);
+#endif
+#line 880 "D:/Bio4/Prog/esp.cpp"
     sys->pEspBuf = p;
     if (p == NULL) {
         return 0;

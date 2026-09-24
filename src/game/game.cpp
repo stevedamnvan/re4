@@ -531,6 +531,11 @@ void gameRoomInit()
     LightMgr.roomInit((cLit*) (pG->pArc->ofs_2C + (u32) pG->pArc), (cLit*) GetDataExt(pG->pRoom, "LIT", 0),
                       (cLit*) GetDataExt(pG->pRoom, "LIT", 1));
     LightMgr.arrayAlloc(ConsGetRoomValue(5));
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_SS_POOL_HIGH
+    void re4dc_ss_light_array_high();  // sscrn_bridge.cpp
+    re4dc_ss_light_array_high();  // sscrn_bridge.cpp: the light works above the sub screen window
+#endif
+#line 469 "D:/Bio4/Prog/game.cpp"
     LightMgr.initPath((LightPathHeader*) (pG->pArc->ofs_3C + (u32) pG->pArc));
     ShadowRoomInit();
     DmgMgr.roomInit();

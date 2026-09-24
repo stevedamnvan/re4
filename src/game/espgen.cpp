@@ -256,8 +256,14 @@ int EspgenArrayAlloc(int n)
         return 0;
     }
     size = n * sizeof(EspgenWork);
+#if defined(RE4DC_GAME) && !defined(__PPC__) && RE4DC_SS_POOL_HIGH
+    void* re4dc_ss_alloc_above(u32 size, const char* file, int line);  // sscrn_bridge.cpp
+    EspgenArray = (EspgenWork*) re4dc_ss_alloc_above(size, "espgen.cpp", 403);
+#else
 #line 403 "D:/Bio4/Prog/espgen.cpp"
     EspgenArray = (EspgenWork*) MEM_ALLOC(size, 1, 0xD);
+#endif
+#line 404 "D:/Bio4/Prog/espgen.cpp"
     if (EspgenArray == NULL) {
         return 0;
     }
