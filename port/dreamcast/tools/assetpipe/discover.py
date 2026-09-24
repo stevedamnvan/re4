@@ -120,6 +120,26 @@ def rel_id(repo, module):
     return json.loads(p.read_text()).get("module_id") if p.exists() else None
 
 
+def source_heap4_bytes(iso, archive):
+    """Body size of the source (big-endian) archive on the GC disc: what an unprepared archive
+    allocates (the LE conversion keeps the size; compaction is what shrinks it)."""
+    if iso is None or iso.find(archive) is None:
+        return None
+    h = iso.read(archive)[:0x28]
+    return struct.unpack_from(">I", h, 0x24)[0] if len(h) >= 0x28 else None
+
+
+def room_container(prepared, iso, room):
+    """The room's DVD container: prepared (.dar + .arc in the mirror) or only on the GC disc."""
+    rel = "st%x/r%03x" % (room >> 8, room)
+    dar, arc = Path(prepared) / (rel + ".dar"), Path(prepared) / (rel + ".arc")
+    out = {"dar": dar.exists(), "arc": arc.exists(),
+           "source": bool(iso and iso.find(rel + ".das"))}
+    if out["arc"]:
+        out["arc_bytes"] = arc.stat().st_size
+    return out
+
+
 def heap4_bytes(prepared_dir, archive):
     p = Path(prepared_dir) / archive
     if not p.exists():
@@ -160,6 +180,7 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
     sc = script_refs(repo, room)
     by_no = {e["no"]: e for e in entries}
     need = {}   # enemy id -> {reasons}
+    iso = GcIso(cfg.path("gc_iso")) if cfg.path("gc_iso") and Path(cfg.path("gc_iso")).exists() else None
 
     def add(eid, why):
         need.setdefault(eid, set()).add(why)
@@ -184,7 +205,12 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
         if "archive" in info:
             r["heap4_bytes"] = heap4_bytes(prepared, info["archive"])
             if r["heap4_bytes"] is None:
-                problems.append("%s: prepared archive %s missing in %s" % (r["id"], info["archive"], prepared))
+                src = source_heap4_bytes(iso, info["archive"].replace(".drs", ".drs"))
+                r["heap4_bytes"] = src
+                r["heap4_basis"] = "source (unprepared)" if src is not None else "unknown"
+                problems.append("%s: prepared archive %s missing in %s%s" % (
+                    r["id"], info["archive"], prepared,
+                    "; counted at its source size %d" % src if src is not None else "; size unknown"))
         mod = info.get("module")
         if mod:
             rid = rel_id(repo, mod)
@@ -244,13 +270,16 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
         problems.append("heap 4: enemy archives %d > measured room %d (short %d)" % (total, budget, total - budget))
     else:
         heap["verdict"] = "fits (%d spare)" % (budget - total)
-    iso = GcIso(cfg.path("gc_iso")) if cfg.path("gc_iso") and Path(cfg.path("gc_iso")).exists() else None
+    rc = room_container(prepared, iso, room)
+    if not (rc["dar"] and rc["arc"]):
+        problems.append("room container st%x/r%03x: not prepared (%s)" % (
+            room >> 8, room, "on the GC disc: convert it (le_mirror / prepare_native_ui)" if rc["source"] else "not on the disc either"))
     evs, ev_problems = event_files.events(repo, room, iso, prepared, cfg.path("route_movies"))
     problems.extend(ev_problems)
     std, std_problems = standard.budgets(standard.std_set(cfg.root, room_name), budget,
                                          cfg.room(room_name).get("standard", {}).get("budget_context", {}))
     problems.extend(std_problems)
-    res = {"room": room_name, "events": evs, "standard": std, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
+    res = {"room": room_name, "container": rc, "events": evs, "standard": std, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
            "script": sc, "entries": entries, "demand": rows, "heap4": heap, "problems": problems, "warnings": warnings,
            "stage_module": smod,
            "inputs": {"repo": str(repo), "game_data": str(game), "prepared": str(prepared), "missing": bs["missing_file"]}}
@@ -298,6 +327,9 @@ def report(res):
             r.get("heap4_bytes", "-"), ",".join(r["reasons"]),
             ("  build " + " ".join("%s=%s" % (k, "ok" if v is True else ("NO" if v is False else (v or "none")))
                                    for k, v in b.items())) if b else ""))
+    rc = res.get("container") or {}
+    print("  room container: %s" % ("prepared (arc %d B)" % rc.get("arc_bytes", 0) if rc.get("dar") and rc.get("arc")
+                                     else "NOT prepared" + (" (source on disc)" if rc.get("source") else "")))
     for e in res.get("events", []):
         if not e["on_disc"]:
             print("  event %s: not on the disc (named only)" % e["event"])
