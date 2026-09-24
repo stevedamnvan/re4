@@ -18,7 +18,8 @@ archive exists, at most 4 enemy archives are live (read.cpp EmReadModule[4]), an
 archives fit the room's measured heap-4 room for them (rooms.toml [room.X.demand]).
 Round 2 (wiring.py): the porting-trap lint over each needed module and the room's stage module, and
 `--wire`, which writes the module wiring (MODULES, modules.cpp, and the ENEMY_DEMAND audit list when
-the lint is clean) into the checked tree.
+the lint is clean) into the checked tree; and the heap-4 options per enemy archive (enemy_heap.py)
+with a plan that covers a shortfall.
 """
 import json
 import re
@@ -27,6 +28,7 @@ from pathlib import Path
 
 from .util import write_json
 from .wiring import lint_module, wire as wire_module
+from . import enemy_heap
 
 ESL_REC = struct.Struct(">BBBBIHBB3h3hHh4x")   # include/em_set.h EmListData (big-endian source)
 EM_SLOTS = 4                                     # read.cpp EmReadModule[4]
@@ -214,12 +216,29 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
     budget = rcfg.get("enemy_heap4_bytes")
     heap = {"enemy_archives": len(arcs), "slots": EM_SLOTS, "worst_case_bytes": total,
             "budget_bytes": budget, "budget_source": rcfg.get("enemy_heap4_source")}
+    comp_path = cfg.path("enemy_compaction")
+    summary = json.loads(Path(comp_path).read_text()) if comp_path and Path(comp_path).exists() else {}
+    con = enemy_heap.contracts(repo)
+    opts = []
+    for r in arcs:
+        ap = Path(prepared) / r["archive"]
+        if not ap.exists():
+            continue
+        br = enemy_heap.breakdown(ap)
+        r["body"] = br
+        name = Path(r["archive"]).name
+        kind = "GANADO" if name in con["GANADO"] else ("SMALL" if name in con["SMALL"] else None)
+        applied = summary.get(name[:-4]) or summary.get(name[:-4] + "-control")
+        applied = applied if applied and applied.get("resident_body_bytes") == r.get("heap4_bytes") else None
+        opts += enemy_heap.options(r["archive"], br, kind, applied)
+    heap["options"] = opts
     if len(arcs) > EM_SLOTS:
         problems.append("%d enemy archives can be live, read.cpp has %d slots" % (len(arcs), EM_SLOTS))
     if budget is None:
         heap["verdict"] = "no budget: measure one run (--log) and record [room.%s.demand]" % room_name
     elif total > budget:
         heap["verdict"] = "SHORT by %d bytes when every archive is live" % (total - budget)
+        heap["plan"] = enemy_heap.plan(total - budget, opts)
         problems.append("heap 4: enemy archives %d > measured room %d (short %d)" % (total, budget, total - budget))
     else:
         heap["verdict"] = "fits (%d spare)" % (budget - total)
@@ -272,6 +291,14 @@ def report(res):
     h = res["heap4"]
     print("  heap 4: %d enemy archives (slots %d), worst case %d bytes, budget %s: %s" % (
         h["enemy_archives"], h["slots"], h["worst_case_bytes"], h["budget_bytes"], h["verdict"]))
+    for o in h.get("options", []):
+        if o["status"] != "applied":
+            print("    option %-13s %-14s %8d  %s (%s)" % (o["archive"], o["option"], o["bytes"], o["status"], o["basis"]))
+    if h.get("plan"):
+        pl = h["plan"]
+        print("    plan for %d short: %s -> covers %d, remaining %d" % (
+            pl["short"], " + ".join("%s %s (%s)" % (o["archive"].split("/")[-1][:-4], o["option"], o["status"]) for o in pl["chosen"]) or "-",
+            pl["covered"], pl["remaining"]))
     if "run" in res:
         run = res["run"]
         print("  run: loaded %s; failed %s; linked %s%s" % (", ".join(run["loaded"]) or "-", ", ".join(run["failed"]) or "-",

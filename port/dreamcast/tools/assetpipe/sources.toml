@@ -22,6 +22,7 @@ ui_logs = "/root/probe/d367-agents/ui-vram/logs"         # run logs naming loade
 evidence = "/mnt/d/Flycast-Evidence/re4-dreamcast"
 game_data = "/root/re4data"                              # source game files (etc/*.esl, em/, ...): discover
 prepared_mirror = "/root/probe/d367-agents/frontier/mirror-w4q"   # prepared disc tree staged by wstage2.sh (em/*.drs): discover
+enemy_compaction = "/root/probe/d367-agents/frontier/enemies/compaction-summary.json"   # prepare_enemy_motions results: discover heap-4 options
 kos = "/root/work/kos-re4dc-d336"
 blender = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe"
 aica_cache = "/root/probe/d367-aica-cache"

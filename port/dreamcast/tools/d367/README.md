@@ -390,6 +390,15 @@ bash port/dreamcast/tools/d367/assets.sh discover r100 --repo <tree> --obj <OBJD
 - Proof (round 2): on dadfbac, `discover r100 --wire` writes e6f65cc's Makefile/modules.cpp lines and
   the lint reports the four traps that commit fixed by hand (em2a value-init, slot-math, asm-alias;
   em21 asm-alias); the audit entry waits for them.
+- **Heap-4 options** (tools/assetpipe/enemy_heap.py): each live archive's prepared body by tag, and
+  the lossless ways to shrink it: `rel-strip` (the REL copy of a linked module; exact),
+  `tex-upload` (TPL texels to VRAM), `motion-stream` (FCV keys through motion leases), `effect-compact`
+  (unmeasured). Each is `applied`, `qualified` (prepare_enemy_motions.py supports it for that
+  archive; its GANADO/SMALL tuples are read from the tool) or `needs-contract`, read against
+  sources.toml `enemy_compaction` (the compaction summary). A SHORT room gets a plan: qualified
+  options first, then the largest needs-contract ones. r100 (2026-09-24): nothing qualified is left;
+  em21 motion-stream (<= 294,240 B) alone covers the 171,328 B crows shortfall; em23 + em2a
+  (motion + textures + em2a's 17,152 B REL) is the alternative.
 - Not covered yet: event actors (evd files), other stages' list rules, Standard-mode budgets, VRAM.
 
 ## GDEMU image (W10)
