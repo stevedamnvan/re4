@@ -179,7 +179,8 @@ def build_room(ctx, name, mode="original", plan="recipe", only=None, review=True
         vq = gen.vq_overlay(logs)
         pinned = cfg.path("vq_overlay")
         if pinned and pinned.exists():
-            same = all(ctx.cache.file_hash(pinned / f) == h for f, h in vq.outputs.items() if f.endswith(".re4tex"))
+            same = all((pinned / f).exists() and ctx.cache.file_hash(pinned / f) == h
+                       for f, h in vq.outputs.items() if f.endswith(".re4tex"))
             checks["vq_overlay_vs_pinned"] = "ok" if same else "differs"
         texdirs.append(("00-vq", vq, lambda rel: rel.endswith(".re4tex") and "/" not in rel))
     pairs = cfg.rooms_cfg.get("material_pairs", {}).get("pairs", [])

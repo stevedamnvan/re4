@@ -19,10 +19,9 @@ pairs = [
     ["77bcda6e-2a354924", "3773a372-bd6d036f"],
     # r103, from the runtime's pair-missing lines (warp-r101-pbdoor5)
     ["d6dac98a-dde12c66", "5c822bd9-c797afd4"], ["20b41c62-133dd8fa", "c8b602c8-633b846d"],
+    # images in ss/cmn/ss_oc101.dat (12a489ae, 5e3c1264, 2b388d2d) and the route events (9264be9a)
+    ["12a489ae-40772dd6", "5e3c1264-a53c4db5"], ["9264be9a-41e48d57", "2b388d2d-af0e5096"],
 ]
-# Not buildable from the GC disc yet (images 12a489ae, 5e3c1264, 2b388d2d are on no disc archive:
-# presumably the pipeline's own substitute packages, e.g. r103 PS2 trees; 9264be9a is in evd/*.evd):
-#   ["12a489ae-40772dd6", "5e3c1264-a53c4db5"] 128x256, ["9264be9a-41e48d57", "2b388d2d-af0e5096"] 64x64
 
 [defaults]
 kind = "smd"                 # BINs + placements from the room SMD
@@ -51,10 +50,12 @@ ps2_obj = "${ps2_r100}/r100_004.scenario.obj"
 bark_png = "${r100_bark_png}"
 bark_key = "f6e54e3e-1ef21097"
 
-[room.r100.recipe]           # LD (README "r100 PS2 tree packages"); COMMON = cdeade63...
+[room.r100.recipe]           # LD (README "r100 PS2 tree packages") rebuilt by the W9b converter (R4IM v3, 8332a22)
 bias = ["0xfe:0-10=0.375"]
 substitute = ["trees", "planar2"]
-expect = { COMMON = "cdeade631a35b6e9514c31d4ec0dbd19f07c66c508b5611270257cebed1191b6", MAINSCENARIO = "f4b31f51940a04987126da3338b0550b0798f65aaf13903894673b1fb0ee646c", FILE_01 = "69c135fdaaa2f7af760ac96f9e67041c03b819d4e464a0d90706be3ac5ddc4c9" }
+# The packages every route disc has staged since W9b. The pre-W9b LD pins (COMMON cdeade63..., MAINSCENARIO
+# f4b31f51..., FILE_01 69c135fd...) predate the R4IM v3 format and failed every build's check.
+expect = { COMMON = "799c3ac8c7562293a41d8fdbc7e71105c88a212e411e28ef3b3e40b4fc712e9a", MAINSCENARIO = "daea2c21708a95571b093d7fdd2705355bc0265fa6211f274de8df904efd4e35", FILE_01 = "6ce0430881442d16c6df8a3223700b322e7055351f36719db608a91fbef61011" }
 
 [room.r100.standard]         # Standard (default, budget-first) plan inputs; classes the heuristics can't tell
 houses = ["1:17", "1:18"]    # item 21 house shells (bl_house_shell.py)

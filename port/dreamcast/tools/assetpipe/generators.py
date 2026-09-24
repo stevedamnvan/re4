@@ -219,10 +219,13 @@ class Gen:
 
     # ---- material-pair packages (a color image plus a separate mask image): the runtime's
     # "pair missing" log lines plus rooms.toml [material_pairs], built from the GC disc
-    def material_pairs(self, logs, pairs):
+    def material_pairs(self, logs, pairs, model_min_bytes=16384):
+        """Pairs of at least model_min_bytes (padded 16-bit) are VQ-encoded like the other model
+        textures (vq_native_ui.py, the tex-vq rule): 7 route pairs 671,744 -> 98,304 B VRAM,
+        PSNR 34-46 dB (hair and foliage cut-outs, warp-r101-pbdoor6)."""
         iso = self.cfg.path("gc_iso")
-        fp = fingerprint([tool("d367/pairs_from_log.py"), tool("prepare_native_ui.py"), tool("le_mirror.py")],
-                         dict(python=sys.version.split()[0]))
+        fp = fingerprint([tool("d367/pairs_from_log.py"), tool("prepare_native_ui.py"), tool("le_mirror.py"),
+                          tool("vq_native_ui.py"), self.pvrtex], dict(python=sys.version.split()[0]))
         logs = sorted(Path(p) for p in logs)
         pairs = sorted(tuple(p) for p in pairs)
 
@@ -235,8 +238,28 @@ class Gen:
             run(cmd, cwd=work, log=work / "log.txt")
             for f in sorted((work / "pairs").iterdir()):
                 shutil.copy2(f, out / f.name)
-            return dict(pairs=len(json.loads((out / "material-pairs.json").read_text())))
-        return self.cache.step("texture.pairs", dict(logs=[p.name for p in logs], pairs=[list(p) for p in pairs]),
+            rep = json.loads((out / "material-pairs.json").read_text())
+            vq = 0
+            if model_min_bytes:
+                # vq_native_ui selects from "native UI: load" lines; every pair is a model
+                # texture, so the synthetic log puts them after the room-bind marker
+                lines = ["native room identities: ok (synthetic: material pairs)"]
+                for r in rep:
+                    m = r["native"]["materials"][0]
+                    lines.append("native UI: load /cd/dc/tex/%s/%s.re4tex %dx%d fmt=14" % (
+                        r["key"][0], r["key"], m["width"], m["height"]))
+                (work / "pairs-loads.txt").write_text("\n".join(lines) + "\n")
+                run([PY, "-B", tool("vq_native_ui.py"), "--textures", work / "pairs", "--log", work / "pairs-loads.txt",
+                     "--model-min-bytes", str(model_min_bytes), "--output", work / "vq", "--pvrtex", self.pvrtex],
+                    cwd=work, log=work / "vq-log.txt")
+                for f in sorted((work / "vq").iterdir()):
+                    if f.suffix == ".re4tex":
+                        shutil.copy2(f, out / f.name)
+                        vq += 1
+                shutil.copy2(work / "vq" / "vq-native-ui-report.json", out / "vq-native-ui-report.json")
+            return dict(pairs=len(rep), vq=vq)
+        return self.cache.step("texture.pairs", dict(logs=[p.name for p in logs], pairs=[list(p) for p in pairs],
+                                                     model_min_bytes=model_min_bytes),
                                dict(iso=iso, logs=logs), fp, fn, label="material pairs")
 
     # ---- a replacement directory without some <OWNER>_<bin>.obj (e.g. planar2 minus the shelled houses)

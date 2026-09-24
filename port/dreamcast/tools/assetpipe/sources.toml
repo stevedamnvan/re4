@@ -35,5 +35,5 @@ converter = ""                                           # tools dir whose conve
 # A generator that can rebuild one records it; `assets.sh --verify` compares.
 r100_planar2 = "/root/probe/d367-agents/ps2-blender/subst/planar2"          # bl_decimate.py r100-planar2.json (Blender 5.2)
 r100_bark_png = "/root/probe/d367-agents/ps2-blender/texture/ps2/r100_004/0023.PNG"   # RE4_PS2_TPL_EXTRACT B.1.1.1
-vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq6"                      # README: tex-vq6 (vq_native_ui.py; tex-vq5 + r101)
+vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq7"                      # README: tex-vq7 (tex-vq6 + the W8e post-bell r101/r103 log)
 r100_impostors = "/root/probe/d367-agents/ps2-blender/impostor/rt/out"   # item 20 tree_impostors.py output (16 views, h128, PAL4 VQ)

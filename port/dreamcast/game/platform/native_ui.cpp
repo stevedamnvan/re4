@@ -1439,13 +1439,20 @@ extern "C" int re4dc_ui_vram_claim(unsigned bytes){
     unsigned released=0,released_bytes=0;
     // Probe only when the total would do: a failed pvr_mem_malloc() logs an error.
     auto fits=[bytes]{if(pvr_mem_available()<bytes)return false;pvr_ptr_t p=pvr_mem_malloc(bytes);if(!p)return false;pvr_mem_free(p);return true;};
+    // Fragmented pool: re-probe only after each 64 KiB released, not after every small texture
+    // (the sub screen's 1 MiB claim probed 146 times at r101, each failure a KOS "out of PVR
+    // memory" line, warp-r101-pbdoor8); at most 64 KiB more is released than strictly needed.
     bool ok=fits();
+    unsigned since_probe=0;
     while(!ok){
         Entry* victim=nullptr;
         for(auto& e:entries) if(e.valid && e.frame!=frame && (!victim || e.frame<victim->frame)) victim=&e;
-        if(!victim)break;
-        released_bytes+=victim->package.vram_bytes();++released;
+        if(!victim){ok=since_probe && fits();break;}
+        const unsigned vb=victim->package.vram_bytes();
+        released_bytes+=vb;++released;since_probe+=vb?vb:1;
         RE4DC_PROFILE_COUNT(TextureEvictions,1);close_entry(*victim);
+        if(since_probe<65536U)continue;
+        since_probe=0;
         ok=fits();
     }
     claim_released+=released;

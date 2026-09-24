@@ -31,7 +31,10 @@ LINE = re.compile(r"native UI: pair missing ([0-9a-f]{8}-[0-9a-f]{8}) color=([0-
 # Archives whose TPLs hold the route's model images (rooms, enemies, Leon, weapon, core).
 ROUTE_FILES = ["st1/r100.das", "st1/r101.das", "st1/r103.das", "em/em10.drs", "em/em12.drs", "em/em15.drs",
                "em/em21.drs", "em/em23.drs", "em/em26.drs", "em/em28.drs", "em/em2a.drs", "em/pl00.drs",
-               "em/wep02.drs", "etc/core.das"]
+               "em/wep02.drs", "etc/core.das",
+               # r103's two remaining pairs (warp-r101-pbdoor6): images in the sub-screen object
+               # archive and in the route events
+               "ss/cmn/ss_oc101.dat", "evd/r101s30.evd"]
 
 
 def pairs_from_logs(logs):
