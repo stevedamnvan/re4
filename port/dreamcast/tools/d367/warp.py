@@ -63,6 +63,10 @@ PRESETS = {
     # 1,000 fight frames with Ganados engaged come first (the fight starts ~150-250 frames in).
     "r101-bell": dict(room=0x101, pos=(-7914, 0, -254), ang=2.96, find=0x2000, trg=(0, 1200, 0x101),
                       notes="r101 square fight, bell forced at room frame 1200 (DebugTrg(0))"),
+    # r103 as the r101 door delivers Leon (r101 AEV record 2: dst -47609.06, 11.83, 7083.56, angle
+    # 1.889). r103 has no events and no story flags of its own on the route (design-r103 PLAN 1.1).
+    "r103-entry": dict(room=0x103, pos=(-47609, 12, 7084), ang=1.889,
+                       notes="r103 from the r101 door (5 Ganados, corpses, cows, chickens, dog)"),
 }
 
 

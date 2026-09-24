@@ -513,6 +513,7 @@ ROUTE_STREAMS = [
     (0, 2), (0, 8),   # bgmtbl: r100 / r101 0x8002, r103 0x8008
     (1, 3),           # Ope radio (sscrn.cpp OpeSetOpenTerm strTbl: terms 0, 1 in r100, 0xC at r101 entry)
     (1, 14),          # em21 (em21.cpp SndStrReq(1, 0xE)), in r100 and r103
+    (1, 0x33),        # Ope radio, strTbl term 2: r101 post-bell call (r101_execOperator, design-r103 W8c)
 ]
 
 
