@@ -14,6 +14,71 @@
 #include "dbmodule.h"
 #include "eprintf.h"
 #include "scheduler.h"
+#if defined(RE4DC_PWC_DIAG) && RE4DC_PWC_DIAG
+#include <string.h>
+// GAME_PWC_DIAG (game30.mk, design-logic P1): partsWorldCalc's non-uniform-scale path multiplies a
+// matrix by a diagonal scale matrix twice (PSMTXScale + PSMTXConcat, i.e. two full 3x4 concats of
+// 63 FP ops each). With b = PSMTXScale(sx, sy, sz) (off-diagonal and translation words +0.0f), the
+// contract-off concat kernel (platform/mtx_sh4.S) computes, for row i:
+//   j<3: ab_ij = add(add(mul(a_i0,b_0j), mul(a_i1,b_1j)), add(mul(a_i2,b_2j), +0))
+//   j=3: ab_i3 = add(add(add(mul(a_i0,+0), mul(a_i1,+0)), mul(a_i2,+0)), a_i3)
+// pwcMulDiag below issues exactly the reduced dataflow (see its comment); the exact reduction is proven
+// on the host (design-logic/proofs/pwc_diag_check.c: 229M cases x {IEEE, FTZ+DAZ}, 0 mismatches) and at
+// runtime by the =2 check build.
+// GAME_PWC_DIAG=2 (check build): computes both and counts word mismatches (tick log "pwcdiag=").
+extern "C" {
+unsigned long re4dc_pwc_diag_checks;
+unsigned long re4dc_pwc_diag_mismatch;
+}
+// out = a * PSMTXScale(sx, sy, sz); out may equal a (all loads precede the stores).
+// Kernel words with b = diag(s): ab_ij (j<3) reduces to add(mul(a_ij, s_j), +0) (the other terms
+// are a_ik*(+0) = signed zeros; a nonzero x absorbs them and a zero sum is +0 because of the
+// kernel's literal +0 term); ab_i3 is the kernel's own column-3 dataflow with b_k3 = +0. Only a
+// non-finite a_ik (k<3) breaks the reduction (a_ik*(+0) = NaN): z_i = add(add(a_i0*0, a_i1*0),
+// a_i2*0) is NaN exactly then, and z_i is also the first half of ab_i3, so the guard costs one
+// compare. Non-finite rotation words: the original PSMTXScale + PSMTXConcat.
+static inline __attribute__((always_inline)) void pwcMulDiag(MtxPtr a, f32 sx, f32 sy, f32 sz, MtxPtr out)
+{
+    const f32 zero = 0.0f;
+    f32 z0 = (a[0][0] * zero + a[0][1] * zero) + a[0][2] * zero;
+    f32 z1 = (a[1][0] * zero + a[1][1] * zero) + a[1][2] * zero;
+    f32 z2 = (a[2][0] * zero + a[2][1] * zero) + a[2][2] * zero;
+    f32 g = (z0 + z1) + z2;
+    if (__builtin_expect(g != g, 0)) {
+        Mtx t;
+        PSMTXScale(t, sx, sy, sz);
+        PSMTXConcat(a, t, out);
+        return;
+    }
+    for (int i = 0; i < 3; i++) {
+        f32 zi = (i == 0) ? z0 : (i == 1) ? z1 : z2;
+        f32 a0 = a[i][0], a1 = a[i][1], a2 = a[i][2], a3 = a[i][3];
+        out[i][0] = a0 * sx + zero;
+        out[i][1] = a1 * sy + zero;
+        out[i][2] = a2 * sz + zero;
+        out[i][3] = zi + a3;
+    }
+}
+#if RE4DC_PWC_DIAG == 2
+static void pwcMulDiagChecked(MtxPtr a, f32 sx, f32 sy, f32 sz, MtxPtr out)
+{
+    Mtx fast;
+    Mtx ref;
+    Mtx t;
+    pwcMulDiag(a, sx, sy, sz, fast);
+    PSMTXScale(t, sx, sy, sz);
+    PSMTXConcat(a, t, ref);
+    re4dc_pwc_diag_checks++;
+    if (memcmp(fast, ref, sizeof(Mtx)) != 0) {
+        re4dc_pwc_diag_mismatch++;
+    }
+    PSMTXCopy(ref, out);
+}
+#define PWC_MUL_DIAG pwcMulDiagChecked
+#else
+#define PWC_MUL_DIAG pwcMulDiag
+#endif
+#endif
 #include "math_sub.h"
 #include "tpl.h"
 #if defined(RE4DC_GAME) && !defined(__PPC__)
@@ -484,11 +549,17 @@ void cModel::partsWorldCalc()
             sc.x = (parent->r_scale.x != 0.0f) ? 1.0f / parent->r_scale.x : 0.0f;
             sc.y = (parent->r_scale.y != 0.0f) ? 1.0f / parent->r_scale.y : 0.0f;
             sc.z = (parent->r_scale.z != 0.0f) ? 1.0f / parent->r_scale.z : 0.0f;
+#if defined(RE4DC_PWC_DIAG) && RE4DC_PWC_DIAG
+            PWC_MUL_DIAG(parent->mat, sc.x, sc.y, sc.z, m1);
+            PSMTXConcat(m1, p->l_mat, p->mat);
+            PWC_MUL_DIAG(p->mat, parent->r_scale.x, parent->r_scale.y, parent->r_scale.z, p->mat);
+#else
             PSMTXScale(m1, sc.x, sc.y, sc.z);
             PSMTXConcat(parent->mat, m1, m1);
             PSMTXConcat(m1, p->l_mat, p->mat);
             PSMTXScale(m1, parent->r_scale.x, parent->r_scale.y, parent->r_scale.z);
             PSMTXConcat(p->mat, m1, p->mat);
+#endif
         } else {
             PSMTXConcat(m, p->l_mat, p->mat);
         }

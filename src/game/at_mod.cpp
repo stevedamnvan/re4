@@ -125,6 +125,48 @@ void YarareAddCube(cEm* em, YARARE_INFO* box, f32 x, f32 y, f32 z, f32 w, f32 h,
 // body's world position (m_flag 0x200, non-zero radius), pushes `em` against every other
 // character and then every object (__em_at_core), stores the old positions and recomputes the
 // parts world positions. A body without collision only marks m_stat bit0.
+#if defined(RE4DC_ATCHK) && RE4DC_ATCHK
+// GAME_ATCHK (game30.mk, design-logic P2): each list is walked once per call and its collidable
+// bodies (m_flag 0x200, m_radius2 != 0) are collected in list order; the three passes then run over
+// that array. Exact: nothing the passes execute (getPos, __em_at_core -> At_em_*_ck, RotVector,
+// PSMTX/PSVEC, getPartsPtr) writes m_flag, m_radius2, pNext or a manager's pAlive -- they only move
+// pos / m_Pos -- so every pass sees the same bodies in the same order as the three list walks. The
+// walk prefetches the next body's cAtariInfo line while testing the current one. More bodies than
+// the array holds: the original code runs.
+#define ATCHK_MAX 96
+static int atchkCollect(cEm* head, cEm** out)
+{
+    int n = 0;
+    for (cEm* m = head; m != 0; m = (cEm*) m->pNext) {
+        cEm* nx = (cEm*) m->pNext;
+        if (nx) {
+            __builtin_prefetch(&nx->atari.m_flag);
+        }
+        if ((m->atari.m_flag & 0x200) && m->atari.m_radius2 != 0.0f) {
+            if (n == ATCHK_MAX) {
+                return -1;
+            }
+            out[n++] = m;
+        }
+    }
+    return n;
+}
+static void atchkPasses(cEm* em, cEm** v, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        v[i]->atari.getPos(v[i], &v[i]->atari.m_Pos);
+    }
+    for (i = 0; i < n; i++) {
+        if (v[i] != em) {
+            __em_at_core(em, v[i]);
+        }
+    }
+    for (i = 0; i < n; i++) {
+        v[i]->atari.m_oldPos = v[i]->atari.m_Pos;
+    }
+}
+#endif
 void EmAtCheck(cEm* em)
 {
     cEm* m;
@@ -134,6 +176,23 @@ void EmAtCheck(cEm* em)
         return;
     }
     em->atari.getPos(em, &em->atari.m_Pos);
+#if defined(RE4DC_ATCHK) && RE4DC_ATCHK
+    {
+        cEm* v[ATCHK_MAX];
+        int n = atchkCollect(EmMgr.pAlive, v);
+        if (n >= 0) {
+            atchkPasses(em, v, n);
+            n = atchkCollect((cEm*) ObjMgr.pAlive, v);
+            if (n >= 0) {
+                atchkPasses(em, v, n);
+                PartsWorldPosCalc(em);
+                em->atari.m_stat &= ~1;
+                return;
+            }
+            goto objects;   /* ems done; objects overflow the array: original object passes */
+        }
+    }
+#endif
     for (m = EmMgr.pAlive; m != 0; m = (cEm*) m->pNext) {
         if ((m->atari.m_flag & 0x200) && m->atari.m_radius2 != 0.0f) {
             m->atari.getPos(m, &m->atari.m_Pos);
@@ -149,6 +208,9 @@ void EmAtCheck(cEm* em)
             m->atari.m_oldPos = m->atari.m_Pos;
         }
     }
+#if defined(RE4DC_ATCHK) && RE4DC_ATCHK
+objects:
+#endif
     for (m = (cEm*) ObjMgr.pAlive; m != 0; m = (cEm*) m->pNext) {
         if ((m->atari.m_flag & 0x200) && m->atari.m_radius2 != 0.0f) {
             m->atari.getPos(m, &m->atari.m_Pos);

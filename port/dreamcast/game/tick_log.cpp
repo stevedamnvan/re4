@@ -35,6 +35,10 @@
 // Optional counters of other game30 knobs (weak: absent unless that knob is built in).
 extern "C" unsigned long re4dc_rot_cache_hits __attribute__((weak));
 extern "C" unsigned long re4dc_rot_cache_misses __attribute__((weak));
+#if RE4DC_PWC_DIAG_LOG   // GAME_PWC_DIAG=2 check builds only
+extern "C" unsigned long re4dc_pwc_diag_checks __attribute__((weak));
+extern "C" unsigned long re4dc_pwc_diag_mismatch __attribute__((weak));
+#endif
 
 namespace {
 constexpr int kSlots = 32;
@@ -148,6 +152,13 @@ extern "C" __attribute__((section(".text.re4dc_tick_log"))) void re4dc_tick_log_
         lastHits = re4dc_rot_cache_hits;
         lastMisses = re4dc_rot_cache_misses;
     }
+#if RE4DC_PWC_DIAG_LOG
+    if (&re4dc_pwc_diag_checks && &re4dc_pwc_diag_mismatch) {
+        char text[48];
+        snprintf(text, sizeof(text), " pwcdiag=%lu/%lu", re4dc_pwc_diag_checks, re4dc_pwc_diag_mismatch);
+        line.field(text);
+    }
+#endif
     line.flush();
     for (auto& s : g_slots) s = Slot{};
     g_frames = 0;

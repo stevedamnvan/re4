@@ -64,6 +64,33 @@ ifeq ($(GAME_ROT_CACHE),1)
 $(OBJDIR)/src/game/math_sub.o: GAME_CPPFLAGS += -DRE4DC_ROT_CACHE=1
 endif
 
+# design-logic prototypes (bit-exact by construction; gate: LOGIC_TRACE STRICT):
+#   GAME_PWC_DIAG=1  partsWorldCalc non-uniform-scale path: the two multiplies by a diagonal scale
+#                    matrix run the concat kernel's own dataflow with the provably dead terms removed
+#                    (diag a*s + 0, column 3 unchanged, NaN guard -> original path; model.cpp comment,
+#                    host proof design-logic/proofs/pwc_diag_check.c). =2: check build, both paths,
+#                    mismatches counted in the tick log ("pwcdiag=checks/mismatches").
+#   GAME_ATCHK=1     EmAtCheck walks each actor list once per call (collidable bodies into an array,
+#                    next-body prefetch) instead of three times.
+#   GAME_MOTION_INDEX=1  re4dc_motion_acquire finds the clip record by binary search over the
+#                    bind-validated, strictly increasing record offsets instead of a linear scan
+#                    (platform residency layer only; returns the same record, so the same key table).
+GAME_PWC_DIAG ?= 0
+GAME_ATCHK ?= 0
+GAME_MOTION_INDEX ?= 0
+ifeq ($(GAME_MOTION_INDEX),1)
+$(OBJDIR)/platform/native_motion.o: PLATFORM_CPPFLAGS += -DRE4DC_MOTION_INDEX=1
+endif
+ifneq ($(GAME_PWC_DIAG),0)
+$(OBJDIR)/src/game/model.o: GAME_CPPFLAGS += -DRE4DC_PWC_DIAG=$(GAME_PWC_DIAG)
+endif
+ifeq ($(GAME_PWC_DIAG),2)
+$(OBJDIR)/tick_log.o: PLATFORM_CPPFLAGS += -DRE4DC_PWC_DIAG_LOG=1
+endif
+ifeq ($(GAME_ATCHK),1)
+$(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_ATCHK=1
+endif
+
 ifeq ($(LOGIC_TRACE),1)
 PLATFORM_OBJS += $(OBJDIR)/logic_trace.o
 $(OBJDIR)/src/game/main.o $(OBJDIR)/src/game/rnd.o: GAME_CPPFLAGS += -DRE4DC_LOGIC_TRACE=1

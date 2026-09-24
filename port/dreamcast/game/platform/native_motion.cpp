@@ -16,6 +16,9 @@ extern "C" { unsigned long long re4dc_motion_wait_total_us; }
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
+#ifndef RE4DC_MOTION_INDEX
+#define RE4DC_MOTION_INDEX 0
+#endif
 
 namespace {
 constexpr unsigned kArchives=4, kEntries=255, kClipLimit=32768;
@@ -238,7 +241,17 @@ extern "C" int re4dc_motion_acquire(const void* header,unsigned** table) {
     for(unsigned bno=0;bno<kArchives;++bno) {
         auto& b=bindings[bno];auto base=reinterpret_cast<std::uintptr_t>(b.archive);
         if(!base || p<base || p-base>=b.bytes)continue;
+#if RE4DC_MOTION_INDEX
+        // GAME_MOTION_INDEX (design-logic P4): re4dc_motion_bind accepts a table only when the record
+        // offsets are strictly increasing (off<=prev rejects it), so the offsets are unique and sorted
+        // and a binary search finds the one record the linear scan finds (8 probes instead of up to
+        // 255 unaligned word() reads per acquire). The lease, pins, stats and load() are unchanged.
+        unsigned lo=0,hi=b.count;const unsigned want=unsigned(p-base);
+        while(lo<hi) { const unsigned mid=(lo+hi)>>1;if(word(record(b,mid))<want)lo=mid+1;else hi=mid; }
+        for(unsigned i=lo;i<b.count && i==lo;++i)if(word(record(b,i))==want) {
+#else
         for(unsigned i=0;i<b.count;++i)if(word(record(b,i))==p-base) {
+#endif
             *table=load(b,i);auto& s=b.slots[i];
             if(!s.pins++) { stats.pinned_bytes+=word(record(b,i)+4);if(stats.pinned_bytes>stats.peak_pinned_bytes)stats.peak_pinned_bytes=stats.pinned_bytes; }
             owner_add();
