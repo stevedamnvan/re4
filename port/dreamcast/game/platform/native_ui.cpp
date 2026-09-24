@@ -754,6 +754,9 @@ HudBatch hud_batch; // 4 KiB .bss (PERF_HUD only), not the caller's stack
 #if RE4DC_IO_PROBE
 extern "C" int re4dc_ioprobe_hud(unsigned v[4]);
 #endif
+#if RE4DC_QUALITY
+extern "C" int re4dc_quality_hud(unsigned v[2]);   // platform/quality.cpp
+#endif
 void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_bytes,unsigned ta_capacity,bool ta_fault){
     HudBatch& b=hud_batch;b.n=1;
     pvr_poly_cxt_t c;pvr_poly_cxt_col(&c,PVR_LIST_TR_POLY);
@@ -765,7 +768,7 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     constexpr float X=40,BX=100,Y=324,R=18,PX=4.0f/1000.0f,MAXW=480;
     const unsigned us[5]={flip_us,period,busy,render_us,wait_us};
     const std::uint32_t colors[6]={0xe0ffffffU,0xe040ff40U,0xe0ffff40U,0xe040ffffU,0xe0ff40ffU,ta_fault?0xf0ff2020U:0xe0ffa040U};
-    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,(6+RE4DC_IO_PROBE)*R+6,0x90000000U);   // backdrop
+    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,(6+RE4DC_IO_PROBE+RE4DC_QUALITY)*R+6,0x90000000U);   // backdrop
     for(unsigned r=0;r<5;++r){
         hud_number(b,X,Y+r*R,(us[r]+50)/100,true,colors[r]);
         hud_rect(b,BX,Y+r*R+2,std::min(MAXW,float(us[r])*PX),8,colors[r]);
@@ -780,6 +783,13 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     // under load, worst underrun deficit (0.1 ms). Blank until the probe has run.
     unsigned io[4];
     if(re4dc_ioprobe_hud(io))for(unsigned k=0;k<4;++k)hud_number(b,X+k*60,Y+6*R,io[k],k==1||k==3,0xe0c0a0ffU);
+#endif
+#if RE4DC_QUALITY
+    // Quality row (green): mode (1 Standard, 0 Original) and the feature word.
+    unsigned qv[2];
+    re4dc_quality_hud(qv);
+    hud_number(b,X,Y+(6+RE4DC_IO_PROBE)*R,qv[0],false,0xe080ff80U);
+    hud_number(b,X+60,Y+(6+RE4DC_IO_PROBE)*R,qv[1],false,0xe080ff80U);
 #endif
     hud_flush(b);
 }

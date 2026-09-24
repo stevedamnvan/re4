@@ -170,6 +170,36 @@ $(IO_PROBE_OBJS): PLATFORM_CPPFLAGS += -include $(OBJDIR)/io-probe.h
 $(OBJDIR)/ui_bridge.o: $(OBJDIR)/io-probe.h
 $(OBJDIR)/ui_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/io-probe.h
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
+# D367 quality modes (design-lowmode DESIGN.md A). QUALITY=1 (default 0: the default image does
+# not change) adds platform/quality.cpp (state, presets, /cd/dc/quality.txt, the RE4DCCFG record
+# through re4dc_quality_cfg_load/store, in memory until the VMU layer links them; freeze at game start) and quality_picker.cpp (the once-per-boot "Graphics quality" picker at
+# the first title main menu (after Start), in the game's message window: "Standard" (budget-first,
+# the default) or "Original" (the faithful look). QUALITY_DEFAULT: mode without a stored record
+# or file (1 = Standard, 0 = Original). QUALITY_PICKER=0: no picker. QUALITY_DEBUG=1 (test builds): X or
+# L+R+A on the picker opens the per-feature menu. Every switch is render-only.
+QUALITY ?= 0
+QUALITY_DEFAULT ?= 1
+QUALITY_PICKER ?= 1
+QUALITY_DEBUG ?= 0
+.PHONY: quality-force
+$(OBJDIR)/quality-knobs.h: quality-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_QUALITY %s\n#define RE4DC_QUALITY_DEFAULT %s\n#define RE4DC_QUALITY_PICKER %s\n#define RE4DC_QUALITY_DEBUG %s\n' '$(QUALITY)' '$(QUALITY_DEFAULT)' '$(QUALITY_PICKER)' '$(QUALITY_DEBUG)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+QUALITY_PLATFORM = $(OBJDIR)/platform/quality.o $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_ui.o
+QUALITY_GAME = $(OBJDIR)/src/game/title.o $(OBJDIR)/ui_bridge.o $(OBJDIR)/quality_picker.o
+$(QUALITY_PLATFORM) $(QUALITY_GAME): $(OBJDIR)/quality-knobs.h
+$(QUALITY_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/quality-knobs.h
+$(QUALITY_GAME): GAME_CPPFLAGS += -include $(OBJDIR)/quality-knobs.h
+ifeq ($(QUALITY),1)
+OBJS += $(OBJDIR)/quality_picker.o
+else
+PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/quality.o,$(PLATFORM_OBJS))
+endif
+$(OBJDIR)/quality_picker.o: quality_picker.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@
 # Route cutscenes (default off): PS2 prerecorded movies present source events
 # (/cd/dc/movie/*.seq, docs/ROUTE_CUTSCENES.md). Default images carry none of it.
 ROUTE_MOVIES ?= 0

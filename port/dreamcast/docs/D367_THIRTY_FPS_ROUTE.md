@@ -241,6 +241,9 @@ User decisions (2026-09-23):
     - Thermal scope, self shadow and cast shadow stay in the build.
     - The quality choice is remembered on the VMU.
     - Picker: once per boot, at the first title main menu, in the game's message window; per-feature submenu in test builds only.
+      - Built (`QUALITY=1`, default off; `port/dreamcast/game/quality_picker.cpp`, `platform/quality.{h,cpp}`): after Start, "Graphics quality" / "Standard" (budget-first, the default) / "Original" (faithful); up/down + A (attr 0x00800000, vertical choices). `/cd/dc/quality.txt`: `mode=standard|original`. Fixture proof w10q9-picker: no record -> Standard highlighted first; Down -> Original, A picks, record stored, frozen at titleExit.
+      - The choice is the 32-byte `R4CF` record (`Re4dcQualityCfg`) through `re4dc_quality_cfg_load/store`: weak in-memory versions until the VMU layer (design-vmu S5) links the RE4DCCFG file.
+      - Not visible yet: GX is a stub on the DC, so no `cMes` text renders anywhere (the picker, prompts, card Yes/No). The native message renderer (the game's own font) is W11's, after its MES/getMes fix.
     - Leon's face bones: PS2 FMV replaces most story cutscenes, so merge them always in Low, unless a route event still in-engine shows Leon's face up close (being checked).
     - Occlusion at the 25 m fog is ~0.1 hw ms for 32.7 KB heap: dropped unless the final scenery design shows more.
   - A bottom-up estimate puts Standard at ~73 hw ms quiet / ~80 in the r101 fight, above the earlier 50-65 outlook. Stacked step 3-5 measurements will settle it.

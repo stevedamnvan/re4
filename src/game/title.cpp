@@ -581,6 +581,14 @@ int titleLevelSelect(TitleWork* w)
 // load -> the card (7), options -> the option screen (4)), 2 difficulty select, 5 / 6 the demo
 // movies after 600 idle frames (e3_jpn.sfd, then demo0 / demo1 alternating), 8 the "no save"
 // message. The background scrolls (titleLoop) meanwhile.
+#if !defined(__PPC__) && RE4DC_QUALITY
+// D367 quality picker (port/dreamcast/game/quality_picker.cpp): once per boot, before the menu.
+extern "C" int re4dc_quality_picker_wanted(void);
+extern "C" void re4dc_quality_picker_open(void);
+extern "C" int re4dc_quality_picker_move(void);
+extern "C" void re4dc_quality_freeze(const char* where);
+#endif
+
 void titleMain(TitleWork* w)
 {
     static int demo_loop_cnt = 0;
@@ -593,10 +601,26 @@ void titleMain(TitleWork* w)
     }
     switch (w->Rno1) {
     case 0:
+#if !defined(__PPC__) && RE4DC_QUALITY
+        if (re4dc_quality_picker_wanted()) {
+            re4dc_quality_picker_open();
+            w->Rno1 = 9;
+            break;
+        }
+#endif
         titleMenuInit(w);
         w->Rno1 = 1;
         demo_loop_cnt = 600;
         break;
+#if !defined(__PPC__) && RE4DC_QUALITY
+    case 9:
+        if (re4dc_quality_picker_move()) {
+            titleMenuInit(w);
+            w->Rno1 = 1;
+            demo_loop_cnt = 600;
+        }
+        break;
+#endif
     case 1: {
         int sel = titleMenuSelect(w);
         BitOff(pG->System_flg, 0x80000000);
@@ -1382,6 +1406,9 @@ static cRoomJmp* pRj;
 // flag (System_flg 0x2000), the next position and chains into GameTask.
 void titleExit(TitleWork* w)
 {
+#if !defined(__PPC__) && RE4DC_QUALITY
+    re4dc_quality_freeze("titleExit");
+#endif
     if ((s32) pG->System_flg >= 0 && !(pG->System_flg & 0x40000000)) {
         pG->pl_type = 0;
         pG->game_costume = 0;

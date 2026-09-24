@@ -21,6 +21,9 @@
 #include <stdio.h>
 #include <cstring>
 #include "native_static.h"
+#if RE4DC_QUALITY
+#include "quality.h"
+#endif
 #include "native_model.h"
 #include "re4dc_platform.h"
 #include "../../room/room_package.hpp"
@@ -1152,7 +1155,11 @@ int mesh_submit(const Re4dcModelPart& p){
         const float px_x=320.0f*std::fabs(p.projection[1]),px_y=240.0f*std::fabs(p.projection[3]);
         const float px=px_x>px_y?px_x:px_y;
         d.part_index=unsigned(part-v.package.parts());
+#if RE4DC_QUALITY
+        d.lod_scale=std::sqrt(scale)*px/re4dc_quality()->lod_px;   // Standard: 5 px (RQ_LOD_COARSE)
+#else
         d.lod_scale=std::sqrt(scale)*px/float(RE4DC_MESH_LOD_PX);
+#endif
     }
 #endif
     // Mesh grid -> source model space -> live source view (node matrix included).

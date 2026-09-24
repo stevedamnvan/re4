@@ -246,7 +246,13 @@ extern "C" void re4dc_room_leave(){
 }
 
 // gameRoomMemInit after the source replaced heap 4: a new room heap exists.
+#if RE4DC_QUALITY
+extern "C" void re4dc_quality_freeze(const char* where);
+#endif
 extern "C" void re4dc_room_enter(){
+#if RE4DC_QUALITY
+    re4dc_quality_freeze("room");
+#endif
 #if RE4DC_IO_PROBE
     io_cycle_enter();
 #endif
