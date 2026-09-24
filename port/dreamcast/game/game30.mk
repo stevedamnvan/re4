@@ -446,6 +446,17 @@ ifneq ($(GAME_FP_CONTRACT),off)
 $(error GAME_MULTVEC_SCHED=1 replaces the contract-off MTXMultVec body: needs GAME_FP_CONTRACT=off)
 endif
 endif
+# GAME_VEC_INLINE=1 (needs GAME_FP_CONTRACT=off): the small PSVEC* routines (add, subtract, scale,
+# square magnitude, dot, cross, square distance) inline in game units (include/vec.h): the SDK's own C_*
+# bodies, same operations in the same order, instead of two calls each (PS* -> C_*). Bit-identical with
+# contraction off; the platform/native renderer units keep the calls.
+GAME_VEC_INLINE ?= 0
+ifeq ($(GAME_VEC_INLINE),1)
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_VEC_INLINE=1 inlines the contract-off SDK vector bodies: needs GAME_FP_CONTRACT=off)
+endif
+GAME_CPPFLAGS += -DRE4DC_VEC_INLINE=1
+endif
 GAME30_DECOMP_SAFE = -fwrapv -fno-strict-aliasing -fno-delete-null-pointer-checks \
 	-fno-isolate-erroneous-paths-dereference
 GAME30_O2_FLAGS = -O2 $(GAME30_DECOMP_SAFE)

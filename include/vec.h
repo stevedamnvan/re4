@@ -68,6 +68,64 @@ void PSMTXQuat(Mtx m, const Quaternion* q);
 }
 #endif
 
+#if defined(RE4DC_VEC_INLINE) && RE4DC_VEC_INLINE
+// GAME_VEC_INLINE=1 (game30.mk, contract-off game units only): the small PSVEC* routines inline.
+// On the Dreamcast each was two calls (platform/mtx.cpp PS* -> the SDK's C_* body); these are the
+// C_* bodies of src/lib/vec.c with the same operations in the same order (and the same temporaries
+// where the source keeps one), so the results are bit-identical with -ffp-contract=off.
+static inline void re4dc_vec_add(const Vec* a, const Vec* b, Vec* ab)
+{
+    ab->x = a->x + b->x;
+    ab->y = a->y + b->y;
+    ab->z = a->z + b->z;
+}
+static inline void re4dc_vec_sub(const Vec* a, const Vec* b, Vec* a_b)
+{
+    a_b->x = a->x - b->x;
+    a_b->y = a->y - b->y;
+    a_b->z = a->z - b->z;
+}
+static inline void re4dc_vec_scale(const Vec* src, Vec* dst, f32 scale)
+{
+    dst->x = (src->x * scale);
+    dst->y = (src->y * scale);
+    dst->z = (src->z * scale);
+}
+static inline f32 re4dc_vec_sqmag(const Vec* v)
+{
+    return v->z * v->z + ((v->x * v->x) + (v->y * v->y));
+}
+static inline f32 re4dc_vec_dot(const Vec* a, const Vec* b)
+{
+    return (a->z * b->z) + ((a->x * b->x) + (a->y * b->y));
+}
+static inline void re4dc_vec_cross(const Vec* a, const Vec* b, Vec* axb)
+{
+    Vec vTmp;
+    vTmp.x = (a->y * b->z) - (a->z * b->y);
+    vTmp.y = (a->z * b->x) - (a->x * b->z);
+    vTmp.z = (a->x * b->y) - (a->y * b->x);
+    axb->x = vTmp.x;
+    axb->y = vTmp.y;
+    axb->z = vTmp.z;
+}
+static inline f32 re4dc_vec_sqdist(const Vec* a, const Vec* b)
+{
+    Vec diff;
+    diff.x = a->x - b->x;
+    diff.y = a->y - b->y;
+    diff.z = a->z - b->z;
+    return (diff.z * diff.z) + ((diff.x * diff.x) + (diff.y * diff.y));
+}
+#define PSVECAdd(a, b, ab) re4dc_vec_add((a), (b), (ab))
+#define PSVECSubtract(a, b, ab) re4dc_vec_sub((a), (b), (ab))
+#define PSVECScale(s, d, k) re4dc_vec_scale((s), (d), (k))
+#define PSVECSquareMag(v) re4dc_vec_sqmag((v))
+#define PSVECDotProduct(a, b) re4dc_vec_dot((a), (b))
+#define PSVECCrossProduct(a, b, d) re4dc_vec_cross((a), (b), (d))
+#define PSVECSquareDistance(a, b) re4dc_vec_sqdist((a), (b))
+#endif
+
 #endif
 
 #endif
