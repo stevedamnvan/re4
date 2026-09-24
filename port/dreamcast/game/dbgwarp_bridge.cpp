@@ -9,7 +9,8 @@
 //  - Position: `pos` / `dir` replace the jump point's NextPos / NextY (-> sub_pos / sub_angle).
 //  - Flags: applied once, at the first room entry (re4dc_room_enter: after gameInit cleared the
 //    new-game state, before the room's init function reads them): room save flags (RsfSet),
-//    Scenario_flg, Item_find_flg, door_unlock.
+//    Scenario_flg, Item_find_flg, door_unlock, and `dead` enemy-list entries (EmListSetAlive(no, 0),
+//    as the event that removes them does: r101's bell list, so a post-bell start has no villagers).
 //  - Actions: `act <frame> <button> <hold>` presses a button / pushes the stick in the first
 //    room (door test mode). Frames count PADRead calls in that room: one per game frame in play,
 //    and they keep counting inside the sub screen (inventory, files), whose loop pauses the game
@@ -26,7 +27,7 @@
 //
 // /cd/dc/warp.txt (tools/d367/warp.py writes it from a named preset):
 //   room 0x100 | jp 0 | pos x y z | dir 0x8000 | ang <rad> | rsf <room> <bit>... |
-//   scenario <0|1> <hex> | find <hex> | unlock <0|1> <hex> | inv default | area <no> [dx dz] |
+//   scenario <0|1> <hex> | find <hex> | unlock <0|1> <hex> | dead <no>... | inv default | area <no> [dx dz] |
 //   act <frame> <a|b|x|y|start|fwd|back|none> <hold> | trg <no> <frame> [room] | dump | name <preset>
 #if RE4DC_DBG_WARP
 #include "types.h"
@@ -36,6 +37,7 @@
 #include "flag_rsf.h"
 #include "sce_at.h"
 #include "area.h"
+#include "em_set.h"
 #include "re4dc_platform.h"
 #include <string.h>
 #include <stdio.h>
@@ -64,6 +66,8 @@ struct Warp {
     Rsf rsf[32];
     unsigned n_rsf;
     u32 scenario[2], find, unlock[2];
+    u8 dead[64];
+    unsigned n_dead;
     Act act[16];
     unsigned n_act;
     bool has_trg, trg_fired;
@@ -134,6 +138,8 @@ void load()
             wp.find |= num(tok[1]);
         } else if (!strcmp(k, "unlock") && n >= 3) {
             wp.unlock[num(tok[1]) & 1] |= num(tok[2]);
+        } else if (!strcmp(k, "dead") && n >= 2) {
+            for (int i = 1; i < n && wp.n_dead < 64; ++i) wp.dead[wp.n_dead++] = (u8) num(tok[i]);
         } else if (!strcmp(k, "inv") && n >= 2) {
             if (strcmp(tok[1], "default")) re4dc_log("warp: inv %s not supported (new-game inventory kept)\n", tok[1]);
         } else if (!strcmp(k, "area") && n >= 2) {
@@ -257,6 +263,8 @@ void re4dc_warp_room_enter(void)
     pG->Item_find_flg |= wp.find;
     pG->door_unlock[0] |= wp.unlock[0];
     pG->door_unlock[1] |= wp.unlock[1];
+    for (unsigned i = 0; i < wp.n_dead; ++i) EmListSetAlive(wp.dead[i], 0);
+    if (wp.n_dead) re4dc_log("warp: %u enemy-list entries set dead\n", wp.n_dead);
     re4dc_log("warp: flags applied rsf[%03x]=%08x scenario=%08x/%08x find=%08x unlock=%08x/%08x\n",
               (unsigned) pG->room_id,
               RoomData.getRoomSavePtr(pG->room_id) ? (unsigned) RsfFlags(pG->room_id)[0] : 0u,

@@ -19,6 +19,10 @@ import sys
 #   12 battle streams faded               13 room entry event done (s40 + radio call)
 #   14 ravine event done                  15 house Ganado event done
 R100_AFTER_S03_S20 = [0, 1, 3, 10, 13]
+# ESL entries r101's bell (r101_Event30) sets dead: the villagers who leave for the church.
+R101_BELL_DEAD = [0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x28, 0x29,
+                  0x2A, 0x2B, 0x2C, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3C, 0x3D, 0x3E,
+                  0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46]
 PRESETS = {
     # r100 fresh entry: R100Init runs r100_StartEvent (s40 movie, then the radio call) because
     # room flag 13 is clear; the event itself places Leon at the gate (-99685,-484,-1343).
@@ -63,6 +67,17 @@ PRESETS = {
     # 1,000 fight frames with Ganados engaged come first (the fight starts ~150-250 frames in).
     "r101-bell": dict(room=0x101, pos=(-7914, 0, -254), ang=2.96, find=0x2000, trg=(0, 1200, 0x101),
                       notes="r101 square fight, bell forced at room frame 1200 (DebugTrg(0))"),
+    # r101 after the bell, at the r103 door: room flag 7 (bell done) set and 10 (post-bell call) clear,
+    # so R101Init runs r101_execOperator (radio term 2, stream 1:0x33) and installs no
+    # r101_DoorDontOpen103 lock. Leon stands where r103's door back puts him (r103 AEV record 0,
+    # angle -1.5038), turned to face the door, with the ESL entries the bell sets dead (R101_BELL_DEAD;
+    # without them a Ganado grabs Leon at the door, warp-r101-pbdoor1). --door closes the call (A:
+    # it closed on the first A at room frame 800 in pbdoor1; B did not), steps forward, presses A.
+    "r101-post-bell-door": dict(room=0x101, pos=(39372, 3201, -26667), ang=1.6378, rsf={0x101: [6, 7]}, find=0x2000,
+                                dead=R101_BELL_DEAD,
+                                door=[("a", 700, 4), ("a", 820, 4), ("fwd", 940, 25), ("a", 980, 4),
+                                      ("a", 1070, 4), ("a", 1160, 4), ("a", 1250, 4)],
+                                notes="r101 after the bell at the r103 door (post-bell call runs first)"),
     # r103 as the r101 door delivers Leon (r101 AEV record 2: dst -47609.06, 11.83, 7083.56, angle
     # 1.889). r103 has no events and no story flags of its own on the route (design-r103 PLAN 1.1).
     "r103-entry": dict(room=0x103, pos=(-47609, 12, 7084), ang=1.889,
@@ -89,6 +104,9 @@ def lines_for(p, door=False, dump=False, name=None):
         out.append("find 0x%08x" % p["find"])
     for i, v in sorted((p.get("unlock") or {}).items()):
         out.append("unlock %d 0x%08x" % (i, v))
+    dead = list(p.get("dead") or [])
+    for i in range(0, len(dead), 10):   # the rig reads at most 12 tokens per line
+        out.append("dead " + " ".join("0x%02x" % n for n in dead[i:i + 10]))
     out.append("inv default")
     if door:
         for kind, frame, hold in p.get("door", []):
