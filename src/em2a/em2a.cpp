@@ -97,7 +97,12 @@ static inline int em2aDeadCk(cEm* em)
 // Work `no` of the enemy manager without the range check (em2aTrap2HitCkEM).
 static inline cEm* em2aMgrWork(u32 no)
 {
+#if !defined(__PPC__)
+    // Scan helper: unbacked sparse slots read as absent (no allocation), as em21.cpp's scans.
+    return (cEm*) EmMgr.workAt(no);
+#else
     return (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * no);
+#endif
 }
 
 // Module entry (SN loader): registers Em2aInit as the DOL's enemy constructor (EmInitFunc).
@@ -120,7 +125,13 @@ extern "C" void _unresolved()
 // EmInitFunc of the module: constructs the cEm2a class in the manager's work.
 void Em2aInit(cEm* em)
 {
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+    // As in Em21Init, retain the archive installed by cEmMgr::construct.
+    // Modern value-initialization would zero it before the base constructor.
+    new (em) cEm2a;
+#else
     new (em) cEm2a();
+#endif
 }
 
 // Damage check of the bear trap (type 0): a weapon hit other than the hand / flash / mine / explosive
@@ -215,7 +226,13 @@ static Camera em2a_rescue_cam = { 0 };
 // COMPILER-DIFF: candidate #12 (cse related-value): `cam = &em2a_rescue_cam` after the `&em2a_rescue_cam.param.pos/at`
 // pointers are known is a fresh `lis/addi` pair in the original; our cse rewrites it as `at - 0xB0`.
 // An asm-labelled alias declaration gives cse a distinct SYMBOL_REF and keeps the fresh pair.
+#if defined(__PPC__)
 extern Camera em2a_rescue_cam_v asm("em2a_rescue_cam");
+#else
+// Off the GC the file-static has no global "em2a_rescue_cam" symbol: the alias would bind to a
+// missing-symbol stub while the cut writes the real camera. Name the object itself.
+#define em2a_rescue_cam_v em2a_rescue_cam
+#endif
 // .data is padded to 8 bytes before the linker's BSS tag word.
 asm(".section .data\n\t.balign 8\n\t.text");
 
@@ -886,6 +903,9 @@ int em2aTrap2HitCkEM(cEm2a* em)
     for (i = 0; i < EmMgr.nArray; i++) {
         cEm* e = em2aMgrWork(i);
 
+#if !defined(__PPC__)
+        if (!e) continue;
+#endif
         if (!e->isAlive()) {
             continue;
         }

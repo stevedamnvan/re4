@@ -41,6 +41,7 @@ MODULE(em15)
 MODULE(em26)
 MODULE(em28)
 MODULE(em21)
+MODULE(em2a)
 #if RE4DC_SUBSCREEN && !RE4DC_SUBSCREEN_OVL
 MODULE(Sscrn)
 #endif
@@ -79,6 +80,7 @@ static const Re4dcModule g_modules[] = {
     MODULE(14, em26),
     MODULE(17, em28),
     MODULE(6, em21),
+    MODULE(28, em2a),  // r100 after state (flag 10): bear traps and tripwire bombs
 #if RE4DC_SUBSCREEN_OVL
     {71, "Sscrn", 0, 0, 0, 0, 0, 0, 0},  // sub screen overlay (entry points set per load)
 #elif RE4DC_SUBSCREEN

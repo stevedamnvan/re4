@@ -219,7 +219,13 @@ static Camera em21_trap_cam = { 0 };
 // COMPILER-DIFF: candidate #12 (cse related-value): `cam = &em21_trap_cam` after the `&em21_trap_cam.param.pos/at`
 // pointers are known is a fresh `lis/addi` pair in the original; our cse rewrites it as `at - 0xB0`.
 // An asm-labelled alias declaration gives cse a distinct SYMBOL_REF and keeps the fresh pair.
+#if defined(__PPC__)
 extern Camera em21_trap_cam_v asm("em21_trap_cam");
+#else
+// Off the GC the file-static has no global "em21_trap_cam" symbol: the alias would bind to a
+// missing-symbol stub while the cut writes the real camera. Name the object itself.
+#define em21_trap_cam_v em21_trap_cam
+#endif
 // .data is padded to 8 bytes before the linker's BSS tag word.
 asm(".section .data\n\t.balign 8\n\t.text");
 
