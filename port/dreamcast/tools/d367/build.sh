@@ -5,14 +5,18 @@
 set -euo pipefail
 REPO=${REPO:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}
 cd "$REPO"
-if pgrep -f "^make .*-C port/dreamcast/game" >/dev/null; then echo "another game build is running" >&2; exit 1; fi
+# One build per tree (a per-tree lock, so other trees can build at the same time), and at most
+# two game builds host-wide through the shared slot helper when it exists.
+exec 7>"/tmp/d367-build-$(printf %s "$REPO" | md5sum | cut -c1-12).lock"
+flock -n 7 || { echo "another game build is running in this tree" >&2; exit 1; }
+SLOT=; [ -x /root/probe/d367-buildslot.sh ] && SLOT=/root/probe/d367-buildslot.sh
 # PVR_PIPELINE=2 needs the async-present KOS (patches/README.md); other sets keep d336.
 case " ${EXTRA_MAKE:-} " in *" PVR_PIPELINE=2 "*) kos_default=/root/work/kos-re4dc-d367 ;; *) kos_default=/root/work/kos-re4dc-d336 ;; esac
 export RE4DC_KOS_BASE=${RE4DC_KOS_BASE:-$kos_default}
 source port/dreamcast/kos-env.sh
 dest=${1:?usage: build.sh <dest-dir>}
 mkdir -p "$dest"
-make NATIVE_REUSE_AUDIT=0 NATIVE_RENDER_PROFILE=0 -C port/dreamcast/game -j${JOBS:-6} \
+$SLOT make NATIVE_REUSE_AUDIT=0 NATIVE_RENDER_PROFILE=0 -C port/dreamcast/game -j${JOBS:-4} \
   CORE_RESIDENT_BYTES=1360608 OPTION_RESIDENT_BYTES=149920 PLAYER_RESIDENT_BYTES=846656 WEAPON_RESIDENT_BYTES=247776 \
   PARTS_DEMAND=1 MODELINFO_DEMAND=1 OBJECT_DEMAND=1 ENEMY_DEMAND=1 PVR_STREAM=1 MODEL_POSITION_CACHE=1 \
   EVENT_FILES=1 R100_DEFER_EVENTS=1 MODEL_ROOM_STRIPS=1 MODEL_DRAW_PLANS=0 D349_RENDERER_STACK=1 \
