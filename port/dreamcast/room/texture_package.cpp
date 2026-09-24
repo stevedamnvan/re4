@@ -17,6 +17,10 @@
 #if RE4DC_PVR_PIPELINE
 extern "C" void re4dc_pvr_vram_fence();
 #endif
+// Game TREE_IMPOSTOR=1: kPal4 (palettised VQ impostor atlases).
+#ifndef RE4DC_TREE_IMPOSTOR
+#define RE4DC_TREE_IMPOSTOR 0
+#endif
 
 namespace re4dc::texture {
 namespace {
@@ -308,10 +312,20 @@ bool Package::validate() {
         // Full 256-entry VQ codebook, no mipmaps or small-codebook pointer bias.
         // Unknown layouts must not fall through as a raw 16-bit upload.
         const std::uint64_t pixels = std::uint64_t(texture.width) * texture.height;
+#if RE4DC_TREE_IMPOSTOR
+        // kPal4: 256 8-byte codebook entries of 4x4 texels, one index byte
+        // per 4x4 block, then the 16-entry palette.
+        const bool pal4 = texture.format == kPal4 && texture.payload == kPayloadVq;
+        const std::uint64_t expected = pal4 ? 2048U + pixels / 16U + 32U :
+            texture.payload == kPayloadVq ? 2048U + pixels / 4U : pixels * 2U;
+        if(!dimensions || texture.payload > kPayloadVq || texture.reserved_0 != 0 ||
+           texture.data_size != expected || (texture.format > kArgb4444 && !pal4) ||
+#else
         const std::uint64_t expected = texture.payload == kPayloadVq
             ? 2048U + pixels / 4U : pixels * 2U;
         if(!dimensions || texture.payload > kPayloadVq || texture.reserved_0 != 0 ||
            texture.data_size != expected || texture.format > kArgb4444 ||
+#endif
            texture.data_offset < header_->data_offset ||
            std::uint64_t(texture.data_offset) + texture.data_size >
                std::uint64_t(header_->data_offset) + header_->data_size ||
@@ -325,7 +339,46 @@ bool Package::validate() {
     return true;
 }
 
+#if RE4DC_TREE_IMPOSTOR
+namespace {
+// Game TREE_IMPOSTOR=1: each uploaded kPal4 texture owns one of the 64
+// 16-entry banks of PVR palette RAM (ARGB1555, the only palette user), and
+// Texture::reserved_0 holds bank + 1 while it does (0 in the file). The
+// upload copied the palette into VRAM behind the VQ data; it is read from
+// there, so the upload path itself is unchanged.
+std::uint64_t palette_banks;
+bool bind_palettes(Package& package) {
+    for(std::uint32_t index = 0; index < package.header().texture_count; ++index) {
+        auto& texture = const_cast<Texture&>(package.textures()[index]);
+        if(texture.format != kPal4 || texture.reserved_0 != 0) continue;
+        unsigned bank = 0;
+        while(bank < 64U && ((palette_banks >> bank) & 1U)) ++bank;
+        if(bank == 64U) return false;
+        palette_banks |= std::uint64_t(1) << bank;
+        texture.reserved_0 = bank + 1U;
+        const auto* entries = reinterpret_cast<const volatile std::uint16_t*>(
+            static_cast<const std::uint8_t*>(package.pvr_texture(index)) + texture.data_size - 32U);
+        pvr_set_pal_format(PVR_PAL_ARGB1555);
+        for(unsigned k = 0; k < 16U; ++k) pvr_set_pal_entry(bank * 16U + k, entries[k]);
+    }
+    return true;
+}
+void release_palettes(const Package& package) {
+    for(std::uint32_t index = 0; index < package.header().texture_count; ++index) {
+        auto& texture = const_cast<Texture&>(package.textures()[index]);
+        if(texture.format != kPal4 || texture.reserved_0 == 0) continue;
+        palette_banks &= ~(std::uint64_t(1) << (texture.reserved_0 - 1U));
+        texture.reserved_0 = 0;
+    }
+}
+} // namespace
+#endif
+
 std::uint32_t pvr_format(const Texture& texture) {
+#if RE4DC_TREE_IMPOSTOR
+    if(texture.format == kPal4) // reserved_0: palette bank + 1 (bind_palettes)
+        return PVR_TXRFMT_PAL4BPP | PVR_TXRFMT_4BPP_PAL(texture.reserved_0 - 1U) | PVR_TXRFMT_VQ_ENABLE;
+#endif
     const std::uint32_t formats[] = {
         PVR_TXRFMT_RGB565, PVR_TXRFMT_ARGB1555, PVR_TXRFMT_ARGB4444
     };
@@ -424,6 +477,12 @@ bool Package::upload() {
         }
         vram_bytes_ += texture.data_size;
     }
+#if RE4DC_TREE_IMPOSTOR
+    if(!bind_palettes(*this)) {
+        error_ = "PVR palette banks exhausted";
+        return false;
+    }
+#endif
     upload_complete_ = true;
     error_ = nullptr;
     return true;
@@ -489,6 +548,10 @@ bool Package::release_payload() {
 }
 
 void Package::close() {
+#if RE4DC_TREE_IMPOSTOR
+    // Before the fence: the next kPal4 upload fences before it rewrites a bank.
+    if(header_ != nullptr) release_palettes(*this);
+#endif
     if(pvr_textures_ != nullptr) {
         vram_fence();
         if(header_ != nullptr) {

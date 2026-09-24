@@ -763,5 +763,7 @@ include effects30.mk
 include scenery30.mk
 # D367 records30 (FRONT_TEXOBJ; default off: no effect).
 include records30.mk
+# D367 Blender scenery knobs (TREE_IMPOSTOR; default off: no effect).
+include blender30.mk
 # D367 TA_HASH (test builds; default off: no effect).
 include tahash.mk

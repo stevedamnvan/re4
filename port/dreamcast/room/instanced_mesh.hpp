@@ -84,6 +84,39 @@ struct MeshLevel {
     std::uint32_t first_meshlet, meshlet_count;
     float error; // model units; drawn while error * lod_scale <= nearest cluster depth
 };
+#if defined(RE4DC_TREE_IMPOSTOR) && RE4DC_TREE_IMPOSTOR
+// v2/v3, game TREE_IMPOSTOR=1 (tools/mesh_annotate.py --impostors): runtime
+// table words 0/1 = offset/count of these records, ascending by mesh, at most
+// one per mesh. Runtime tables: LOD header word 7 ('reserved'; W9b took words
+// 5/6) = offset of a 32-byte head {impostor offset, impostor count, texture
+// offset, 5 zero words}. A runtime without the knob ignores them (geometry as before).
+// The atlas holds 'views' cells (cell_w x cell_h texels, 'cols' per row, row
+// 0 at the top) of the mesh rendered orthographically around its vertical
+// axis; cell k looks along -back_k, back_k = (cos a, 0, -sin a), a = 2 pi k /
+// views in model space, and spans half_w/half_h around 'centre'.
+struct MeshImpostor {
+    std::uint32_t mesh;             // MeshRecord index
+    std::uint32_t key_crc, key_fnv; // atlas: /cd/dc/tex/<crc>-<fnv>.re4tex
+    std::uint16_t views, cols, cell_w, cell_h, atlas_w, atlas_h;
+    float centre[3];                // model units
+    float half_w, half_h;           // model units
+    std::uint32_t reserved;         // 0 in the file; runtime: cached mean lit colour
+};
+static_assert(sizeof(MeshImpostor)==48);
+#endif
+#if defined(RE4DC_MESH_TEXTURES) && RE4DC_MESH_TEXTURES
+// v2/v3, game MESH_TEXTURES=1 (tools/mesh_annotate.py --textures): runtime
+// table word 2 = offset of a u32 record count followed by these records,
+// ascending by package part index, at most one per part. The part draws with
+// that prepared texture package instead of its source image; its UVs address
+// it directly (0..1). A runtime without the knob ignores them.
+struct MeshTexture {
+    std::uint32_t part;             // package part index (MeshRecord::first_part + i)
+    std::uint16_t width, height;    // the package's texture size
+    std::uint32_t key_crc, key_fnv; // /cd/dc/tex/<crc>-<fnv>.re4tex
+};
+static_assert(sizeof(MeshTexture)==16);
+#endif
 static_assert(sizeof(MeshHeader)==80);
 static_assert(sizeof(MeshLodHeader)==32);
 static_assert(sizeof(MeshPartLod)==8);
@@ -192,9 +225,52 @@ public:
                 }
             }
         }
+#if (defined(RE4DC_TREE_IMPOSTOR) && RE4DC_TREE_IMPOSTOR) || (defined(RE4DC_MESH_TEXTURES) && RE4DC_MESH_TEXTURES)
+        rt_[0]=rt_[1]=rt_[2]=0;
+        if(h_.version>=2 && l_.reserved){
+            if(!section(l_.reserved,8,4,size,head))return fail("runtime tables");
+            const std::uint32_t* t=at<std::uint32_t>(l_.reserved);
+            for(unsigned i=3;i<8;++i)if(t[i])return fail("runtime tables");
+            for(unsigned i=0;i<3;++i)rt_[i]=t[i];
+        }
+#endif
+#if defined(RE4DC_TREE_IMPOSTOR) && RE4DC_TREE_IMPOSTOR
+        if(h_.version>=2 && rt_[1]){
+            if(!section(rt_[0],rt_[1],sizeof(MeshImpostor),size,head))return fail("impostor section");
+            const auto pow2=[](unsigned n){return n>=8U && n<=1024U && !(n&(n-1U));};
+            const auto finite=[](float f){return f==f && f<3.0e38f && f>-3.0e38f;};
+            for(unsigned i=0;i<rt_[1];++i){
+                const auto& r=impostors()[i];
+                if(r.mesh>=h_.mesh_count || (i && r.mesh<=impostors()[i-1].mesh) || r.reserved ||
+                   !r.views || r.views>64U || !r.cols || r.cols>r.views || !r.cell_w || !r.cell_h ||
+                   !pow2(r.atlas_w) || !pow2(r.atlas_h) || unsigned(r.cols)*r.cell_w>r.atlas_w ||
+                   unsigned((r.views+r.cols-1U)/r.cols)*r.cell_h>r.atlas_h ||
+                   !finite(r.centre[0]) || !finite(r.centre[1]) || !finite(r.centre[2]) ||
+                   !(r.half_w>0.0f) || !(r.half_h>0.0f) || !finite(r.half_w) || !finite(r.half_h))return fail("impostor");
+            }
+        }
+#endif
+#if defined(RE4DC_MESH_TEXTURES) && RE4DC_MESH_TEXTURES
+        if(h_.version>=2 && rt_[2]){
+            if(!section(rt_[2],1,4,size,head))return fail("texture section");
+            const std::uint32_t count=*at<std::uint32_t>(rt_[2]);
+            if(!count || !section(rt_[2]+4,count,sizeof(MeshTexture),size,head))return fail("texture section");
+            const auto pow2=[](unsigned n){return n>=8U && n<=1024U && !(n&(n-1U));};
+            for(unsigned i=0;i<count;++i){
+                const auto& r=textures()[i];
+                if(r.part>=h_.part_count || (i && r.part<=textures()[i-1].part) ||
+                   !pow2(r.width) || !pow2(r.height))return fail("texture");
+            }
+        }
+#endif
         return true;
     }
-    void close(){data_=nullptr;error_=nullptr;l_={};}
+    void close(){
+        data_=nullptr;error_=nullptr;l_={};
+#if (defined(RE4DC_TREE_IMPOSTOR) && RE4DC_TREE_IMPOSTOR) || (defined(RE4DC_MESH_TEXTURES) && RE4DC_MESH_TEXTURES)
+        rt_[0]=rt_[1]=rt_[2]=0;
+#endif
+    }
     bool valid()const{return data_!=nullptr;}
     bool lod()const{return data_ && h_.version>=2;}
     bool shared()const{return data_ && h_.version==3;}
@@ -225,6 +301,25 @@ public:
     const MeshPartLod* part_lods()const{return at<MeshPartLod>(l_.part_lod_offset);}
     const MeshCluster* clusters()const{return at<MeshCluster>(l_.cluster_offset);}
     const MeshLevel* levels()const{return at<MeshLevel>(l_.level_offset);}
+#if defined(RE4DC_TREE_IMPOSTOR) && RE4DC_TREE_IMPOSTOR
+    const MeshImpostor* impostors()const{return at<MeshImpostor>(rt_[0]);}
+    // Impostor record of mesh m; nullptr when it has none.
+    const MeshImpostor* impostor(unsigned m)const{
+        if(!lod())return nullptr;
+        for(unsigned i=0;i<rt_[1] && impostors()[i].mesh<=m;++i)if(impostors()[i].mesh==m)return impostors()+i;
+        return nullptr;
+    }
+#endif
+#if defined(RE4DC_MESH_TEXTURES) && RE4DC_MESH_TEXTURES
+    const MeshTexture* textures()const{return at<MeshTexture>(rt_[2]+4);}
+    // Texture record of package part index 'part'; nullptr when it has none.
+    const MeshTexture* texture(unsigned part)const{
+        if(!lod() || !rt_[2])return nullptr;
+        const std::uint32_t count=*at<std::uint32_t>(rt_[2]);
+        for(unsigned i=0;i<count && textures()[i].part<=part;++i)if(textures()[i].part==part)return textures()+i;
+        return nullptr;
+    }
+#endif
     // Scenery class of mesh m (kClassDefault when the package has no table).
     unsigned mesh_class(unsigned m)const{return l_.class_offset?data_[l_.class_offset+m]:unsigned(kClassDefault);}
     // This room's rule for class c; {0, 0} (runtime defaults) when absent.
@@ -284,6 +379,9 @@ private:
     bool fail(const char* why){data_=nullptr;error_=why;return false;}
     MeshHeader h_{};
     MeshLodHeader l_{};
+#if (defined(RE4DC_TREE_IMPOSTOR) && RE4DC_TREE_IMPOSTOR) || (defined(RE4DC_MESH_TEXTURES) && RE4DC_MESH_TEXTURES)
+    std::uint32_t rt_[3]{}; // runtime tables (TREE_IMPOSTOR / MESH_TEXTURES): see open()
+#endif
     const std::uint8_t* data_=nullptr;
     const char* error_=nullptr;
 };

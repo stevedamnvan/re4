@@ -1716,6 +1716,11 @@ extern "C" void re4dc_ui_init(){
     // Flycast's zero TA-used register does not qualify physical TA capacity.
     params.vertex_buf_size=RE4DC_TA_VERTBUF_KB*1024;params.vbuf_doublebuf_disabled=!RE4DC_TA_DOUBLEBUF;
     if(RE4DC_TA_OPB_BINS==32){params.opb_sizes[PVR_LIST_OP_POLY]=PVR_BINSIZE_32;params.opb_sizes[PVR_LIST_TR_POLY]=PVR_BINSIZE_32;}
+#if RE4DC_TREE_IMPOSTOR
+    // Impostor quads (re4dc_model_pt_begin). A scene that sends no PT list
+    // gets KOS's blank one at pvr_scene_finish(), so every scene completes.
+    params.opb_sizes[PVR_LIST_PT_POLY]=PVR_BINSIZE_8; // 8 words: half the OPB VRAM of 16
+#endif
     params.opb_overflow_count=RE4DC_TA_OPB_OVERFLOW;
 #endif
     params.autosort_disabled=1; // source OT is the UI blending order
@@ -1758,6 +1763,9 @@ extern "C" void re4dc_ui_init(){
         // near/far visibility to the existing source-projection clipper and
         // place the background behind every positive inverse model depth.
         pvr_set_zclip(0.0f);
+#if RE4DC_TREE_IMPOSTOR
+        PVR_SET(PVR_PT_ALPHA_REF,128); // punch-through keeps texels with alpha >= 50%
+#endif
     }
 }
 extern "C" void re4dc_ui_begin(){
@@ -2176,6 +2184,16 @@ extern "C" int re4dc_model_header_preview(const Re4dcModelPart* p,void* out){
     return 1;
 }
 #endif
+#if RE4DC_MESH_TEXTURES
+#if !RE4DC_D349_RENDERER_STACK
+#error MESH_TEXTURES extends the D349 model packet path
+#endif
+// MESH_TEXTURES (native_static.cpp): set around one native mesh part's draw.
+// That part binds this prepared package {crc, fnv, width, height} instead of
+// its source image; its UVs address the package texture directly (scale 1).
+namespace { const unsigned* model_texture=nullptr; }
+extern "C" void re4dc_model_texture(const unsigned* key){model_texture=key;}
+#endif
 extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket* out){
     RE4DC_PROFILE_SCOPE(PacketPack);
 #if RE4DC_ACTOR_UV16
@@ -2184,22 +2202,46 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
     const unsigned pcw_set=next_pcw_set,pcw_clear=next_pcw_clear;next_pcw_set=next_pcw_clear=0;
 #endif
     if(!re4dc_model_packet_reserve(p,out))return 0;
+#if RE4DC_MESH_TEXTURES
+    Entry* handle=nullptr;
+    if(model_texture){
+        const Key baked_key{model_texture[0],model_texture[1]};
+        const Re4dcUiImage baked{&baked_key,nullptr,model_texture[2],model_texture[3],5,0,0}; // size checks only
+        handle=load(baked,false,&baked_key);if(!handle){++model_texture_rejects;return 0;}
+    }else{
+#endif
 #if RE4DC_UI_HANDLES
     const Re4dcModelPart* masked=nullptr;
 #if RE4DC_D349_RENDERER_STACK
     if(p->material_flags&4)masked=p;
 #endif
+#if RE4DC_MESH_TEXTURES
+    handle=resolve(p->image,masked,false);if(!handle){++model_texture_rejects;return 0;}
+#else
     Entry* handle=resolve(p->image,masked,false);if(!handle){++model_texture_rejects;return 0;}
+#endif
 #else
     Key prepared{};const Key* key=nullptr;
 #if RE4DC_D349_RENDERER_STACK
     if(p->material_flags&4){if(!model_mask_key(p,prepared)){++model_texture_rejects;return 0;}key=&prepared;}
 #endif
+#if RE4DC_MESH_TEXTURES
+    handle=load(p->image,false,key);if(!handle){++model_texture_rejects;return 0;}
+#else
     Entry* handle=load(p->image,false,key);if(!handle){++model_texture_rejects;return 0;}
+#endif
+#endif
+#if RE4DC_MESH_TEXTURES
+    }
 #endif
     const auto& t=handle->package.textures()[0];
     // Repeating a padded image would repeat its border. Reject, never change wrap.
+#if RE4DC_MESH_TEXTURES
+    // A baked texture is addressed 0..1 as authored: no source image size to match.
+    if(!model_texture && ((p->wrap_s && t.width!=p->image.width)||(p->wrap_t && t.height!=p->image.height))){++model_wrap_rejects;return 0;}
+#else
     if((p->wrap_s && t.width!=p->image.width)||(p->wrap_t && t.height!=p->image.height)){++model_wrap_rejects;return 0;}
+#endif
     unsigned fmt=re4dc::texture::pvr_format(t);
     pvr_list_t list=PVR_LIST_TR_POLY;
 #if RE4DC_D349_RENDERER_STACK
@@ -2263,8 +2305,15 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
 #endif
     model_pending=model_used+count;model_handle=handle;
     out->vertices=model_packets+model_pending;out->capacity=kModelPacketBytes/32-model_pending;
+#if RE4DC_MESH_TEXTURES
+    if(model_texture){out->u_scale=1.0f;out->v_scale=1.0f;}
+    else {
+#endif
     if(out->u_scale!=float(p->image.width)/t.width || out->v_scale!=float(p->image.height)/t.height)++model_scale_rebuilds;
     out->u_scale=float(p->image.width)/t.width;out->v_scale=float(p->image.height)/t.height;
+#if RE4DC_MESH_TEXTURES
+    }
+#endif
     if(p->alpha_state&256)++model_alpha_vertex;else ++model_alpha_material;
     if(!(p->alpha_state&256) && (p->alpha_state&255)<255)++model_alpha_faded;
     if(model_parts<6)re4dc_log("native model DIAGNOSTIC source=%08x info=%08x part=%08x positions=%u stride=%u stream=%u flags=%08x material=%02x cull=%u\n",(unsigned)p->model,(unsigned)p->info,(unsigned)p->part,p->position_count,p->position_stride,p->stream_bytes,p->flags,p->material_flags,p->cull);
@@ -2349,6 +2398,39 @@ extern "C" void re4dc_model_direct_end(unsigned vertices){
     (void)vertices;
 #endif
 }
+#if RE4DC_TREE_IMPOSTOR
+#if !RE4DC_PVR_STREAM || !RE4DC_D349_RENDERER_STACK
+#error TREE_IMPOSTOR extends the PVR_STREAM=1 D349 frame owner
+#endif
+// TREE_IMPOSTOR (native_static.cpp): one punch-through batch per impostor
+// atlas; the vertices follow in the returned packet, then
+// re4dc_model_packet_commit(). The atlas is bound by its prepared package key
+// (/cd/dc/tex/<crc>-<fnv>.re4tex); no source image exists for it.
+extern "C" void re4dc_static_flush_impostors();
+extern "C" int re4dc_model_pt_begin(unsigned crc,unsigned fnv,unsigned width,unsigned height,int fog,Re4dcModelPacket* out){
+    if(!frame_ready || stream_aborted || !ensure_model_storage() || model_used+8>kModelPacketBytes/32)return 0;
+    const Key key{crc,fnv};
+    const Re4dcUiImage image{&key,nullptr,width,height,5,0,0}; // size checks only: pixels are never read
+    Entry* handle=load(image,false,&key);if(!handle){++model_texture_rejects;return 0;}
+    const auto& t=handle->package.textures()[0];
+    stream_select(PVR_LIST_PT_POLY);
+    pvr_poly_cxt_t c;pvr_poly_cxt_txr(&c,PVR_LIST_PT_POLY,re4dc::texture::pvr_format(t),t.width,t.height,handle->package.pvr_texture(0),PVR_FILTER_BILINEAR);
+    c.gen.culling=PVR_CULLING_NONE;c.depth.comparison=PVR_DEPTHCMP_GEQUAL;c.depth.write=PVR_DEPTHWRITE_ENABLE;
+    c.blend.src=PVR_BLEND_ONE;c.blend.dst=PVR_BLEND_ZERO;c.txr.env=PVR_TXRENV_MODULATEALPHA;c.txr.alpha=PVR_TXRALPHA_ENABLE;
+    c.txr.uv_clamp=PVR_UVCLAMP_UV;
+#if RE4DC_NATIVE_FOG
+    c.gen.fog_type=fog?PVR_FOG_TABLE:PVR_FOG_DISABLE;
+#else
+    (void)fog;
+#endif
+    pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);++model_header_builds;
+    std::uint32_t count;re4dc::render::begin_pvr_packet(model_packets+model_used,count,header);
+    model_pending=model_used+count;model_handle=handle;
+    out->vertices=model_packets+model_pending;out->capacity=kModelPacketBytes/32-model_pending;
+    out->u_scale=1.0f;out->v_scale=1.0f;
+    return 1;
+}
+#endif
 
 #if RE4DC_COPY_LEAN && RE4DC_D349_RENDERER_STACK
 namespace {
@@ -2559,6 +2641,9 @@ extern "C" int re4dc_effect_sprite(const Re4dcEffectSprite* s){
 #endif
 extern "C" void re4dc_model_finish_source_draws(){
     RE4DC_PROFILE_SCOPE(TranslucentDrain);
+#if RE4DC_TREE_IMPOSTOR
+    re4dc_static_flush_impostors(); // PT list, between the OP pass and the TR drain
+#endif
 #if RE4DC_D349_RENDERER_STACK
     if(!deferred_first){source_draws_finished=true;return;}
     draining_parts=true;

@@ -13,6 +13,9 @@ inline constexpr std::uint32_t kVersion = 2;
 inline constexpr std::uint32_t kRgb565 = 0;
 inline constexpr std::uint32_t kArgb1555 = 1;
 inline constexpr std::uint32_t kArgb4444 = 2;
+// Game TREE_IMPOSTOR=1 only: 4bpp palettised full-codebook VQ (impostor
+// atlases); its 16 ARGB1555 palette entries follow the VQ data (32 bytes).
+inline constexpr std::uint32_t kPal4 = 3;
 inline constexpr std::uint32_t kAlpha = 1U << 0U;
 inline constexpr std::uint32_t kBinaryAlpha = 1U << 1U;
 // Linear 16-bit payloads use the existing upload-time twiddler. Twiddled and

@@ -186,6 +186,43 @@ converter (`tools/convert_room_bins.py --lod ...`).
 Add `PC_SAMPLER=1 PC_SAMPLER_BYTES=8192` for the PC-sampling profiler, when that knob is
 present in the tree.
 
+## Blender scenery knobs (items 20/21, `game/blender30.mk`)
+
+Both default to 0, and the default image is then byte-identical. Both need `MESH_LOD=1` and
+packages annotated by `tools/mesh_annotate.py`. A runtime without the knob ignores the
+annotations.
+
+| Knob | Effect | Package input |
+|---|---|---|
+| `TREE_IMPOSTOR=1` (`TREE_IMPOSTOR_MM=12000`) | Past that view depth, each PS2 tree draws as one camera-facing punch-through quad from a 16-view atlas (4bpp palettised VQ, format kPal4). Quads are batched per atlas into the PT list. | `--impostors` (`tools/tree_impostors.py`) |
+| `MESH_TEXTURES=1` | A part with a texture record binds that prepared package instead of its source image. This is how house shells carry their baked GC detail. | `--textures` (`tools/house_shells.py`) |
+
+```
+# tree impostors (COMMON): bake, encode, annotate; TEXDIRS += <imp>/tex
+blender -b --factory-startup --python tools/blender/bl_impostor_bake.py -- <trees-dc> <bake>
+python3 tools/tree_impostors.py <imp> --bake <bake> --trees <trees-dc>
+python3 tools/mesh_annotate.py <pkg>/COMMON.re4mesh <out>/COMMON.re4mesh --impostors <imp>/impostors.json
+# house shells (FILE_01/17, /18): shell + bake per BIN, package, replace, annotate; TEXDIRS += <sh>/tex
+blender -b --factory-startup --python tools/blender/bl_house_shell.py -- FILE_01_17.obj <tpl png dir> <s17> \
+  --keep-alpha --cull-hidden --faces 550 --tex-size 512
+python3 tools/house_shells.py <sh> <s17> <s18>
+python3 tools/convert_room_bins.py <tmp>/FILE_01.re4mesh --owner 1 --bins <R100.FILE_1> <LD lod args> \
+  --lod-substitute <dir: the other FILE_01 replacements + <sh>/replace/*.obj>
+python3 tools/mesh_annotate.py <tmp>/FILE_01.re4mesh <out>/FILE_01.re4mesh --textures <sh>/textures.json
+# honest comparison renders (VQ-decoded texture), 3/8/20 m, 8 azimuths, worst first in metrics.json
+blender -b --factory-startup --python tools/blender/bl_house_compare.py -- FILE_01_17.obj <s17>/FILE_01_17.obj \
+  <tpl png dir> <sh>/preview/FILE_01_17.png <cmp>
+```
+
+`TREE_IMPOSTOR=1` at 12 m, measured on r100 frames 2401-2520 with LF in one Flycast sitting:
+frame 116.8 -> 100.1 ms, work 91.3 -> 88.6 ms, TA 1.41 -> 1.28 MB/frame (about 30 quads in 5
+batches). The hardware model (`frame_ms.py --impostor`) gives -1.08 ms, or -0.98 ms at 15 m.
+VRAM is 84 KB of atlases plus 77 KB of PT bins.
+
+`MESH_TEXTURES=1` with the FILE_01/17 and /18 shells (550 and 800 triangles, 512 VQ each)
+gives -0.71 ms/frame in the hardware model (heavy mean 8.62 -> 7.91; per BIN 0.81 -> 0.32 and
+0.63 -> 0.40). VRAM is 132 KB. Not measured in Flycast.
+
 ## Any room: r101, r103 (W9)
 
 The same package recipe as r100 (instanced meshes, LOD at `MESH_LOD_PX=3`, fog to the

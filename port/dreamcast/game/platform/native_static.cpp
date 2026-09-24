@@ -109,6 +109,23 @@
 // native_ui.cpp: the translucent queue without a lighting snapshot.
 extern "C" int re4dc_model_defer_part_unlit(const Re4dcModelPart*);
 #endif
+// D367 item 20, TREE_IMPOSTOR (blender30.mk; default off = previous image): a
+// mesh with an impostor record draws beyond RE4DC_TREE_IMPOSTOR_MM of view
+// depth as one camera-facing punch-through quad (mesh_impostor below).
+#if RE4DC_TREE_IMPOSTOR
+#if !RE4DC_NATIVE_MESH || !RE4DC_MESH_LOD
+#error TREE_IMPOSTOR draws R4IM v2 impostor records (NATIVE_MESH=1 MESH_LOD=1)
+#endif
+extern "C" int re4dc_model_pt_begin(unsigned crc,unsigned fnv,unsigned width,unsigned height,int fog,Re4dcModelPacket* out);
+#endif
+// D367 item 21, MESH_TEXTURES (blender30.mk; default off = previous image): a
+// part with a texture record draws with that prepared package (mesh_submit).
+#if RE4DC_MESH_TEXTURES
+#if !RE4DC_NATIVE_MESH || !RE4DC_MESH_LOD
+#error MESH_TEXTURES draws R4IM v2 texture records (NATIVE_MESH=1 MESH_LOD=1)
+#endif
+extern "C" void re4dc_model_texture(const unsigned* key);
+#endif
 
 namespace {
 using re4dc::room::Package;
@@ -489,6 +506,16 @@ struct MeshView {
     unsigned room=0; bool attempted=false;
 };
 MeshView mesh_views[kMeshViews];
+#if RE4DC_TREE_IMPOSTOR
+// This frame's impostor quads (screen x, y, 1/w per corner: TL, TR, BL, BR),
+// sent per atlas by re4dc_static_flush_impostors(). A retired view clears it.
+struct ImpostorQuad { const re4dc::room::MeshImpostor* record; std::uint32_t argb; std::uint16_t cell; std::uint8_t fog,pad; float s[4][3]; };
+constexpr unsigned kImpostorQuads=48;
+ImpostorQuad impostor_queue[kImpostorQuads];
+unsigned impostor_count=0,impostor_frame=~0U,impostor_flushed=~0U;
+const void* impostor_object=nullptr; bool impostor_queued=false; // the last first-part decision
+unsigned impostor_stats[4]; // quads queued, parts skipped, queue full, batches sent
+#endif
 #if RE4DC_MESH_FASTPATH
 constexpr unsigned kLutBytes=512*4;
 #else
@@ -498,6 +525,9 @@ constexpr unsigned kLutBytes=0;
 constexpr unsigned kGatherBytes=(256U*unsigned(sizeof(re4dc::room::CompactVertex12))+31U)&~31U;
 
 void retire(MeshView& v){
+#if RE4DC_TREE_IMPOSTOR
+    impostor_frame=~0U; // queued records may point into this view
+#endif
     v.package.close();
     if(v.storage){re4dc_static_free(v.storage);stats.package_bytes-=v.bytes;--stats.owners_open;}
     v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.capacity=0;v.lut=nullptr;v.gather=nullptr;v.attempted=false;v.room=0;
@@ -892,6 +922,45 @@ extern "C" void re4dc_static_retire_all(){
 #endif
 }
 extern "C" const Re4dcStaticStats* re4dc_static_stats(){return &stats;}
+#if RE4DC_TREE_IMPOSTOR
+// native_ui re4dc_model_finish_source_draws(): after the OP pass, before the
+// translucent drain. One PT packet per (atlas, fog) with each quad as a
+// 4-corner strip; a later impostor candidate this frame draws geometry.
+extern "C" void re4dc_static_flush_impostors(){
+    const unsigned frame=re4dc_ui_frame();
+    if(impostor_flushed==frame)return;
+    impostor_flushed=frame;
+    if(impostor_frame!=frame)return;
+    for(unsigned i=0;i<impostor_count;++i){
+        const auto* first=impostor_queue[i].record;
+        if(!first)continue;
+        const unsigned fog=impostor_queue[i].fog;
+        Re4dcModelPacket packet{};
+        const bool bound=re4dc_model_pt_begin(first->key_crc,first->key_fnv,first->atlas_w,first->atlas_h,int(fog),&packet)!=0;
+        auto* out=static_cast<pvr_vertex_t*>(packet.vertices);unsigned used=0;
+        for(unsigned j=i;j<impostor_count;++j){
+            ImpostorQuad& q=impostor_queue[j];
+            const auto* r=q.record;
+            if(!r || r->key_crc!=first->key_crc || r->key_fnv!=first->key_fnv || q.fog!=fog)continue;
+            q.record=nullptr;
+            if(!bound || used+4>packet.capacity)continue;
+            const unsigned col=q.cell%r->cols,row=q.cell/r->cols;
+            const float iw=1.0f/float(r->atlas_w),ih=1.0f/float(r->atlas_h); // half-texel inset: no neighbour bleed
+            const float u0=(float(col*r->cell_w)+0.5f)*iw,u1=(float((col+1)*r->cell_w)-0.5f)*iw;
+            const float v0=(float(row*r->cell_h)+0.5f)*ih,v1=(float((row+1)*r->cell_h)-0.5f)*ih;
+            for(unsigned k=0;k<4;++k){
+                pvr_vertex_t& o=out[used+k];
+                o.flags=k==3?PVR_CMD_VERTEX_EOL:PVR_CMD_VERTEX;
+                o.x=q.s[k][0];o.y=q.s[k][1];o.z=q.s[k][2];
+                o.u=(k&1)?u1:u0;o.v=(k&2)?v1:v0;o.argb=q.argb;o.oargb=0;
+            }
+            used+=4;
+        }
+        if(bound){re4dc_model_packet_commit(used);++impostor_stats[3];}
+    }
+    impostor_count=0;
+}
+#endif
 #if RE4DC_FRONT_LEAN
 // 1 when 'object' is bound to a native mesh whose source identity matches
 // (vertices, display lists) and every part of it is already lit (light_part
@@ -1067,6 +1136,10 @@ void log_stats(unsigned frame){
             stats.clusters_visible+stats.clusters_culled,stats.lod_draws[0],stats.lod_draws[1],stats.lod_draws[2],
             stats.lod_draws[3],unsigned(RE4DC_MESH_LOD_PX));
 #endif
+#if RE4DC_TREE_IMPOSTOR
+        re4dc_log("native static: frame=%u impostors=%u parts_skipped=%u queue_full=%u batches=%u switch_mm=%u\n",frame,
+            impostor_stats[0],impostor_stats[1],impostor_stats[2],impostor_stats[3],unsigned(RE4DC_TREE_IMPOSTOR_MM));
+#endif
     }
 }
 #if RE4DC_NATIVE_MESH
@@ -1094,6 +1167,115 @@ const unsigned char* first_part(const unsigned char* data){
     const unsigned char* parts;
     std::memcpy(&parts,data+0x1C,sizeof(parts));
     return parts;
+}
+#endif
+#if RE4DC_TREE_IMPOSTOR
+// atan2(y, x) in turns, [0, 1): octant reduction and a 7th-order minimax
+// arctangent (error < 1e-5 rad); libm's atan2 would grow this -Os unit.
+float turns(float y,float x){
+    const float ax=std::fabs(x),ay=std::fabs(y),lo=ax<ay?ax:ay,hi=ax<ay?ay:ax;
+    if(!(hi>0.0f))return 0.0f;
+    const float a=lo/hi,s=a*a;
+    float r=((-0.0464964749f*s+0.15931422f)*s-0.327622764f)*s*a+a;
+    if(ay>ax)r=1.57079633f-r;
+    if(x<0.0f)r=3.14159265f-r;
+    r*=0.159154943f;
+    return y<0.0f?1.0f-r:r;
+}
+// Area-weighted mean lit colour of the mesh's full-detail surface (level 0 of
+// every cluster of every lit part; ARGB8888), cached in the record once every
+// part is lit. The quad modulates the atlas's unlit albedo by it, as the
+// geometry modulates the same texture by its per-vertex lighting.
+std::uint32_t impostor_color(const MeshView& v,const re4dc::room::MeshRecord& mesh,re4dc::room::MeshImpostor& r){
+    if(r.reserved)return r.reserved;
+    float sum[3]={0,0,0},total=0;bool all=true;
+    const auto& pk=v.package;
+    for(unsigned i=mesh.first_part;i<mesh.first_part+mesh.part_count;++i){
+        if(!pk.parts()[i].reserved){all=false;continue;}
+        const auto& lod=pk.part_lods()[i];
+        for(unsigned c=lod.first_cluster;c<lod.first_cluster+lod.cluster_count;++c){
+            const auto& lv=pk.levels()[pk.clusters()[c].first_level];
+            for(unsigned l=lv.first_meshlet;l<lv.first_meshlet+lv.meshlet_count;++l){
+                const auto& let=pk.meshlets()[l];
+                const auto* base=pk.vertices()+let.first_vertex;
+                const std::uint8_t* s=pk.strips()+let.first_strip;const std::uint8_t* end=s+let.strip_bytes;
+                while(s<end){
+                    const unsigned n=*s++;
+                    for(unsigned k=2;k<n;++k){
+                        const auto &a=base[s[k-2]],&b=base[s[k-1]],&d=base[s[k]];
+                        float e[2][3];
+                        for(unsigned x=0;x<3;++x){
+                            const float o=float((&a.x)[x]);
+                            e[0][x]=(float((&b.x)[x])-o)*mesh.step[x];e[1][x]=(float((&d.x)[x])-o)*mesh.step[x];
+                        }
+                        const float cx=e[0][1]*e[1][2]-e[0][2]*e[1][1],cy=e[0][2]*e[1][0]-e[0][0]*e[1][2],
+                                    cz=e[0][0]*e[1][1]-e[0][1]*e[1][0],area=std::sqrt(cx*cx+cy*cy+cz*cz);
+                        const re4dc::room::CompactVertex12* corners[3]={&a,&b,&d};
+                        for(const auto* q:corners){
+                            const unsigned col=q->color;
+                            sum[0]+=area*float((col>>10)&31U);sum[1]+=area*float((col>>5)&31U);sum[2]+=area*float(col&31U);
+                        }
+                        total+=3.0f*area;
+                    }
+                    s+=n;
+                }
+            }
+        }
+    }
+    std::uint32_t argb=0xffffffffU;
+    if(total>0){argb=0xff000000U;for(unsigned a=0;a<3;++a)argb|=unsigned(sum[a]*(255.0f/31.0f)/total+0.5f)<<(16-8*a);}
+    if(all && total>0)r.reserved=argb;
+    return argb;
+}
+// 0: draw the geometry; 1: the mesh is its impostor's (queued, or hidden
+// beyond the fog/far plane or the screen). The mesh's first part decides for
+// the whole object; its other parts follow that decision.
+int mesh_impostor(MeshView& v,unsigned mesh_index,const re4dc::room::MeshPart& part,const Re4dcModelPart& p,
+                  float near,float far){
+    auto* r=const_cast<re4dc::room::MeshImpostor*>(v.package.impostor(mesh_index));
+    if(!r)return 0;
+    const unsigned frame=re4dc_ui_frame();
+    const auto& mesh=v.package.meshes()[mesh_index];
+    if(&part!=v.package.parts()+mesh.first_part){
+        if(impostor_frame!=frame || p.model!=impostor_object || !impostor_queued)return 0;
+        ++impostor_stats[1];return 1;
+    }
+    if(impostor_frame!=frame){impostor_frame=frame;impostor_count=0;}
+    impostor_object=p.model;impostor_queued=false;
+    if(impostor_flushed==frame)return 0; // after this frame's PT batches: geometry
+    const float* m=p.modelview;const float* C=r->centre;
+    float c[3];
+    for(unsigned i=0;i<3;++i)c[i]=m[4*i]*C[0]+m[4*i+1]*C[1]+m[4*i+2]*C[2]+m[4*i+3];
+    if(!(-c[2]>=float(RE4DC_TREE_IMPOSTOR_MM)))return 0;
+    const float scale=std::sqrt(m[0]*m[0]+m[1]*m[1]+m[2]*m[2]);
+    if(-c[2]-(r->half_w>r->half_h?r->half_w:r->half_h)*scale>far){impostor_queued=true;return 1;} // as its clusters
+    if(impostor_count>=kImpostorQuads){++impostor_stats[2];return 0;}
+    // Camera direction in model space (A^T of a rotation-and-uniform-scale
+    // modelview, unnormalised), its azimuth's cell, and the facing quad.
+    const float dx=-(m[0]*c[0]+m[4]*c[1]+m[8]*c[2]),dz=-(m[2]*c[0]+m[6]*c[1]+m[10]*c[2]);
+    const float length=std::sqrt(dx*dx+dz*dz),bx=length>0?dx/length:1.0f,bz=length>0?dz/length:0.0f;
+    unsigned cell=unsigned(turns(-dz,dx)*float(r->views)+0.5f);
+    if(cell>=r->views)cell-=r->views;
+    ImpostorQuad& q=impostor_queue[impostor_count];
+    const float* P=p.projection;const float* V=p.viewport;
+    unsigned left=0,right=0,top=0,bottom=0;
+    for(unsigned k=0;k<4;++k){
+        const float sx=(k&1)?r->half_w:-r->half_w,sy=(k&2)?-r->half_h:r->half_h;
+        const float x=C[0]+sx*bz,y=C[1]+sy,z=C[2]-sx*bx;
+        const float vx=m[0]*x+m[1]*y+m[2]*z+m[3],vy=m[4]*x+m[5]*y+m[6]*z+m[7],vz=m[8]*x+m[9]*y+m[10]*z+m[11];
+        if(!(-vz>near))return 0;
+        const float inv=1.0f/(-vz);
+        float* s=q.s[k];
+        s[0]=(V[2]*.5f*(P[1]*vx+P[2]*vz)*inv+V[0]+V[2]*.5f)*640.f/V[2];
+        s[1]=(-V[3]*.5f*(P[3]*vy+P[4]*vz)*inv+V[1]+V[3]*.5f)*480.f/V[3];
+        s[2]=inv;
+        left+=s[0]<0;right+=s[0]>640.0f;top+=s[1]<0;bottom+=s[1]>480.0f;
+    }
+    impostor_queued=true;
+    if(left==4 || right==4 || top==4 || bottom==4)return 1;
+    q.record=r;q.cell=std::uint16_t(cell);q.fog=p.source_key[2]?1:0;q.argb=impostor_color(v,mesh,*r);
+    ++impostor_count;++impostor_stats[0];
+    return 1;
 }
 #endif
 int mesh_submit(const Re4dcModelPart& p){
@@ -1162,6 +1344,15 @@ int mesh_submit(const Re4dcModelPart& p){
     if(p.projection[0]!=0 || p.viewport[2]<=0 || p.viewport[3]<=0)return 0;
     const float near=p.projection[6]/(p.projection[5]-1),far=p.projection[6]/p.projection[5];
     if(!re4dc::render::is_finite(near)||!re4dc::render::is_finite(far)||near<=0||far<=near)return 0;
+#if RE4DC_TREE_IMPOSTOR
+    {
+        float cull=far;
+#if RE4DC_NATIVE_FOG
+        if(p.source_key[2] && fog_now.far>near && fog_now.far<far)cull=fog_now.far; // as MeshDraw::cull_far
+#endif
+        if(mesh_impostor(v,e->mesh,*part,*drawn,near,cull))return 1;
+    }
+#endif
     // Queued translucent parts replay through this function in pass order.
 #if RE4DC_COPY_LEAN
     // The part is lit (above): a replay never reads its lighting again.
@@ -1212,7 +1403,16 @@ int mesh_submit(const Re4dcModelPart& p){
     std::memcpy(d.mv,d.mvq,sizeof(d.mv));
     load_screen(d.mvq,p.projection,p.viewport);
 #endif
+#if RE4DC_MESH_TEXTURES
+    // A part with a texture record (a baked house shell) binds that package.
+    unsigned baked[4];
+    const auto* texture=v.package.texture(unsigned(part-v.package.parts()));
+    if(texture){baked[0]=texture->key_crc;baked[1]=texture->key_fnv;baked[2]=texture->width;baked[3]=texture->height;re4dc_model_texture(baked);}
     const int result=d.run();
+    if(texture)re4dc_model_texture(nullptr);
+#else
+    const int result=d.run();
+#endif
 #if RE4DC_MESH_DIRECT
     d.end_direct(); // before any abort: releases the store queues
 #endif
