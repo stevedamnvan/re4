@@ -11,6 +11,7 @@
 #include "joy.h"
 #include "id_sys.h"
 #include "cockpit.h"
+#include "texture.h"
 #include "platform/quality.h"
 #include <stddef.h>
 #include <string.h>
@@ -20,6 +21,8 @@
 #endif
 
 extern "C" void re4dc_log(const char* fmt, ...);
+extern cTexSys* g_pIdTexSys;  // id_tex.cpp (at file scope: inside the unnamed namespace it would
+                              // name a different, internal variable)
 
 namespace {
 // Glyph codes of the English common_p.fnt (design-lowmode tools/mestbl.py, verified against the
@@ -98,6 +101,56 @@ void show(int no, int cursor)
     cMes.mes[0].m_cur = s8(cursor);
 }
 
+// The window backdrop. The cockpit id textures share ids with the title's (0x00, 0x0a, 0x0d, 0x13,
+// 0x6f..: IdTexDataLoad logs "id already used" and keeps the title's), so the backdrop unit (texture
+// 0x0a) drew the title's texture of that id and no window showed. The window's own units (ID_MSG)
+// are pointed at a copy of the cockpit texture registered under a free id instead; the title's
+// textures and units are untouched. The copy is registered to the cockpit owner, so close()'s
+// IdTexRelease frees it, and msgWindow(0) removes the units.
+constexpr u8 kIdMsg = 0x2F;  // cockpit.cpp ID_MSG (Cckpt.msgWindow)
+
+void remap_window_ids()
+{
+    // Cockpit IdTexData (version 0xB): id table at +0x04, TPL table at +0x18, TexAnm table at +0x1C.
+    const u32 base = pG->pArc->ofs_74 + (u32) pG->pArc;
+    const u32* hdr = (const u32*) base;
+    if (hdr[0] != 0xB) return;
+    TexIdTbl* ids = (TexIdTbl*) (base + hdr[1]);
+    TexOfsTbl* tpls = (TexOfsTbl*) (base + hdr[6]);
+    TexOfsTbl* anms = (TexOfsTbl*) (base + hdr[7]);
+    u8 from[4], to[4];
+    int n = 0;
+    IdUnit* u = IdSys.pUnit;
+    for (int i = 0; i < IdSys.m_maxId; i++, u++) {
+        if (u->be_flag == 0xFF || u->classNo != kIdMsg) continue;
+        for (int m = 0; m < 2; m++) {
+            if (m && !(u->tex_flag & 1)) continue;
+            u8& id = m ? u->maskId : u->texId;
+            if (id == 0xFF) continue;
+            const u32 owner = g_pIdTexSys->wk[id].owner;
+            if (owner == 0 || owner == TEX_OWNER_ID_COCKPIT) continue;  // the cockpit's own texture
+            int j = 0;
+            while (j < n && from[j] != id) j++;
+            if (j == n) {
+                u32 k = 0;
+                while (k < ids->num && (u8) ids->ent[k].id != id) k++;
+                int f = 0xFE;
+                while (f > 0 && (f == 0x80 || g_pIdTexSys->wk[f].owner != 0)) f--;
+                if (n == 4 || k == ids->num || f == 0 ||
+                    !g_pIdTexSys->TexRegist((TEXPalette*) ((u8*) tpls + tpls->ofs[k]),
+                                            (TexAnm*) ((u8*) anms + anms->ofs[k]), u8(f), TEX_OWNER_ID_COCKPIT, 0, 1))
+                    continue;
+                from[n] = id;
+                to[n] = u8(f);
+                n++;
+                re4dc_log("quality: picker window texture %02x (owner %u) drawn from a cockpit copy at %02x\n", id,
+                          unsigned(owner), f);
+            }
+            id = to[j];
+        }
+    }
+}
+
 void close()
 {
     cMes.Delete(0);
@@ -116,6 +169,7 @@ extern "C" void re4dc_quality_picker_open(void)
     MesData.ptr[4] = (u8*) &table;
     IdTexDataLoad((void*) (pG->pArc->ofs_74 + (u32) pG->pArc), TEX_OWNER_ID_COCKPIT);
     Cckpt.msgWindow(1);
+    remap_window_ids();
     state = 1;
     show(0, cursor_of(re4dc_quality()->mode));
     re4dc_log("quality: picker open (highlight %s)\n", kChoice[cursor_of(re4dc_quality()->mode)]);
