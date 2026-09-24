@@ -62,6 +62,19 @@
 #ifndef RE4DC_UI_VRAM_RESERVE_KB
 #define RE4DC_UI_VRAM_RESERVE_KB 64
 #endif
+// UI_FRAG_LATCH=1: a load refused for fragmentation is not retried for kFragRetryFrames or until the
+// next room preload. Each retry evicted every upload the scene drew last frame, the scene reloaded
+// them and the next retry evicted them again: the r101 scope overlay (256x224, 128 KB 16-bit, with
+// 928 KB free but no such block) locked the game in that loop (user play, warp-r101-door).
+// UI_OVERLAY_SLAB_KB=n: one contiguous n KiB block held from init (beside the glyph atlas, before
+// the budget is taken). A load that finds no contiguous block gets it: the slab is freed and the
+// upload retried into the hole, before anything is evicted; it is taken back when that entry closes.
+#ifndef RE4DC_UI_FRAG_LATCH
+#define RE4DC_UI_FRAG_LATCH 0
+#endif
+#ifndef RE4DC_UI_OVERLAY_SLAB_KB
+#define RE4DC_UI_OVERLAY_SLAB_KB 0
+#endif
 // UI_HANDLES=1 (default off = previous image): direct texture handles. A
 // source image descriptor resolves to its cache entry once; later draws reach
 // it by one direct-mapped compare (no source scan, identity lookup, texel
@@ -168,6 +181,15 @@ inline void sources_reset(){nsource=0;}
 #if RE4DC_TEX_RESIDENT || RE4DC_SUBSCREEN
 // (SUBSCREEN: sub screen images without a converted package are drawn every frame.)
 Key missing_keys[32]; unsigned nmissing;
+#endif
+#if RE4DC_UI_VRAM && RE4DC_UI_FRAG_LATCH
+constexpr unsigned kFragRetryFrames=120;
+Key frag_key{}; unsigned frag_frame,frag_latched;
+#endif
+#if RE4DC_UI_VRAM && RE4DC_TEX_RESIDENT && RE4DC_UI_OVERLAY_SLAB_KB
+constexpr unsigned kOverlaySlabBytes=RE4DC_UI_OVERLAY_SLAB_KB*1024U;
+pvr_ptr_t overlay_slab; const Entry* overlay_owner; unsigned overlay_uses;
+void overlay_slab_take(){ if(!overlay_slab && !overlay_owner)overlay_slab=pvr_mem_malloc(kOverlaySlabBytes); }
 #endif
 #if RE4DC_TEX_RESIDENT
 bool preload_pending; unsigned preload_loads,preload_skipped,preload_runs;
@@ -1015,6 +1037,9 @@ extern "C" int re4dc_std_texture(unsigned i,unsigned out[5]);
 void close_entry(Entry& entry) {
     if(entry.valid) used-=entry.package.vram_bytes();
     entry.package.close();entry.valid=false;
+#if RE4DC_UI_VRAM && RE4DC_TEX_RESIDENT && RE4DC_UI_OVERLAY_SLAB_KB
+    if(overlay_owner==&entry){overlay_owner=nullptr;overlay_slab_take();} // the freed hole comes back
+#endif
 #if RE4DC_D349_RENDERER_STACK
     entry.model_header_key=~0U;
 #endif
@@ -1055,6 +1080,9 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     // A package absent from the disc: fail without evicting an entry or
     // touching the filesystem again (it was retried every frame).
     for(const auto& m:missing_keys) if(m.crc|m.fnv) if(m==key) return nullptr;
+#endif
+#if RE4DC_UI_VRAM && RE4DC_UI_FRAG_LATCH
+    if(key==frag_key && frame-frag_frame<kFragRetryFrames){++frag_latched;return nullptr;} // before any eviction
 #endif
     Entry* slot=nullptr;
     for(auto& e:entries) if(!e.valid){slot=&e;break;}
@@ -1117,6 +1145,20 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
     const unsigned vram_before=pvr_mem_available();
     if(ok) {RE4DC_PROFILE_SCOPE(TextureUpload);
         ok=slot->package.upload();
+#if RE4DC_TEX_RESIDENT && RE4DC_UI_OVERLAY_SLAB_KB
+        // No contiguous block: take the overlay slab before evicting anything the scene uses.
+        if(!ok && overlay_slab && need<=kOverlaySlabBytes && slot->package.error() &&
+           !std::strcmp(slot->package.error(),"PVR texture allocation failed")){
+            pvr_mem_free(overlay_slab);overlay_slab=nullptr;
+            ok=slot->package.open_streamed(path) && slot->package.upload();
+            if(ok){overlay_owner=slot;++overlay_uses;}
+            else{ // did not fit the hole: give the slab back, then the normal retry below
+                slot->package.close();overlay_slab_take();
+                ok=slot->package.open_streamed(path) && slot->package.upload();
+            }
+            re4dc_log("native UI: overlay slab %s: %ux%u need=%u uses=%u\n",overlay_owner==slot?"taken":"too small",image.width,image.height,need,overlay_uses);
+        }
+#endif
         // A fragmented pool can refuse a block that the totals admit. Free one
         // more unreferenced upload and retry; reopening releases the partial
         // allocation (Package refuses to resume a partial upload in place).
@@ -1130,6 +1172,12 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
 #endif
             ok=slot->package.open_streamed(path) && slot->package.upload();
         }
+#if RE4DC_UI_FRAG_LATCH && RE4DC_TEX_RESIDENT
+        if(!ok && slot->package.error() && !std::strcmp(slot->package.error(),"PVR texture allocation failed")){
+            frag_key=key;frag_frame=frame;
+            re4dc_log("native UI: no contiguous block for %ux%u (need=%u free=%u): latched %u frames\n",image.width,image.height,need,(unsigned)pvr_mem_available(),kFragRetryFrames);
+        }
+#endif
         ok=ok && slot->package.release_payload();
         if(ok){RE4DC_PROFILE_COUNT(TextureUploads,1);RE4DC_PROFILE_COUNT(TextureUploadBytes,slot->package.vram_bytes());}
         else RE4DC_PROFILE_COUNT(TextureUploadFailures,1);
@@ -1298,6 +1346,9 @@ void preload_select(const re4dc::texture::SourceIdentityTable& table,unsigned& n
 }
 void preload_identities(){
     preload_pending=false;++preload_runs;
+#if RE4DC_UI_VRAM && RE4DC_UI_FRAG_LATCH
+    frag_key=Key{}; // a new room: the pool has a new shape
+#endif
     const std::uint64_t start=timer_us_gettime64();
     const unsigned loads=preload_loads,skipped=preload_skipped;
     const unsigned budget=(RE4DC_UI_VRAM?vram_budget:kVramBudget),reserve=RE4DC_TEX_RESIDENT_RESERVE_KB*1024U;
@@ -1838,6 +1889,10 @@ extern "C" void re4dc_ui_init(){
         census_heap_base=PVR_RAM_INT_TOP-pvr_mem_available(); // no texture RAM allocated yet
 #endif
         glyph_init(); // before the UI_VRAM budget: the atlas is part of the accounted pool
+#endif
+#if RE4DC_UI_VRAM && RE4DC_TEX_RESIDENT && RE4DC_UI_OVERLAY_SLAB_KB
+        overlay_slab_take(); // beside the glyph atlas, before the budget: never part of the pool
+        re4dc_log("native UI: overlay slab %u B at %08x\n",kOverlaySlabBytes,(unsigned)overlay_slab);
 #endif
 #if RE4DC_UI_VRAM
         {

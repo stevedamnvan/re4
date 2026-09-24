@@ -18,7 +18,7 @@ ps2_rooms = "/root/probe/ps2-asset-experiment"          # PS2 TPL PNG extraction
 ps2_r100 = "/root/probe/d353-ps2-r100-prelit/r100/r100"   # PS2 r100_004 scenario OBJ + .idx_ps2_smd (SMD tool 1.3.0)
 ps2_r101 = "/root/probe/ps2-asset-complete/extract"       # PS2 r101_004 scenario OBJ + .idx_ps2_smd
 ps2_r103 = "/root/probe/d367-agents/w9/ps2/r103"         # PS2 r103_004 scenario OBJ + .idx_ps2_smd
-ui_logs = "/root/probe/d367-agents/ui-vram/logs"         # run logs naming loaded textures (vq_native_ui.py)
+ui_logs = "/root/probe/d367-agents/ui-vram/logs"         # run logs naming loaded textures (vq_native_ui.py); includes ui_indexed_coverage.py output
 evidence = "/mnt/d/Flycast-Evidence/re4-dreamcast"
 game_data = "/root/re4data"                              # source game files (etc/*.esl, em/, ...): discover
 prepared_mirror = "/root/probe/d367-agents/frontier/mirror-w4q"   # prepared disc tree staged by wstage2.sh (em/*.drs): discover
@@ -35,5 +35,5 @@ converter = ""                                           # tools dir whose conve
 # A generator that can rebuild one records it; `assets.sh --verify` compares.
 r100_planar2 = "/root/probe/d367-agents/ps2-blender/subst/planar2"          # bl_decimate.py r100-planar2.json (Blender 5.2)
 r100_bark_png = "/root/probe/d367-agents/ps2-blender/texture/ps2/r100_004/0023.PNG"   # RE4_PS2_TPL_EXTRACT B.1.1.1
-vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq7"                      # README: tex-vq7 (tex-vq6 + the W8e post-bell r101/r103 log)
+vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq8"                      # README: tex-vq8 (tex-vq7 + every indexed image, ui_indexed_coverage.py)
 r100_impostors = "/root/probe/d367-agents/ps2-blender/impostor/rt/out"   # item 20 tree_impostors.py output (16 views, h128, PAL4 VQ)

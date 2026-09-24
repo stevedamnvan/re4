@@ -513,6 +513,12 @@ TA_GUARD ?= 0
 PERF_HUD ?= 0
 UI_VRAM ?= 0
 UI_VRAM_RESERVE_KB ?= 64
+# UI_FRAG_LATCH=1: a texture refused for fragmentation is not retried (and nothing is evicted for it)
+# for 120 frames or until the next room preload (the r101 scope-view evict/reload lockup).
+# UI_OVERLAY_SLAB_KB=n: an n KiB contiguous block held from init for a large overlay that finds no
+# contiguous block in play (taken before anything is evicted, returned when it closes). Needs TEX_RESIDENT.
+UI_FRAG_LATCH ?= 0
+UI_OVERLAY_SLAB_KB ?= 0
 # VRAM_PAGES=1: platform/vram_pages.cpp replaces KOS's weak pvr_mem_* (dlmalloc, in-VRAM block
 # headers) with a best-fit allocator whose bookkeeping is in main RAM; >= 2 KiB blocks start on a
 # 2 KiB page and smaller ones never straddle one, so UI_VRAM's VQ page placement no longer pads
@@ -536,6 +542,7 @@ $(OBJDIR)/pipeline30.h: pipeline30-force
 	@printf '#define RE4DC_PVR_FAST_WAKE %s\n#define RE4DC_PVR_PIPELINE %s\n#define RE4DC_TA_DIRECT %s\n#define RE4DC_BRIDGE_LEAN %s\n' '$(PVR_FAST_WAKE)' '$(PVR_PIPELINE)' '$(TA_DIRECT)' '$(BRIDGE_LEAN)' > $@.tmp
 	@printf '#define RE4DC_TA_VERTBUF_KB %s\n#define RE4DC_TA_DOUBLEBUF %s\n#define RE4DC_TA_OPB_BINS %s\n#define RE4DC_TA_OPB_OVERFLOW %s\n#define RE4DC_TA_GUARD %s\n#define RE4DC_PERF_HUD %s\n' '$(TA_VERTBUF_KB)' '$(TA_DOUBLEBUF)' '$(TA_OPB_BINS)' '$(TA_OPB_OVERFLOW)' '$(TA_GUARD)' '$(PERF_HUD)' >> $@.tmp
 	@printf '#define RE4DC_UI_VRAM %s\n#define RE4DC_UI_VRAM_RESERVE_KB %s\n' '$(UI_VRAM)' '$(UI_VRAM_RESERVE_KB)' >> $@.tmp
+	@printf '#define RE4DC_UI_FRAG_LATCH %s\n#define RE4DC_UI_OVERLAY_SLAB_KB %s\n' '$(UI_FRAG_LATCH)' '$(UI_OVERLAY_SLAB_KB)' >> $@.tmp
 	@printf '#define RE4DC_VRAM_PAGES %s\n#define RE4DC_VRAM_CENSUS %s\n' '$(VRAM_PAGES)' '$(VRAM_CENSUS)' >> $@.tmp
 	@printf '#define RE4DC_UI_HANDLES %s\n#define RE4DC_UI_HEADERS %s\n' '$(UI_HANDLES)' '$(UI_HEADERS)' >> $@.tmp
 	@printf '#define RE4DC_TEX_RESIDENT %s\n#define RE4DC_TEX_RESIDENT_RESERVE_KB %s\n#define RE4DC_TEX_PAYLOAD_CRC %s\n#define RE4DC_TEX_SLOTS %s\n' '$(TEX_RESIDENT)' '$(TEX_RESIDENT_RESERVE_KB)' '$(TEX_PAYLOAD_CRC)' '$(TEX_SLOTS)' >> $@.tmp
