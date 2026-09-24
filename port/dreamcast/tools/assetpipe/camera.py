@@ -180,20 +180,25 @@ def _eval_view(args):
                 else:
                     zmin = max(cam.znear, depth_obj)
                 s_k_z = scale * K / zmin
+                # an empty level (no meshlets) draws nothing: its error is the part's size, and with an
+                # option's vanish_min (budget.py) it is reached no nearer than in Original
+                gone = crad / max(scale, 1e-9)
+                vm0 = (opts[0].get("vanish_min") or 0.0) if opts else 0.0
                 # best (bias 1) choice for the quality reference
                 ref = 0
-                for li, (err, _) in enumerate(levels):
-                    if err * s_k_z <= px:
+                for li, (err, ls_) in enumerate(levels):
+                    if (err if ls_ else max(err, vm0)) * s_k_z <= px:
                         ref = li
-                e_ref = levels[ref][0] * s_k_z
+                e_ref = (levels[ref][0] if levels[ref][1] else max(levels[ref][0], gone)) * s_k_z
                 ar = min(1.0, math.pi * (crad * K / zmin) ** 2 / area_div) if crad else 0.0
                 for oi, o in enumerate(opts):
                     if imp_done[oi]:
                         continue
                     b = o.get("bias", 1.0)
+                    vm = o.get("vanish_min") or 0.0
                     pick = 0
-                    for li, (err, _) in enumerate(levels):
-                        if err * b * s_k_z <= px:
+                    for li, (err, ls_) in enumerate(levels):
+                        if (err * b if ls_ else max(err * b, vm)) * s_k_z <= px:
                             pick = li
                     a = acc[oi]
                     for wb, (c, s, v, t) in levels[pick][1]:
@@ -208,7 +213,8 @@ def _eval_view(args):
                         a[7] += t
                     # err_floor: the option's geometry is itself a reduction of the source (e.g. a
                     # Blender decimation, model units), so no level is better than that
-                    e = max(levels[pick][0], o.get("err_floor", 0.0)) * s_k_z
+                    e = max(levels[pick][0] if levels[pick][1] else max(levels[pick][0], gone),
+                            o.get("err_floor", 0.0)) * s_k_z
                     if e > e_ref:
                         a[9] += (e - e_ref) * ar
             for oi in range(len(opts)):

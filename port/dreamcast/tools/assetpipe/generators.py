@@ -30,9 +30,13 @@ def item_tool(name):
     return p if p.exists() else HERE / name
 
 
-def converter_dir(cfg):
+def converter_dir(cfg, room=None):
     """convert_room_bins.py to use: sources key `converter` (a tools dir), else the
-    checkout's. W9b options need a converter that has them (see supports())."""
+    checkout's. W9b options need a converter that has them (see supports()). A room with
+    `w9b = false` (r100: its accepted packages predate W9b) always uses the checkout's, so
+    setting the key for r101/r103 does not change r100's bytes."""
+    if room is not None and not room.recipe.get("w9b", True):
+        return TOOLS
     d = cfg.src.get("converter") or ""
     return Path(d) if d else TOOLS
 
@@ -116,7 +120,7 @@ class Gen:
     def package(self, room, owner, spec, scales_obj=None, substitutes=()):
         """One R4IM package. spec: dict(bias=[...], floor, share, classes=[...], class_auto,
         class_rules=[...]) in the converter's own argument forms."""
-        conv = converter_dir(self.cfg)
+        conv = converter_dir(self.cfg, room)
         cm = self.cfg.cost["lod"]
         args = ["--owner", "0x%02x" % owner["code"] if owner["code"] >= 0xF0 else str(owner["code"])]
         inputs = {}
@@ -216,12 +220,37 @@ class Gen:
         return self.cache.step("subst.filter", dict(exclude=exclude), dict(src=src), {"rule": "copy minus exclude"},
                                fn, label="subst %s minus %s" % (src_dir.name, ",".join(exclude)))
 
+    # ---- the room's scenery TPL (BIN part texture byte = image index)
+    def room_tpl(self, room):
+        """r100: the export's R100.TPL. SMD rooms: TPL 0 of the SMD's own TPL table (every r101 /
+        r103 placement has tplNo 0 and no common flag); cached as <room>.tpl."""
+        if room.kind == "export":
+            return self.cfg.path("r100_export") / "R100.TPL.TPL"
+        das = room.das_path()
+        fp = fingerprint([tool("room_smd.py")], dict(python=sys.version.split()[0]))
+
+        def fn(out, work):
+            import struct
+            sys.path.insert(0, str(TOOLS))
+            import room_smd
+            smd, e = room_smd.load_smd(das)
+            sm = room_smd.Smd(smd, e)
+            tpls = {p["tpl"] for p in sm.used() if not p["common"]}
+            if tpls != {0}:
+                raise ValueError("%s: placements use TPLs %s; only TPL 0 is handled" % (room.name, sorted(tpls)))
+            base = sm.tables[1]
+            start = base + struct.unpack_from(e + "I", smd, base)[0]
+            later = [t for t in sm.tables if t > base]
+            (out / (room.name + ".tpl")).write_bytes(smd[start:min(later) if later else len(smd)])
+            return dict(bytes=(out / (room.name + ".tpl")).stat().st_size)
+        obj = self.cache.step("texture.room_tpl", dict(room=room.name), dict(das=das), fp, fn,
+                              label="%s SMD TPL 0" % room.name)
+        return obj.path(room.name + ".tpl")
+
     # ---- decoded room TPL (convert_tpl.decode_image -> RGBA PNG <index>.png; deterministic)
     def tpl_png(self, room):
         from . import texture
-        tpl_path = self.cfg.path("r100_export") / "R100.TPL.TPL" if room.kind == "export" else None
-        if tpl_path is None:
-            raise NotImplementedError("tpl_png: %s (smd rooms: TPL from the room archive, step d)" % room.name)
+        tpl_path = self.room_tpl(room)
         fp = fingerprint([tool("convert_tpl.py")], dict(python=sys.version.split()[0]))
 
         def fn(out, work):
@@ -234,12 +263,19 @@ class Gen:
 
     # ---- source BINs as OBJ (export_room_bins_obj.py: model space, one material per part)
     def bin_objs(self, room, keys):
-        if room.kind != "export":
-            raise NotImplementedError("bin_objs: %s (smd rooms arrive with step d)" % room.name)
-        exp = self.cfg.path("r100_export")
         keys = sorted(keys)
         fp = fingerprint([tool("export_room_bins_obj.py"), tool("convert_room_bins.py"), tool("mesh_lod.py")],
                          dict(python=sys.version.split()[0]))
+        if room.kind != "export":
+            das = room.das_path()
+
+            def fn_smd(out, work):
+                run([PY, "-B", tool("export_room_bins_obj.py"), out, "--smd", das, "--keys", ",".join(keys)],
+                    cwd=work, log=work / "log.txt")
+                return dict(objs=sorted(p.name for p in out.glob("*.obj")))
+            return self.cache.step("scenery.bin_obj", dict(room=room.name, keys=keys), dict(das=das), fp, fn_smd,
+                                   label="%s BIN OBJ %d BINs" % (room.name, len(keys)))
+        exp = self.cfg.path("r100_export")
         inputs = {}
         for k in keys:
             owner, b = k.rsplit("_", 1)
@@ -356,6 +392,75 @@ class Gen:
                                           "hidden_faces_removed", "source_to_shell_cm", "shell_to_source_cm")}
         return self.cache.step("house.shell", dict(room=room.name, key=key, args=args),
                                dict(obj=objs, tpl=tpl), fp, fn, label="%s shell %s %d faces" % (room.name, key, faces))
+
+    # ---- empty-level guard (Standard): a baked bias must not make objects vanish nearer than Original
+    def vanish_guard(self, room, owner, pkg_obj, vmin):
+        """Copy of package step `pkg_obj` (owner `owner`) whose empty LOD levels (no meshlets: the
+        object draws nothing there) store at least vmin[(bin, common)] as their error. The runtime
+        picks the coarsest level with err x scale x K / zmin <= px, so an empty level's error sets
+        the vanish distance, and a Standard bias scales it down with every other level (r103 fence
+        panels: 18 m in Original, 1.8 m in Standard before this guard). Only those floats change."""
+        name = owner + ".re4mesh"
+        vm = sorted((b, bool(c), float("%.6g" % v)) for (b, c), v in vmin.items())
+        here = Path(__file__).resolve().parent
+
+        def fn(out, work):
+            import hashlib
+            import struct
+            from . import r4im
+            data = bytearray(pkg_obj.path(name).read_bytes())
+            pk = r4im.Package(bytes(data))
+            llo = r4im.LOD_HEADER.unpack_from(data, r4im.HEADER.size)[4]
+            want = {(b, c): v for b, c, v in vm}
+            changed = 0
+            for (b, c), k in sorted(pk.mesh_by_bin().items()):
+                v = want.get((b, c))
+                if v is None:
+                    continue
+                for p in pk.mesh_parts(k):
+                    fc, nc = pk.part_lod[p]
+                    for cl in pk.clusters[fc:fc + nc]:
+                        for li in range(cl[6], cl[6] + cl[7]):
+                            f, cnt, err = pk.levels[li]
+                            if cnt == 0 and err < v:
+                                struct.pack_into("<f", data, llo + 12 * li + 8, v)
+                                changed += 1
+            (out / name).write_bytes(bytes(data))
+            summary = json.loads(Path(str(pkg_obj.path(name)) + ".json").read_text())
+            summary["sha256"] = hashlib.sha256(bytes(data)).hexdigest()
+            summary["vanish_guard_levels"] = changed
+            (out / (name + ".json")).write_text(json.dumps(summary, sort_keys=True))
+            info = dict(pkg_obj.info)
+            info.update(sha256=summary["sha256"], vanish_guard_levels=changed)
+            return info
+        return self.cache.step("scenery.vanish_guard", dict(room=room.name, owner=owner, vmin=vm),
+                               dict(pkg=pkg_obj.path(name)), fingerprint([here / "r4im.py"], {"rule": "empty>=vmin"}),
+                               fn, label="%s %s vanish guard" % (room.name, owner))
+
+    # ---- tree impostors for rooms without a pinned item 20 bake (impostor.py, pure Python + pvrtex)
+    def room_impostors(self, room, owner, pkg_obj, bins, views=16, cell=128, ss=4, jobs=1):
+        """Atlases + records for tree BINs `bins` [(code, bin, common)] of owner `owner` (a package step
+        Obj of the recipe build: its finest level is what gets baked)."""
+        here = Path(__file__).resolve().parent
+        tpl = self.room_tpl(room)
+        fp = fingerprint([here / n for n in ("impostor.py", "render.py", "scene.py", "raster.py", "r4im.py",
+                                             "texture.py", "camera.py")] +
+                         [item_tool("tree_impostors.py"), tool("convert_tpl.py"), self.pvrtex],
+                         dict(python=sys.version.split()[0]))
+        name = owner + ".re4mesh"
+        bins = sorted(bins)
+        cfg, pvrtex = self.cfg, self.pvrtex
+
+        def fn(out, work):
+            from . import impostor, r4im, texture
+            from .scene import Textures
+            pk = r4im.load(pkg_obj.path(name))
+            tex = Textures(texture.tpl_images(tpl, TOOLS))
+            js = [(pk, owner, code, b, common, tex, cfg.cost) for code, b, common in bins]
+            return impostor.write_room(out, js, pvrtex, views, cell, ss, workers=jobs)
+        return self.cache.step("tree.impostor", dict(room=room.name, owner=owner, bins=bins, views=views, cell=cell,
+                                                     ss=ss), dict(pkg=pkg_obj.path(name), tpl=tpl), fp, fn,
+                               label="%s impostors %d BINs" % (room.name, len(bins)))
 
     # ---- audio (aica_banks.py; the same cache stage.sh uses)
     def audio(self, route="title,r100,r101,r103"):

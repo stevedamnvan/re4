@@ -67,6 +67,44 @@ share = true
 classes = ["0xff:13-17=tree"]
 class_auto = true
 substitute = ["trees"]
+expect = { MAINSCENARIO = "a2451febc6285d2126bb8255b56569f844edf1299a2e271f5ae113dd7ef20288" }   # W9 m-r101-FIN
+
+[room.r101.standard]         # houses: picked by size (houses_auto), kept only where a shell fits (house_err_cm)
+houses = []
+landmarks = []
+review_notes = [
+  "Houses: 10 BINs picked by size (radius 5-15 m, >= 700 tris, >= 4 m tall, at most 2 placements) and kept where a shell ladder rung fits (p90 <= 30 cm): 48 to 400 faces, 128 x 128 baked textures (256 would put the VRAM pool ~82 KB over).",
+  "BIN 45's 400-face shell also covers the well in the square, which becomes a cone (fight views). If that is wrong, exclude 45 (houses_auto.exclude) and it stays a biased structure.",
+  "Trees: impostor atlases rendered by the pipeline (impostor.py). BIN 17 is a grove (24 placements of a 13 m cluster of thin trees with one centre), so near it the full mesh draws: 2.9 ms at the spawn. Splitting groves into single trees is the next lever.",
+  "The ground (BIN 12, one 165 x 125 m mesh) costs about 1 ms at every view even at its coarsest option.",
+  "Fences, posts and other clutter are culled only beyond 15 m here, and no object vanishes nearer than in Original (vanish guard).",
+]
+
+[room.r101.standard.plan]
+house_tex = 128              # VRAM: ~150 KB free in the r101 pool (design-r103 PLAN): 10 shells at 256 (18 KB each)
+                             # + atlases put Standard 234 KB over Original; at 128 (6 KB each) it fits
+houses_auto = { min_radius_mm = 5000.0, max_radius_mm = 15000.0, min_tris = 700, min_height_mm = 4000.0, max_instances = 2 }
+impostors = { views = 16, cell = 128, ss = 4 }   # tree atlases rendered by impostor.py (r100: pinned item 20 bake)
+# fences, posts and rails are clutter-sized: culled at 6 m they vanish from the cow pen and the
+# village (review 2026-09-23), so these rooms only cull clutter beyond 15 m (fog is ~50 % there)
+options = { tree = { bias = [1.0, 0.5, 0.25, 0.125], imp_mm = [0, 12000, 8000, 6000, 4000, 3000] }, ground = { bias = [1.0, 0.5, 0.25, 0.125, 0.0625] }, clutter = { bias = [1.0, 0.5, 0.25], cull_mm = [0, 15000] } }
+
+[room.r101.standard.budget_context]   # review sheet: heap 4 / VRAM against the route plan (design-r103 PLAN.md)
+heap4 = [ { case = "r101 on the m1 recipe, at entry (design-r103 estimate)", original_free_kb = [1460, 1460] } ]
+heap4_margin_kb = 155
+vram = { pool = 2578176, original_used = 2428032, source = "r101 measured, design-r103 PLAN" }
+note = "Heap 4 free is Original's estimate minus the Standard package delta; the margin is the 155 KB kept at r100 s40 / r101."
+
+[room.r101.views]            # spawn: r100 AEV record 0 (door to r101) dstPos/dstAngle, the camera 0.3 m behind
+                             # the head (1.29 m back, as at r100, is inside the slope); fight: the village square,
+                             # ESL em15 20-31 at x -11..6 m, z -2..3 m (emleon00.esl, 10 mm units); house: the
+                             # 400-face shell of BIN 45 from the fight camera; w9_worst: W9 m-r101-FIN grid_3_1
+spawn = { player = [-52144.4, 90.6, 22524.3], angle = 2.122, back_mm = 300.0, up_mm = 1700.0, pitch = -5.0 }
+fight = { eye_xz = [-20000.0, 9000.0], at_xz = [-4000.0, 0.0] }
+fight_in = { eye_xz = [2000.0, -6000.0], at_xz = [-9000.0, 1000.0] }
+house = { bin = "0xff:45", from = "fight", distances_m = [20.0, 8.0] }
+w9_worst = { eye = [3297.0, 1798.0, -19715.0], yaw = 315.0 }
+widest = { grid = "max_original_ms" }
 
 [room.r103]
 das = "St1/r103.das"
@@ -77,3 +115,38 @@ floor = 2
 share = true
 classes = ["0xff:38,59,60,62-67=tree"]
 class_auto = true
+expect = { MAINSCENARIO = "1de5104140632d79016860533314a6863b390cadac248852502f42dfd9c54349" }   # W9 m-r103-FIN
+
+[room.r103.standard]
+houses = []
+landmarks = []
+review_notes = [
+  "Houses: 3 BINs shelled (5, 6, 7: 48 faces, p90 15-23 cm) with 256 x 256 baked textures; BIN 1, also picked by size, fails the shell bake and stays a biased structure.",
+  "Trees: impostor atlases rendered by the pipeline (impostor.py). BINs 38 and 59 are groves with one centre each, so near them the full mesh draws: 2.3 ms at the cow pen. Splitting groves into single trees is the next lever.",
+  "The cow pen fences stay (clutter is culled only beyond 15 m here, and the vanish guard keeps Original's LOD vanish distance).",
+  "Actors are outside this sheet: 5 Ganados, 10 corpses (they stay: gore rule), 6 cows, 6 chickens, 1 dog. r103 has no events and no FMV.",
+]
+
+[room.r103.standard.plan]
+house_tex = 256
+houses_auto = { min_radius_mm = 5000.0, max_radius_mm = 15000.0, min_tris = 700, min_height_mm = 4000.0, max_instances = 2 }
+impostors = { views = 16, cell = 128, ss = 4 }   # tree atlases rendered by impostor.py (r100: pinned item 20 bake)
+# fences, posts and rails are clutter-sized: culled at 6 m they vanish from the cow pen and the
+# village (review 2026-09-23), so these rooms only cull clutter beyond 15 m (fog is ~50 % there)
+options = { tree = { bias = [1.0, 0.5, 0.25, 0.125], imp_mm = [0, 12000, 8000, 6000, 4000, 3000] }, ground = { bias = [1.0, 0.5, 0.25, 0.125, 0.0625] }, clutter = { bias = [1.0, 0.5, 0.25], cull_mm = [0, 15000] } }
+
+[room.r103.standard.budget_context]
+heap4 = [ { case = "with the W8b r103 room-archive compaction (after W11's 175 KB)", original_free_kb = [1100, 1550] },
+          { case = "without W8b (not implemented yet)", original_free_kb = [-350, -200] } ]
+heap4_margin_kb = 155
+heap4_gate_kb = 330
+vram = { pool = 2578176, original_used = 2245760, source = "estimate, not measured: r101's non-room VRAM + r103's room textures" }
+note = "Original free ranges from design-r103 PLAN.md section 3; the W8d gate is 330 KB free (155 margin + 175 W11). Standard free = Original free - (Standard - Original) scenery package bytes. The corpses stay (gore rule) and are not part of the scenery budget."
+
+[room.r103.views]            # spawn: r101 AEV record 2 (door to r103); cow_pen: W9 grid_2_1, the worst view
+                             # with enemies (cows, ESL 95/97); w9_worst: W9 grid_4_4
+spawn = { player = [-47609.06, 11.83, 7083.56], angle = 1.889, back_mm = 300.0, up_mm = 1700.0, pitch = -5.0 }
+cow_pen = { eye = [-24621.0, 2360.0, -31179.0], yaw = 45.0 }
+house = { bin = "0xff:6", from = "cow_pen", distances_m = [20.0, 8.0] }
+w9_worst = { eye = [707.0, 1921.0, -457.0], yaw = 225.0 }
+widest = { grid = "max_original_ms" }

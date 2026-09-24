@@ -54,7 +54,8 @@ def _clip_near(poly, zn):
     return out
 
 
-def render_scene(view, tris, fog=(3000.0, 25000.0), fog_rgb=(139, 137, 115), gain=2.0, sky=None):
+def render_scene(view, tris, fog=(3000.0, 25000.0), fog_rgb=(139, 137, 115), gain=2.0, sky=None, mask=None,
+                 raw=False):
     """tris: [(P0, P1, P2, uv0, uv1, uv2, c0, c1, c2, tex, atex)]: world positions, GX UVs
     (v = 0 is image row 0), vertex colours (r, g, b) 0..255, texture Image or None, alpha
     Image (its red channel is the alpha) or None. -> (png bytes, pixels written)."""
@@ -196,6 +197,8 @@ def render_scene(view, tris, fog=(3000.0, 25000.0), fog_rgb=(139, 137, 115), gai
                                 rgb[o] = 255 if r > 255 else int(r)
                                 rgb[o + 1] = 255 if g > 255 else int(g)
                                 rgb[o + 2] = 255 if bb > 255 else int(bb)
+                                if mask is not None:
+                                    mask[i] = 1
                                 drawn += 1
                     iz += zA
                     uz += uA
@@ -203,4 +206,6 @@ def render_scene(view, tris, fog=(3000.0, 25000.0), fog_rgb=(139, 137, 115), gai
                     rz += rA
                     gz += gA
                     bz += bA
+    if raw:
+        return rgb, drawn
     return png_bytes(W, H, rgb), drawn

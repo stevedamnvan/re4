@@ -3,6 +3,10 @@
 convert_room_bins.py (--lod-substitute DIR): DIR/<OWNER>_<bin>.obj.
 
   export_room_bins_obj.py <out dir> [--export DIR] [--keys COMMON_0,FILE_01_17,...]
+  export_room_bins_obj.py <out dir> --smd St1/r101.das [--keys MAINSCENARIO_3,...]
+
+--smd takes any room's local SMD BINs (room_smd.py: .das, decoded archive or SMD) as
+MAINSCENARIO_<bin>, the owner name convert_room_bins.py --smd gives them.
 
 Positions are welded by exact coordinate (Blender and other editors see the
 connectivity); vt are the source UVs as parse_bin decodes them (GX convention,
@@ -40,11 +44,19 @@ def all_bins(export):
     return out
 
 
-def export_bin(path, out):
-    """One BIN -> OBJ; returns the triangle count."""
-    src = crb.parse_bin(Path(path).read_bytes())
+def smd_bins(das):
+    """-> [(key "MAINSCENARIO_<bin>", BIN bytes)] for the local BINs of a room SMD."""
+    import room_smd
+    smd, e = room_smd.load_smd(das)
+    return [("MAINSCENARIO_%d" % b, data) for b, data in sorted(room_smd.Smd(smd, e).bins().items())]
+
+
+def export_bin(path, out, data=None):
+    """One BIN (a file, or its bytes in `data` named `path`) -> OBJ; returns the triangle count."""
+    src = crb.parse_bin(Path(path).read_bytes() if data is None else data)
     ids, welded = mesh_lod.weld(src["positions"])
-    lines = ["# r100 BIN model space (%s); parts=%d" % (Path(path).name, len(src["parts"]))]
+    lines = ["# %sBIN model space (%s); parts=%d" % ("r100 " if data is None else "", Path(path).name,
+                                                   len(src["parts"]))]
     for k in sorted(welded):
         lines.append("v %.6f %.6f %.6f" % welded[k])
     uvi, nvi = {}, {}
@@ -77,11 +89,18 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out", type=Path)
     ap.add_argument("--export", type=Path, default=DEFAULT_EXPORT, help="r100_full_export directory")
+    ap.add_argument("--smd", type=Path, help="room .das / SMD: export its local BINs instead of --export")
     ap.add_argument("--keys", help="comma list of <OWNER>_<bin> to export (default: all)")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     keys = set(a.keys.split(",")) if a.keys else None
     total = 0
+    if a.smd:
+        for key, data in smd_bins(a.smd):
+            if keys is None or key in keys:
+                total += export_bin("%s:%s" % (a.smd.name, key), a.out / (key + ".obj"), data)
+        print("exported triangles", total)
+        return
     for key, path in all_bins(a.export):
         if keys is None or key in keys:
             total += export_bin(path, a.out / (key + ".obj"))

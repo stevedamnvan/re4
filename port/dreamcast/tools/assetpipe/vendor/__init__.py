@@ -17,4 +17,8 @@ FILES = {
     "house_shells.py": ("house_shells.py",
                         "ps2-blender/item21-house-shells.patch (sha256 1ecedfdd05e3...)",
                         "cfd9b6848c67521af6f33403c68f950c23b994b201da9ca7891a4a8d06b3c388"),
+    # item 20: impostor.py imports its kPal4 packaging (package_pal4) for the rooms without a pinned bake
+    "tree_impostors.py": ("tree_impostors.py",
+                          "ps2-blender/item20-tree-impostor.patch (sha256 7e9e4d622679...)",
+                          "485de043a954271faf06fad31ddccb77ea6f8d62164420cf7d14e18257fd02ce"),
 }

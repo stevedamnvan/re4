@@ -41,6 +41,11 @@ assets.sh rooms                     # every stage room found in the source disc(
   `review/<mode>/<room>/`.
 - Private inputs (disc images, mirrors, exports, PS2 files) are named in `assetpipe/sources.toml`
   and can be overridden by the environment variables listed there. Nothing private is tracked.
+- r101/r103 recipes need W9b converter options. Until they land in the checkout, set
+  `RE4DC_SRC_CONVERTER=/root/probe/d367-agents/w9/ptree/port/dreamcast/tools`. A room with
+  `w9b = false` (r100) always uses the checkout's converter, so the variable does not change
+  r100's bytes. With it, `build r101|r103 --mode original` reproduces W9's `m-r101-FIN` /
+  `m-r103-FIN` packages byte for byte (rooms.toml `expect`).
 
 ## 2. Assets and classes
 
@@ -283,26 +288,41 @@ modes. Every Standard manifest records heap 4 per package (Original, Standard, d
 #### 4.9.1 The Standard plan (budget.py)
 
 1. Classes: explicit lists in rooms.toml `[room.X.standard]` (houses, landmarks) and the recipe
-   trees; otherwise ground (height <= 0.25 x horizontal extent, >= 10 m wide), clutter (radius
-   <= 1.5 m) or structure.
+   trees (`[room.X.trees]` and the W9b `--class ...=tree` lists); otherwise ground (height <= 0.25
+   x horizontal extent, >= 10 m wide), then, with the room plan's `houses_auto`, a house candidate
+   by size (radius 5-15 m, >= 700 triangles, >= 4 m tall and no taller than wide, at most 2
+   placements), then clutter (radius <= 1.5 m) or structure. A room can override any
+   `[plan.standard]` key in `[room.X.standard.plan]` (options merge per class).
 2. Houses: `house.shell` steps (Blender bl_house_shell.py + house_shells.py, cached by hash) on
    the ladder `house_faces`; the first rung whose p90 source-to-shell error is <= `house_err_cm`
    is used. r100: 48, 96 and 200 faces break the houses (p90 1.2-3.7 m); 400 faces pass (21 and
    26 cm), the same count as the approved low512 shells. The review shows the rejected rungs.
+   A size-picked candidate that no rung fits (or that the bake fails on) is not shelled: it
+   goes back to structure and the manifest lists it (`shell_rejected_p90_cm`).
 3. Options per class (`[plan.standard.options]`): extra LOD bias, tree impostor centre depth
    (item 20 records), clutter cull centre depth; plus, for ground/structure, the same options on
    a Blender reduction (`scenery.decimate`, bl_decimate.py) whose p90 error is <= `max_p90_mm`
-   and whose worst source-to-reduction distance is <= `max_mm`. That reduction's error is the
+   and whose worst source-to-reduction distance is <= `max_mm` and <= `max_rel` (0.1) x the
+   BIN's radius. That reduction's error is the
    option's error floor in the quality term. Standard packages use a coarser LOD chain of the
    same depth (`lod_args`); an owner whose package would grow is rebuilt with the recipe chain.
 4. Pricing at runtime LOD px 5 over the ground grid plus the named views (`[room.X.views]`:
-   spawn and walk frames from SCEN_LOG cam/pl, house approach at 30/8/3 m, the heaviest
-   Original grid view).
+   `cam`/`toward` (SCEN_LOG frames), `player`/`angle` (an AEV door arrival: the camera just
+   behind the head), `eye`/`yaw` (fixed cameras such as W9's model views), `eye_xz`/`at_xz`
+   (standing on the ground looking at a point), `bin` (house approach at given distances), and
+   `grid = "max_original_ms"`).
 5. Lazy-greedy multiple-choice solver (`budget.solve`): moves ranked by reduction of summed
    relative excess over all views per unit of weighted quality loss, deterministic ties, then
    an upgrade pass. Views still over budget are reported, never hidden.
 6. Final packages bake recipe bias x chosen bias per BIN; the staged set is priced again and
    those numbers are the ones reported (the solver's differ by at most ~0.5 ms).
+   **Vanish guard.** An empty LOD level (no meshlets) is where an object stops drawing, and its
+   stored error sets that distance (`err x scale x K / zmin <= px`). A baked bias scales it
+   down with the other levels, and Standard's px 5 moves it nearer again, so r103's fence panels
+   vanished at 1.8 m instead of 18 m. Every Standard package therefore gets its empty-level
+   errors raised to at least Original's x px_std / px_orig (`scenery.vanish_guard`, only those
+   floats change), and pricing uses the same rule (`vanish_min`), with the part's size as the
+   quality error of a vanished part. No object vanishes nearer than in Original.
    `plan.json` carries the runtime choices (impostor/cull distances, geometry variant).
 7. Review: `review/standard/<room>/index.html` renders both modes from identical cameras with
    the textured software renderer (`render.py`, `scene.py`: TPL textures, PS2 bark, baked shell
@@ -310,13 +330,30 @@ modes. Every Standard manifest records heap 4 per package (Original, Standard, d
    per-view asset ms, triangles, and a frame estimate = `frame_rest_ms` (design-lowmode D2 floor
    28.3) + `base_ms_planned` (2.5) + assets, against 33.3 ms.
 
-r100 prototype (2026-09-23), scenery assets excluding base: Standard named views 5.7-10.7 hw
-ms, grid p95 7.34 / max 10.6, within 5 ms at 158 of 215 views (159 before the Blender
-`--threads 1` pin re-baked the shells); Original 14.2-24.9, grid p95
-17.6 / max 24.9. Heap 4 -302 KB (every package <= Original), VRAM +170 KB (shells 132 KB,
-atlases 82 KB), second set on disc 1.51 MB (every package differs while biases are baked; section 15
-weighs a runtime per-BIN table that would limit it to geometry-changed packages). Remaining
-cost: PS2 trees nearer than the impostor distance, a tail of terrain pieces, the two shells.
+Results (2026-09-23, scenery assets in hw ms excluding base, cost model as calibrated on r100;
+no r101/r103 hwproject evidence exists yet, W8g is the first; r101 Original at W9's cameras is
+within 0.3 ms of W9's model rows, so no re-fit was needed):
+
+| Room | Standard named views | Standard grid p95 / max | views within 5 ms | Original grid p95 / max | heap 4 Std - Orig | VRAM Std - Orig |
+|---|---|---|---|---|---|---|
+| r100 | 5.7-10.7 | 7.37 / 10.7 | 155 / 215 | 17.6 / 24.9 | -294 KB | +170 KB (shells 132, atlases 82) |
+| r101 | 6.2-11.5 | 10.3 / 13.9 | 118 / 263 | 25.2 / 27.5 | -439 KB | +108 KB (10 shells at 128: 60, atlases 82) |
+| r103 | 4.9-10.5 | 8.48 / 13.3 | 151 / 270 | 25.8 / 38.5 | -428 KB | +114 KB (3 shells at 256: 54, atlases 82) |
+
+r100's numbers include the vanish guard (before it: 7.34 / 10.6, 158 views). Every Standard package is
+no larger than Original's. The second set on disc is every Original package (1.51 / 1.01 / 1.13 MB)
+while biases are baked; section 15 weighs a runtime per-BIN table. Remaining cost: tree groves
+(one BIN, one centre: r101 17, r103 38/59, 2-3 ms when standing in them; splitting groves into single
+trees is the next lever), single large ground meshes (~1 ms at every view), the shells.
+
+Against the route budgets (review sheets, "Against the route memory budgets"):
+- r101 heap 4: ~1.46 MB free at entry in Original (design-r103 estimate) -> ~1.9 MB in Standard.
+- r103 heap 4: with W8b compaction 1.10-1.55 MB -> 1.53-1.98 MB; without W8b -0.35..-0.20 MB ->
+  +0.08..+0.23 MB. Standard fits without W8b, but below the 155 KB margin at the low end and below
+  W8d's 330 KB gate, so W8b is still needed.
+- VRAM (pool 2,518 KB): r101 Original 2,371 KB measured -> Standard ~2,479 KB (~39 KB free); with 256
+  shells it would be ~82 KB over. r103 is an estimate (r101's non-room use + r103 room textures):
+  ~2,193 KB -> ~2,307 KB, ~211 KB free.
 
 ## 5. Camera model and view set
 
@@ -365,7 +402,10 @@ tools unchanged:
 |---|---|---|---|
 | `scenery.r4im` | convert_room_bins.py (`--smd` or `--bins`, `--lod*`, `--lod-substitute`, and W9b's `--lod-floor/--lod-share/--class*` when the converter has them) | `<OWNER>.re4mesh` | r100: `MESHDIR`; others: `MESHROOMS` |
 | `tree.ps2` | ps2_trees.py (`--room`, `--dc-uv`) + ps2_tree_texture.py | replacement OBJs, bark `.re4tex` | via `--lod-substitute`; bark via `TEXDIRS` |
-| `tree.impostor` | bl_impostor_bake.py + tree_impostors.py + mesh_annotate.py (item 20) | atlases `.re4tex`, annotated package | `TEXDIRS`, `MESHDIR` |
+| `tree.impostor` | r100: the pinned item 20 bake (bl_impostor_bake.py + tree_impostors.py). Other rooms: `assetpipe/impostor.py` (pure Python, render.py; kPal4 packaging from the vendored tree_impostors.py) | atlases `.re4tex`, `impostors.json` records (+ `rgb`) | `TEXDIRS` |
+| `texture.room_tpl` | SMD rooms: TPL 0 of the SMD's TPL table (every r101/r103 placement uses it) | `<room>.tpl` | review textures, VRAM |
+| `scenery.bin_obj` | export_room_bins_obj.py (`--export` for r100, `--smd <das>` for SMD rooms) | `<OWNER>_<bin>.obj` | shells, decimation |
+| `scenery.vanish_guard` | generators.vanish_guard (4.9.1 step 6) | package with empty-level errors raised | as the package |
 | `house.shell` | bl_house_shell.py + house_shells.py (item 21; the checkout's copy when present, else the sha256-checked copies in `assetpipe/vendor/`) + mesh_annotate.py | shell OBJs, 512 VQ `.re4tex`, annotated package | `--lod-substitute`, `TEXDIRS` |
 | `blender.planar` | bl_decimate.py (r100-planar2 spec; Standard's `scenery.decimate` coarse variant) | replacement OBJs | `--lod-substitute` |
 | `texture.vq` | vq_native_ui.py (pinned pvrtex) | `.re4tex` overlay | `TEXDIRS` |
@@ -572,9 +612,13 @@ manifest hash.
 | room_smd release, prepare_native_ui, convert_tpl | yes | |
 | Blender steps (planar decimation, house shell bake) | yes with pins (measured) | run as `blender -b --threads 1 --factory-startup`; fixed seeds and sample counts in the scripts; inputs sorted. Without `--threads 1` the same shell came out with the same metrics but a different vertex order (and so different OBJ/PNG/JSON bytes) than with a different thread count, so a machine with another core count would not reproduce it. `blender_threads` is part of the fingerprint. |
 | impostor bake (item 20) | pinned artifact | the r100 atlases are a pinned input (sources.toml `r100_impostors`), hashed by content like an AI output |
+| impostor.py (other rooms), vanish guard | yes (measured) | pure Python + pinned pvrtex; verified in the r101/r103 `--verify` runs |
 | convert_route_movies (ffmpeg) | yes with pins | `-threads 1`, pinned version |
 | review renders | yes | pure-Python rasteriser |
 | **ai-upscale** (ComfyUI + PBRify, local, port 7860) | **no** | opt-in only |
+
+Measured (2026-09-23, r101 / r103 Standard, run concurrently): 263 and 132 steps byte-identical,
+including their Blender shells and decimations, impostor atlases and guarded packages.
 
 Measured (2026-09-23, r100, `--jobs 12`): `build r100 --verify` rebuilds every cached step and
 compares output hashes. Standard: 142 of 142 steps byte-identical, including the 8 house-shell
@@ -645,7 +689,7 @@ weights).
 | b | tool skeleton, cache, r100 wired to the existing generators, review sheet | done: `build r100 --plan recipe` reproduces the LFV r100 inputs byte for byte; `--verify` passes |
 | b2 | Standard (budget-first) prototype for r100: classes, shells, coarse variants, impostor/cull options, solver, textured Standard vs Original review | done (prototype; 4.9.1) |
 | c | solver (`--plan solve` for Original) + `calibrate` | solver done in budget.py; calibrate open |
-| d | r101, r103 (Standard, built together: user decision 2026-09-23) | in progress |
+| d | r101, r103 (Standard, built together: user decision 2026-09-23) | done: Original reproduces W9 FIN byte for byte; Standard with auto-picked shells, impostor.py atlases, vanish guard; `--verify` byte-identical (r101 263 steps, r103 132); review sheets with the heap 4 / VRAM budget tables. Calibration waits for W8g hwproject evidence |
 | e | overrides + upscale (source) + opt-in ai-upscale | |
 | f | `assets.sh audit <room>`: bring-up gaps (missing-module stubs, missing packages, events without PS2 FMV, unported systems, heap/image estimate), seeded from R4_FIRST_STAGE_GAP_AUDIT.md and the next-room dependency brief | |
 

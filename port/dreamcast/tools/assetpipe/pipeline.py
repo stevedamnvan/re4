@@ -124,10 +124,10 @@ def room_views(ctx, room, pkgs):
     return views
 
 
-def price_room(ctx, room, pkgs, keyfn, options=None):
-    """Price every placed asset of `pkgs` at the room views; options default: the built
-    package as is (bias 1 on its stored errors)."""
-    views = room_views(ctx, room, pkgs)
+def price_room(ctx, room, pkgs, keyfn, options=None, views=None):
+    """Price every placed asset of `pkgs` at the room views (default: the grid from `pkgs`
+    itself); options default: the built package as is (bias 1 on its stored errors)."""
+    views = views if views is not None else room_views(ctx, room, pkgs)
     inst = build_instances(pkgs, room.placements(), keyfn)
     keys = sorted({i["key"] for i in inst})
     opts = options or {k: [dict(id="built", bias=1.0)] for k in keys}
@@ -191,7 +191,9 @@ def build_room(ctx, name, mode="original", plan="recipe", only=None, review=True
     keyfn = lambda w: "%s/%s" % (w["owner"], bin_id(w["code"], w["bin"]))
     pk_built, pk_reset = load_pkgs(built), load_pkgs(reset)
     pr_b, views = price_room(ctx, room, pk_built, keyfn)
-    pr_r, _ = price_room(ctx, room, pk_reset, keyfn)
+    # the same cameras for both sides: substitutes (PS2 trees) move the vertex cloud the
+    # grid is built from, and r101's grid then has a different view count
+    pr_r, _ = price_room(ctx, room, pk_reset, keyfn, views=views)
     keys = sorted(set(pr_b.ms) | set(pr_r.ms))
     sum_b, tot_b = summarise(pr_b, keys, lambda k: 0, base)
     sum_r, tot_r = summarise(pr_r, keys, lambda k: 0, base)
@@ -271,7 +273,7 @@ def build_room(ctx, name, mode="original", plan="recipe", only=None, review=True
         status = "OVER" if sum_b["ms_p95"] - base > budgets["scenery_ms_p95"] else "OVER-BASE"
     manifest = dict(schema="re4dc-assets/1", room=name, mode=mode, plan=plan,
                     config_sha256=canon_hash(cfg.cost), rooms_sha256=canon_hash(room.recipe),
-                    converter=str(converter_dir(cfg).name), checks=checks, budgets=budgets, status=status,
+                    converter=str(converter_dir(cfg, room).name), checks=checks, budgets=budgets, status=status,
                     predicted=dict(base_ms=base, scenery=sum_b, reset_scenery=sum_r, heap4_bytes=heap4,
                                    heap4_reset_bytes=heap4_reset,
                                    vram_bytes=sum(a["predicted"].get("vram_bytes", 0) for a in assets)),

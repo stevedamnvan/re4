@@ -47,6 +47,12 @@ def classify(room, inv, plan):
     if t:
         o, bins = t["gc"].split(":")
         trees = {bin_id(int(o, 0), b) for b in parse_ranges(bins)}
+    for c in room.recipe.get("recipe", {}).get("classes", []):     # W9b "--class 0xff:13-17=tree"
+        sel, cls = c.split("=")
+        if cls == "tree":
+            o, bins = sel.split(":")
+            trees |= {bin_id(int(o, 0), b) for b in parse_ranges(bins)}
+    auto = plan.get("houses_auto")   # candidates by size; house_shells keeps only those a shell fits
     out = {}
     for r in inv:
         bid = bin_id(r["code"], r["bin"])
@@ -61,6 +67,8 @@ def classify(room, inv, plan):
             c = "tree"
         elif horiz >= plan["ground_min_mm"] and ext[1] <= plan["ground_flat"] * horiz:
             c = "ground"
+        elif auto and bid not in auto.get("exclude", []) and                 auto["min_radius_mm"] <= (r.get("radius_mm") or 0) <= auto.get("max_radius_mm", 1e9)                 and (r.get("triangles") or 0) >= auto["min_tris"] and ext[1] >= auto["min_height_mm"]                 and ext[1] <= auto.get("max_height_ratio", 1.0) * horiz and (r.get("instances") or 1) <= auto["max_instances"]:
+            c = "house"
         elif (r.get("radius_mm") or 0) <= plan["clutter_radius_mm"]:
             c = "clutter"
         else:
@@ -259,7 +267,7 @@ def named_views(ctx, room, pkgs, grid, grid_ms_original):
     eye_mm = ctx.cfg.cost["screen"]["eye_mm"]
     out = []
     ground = None
-    order = ["spawn", "path_a", "path_b", "house", "widest"]
+    order = ["spawn", "path_a", "path_b", "fight", "fight_in", "cow_pen", "house", "w9_worst", "widest"]
     for name in sorted(spec, key=lambda n: (order.index(n) if n in order else len(order), n)):
         s = spec[name]
         if "cam" in s:
@@ -271,6 +279,35 @@ def named_views(ctx, room, pkgs, grid, grid_ms_original):
             tgt = [cam[0] + d[0] / n * 1000.0, cam[1] + math.tan(p) * 1000.0, cam[2] + d[1] / n * 1000.0]
             yaw, pitch = _look(cam, tgt)
             out.append(dict(name=name, eye=cam, target=tgt, yaw=yaw, pitch=pitch, frame=s.get("frame")))
+        elif "player" in s:
+            # door arrival (AEV dstPos / dstAngle): the camera behind and above the player as
+            # at the r100 spawn frame (1.29 m back, 1.76 m up, 10 degrees down)
+            px_, py_, pz_ = [float(x) for x in s["player"]]
+            a = float(s["angle"])
+            f = [math.sin(a), math.cos(a)]
+            back, up = s.get("back_mm", 1290.0), s.get("up_mm", 1764.0)
+            cam = [round(px_ - f[0] * back, 1), round(py_ + up, 1), round(pz_ - f[1] * back, 1)]
+            p = math.radians(s.get("pitch", -10.0))
+            tgt = [cam[0] + f[0] * 1000.0, cam[1] + math.tan(p) * 1000.0, cam[2] + f[1] * 1000.0]
+            yaw, pitch = _look(cam, tgt)
+            out.append(dict(name=name, eye=cam, target=tgt, yaw=yaw, pitch=pitch, frame=None))
+        elif "yaw" in s:
+            # a fixed eye and yaw (the W9 model's grid views: yaw about +y, 0 = +z, pitch 0)
+            eye = [float(x) for x in s["eye"]]
+            yr, pr_ = math.radians(s["yaw"]), math.radians(s.get("pitch", 0.0))
+            tgt = [eye[0] + math.sin(yr) * 1000.0, eye[1] + math.tan(pr_) * 1000.0, eye[2] + math.cos(yr) * 1000.0]
+            out.append(dict(name=name, eye=eye, target=tgt, yaw=float(s["yaw"]), pitch=s.get("pitch", 0.0),
+                            frame=None))
+        elif "eye_xz" in s:
+            # standing at eye_xz (ground + eye height) looking at at_xz (ground + 1 m)
+            ground = ground or _ground_fn(ctx, room, pkgs)
+            ex, ez = [float(x) for x in s["eye_xz"]]
+            ax, az = [float(x) for x in s["at_xz"]]
+            gy, gt = ground(ex, ez), ground(ax, az)
+            eye = [ex, round((gy if gy is not None else 0.0) + eye_mm, 1), ez]
+            tgt = [ax, round((gt if gt is not None else 0.0) + 1000.0, 1), az]
+            yaw, pitch = _look(eye, tgt)
+            out.append(dict(name=name, eye=eye, target=tgt, yaw=yaw, pitch=pitch, frame=None))
         elif "bin" in s:
             ground = ground or _ground_fn(ctx, room, pkgs)
             code, b = s["bin"].split(":")
@@ -314,8 +351,11 @@ def named_views(ctx, room, pkgs, grid, grid_ms_original):
 # ---------------------------------------------------------------------------- shells
 def house_shells(ctx, room, classes, inv, plan):
     """{bin id: (Obj, faces)}: per house the first ladder rung whose p90 source->shell error
-    is within plan house_err_cm (else the last rung)."""
+    is within plan house_err_cm (else the last rung). With plan `houses_auto` (size-picked
+    candidates) a candidate no rung fits is not shelled: its class goes back to structure and
+    it is listed in plan['_shell_rejected']."""
     out = {}
+    rejected = plan.setdefault("_shell_rejected", {})
     names = {o["code"]: o["name"] for o in room.owners()}
     for key, cls in sorted(classes.items()):
         if cls != "house":
@@ -325,11 +365,22 @@ def house_shells(ctx, room, classes, inv, plan):
         skey = "%s_%d" % (owner, int(b))
         chosen = None
         for faces in plan["house_faces"]:
-            obj = ctx.gen.house_shell(room, skey, faces, plan["house_tex"])
+            try:
+                obj = ctx.gen.house_shell(room, skey, faces, plan["house_tex"])
+            except Exception as ex:        # a size-picked candidate the shell tool cannot bake
+                if not plan.get("houses_auto"):
+                    raise
+                ctx.log("  shell %s %d faces failed (%s); not shelled" % (skey, faces, str(ex).splitlines()[0][:80]))
+                chosen = (None, faces, 1e9)
+                break
             err = (obj.info.get("source_to_shell_cm") or {}).get("p90", 1e9)
             chosen = (obj, faces, err)
             if err <= plan["house_err_cm"]:
                 break
+        if plan.get("houses_auto") and chosen[2] > plan["house_err_cm"]:
+            rejected[key] = round(min(chosen[2], 1e6), 1)
+            classes[key] = "structure"
+            continue
         out[bid] = chosen
     return out
 
@@ -353,6 +404,13 @@ def build_standard(ctx, name, only=None, review=True):
     plan = cfg.cost["plan"]["standard"]
     budgets = cfg.budgets("standard")
     room = Room(cfg, ctx.cache, name)
+    # per-room plan overrides (rooms.toml [room.X.standard.plan]; options merge per class)
+    over = room.recipe.get("standard", {}).get("plan", {})
+    if over:
+        plan = dict(plan, **{k: v for k, v in over.items() if k != "options"})
+        plan["options"] = dict(cfg.cost["plan"]["standard"]["options"], **over.get("options", {}))
+    else:
+        plan = dict(plan)
     ctx.log("== %s (standard: budget-first; original for comparison)" % name)
     orig = build_room(ctx, name, mode="original", plan="recipe", review=False)
     scales = gen.scales(room) if room.kind == "export" else None
@@ -392,10 +450,14 @@ def build_standard(ctx, name, only=None, review=True):
         if coarse_keys:
             coarse_obj = gen.decimate(room, sorted(coarse_keys.values()), coarse["variant"], coarse["ops"])
             rep = json.loads(coarse_obj.path("blender-report.json").read_text()).get(coarse["variant"], {})
+            rad = {"%s/%s" % (r["owner"], bin_id(r["code"], r["bin"])): r.get("radius_mm") or 0.0 for r in inv}
             for k, sk in coarse_keys.items():
                 r = rep.get(sk, {})
                 p90 = float(max(r.get("fwd_p90") or 0.0, r.get("rev_p90") or 0.0))
-                if p90 <= coarse.get("max_p90_mm", 1e9) and float(r.get("rev_max") or 0.0) <= coarse.get("max_mm", 1e9):
+                worst = float(r.get("rev_max") or 0.0)
+                # absolute limits, and relative to the object (a 1 m well must not lose 0.6 m: r101's
+                # well became a cone)
+                if p90 <= coarse.get("max_p90_mm", 1e9) and worst <= coarse.get("max_mm", 1e9) and                         worst <= coarse.get("max_rel", 1e9) * rad.get(k, 0.0):
                     coarse_err[k] = p90
             coarse_subs = subs_minus(shelled + sorted(coarse_keys.values())) + [coarse_obj.out]
             coarse_objs = build_packages(ctx, room, specs, coarse_subs + shell_dirs, scales)
@@ -416,10 +478,15 @@ def build_standard(ctx, name, only=None, review=True):
     # Original priced at every view (its own px), Standard options priced on the base packages
     pr_o = price(inst_o, views, {k: [dict(id="orig", bias=1.0)] for k in keys_o}, cost, px=cost["lod"]["px"], far=far,
                  jobs=ctx.jobs)
-    imp_recs = _impostor_records(ctx, room)
+    imp_recs = _impostor_records(ctx, room, plan, classes, orig_objs)
     inst_s = build_instances(pk_base, room.placements(), keyfn)
     keys_s = sorted({i["key"] for i in inst_s})
     options = {k: class_options(classes.get(k, "structure"), plan, _imp_key(k) in imp_recs) for k in keys_s}
+    # empty LOD levels: no nearer vanishing than Original (priced here, patched into the packages)
+    vmin = _vanish_min(room, pk_orig, plan["px"], cost["lod"]["px"])
+    for k in keys_s:
+        for o in options[k]:
+            o["vanish_min"] = vmin.get(k, NEVER)
     ctx.log("  pricing %d assets x %d views (%d options)" % (len(keys_s), nv, sum(len(v) for v in options.values())))
     pr_s = price(inst_s, views, options, cost, px=plan["px"], far=far, jobs=ctx.jobs)
     if coarse_obj is not None:
@@ -452,7 +519,7 @@ def build_standard(ctx, name, only=None, review=True):
         unused = sorted(set(coarse_keys.values()) - set(use_coarse))
         subs.append(gen.subst_without(coarse_obj, unused).out if unused else coarse_obj.out)
     # final packages: recipe bias x chosen bias baked per BIN
-    final_objs = _final_packages(ctx, room, specs, subs, shell_dirs, scales, chosen)
+    final_objs = _final_packages(ctx, room, specs, subs, shell_dirs, scales, chosen, vmin)
     # heap 4: no Standard package may be larger than Original's; an owner that grew (deeper LOD
     # chain) is rebuilt with the recipe's LOD arguments
     grew = [n for n in sorted(final_objs) if (final_objs[n].info.get("package_bytes") or 0) >
@@ -460,7 +527,7 @@ def build_standard(ctx, name, only=None, review=True):
     if grew and "lod_args" in specs:
         ctx.log("  heap 4: %s grew with the Standard LOD chain; rebuilt with the recipe LOD args" % ", ".join(grew))
         redo = _final_packages(ctx, room, {k: v for k, v in specs.items() if k != "lod_args"}, subs, shell_dirs,
-                               scales, chosen)
+                               scales, chosen, vmin)
         for n in grew:
             final_objs[n] = redo[n]
     pk_final = load_pkgs(final_objs)
@@ -506,10 +573,9 @@ def build_standard(ctx, name, only=None, review=True):
     for b in sorted(shells):
         o = shells[b][0]
         shell_tex += [o.path(r) for r in sorted(o.outputs) if r.startswith("tex/")]
-    atlas_dir = cfg.path("r100_impostors") if imp_recs else None
     used_imp = {_imp_key(k) for k in keys_s if chosen[k].get("imp_mm")}
-    atlas_files = sorted({(atlas_dir / "tex" / imp_recs[k]["package"]) for k in used_imp}) if atlas_dir else []
-    sizes = _sizes(cfg, room, orig_objs, final_objs, pk_orig, pk_final, shell_tex, atlas_files, imp_recs, used_imp)
+    atlas_files = sorted({Path(imp_recs[k]["tex_file"]) for k in used_imp})
+    sizes = _sizes(cfg, gen.room_tpl(room), orig_objs, final_objs, pk_orig, pk_final, shell_tex, atlas_files, imp_recs, used_imp)
     # assets list
     inv_by = {"%s/%s" % (r["owner"], bin_id(r["code"], r["bin"])): r for r in inv}
     assets = []
@@ -580,7 +646,7 @@ def build_standard(ctx, name, only=None, review=True):
     manifest = dict(schema="re4dc-assets/1", room=name, mode="standard", plan="budget",
                     lod_px=dict(standard=plan["px"], original=cost["lod"]["px"]),
                     config_sha256=canon_hash(cfg.cost), rooms_sha256=canon_hash(room.recipe),
-                    converter=str(converter_dir(cfg).name), budgets=budgets, status=status,
+                    converter=str(converter_dir(cfg, room).name), budgets=budgets, status=status,
                     original_manifest_sha256=orig["manifest_sha256"],
                     predicted=dict(base_ms_today=base_today, base_ms_planned=base_plan, frame_rest_ms=rest,
                                    summary=summary, sizes=sizes),
@@ -590,6 +656,14 @@ def build_standard(ctx, name, only=None, review=True):
                     steps=dict(**{"standard:" + n: o.key for n, o in sorted(final_objs.items())},
                                **{"shell:" + b: shells[b][0].key for b in sorted(shells)}),
                     stage=stage)
+    if plan.get("_shell_rejected"):
+        manifest["shell_rejected_p90_cm"] = dict(sorted(plan["_shell_rejected"].items()))
+    ctxb = room.recipe.get("standard", {}).get("budget_context")
+    if ctxb:
+        manifest["budget_context"] = ctxb
+    notes = room.recipe.get("standard", {}).get("review_notes")
+    if notes:
+        manifest["review_notes"] = list(notes)
     manifest["manifest_sha256"] = canon_hash({k: v for k, v in manifest.items() if k != "stage"})
     write_json(out / "manifest.json", manifest)
     env = "".join(': "${%s:=%s}"\nexport %s\n' % (k, v, k) for k, v in sorted(stage.items()))
@@ -608,7 +682,7 @@ def build_standard(ctx, name, only=None, review=True):
                 o = gen.house_shell(room, "%s_%d" % (names[int(code, 0)], int(b)), faces, plan["house_tex"])
                 vsh[bid] = (o, faces, (o.info.get("source_to_shell_cm") or {}).get("p90"))
             vobjs = _final_packages(ctx, room, specs, subs, [Path(o.out) / "replace" for o, _, _ in
-                                                             (vsh[b] for b in sorted(vsh))], scales, chosen)
+                                                             (vsh[b] for b in sorted(vsh))], scales, chosen, vmin)
             variants.append((faces, load_pkgs(vobjs), vsh))
         _review(ctx, room, manifest, named, pk_final, pk_orig, chosen, imp_recs, shells, out, variants)
     return manifest
@@ -620,26 +694,83 @@ def _imp_key(k):
     return (int(code, 0), int(b))
 
 
-def _impostor_records(ctx, room):
-    """{(code, bin): record + image} from the pinned item 20 output (r100 only today)."""
-    try:
-        d = ctx.cfg.path("r100_impostors")
-    except KeyError:
-        return {}
-    if room.name != "r100" or not d or not d.exists():
+def _impostor_records(ctx, room, plan=None, classes=None, orig_objs=None):
+    """{(code, bin): record + image}: r100 from the pinned item 20 bake; a room whose plan sets
+    `impostors` from impostor.py (every tree-class BIN of the recipe package)."""
+    if room.name == "r100":
+        try:
+            d = ctx.cfg.path("r100_impostors")
+        except KeyError:
+            return {}
+        if not d or not d.exists():
+            return {}
+    elif plan and plan.get("impostors") and classes and orig_objs:
+        owners = {o["name"]: o for o in room.owners()}
+        d = None
+        recs = {}
+        by_owner = {}
+        for k, c in sorted(classes.items()):
+            if c == "tree":
+                owner, bid = k.split("/")
+                code, b = _imp_key(k)
+                by_owner.setdefault(owner, []).append((code, b, bool(owners[owner]["common"])))
+        for owner, bins in sorted(by_owner.items()):
+            spec = plan["impostors"]
+            obj = ctx.gen.room_impostors(room, owner, orig_objs[owner], bins, spec.get("views", 16),
+                                         spec.get("cell", 128), spec.get("ss", 4), jobs=ctx.jobs or 1)
+            man = json.loads(obj.path("impostors.json").read_text())
+            for r in man["records"]:
+                at = man["atlases"][str(r["model"])]
+                recs[(int(r["owner"], 0), r["bin"])] = dict(
+                    r, package=at["package"], vram_bytes=at["vram_bytes"],
+                    preview=str(obj.path("preview/%d.png" % r["model"])), tex_file=str(obj.path("tex/" + at["package"])))
+        return recs
+    else:
         return {}
     man = json.loads((d / "impostors.json").read_text())
     recs = {}
     for r in man["records"]:
         at = man["atlases"][str(r["model"])]
         rec = dict(r, package=at["package"], vram_bytes=at["vram_bytes"],
-                   preview=str(d / "preview" / ("%d.png" % r["model"])))
+                   preview=str(d / "preview" / ("%d.png" % r["model"])), tex_file=str(d / "tex" / at["package"]))
         recs[(int(r["owner"], 0) if isinstance(r["owner"], str) else r["owner"], r["bin"])] = rec
     return recs
 
 
-def _final_packages(ctx, room, specs, subs, shell_dirs, scales, chosen):
-    """Rebuild each owner with bias = recipe bias x chosen bias per BIN."""
+NEVER = 3.0e38      # an empty level Original never reaches: Standard never picks it either
+
+
+def _vanish_min(room, pk_orig, px_std, px_orig):
+    """{asset key: least stored error of a Standard empty LOD level}: the Original package's
+    smallest empty-level error x px_std / px_orig, so an object vanishes no nearer than in
+    Original; NEVER where Original has no empty level."""
+    out = {}
+    for o in room.owners():
+        pk = pk_orig.get(o["name"])
+        if pk is None:
+            continue
+        for (b, common), k in sorted(pk.mesh_by_bin().items()):
+            errs = [e for p in pk.mesh_parts(k) for cl in pk.part_levels(p) for e, lets in cl["levels"] if not lets]
+            out["%s/%s" % (o["name"], bin_id(o["code"], b))] = min(errs) * px_std / px_orig if errs else NEVER
+    return out
+
+
+def _guard(ctx, room, objs, vmin):
+    """Apply the vanish guard (generators.vanish_guard) to every owner's package."""
+    out = {}
+    owners = {o["name"]: o for o in room.owners()}
+    for n, obj in sorted(objs.items()):
+        vm = {}
+        for k, v in vmin.items():
+            owner, bid = k.split("/")
+            if owner == n:
+                vm[(_imp_key(k)[1], bool(owners[n]["common"]))] = v
+        out[n] = ctx.gen.vanish_guard(room, n, obj, vm) if vm else obj
+    return out
+
+
+def _final_packages(ctx, room, specs, subs, shell_dirs, scales, chosen, vmin=None):
+    """Rebuild each owner with bias = recipe bias x chosen bias per BIN (then the vanish guard)."""
     rec = {}
     for s in specs.get("bias", []):
         o, rest = s.split(":")
@@ -661,7 +792,8 @@ def _final_packages(ctx, room, specs, subs, shell_dirs, scales, chosen):
         oc = "0x%02x" % code if code >= 0xF0 else str(code)
         for f in sorted(per[code]):
             spec["bias"].append("%s:%s=%g" % (oc, ranges(sorted(set(per[code][f]))), f))
-    return build_packages(ctx, room, spec, list(subs) + list(shell_dirs), scales)
+    objs = build_packages(ctx, room, spec, list(subs) + list(shell_dirs), scales)
+    return _guard(ctx, room, objs, vmin) if vmin else objs
 
 
 def _tex_vram(img_w, img_h, cost):
@@ -680,14 +812,13 @@ def _used_textures(pk):
     return used
 
 
-def _sizes(cfg, room, orig_objs, final_objs, pk_orig, pk_final, shell_tex, atlas_files, imp_recs, used_imp):
+def _sizes(cfg, tpl, orig_objs, final_objs, pk_orig, pk_final, shell_tex, atlas_files, imp_recs, used_imp):
     heap = {}
     for n in sorted(orig_objs):
         a = orig_objs[n].info.get("package_bytes") or 0
         b = final_objs[n].info.get("package_bytes") or 0
         heap[n] = dict(original=a, standard=b, delta=b - a)
     # VRAM: room TPL images referenced by drawing parts + added shell/atlas textures
-    tpl = cfg.path("r100_export") / "R100.TPL.TPL" if room.kind == "export" else None
     dims = []
     if tpl is not None:
         from .config import TOOLS
@@ -778,7 +909,7 @@ def _review(ctx, room, man, named, pk_final, pk_orig, chosen, imp_recs, shells, 
 
 def _textures(ctx, room, shells, imp_recs):
     from .config import TOOLS
-    imgs = texture.tpl_images(ctx.cfg.path("r100_export") / "R100.TPL.TPL", TOOLS)
+    imgs = texture.tpl_images(ctx.gen.room_tpl(room), TOOLS)
     by_index = {}
     if room.recipe.get("trees", {}).get("bark_png"):
         bark = ctx.gen.ps2_bark(room)
@@ -847,10 +978,10 @@ def _html(man, named, counts, rev, variants=()):
     h.append("<p class=mut>Identical cameras for both modes. <b>Standard (default)</b> = budget-first Dreamcast-native "
              "look (LOD px %g, baked house shells, tree impostors, clutter culling; per asset chosen by the solver). "
              "<b>Original</b> = the faithful recipe packages (LOD px %g). Pictures are the pipeline's software "
-             "render of exactly what each mode draws at that view (same textures, lighting and 25 m fog for both); "
-             "the spawn view also shows the real game's frame at that camera (Flycast, scenery-trials arm C) to check "
-             "the render against.</p>"
-             % (man["lod_px"]["standard"], man["lod_px"]["original"]))
+             "render of exactly what each mode draws at that view (same textures, lighting and 25 m fog for both)%s.</p>"
+             % (man["lod_px"]["standard"], man["lod_px"]["original"],
+                "; the spawn view also shows the real game's frame at that camera (Flycast, scenery-trials arm C) to "
+                "check the render against" if any(v.get("frame") for v in named) else ""))
     h.append("<div class=tiles>")
     tiles = [
         ("Standard scenery assets, worst named view", "%s hw ms" % ms(sm["standard"]["named_assets_ms_max"]),
@@ -872,6 +1003,43 @@ def _html(man, named, counts, rev, variants=()):
         h.append("<div class=tile><span class=mut>%s</span><b>%s</b><span class=mut>%s</span></div>" % (
             escape(t), escape(v), escape(s)))
     h.append("</div>")
+    bc = man.get("budget_context")
+    if bc:
+        dh = sum(v["delta"] for v in sz["heap4"].values())
+        h.append("<h2>Against the route memory budgets</h2><div class=scroll><table><tr><th>heap 4 case</th>"
+                 "<th>Original free</th><th>Standard free</th><th>vs margin %d KB</th>%s</tr>" % (
+                     bc.get("heap4_margin_kb", 0), "<th>vs gate %d KB</th>" % bc["heap4_gate_kb"]
+                     if bc.get("heap4_gate_kb") else ""))
+        for c in bc.get("heap4", []):
+            lo, hi = c["original_free_kb"]
+            slo, shi = lo - dh / 1024.0, hi - dh / 1024.0
+
+            def rng(a, b_):
+                return "%+.0f KB" % a if abs(a - b_) < 0.5 else "%+.0f to %+.0f KB" % (a, b_)
+
+            def ok(x):
+                return "good" if x >= 0 else "bad"
+            m = bc.get("heap4_margin_kb", 0)
+            g = bc.get("heap4_gate_kb")
+            h.append("<tr><td style='text-align:left'>%s</td><td>%s</td><td><b>%s</b></td><td class=%s>%s</td>%s</tr>" % (
+                escape(c["case"]), rng(lo, hi), rng(slo, shi), ok(slo - m), rng(slo - m, shi - m),
+                "<td class=%s>%s</td>" % (ok(slo - g), rng(slo - g, shi - g)) if g else ""))
+        h.append("</table></div>")
+        v = bc.get("vram")
+        if v:
+            used_s = v["original_used"] + sz["vram"]["delta"]
+            h.append("<p>VRAM pool %d KB: Original uses %d KB (%s), Standard <b>%d KB</b> (%+d KB: shells %d, "
+                     "impostor atlases %d, room textures no longer drawn %s), <span class=%s>%d KB free</span>.</p>" % (
+                         v["pool"] // 1024, v["original_used"] // 1024, escape(v["source"]), used_s // 1024,
+                         round(sz["vram"]["delta"] / 1024), round(sz["vram"]["shells"] / 1024),
+                         round(sz["vram"]["impostor_atlases"] / 1024),
+                         ", ".join(str(i) for i in sz["vram"]["room_textures_dropped"]) or "none",
+                         "good" if used_s <= v["pool"] else "bad", (v["pool"] - used_s) // 1024))
+        if bc.get("note"):
+            h.append("<p class=mut>%s</p>" % escape(bc["note"]))
+    if man.get("review_notes"):
+        h.append("<div class=view><h3>This room</h3><ul>%s</ul></div>" % "".join(
+            "<li>%s</li>" % escape(x) for x in man["review_notes"]))
     h.append("<p class=mut>Frame estimate per view = rest of frame %.1f ms (design-lowmode D2 floor: everything "
              "but scenery at 30 fps) + scenery base %.1f ms (planned after design-scenery S1-S5; today %.1f) + "
              "scenery assets. Target 33.3 ms (30 fps). The same rest-of-frame is used for both modes, so the "
@@ -886,9 +1054,10 @@ def _html(man, named, counts, rev, variants=()):
              "<li>Houses: the shell ladder picks the first face count whose p90 error is within the limit; the "
              "house views also show the rejected lower rungs, so the 'few dozen polygons' request can be judged "
              "by eye.</li>"
-             "<li>Disc: every Standard package differs from Original because the chosen LOD biases are baked in. "
-             "With a runtime per-BIN bias table (like LOD px, a quality-struct switch) only the packages whose "
-             "geometry differs would need a second copy.</li></ul></div>" % (
+             "<li>Disc: every Standard package differs from Original because the chosen LOD biases are baked in "
+             "(D367_ASSET_PIPELINE.md section 15 weighs a runtime per-BIN table instead).</li>"
+             "<li>No object vanishes nearer in Standard than in Original: an empty LOD level keeps at least "
+             "Original's vanish distance (the vanish guard).</li></ul></div>" % (
                  b["scenery_ms_view_max"], nin, sm["views"], 6, 6, p["base_ms_today"], p["base_ms_planned"]))
     h.append("<h2>Views</h2>")
     for v in named:

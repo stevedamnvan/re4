@@ -100,8 +100,9 @@ house_err_cm = 30.0        # rung whose p90 source->shell error <= house_err_cm 
 house_review_faces = [48, 96, 200]   # rungs rendered next to the chosen one in the review (not staged)
 lod_args = ["--lod", "--lod-min-gain", "0.5", "--lod-max-levels", "4", "--lod-eps", "48,192,768,3072"]   # coarser chain, same depth
 # Blender reduction offered as an extra geometry option; a BIN's reduction is only offered when its
-# measured error stays small (p90 both ways <= max_p90_mm, source-to-reduction max <= max_mm)
-coarse = { variant = "coarse", classes = ["ground", "structure"], ops = [["planar", 4.0], ["collapse", 0.3]], max_p90_mm = 150.0, max_mm = 600.0 }
+# measured error stays small (p90 both ways <= max_p90_mm, source-to-reduction max <= max_mm and
+# <= max_rel x the BIN's bounding radius)
+coarse = { variant = "coarse", classes = ["ground", "structure"], ops = [["planar", 4.0], ["collapse", 0.3]], max_p90_mm = 150.0, max_mm = 600.0, max_rel = 0.1 }
 house_tex = 512
 ground_flat = 0.25         # ground: height <= 0.25 x horizontal extent and horizontal >= ground_min_mm
 ground_min_mm = 10000.0
