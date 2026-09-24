@@ -1301,6 +1301,11 @@ extern "C" void re4dc_fog_capture(int type,float start,float end,unsigned rgba){
     fog_now.type=type;fog_now.start=start;fog_now.end=end;fog_now.rgba=rgba;
 }
 extern "C" unsigned re4dc_fog_enabled(){return fog_now.type!=0;}
+#if RE4DC_ACTOR_FOG_GATE
+// ACTOR_FOG_GATE: the fogged source View far last noted (re4dc_fog_note_far, already clamped to
+// FOG_FAR), the value re4dc_fog_far_for_gate gives SCENERY_GATE for the same View; 0 when unknown.
+extern "C" float re4dc_fog_gate_far(){return fog_now.type?fog_now.far:0.0f;}
+#endif
 #if RE4DC_SCENERY_GATE
 extern "C" float re4dc_fog_far_for_gate(float far){ // re4dc_fog_note_far's clamp, without noting
 #if RE4DC_FOG_FAR > 0

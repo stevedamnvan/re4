@@ -38,6 +38,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#ifndef RE4DC_ACTOR_FOG_GATE
+#define RE4DC_ACTOR_FOG_GATE 0  // obj/scenery30.h (ACTOR_FOG_GATE)
+#endif
 #if defined(RE4DC_ACTOR_TEST)
 #include <cstdio>
 #endif
@@ -1215,6 +1218,9 @@ struct Frame {  // per (info, matrices) per frame
     u8* skin_ready = nullptr;         // per entry: skin_positions entry built this frame
     u8* dirs_ready = nullptr;         // per entry: skin_dirs entry built for dirs_fold
     float dirs_fold[12]{};            // the light directions skin_dirs were built from
+#if RE4DC_ACTOR_FOG_GATE
+    bool gate_ready = false; float gate_T = 0.0f, gate_G = 0.0f;  // ACTOR_FOG_GATE skinned depth bound
+#endif
 };
 constexpr unsigned kFrames = 4;
 Frame frames[kFrames];
@@ -2713,6 +2719,22 @@ extern "C" int re4dc_actor_materialize_lazy(Re4dcModelPart* p) {
 }
 #endif
 
+#if RE4DC_ACTOR_FOG_GATE
+extern "C" float re4dc_fog_gate_far();
+extern "C" void re4dc_log(const char* fmt, ...);
+namespace {
+unsigned fog_gate_tests = 0, fog_gate_culled = 0, fog_gate_log = 0;
+// SCENERY_GATE's cull depth: the projection far, or the fogged View far when it is nearer.
+float fog_gate_depth(float near_distance, float far_distance) {
+    const float view_far = re4dc_fog_gate_far();
+    return view_far > near_distance && view_far < far_distance ? view_far : far_distance;
+}
+// Conservative view depth bound of a skinned Frame: every skinned vertex is a convex blend of
+// R_i x + t_i over palette entries i with x in the part's bind ball (|x| <= |c| + r), so its
+// view depth -z >= min_i(-z(t_i)) - max_i(|m_z| * s_i) * (|c| + r), s_i = R_i's largest column
+// norm. Cached per Frame (T = min depth of t_i, G = max |m_z| s_i).
+}  // namespace
+#endif
 extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
     ++stats.parts;
     if (!part || !qualifies(*part)) { ++stats.declined; return 0; }
@@ -2736,6 +2758,39 @@ extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
     if (re4dc_model_defer_part(&p)) { ++stats.deferred; return 1; }
 
     Frame& f = *prepare_frame(p, near_distance, far_distance);
+#if RE4DC_ACTOR_FOG_GATE
+    if (blob->radius > 0.0f || blob->center[0] != 0.0f || blob->center[1] != 0.0f || blob->center[2] != 0.0f) {
+        const float cull_far = fog_gate_depth(near_distance, far_distance);
+        const float* m = p.modelview; const float* c = blob->center;
+        float depth = -1.0f;  // least view depth (-z) of the part's drawn vertices, if known
+        if (f.mode != kSkin) {
+            depth = -(m[8] * c[0] + m[9] * c[1] + m[10] * c[2] + m[11]) -
+                    std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]) * blob->radius;
+        } else if (f.palette && f.palette_entries) {
+            if (!f.gate_ready) {
+                const float mz = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+                float T = 3.0e38f, G = 0.0f;
+                for (unsigned i = 0; i < f.palette_entries; ++i) {
+                    const float* P = f.palette + i * 12;  // columns R0, R1, R2, t
+                    const float d = -(m[8] * P[9] + m[9] * P[10] + m[10] * P[11] + m[11]);
+                    float s = 0.0f;
+                    for (unsigned k = 0; k < 3; ++k)
+                        s = std::max(s, P[k * 3] * P[k * 3] + P[k * 3 + 1] * P[k * 3 + 1] + P[k * 3 + 2] * P[k * 3 + 2]);
+                    T = std::min(T, d); G = std::max(G, mz * std::sqrt(s));
+                }
+                f.gate_ready = true; f.gate_T = T; f.gate_G = G;
+            }
+            depth = f.gate_T - f.gate_G * (std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]) + blob->radius);
+        }
+        ++fog_gate_tests;
+        if (frame_serial - fog_gate_log >= 600U) {
+            fog_gate_log = frame_serial;
+            re4dc_log("native actor fog gate: frame=%u tests=%u culled=%u far=%.0f\n", frame_serial, fog_gate_tests,
+                      fog_gate_culled, cull_far);
+        }
+        if (depth > cull_far) { ++fog_gate_culled; re4dc_model_result(0, 0, 0); return 1; }
+    }
+#endif
     if (f.mode == kRigid && blob->radius > 0.0f) {
         // Whole-part depth test of the bind-pose sphere (bind == drawn pose).
         const float* m = p.modelview; const float* c = blob->center;
