@@ -217,6 +217,14 @@ is CPU-bound). The study used a lighter SUBSCREEN=0 fixture (53.9 ms busy). The 
 frame and appears only when the CPU part of a frame is close to the render time, which is where the lane is
 heading (50 ms target). Re-measure it on hardware with the calibration disc.
 
+**Room discovery round 2 (2026-09-24, 9f2f45a..49b97b2; user: "we need that to make it through the game scalable").**
+`assets.sh discover` now lints each needed module for the known porting traps and writes the module wiring
+(`--wire`; audit list only when the lint is clean), lists heap-4 options per enemy archive with a covering plan,
+checks each event's evd (route movie, or prepared + qualified evd), and reports Standard budgets and VRAM. Game logic
+is never generated. For the r100 after-state crows (171,328 B short in Original): Standard with QUALITY_ASSETS=1 fits
+(packages -282,560 B, 111,232 spare); for Original the cheapest option is a new em21 motion-stream contract
+(<= 294,240 B). r101's enemy heap-4 room is measured (3,048,704 B, fits 1,595,136 spare); r103's waits for W8b.
+
 User decisions 2026-09-23: (1) the fight floor (smoother-slower vs choppier-faster) is deferred until real numbers exist; it stays the PACE_FLOOR_FPS knob, default 15. (2) One early console timing run of a self-running r100 fight calibration disc is approved, purely to calibrate the hardware model (results on screen and on the VMU). All other console tests still wait for r100 -> r101 -> r103. (3) Gameplay-equivalent maths in game logic (SH-4 FTRV/FIPR for skeleton and foot IK) is approved as a measured option under the existing last-bit FP policy: deterministic but not bit-identical, with collision checked separately before adoption.
 
 ## 20 fps hardware budget (2026-09-23)

@@ -7,7 +7,8 @@ NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + conver
 ea1e2d3 VRAM_PAGES (default off), 9951d17 items 20+21 (TREE_IMPOSTOR/MESH_TEXTURES on W9b, default off), 010169c
 QUALITY_ASSETS (Standard selection, default off), 46b9f4f tex-vq6 (r101 textures VQ: the r101 VRAM blocker), e6f65cc
 em2a linked (r100 after-state entry), 4f530e3 warp `trg` (r101 bell reached by warp), b1a342c `assets.sh discover` (room demand from source data: modules,
-archives, heap 4; run it before building a room's disc), 07d4a82 movie ring (r101s30 plays from the fight). The
+archives, heap 4; run it before building a room's disc), 07d4a82 movie ring (r101s30 plays from the fight),
+b7a7e2d + edf0cc4 TA_DOUBLEBUF (canonical), 9f2f45a/4a7a560/b99e803/054bfd2/49b97b2 discover round 2. The
 sections below are updated for those; everything else is as at the hold.
 
 The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
@@ -200,11 +201,13 @@ build or watcher of theirs is running.
    - r100 after-state crows (heap 4, see blocker 3);
    - the m1 restage with em15 keys;
    - r101 -> r103 (the bell movie plays since 07d4a82);
-   - discover round 2 (user, 2026-09-24: "we need that to make it through the game scalable"): write the module
-     wiring patch (MODULES, MODULE(id, name), audit list); lint module sources for the known traps (value-init
-     `new (em) cEmXX()`, asm-label aliases of file statics, direct EmMgr slot arithmetic); heap-4 options per
-     enemy archive in the solver (texture-only preparation, Standard packages); event actors (evd), measured
-     r101/r103 enemy heap-4 room, Standard budgets, VRAM;
+   - DONE discover round 2 (tools/d367/README.md "Room discovery"): porting-trap lint + `--wire` (9f2f45a;
+     reproduces e6f65cc on dadfbac), heap-4 options per enemy archive with a covering plan (4a7a560), r101
+     measured enemy heap-4 room 3,048,704 B (b99e803; r103 waits for W8b), event actors / evd (054bfd2; every
+     route event has a movie), Standard budgets + VRAM + missing-texture check (49b97b2). Findings: r100 crows
+     fit in Standard with QUALITY_ASSETS=1 (111,232 B spare); Original needs a new contract (em21 motion-stream
+     <= 294,240 B, or em23 + em2a motion/textures + em2a's 17,152 B REL copy). The r101 warp disc misses 16 room
+     texture packages (open failed): trace the staging gap;
    - ADPCM movie audio (queued by the user after the ring fix);
    - r100 Standard proof.
 3. Resume the other streams in the order of the dependency list in the route doc; every patch still goes through
