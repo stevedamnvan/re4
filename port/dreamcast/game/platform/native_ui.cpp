@@ -2078,6 +2078,57 @@ extern "C" void* re4dc_model_metadata_storage(unsigned* bytes){
 #if RE4DC_ACTOR_UV16
 extern "C" void re4dc_model_next_header_pcw(unsigned set,unsigned clear){next_pcw_set=set;next_pcw_clear=clear;}
 #endif
+#if RE4DC_FRONT_NATIVE>=2 && RE4DC_UI_HANDLES && RE4DC_D349_RENDERER_STACK
+// FRONT_NATIVE=2 group 8 (model_bridge.cpp): the PVR header a part would get, computed without
+// side effects (no texture load, no handle touch, no pass switch, no header cache). A copy of
+// re4dc_model_packet_reserve's state checks and re4dc_model_packet_begin's header build; the
+// compare against the header packet_begin really built for the source part proves the copy.
+extern "C" void re4dc_front_header_built(const void* header,unsigned alpha_state);
+Entry* resolve_peek(const Re4dcUiImage& image,const Re4dcModelPart* masked){
+    const Re4dcUiImage* mask=masked?&masked->mask:nullptr;
+    unsigned shape,mask_shape=0;
+    if(!handle_shape(image,shape,!mask) || (mask && !handle_shape(*mask,mask_shape,false)))return nullptr;
+    const bool indexed=image.format==8 || image.format==9;
+    const void* mask_pixels=mask?mask->pixels:nullptr;const void* mask_palette=mask?mask->palette:nullptr;
+    const unsigned a=unsigned(reinterpret_cast<std::uintptr_t>(image.pixels)),b=unsigned(reinterpret_cast<std::uintptr_t>(mask_pixels));
+    const Handle& h=handle_table[((a>>5)^(a>>13)^(b>>6)^(shape>>11))&255U];
+    if(h.pixels==image.pixels && h.shape==shape && h.palette==image.palette && h.mask_pixels==mask_pixels &&
+       h.mask_shape==mask_shape && h.mask_palette==mask_palette && h.stamp>handle_reset && h.stamp>entry_closed[h.entry] &&
+       h.palette_bytes==image.palette_bytes && (!indexed || palette_same(unsigned(&h-handle_table),image)))return &entries[h.entry];
+    return nullptr;
+}
+extern "C" int re4dc_model_header_preview(const Re4dcModelPart* p,void* out){
+    if(p->blend>4 || p->cull>2 || p->depth_mode>2 || p->wrap_s>1 || p->wrap_t>1)return 0;
+    if((p->material_flags&4) && (!p->mask.pixels || !p->mask_same_uv || p->mask_ref!=0 ||
+       p->mask.width!=p->image.width || p->mask.height!=p->image.height))return 0;
+    if(p->image.format>=8 && p->image.format!=14)return 0;
+    if(!p->image.pixels || !p->image.width || !p->image.height || p->image.width>1024 || p->image.height>1024)return 0;
+    Entry* handle=resolve_peek(p->image,(p->material_flags&4)?p:nullptr);
+    if(!handle)return 0;
+    const auto& t=handle->package.textures()[0];
+    if((p->wrap_s && t.width!=p->image.width)||(p->wrap_t && t.height!=p->image.height))return 0;
+    unsigned fmt=re4dc::texture::pvr_format(t);
+    const pvr_list_t list=select_model_pass(p);
+    pvr_poly_hdr_t header;
+    pvr_poly_cxt_t c;pvr_poly_cxt_txr(&c,list,fmt,t.width,t.height,handle->package.pvr_texture(0),PVR_FILTER_BILINEAR);
+    const pvr_cull_mode_t cull[]={PVR_CULLING_NONE,PVR_CULLING_CCW,PVR_CULLING_CW};
+    c.gen.culling=cull[p->cull];
+    c.depth.comparison=p->depth_mode==2?PVR_DEPTHCMP_ALWAYS:PVR_DEPTHCMP_GEQUAL;
+    c.depth.write=p->depth_mode==0?PVR_DEPTHWRITE_ENABLE:PVR_DEPTHWRITE_DISABLE;
+    const pvr_blend_mode_t src[]={PVR_BLEND_SRCALPHA,PVR_BLEND_SRCALPHA,PVR_BLEND_ONE,PVR_BLEND_DESTCOLOR,PVR_BLEND_ONE};
+    const pvr_blend_mode_t dst[]={PVR_BLEND_INVSRCALPHA,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ONE,PVR_BLEND_ZERO};
+    c.blend.src=src[p->blend];c.blend.dst=dst[p->blend];c.txr.env=PVR_TXRENV_MODULATEALPHA;
+    c.txr.alpha=PVR_TXRALPHA_DISABLE;
+    if(p->material_flags&4)c.txr.alpha=PVR_TXRALPHA_ENABLE;
+    c.txr.uv_clamp=(pvr_uv_clamp_t)((p->wrap_s?0:PVR_UVCLAMP_U)|(p->wrap_t?0:PVR_UVCLAMP_V));
+#if RE4DC_NATIVE_FOG
+    c.gen.fog_type=p->source_key[2]?PVR_FOG_TABLE:PVR_FOG_DISABLE;
+#endif
+    pvr_poly_compile(&header,&c);
+    std::memcpy(out,&header,sizeof(header));
+    return 1;
+}
+#endif
 extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket* out){
     RE4DC_PROFILE_SCOPE(PacketPack);
 #if RE4DC_ACTOR_UV16
@@ -2155,6 +2206,9 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
         else if(list==PVR_LIST_PT_POLY)RE4DC_PROFILE_COUNT(HardwareCullPT,1);
         else RE4DC_PROFILE_COUNT(HardwareCullTR,1);
     }
+#endif
+#if RE4DC_FRONT_NATIVE>=2 && RE4DC_UI_HANDLES && RE4DC_D349_RENDERER_STACK
+    if(!draining_parts)re4dc_front_header_built(&header,p->alpha_state);
 #endif
     re4dc::render::begin_pvr_packet(model_packets+model_used,count,header);
 #if RE4DC_ACTOR_UV16

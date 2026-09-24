@@ -128,13 +128,22 @@ extern "C" void re4dc_model_alpha_material(const void* object,unsigned ref,unsig
 // D367 FRONT_NATIVE=2 (trans.cpp ModelRender): the source path records a hash per field group of
 // every part it submits for one model (mode 1); the native replay (mode 2) is compared part by
 // part and not drawn. Groups: 0 geometry/arrays/modes, 1 modelview, 2 projection+viewport,
-// 3 texture+uv, 4 alpha state, 5 alpha mask, 6 static binding, 7 lighting contents.
+// 3 texture+uv, 4 alpha state, 5 alpha mask, 6 static binding, 7 lighting contents,
+// 8 (groups bit 0x100) the PVR header words (cmd/ISP/TSP/TCW; words 4-7 are not written by
+// pvr_poly_compile): the header re4dc_model_packet_begin built for the
+// source part (drawn in place; deferred, static-package and rejected parts are "unchecked")
+// against re4dc_model_header_preview of the replayed part. Groups bit 0x80000000 = count overflow.
 extern "C" void re4dc_log(const char* fmt,...);
+extern "C" int re4dc_model_header_preview(const Re4dcModelPart* p,void* out);
 namespace {
 constexpr unsigned kFrontParts=512,kFrontGroups=8;
 unsigned front_mode,front_n,front_k,front_model_bad,front_block=~0U,front_logged;
 unsigned front_hash[kFrontParts][kFrontGroups];
 unsigned front_models,front_parts,front_bad_parts,front_bad_models,front_group_bad[kFrontGroups];
+unsigned front_cur=~0U,front_hdr[kFrontParts][8];
+unsigned char front_hdr_ok[kFrontParts];
+unsigned front_hdr_alpha[kFrontParts];
+unsigned front_g8_checked,front_g8_bad,front_g8_unchecked,front_g8_nopreview;
 inline unsigned fnv(unsigned h,const void* p,unsigned n){
     auto* b=(const unsigned char*)p;for(unsigned i=0;i<n;++i)h=(h^b[i])*16777619U;return h;
 }
@@ -158,16 +167,37 @@ void front_hash_part(const Re4dcModelPart* p,unsigned* g){
     h=fv(s,p->serial);h=fv(h,p->world);h=fv(h,p->view);g[6]=fnv(h,p->source_key,sizeof(p->source_key));
     g[7]=p->lighting?fnv(s,p->lighting,sizeof(*p->lighting)):0;
 }
+// The emitters may hand packet_begin an adjusted copy: native_static draws a vertex-alpha part
+// whose alpha cannot reach the image (all vertices opaque, or blend 0 unmasked) as alpha_state
+// 255. That is the only adjustment group 8 accepts (counted); any other alpha_state change
+// is previewed as is and so shows as a group 8 mismatch.
+Re4dcModelPart front_g8_part;
+unsigned front_g8_adjusted;
+const Re4dcModelPart* front_g8_alpha(const Re4dcModelPart* p,unsigned alpha_state){
+    if(!(p->alpha_state&256) || alpha_state!=255)return p;
+    front_g8_part=*p;front_g8_part.alpha_state=255;++front_g8_adjusted;return &front_g8_part;
+}
 int front_verify_part(const Re4dcModelPart* p){
     if(!front_mode)return 0;
     unsigned g[kFrontGroups];front_hash_part(p,g);
     if(front_mode==1){
-        if(front_n<kFrontParts)memcpy(front_hash[front_n],g,sizeof(g));
+        if(front_n<kFrontParts){memcpy(front_hash[front_n],g,sizeof(g));front_hdr_ok[front_n]=0;front_cur=front_n;}
         ++front_n;return 0;
     }
     const unsigned k=front_k++;++front_parts;
-    unsigned bad=k<front_n && k<kFrontParts?0U:0x100U;
+    unsigned bad=k<front_n && k<kFrontParts?0U:0x80000000U;
     for(unsigned i=0;!bad && i<kFrontGroups;++i)if(g[i]!=front_hash[k][i]){bad|=1U<<i;++front_group_bad[i];}
+    if(!bad){
+        unsigned h[8];
+        if(!front_hdr_ok[k])++front_g8_unchecked;
+        else if(!re4dc_model_header_preview(p->alpha_state==front_hdr_alpha[k]?p:front_g8_alpha(p,front_hdr_alpha[k]),h))++front_g8_nopreview;
+        else if(++front_g8_checked,memcmp(h,front_hdr[k],16)){
+            bad|=0x100U;++front_g8_bad;
+            if(front_logged<24){++front_logged;
+                re4dc_log("front_native: GROUP8 frame=%u part=%p source=%08x,%08x,%08x,%08x native=%08x,%08x,%08x,%08x\n",pG->Frame_cnt,p->part,
+                          front_hdr[k][0],front_hdr[k][1],front_hdr[k][2],front_hdr[k][3],h[0],h[1],h[2],h[3]);}
+        }
+    }
     if(bad){
         ++front_bad_parts;front_model_bad=1;
         if(front_logged<24){++front_logged;
@@ -176,6 +206,12 @@ int front_verify_part(const Re4dcModelPart* p){
     }
     return 1;
 }
+}
+extern "C" void re4dc_front_header_built(const void* header,unsigned alpha_state){
+    if(front_mode==1 && front_cur<kFrontParts && !front_hdr_ok[front_cur]){
+        memcpy(front_hdr[front_cur],header,sizeof(front_hdr[0]));front_hdr_ok[front_cur]=1;
+        front_hdr_alpha[front_cur]=alpha_state;
+    }
 }
 extern "C" void re4dc_front_verify(int mode){
     if(mode==1)front_n=0;
@@ -189,7 +225,9 @@ extern "C" void re4dc_front_verify(int mode){
         if(block!=front_block){front_block=block;
             re4dc_log("front_native: frame=%u models=%u parts=%u bad_models=%u bad_parts=%u groups=%u,%u,%u,%u,%u,%u,%u,%u\n",
                 pG->Frame_cnt,front_models,front_parts,front_bad_models,front_bad_parts,front_group_bad[0],front_group_bad[1],
-                front_group_bad[2],front_group_bad[3],front_group_bad[4],front_group_bad[5],front_group_bad[6],front_group_bad[7]);}
+                front_group_bad[2],front_group_bad[3],front_group_bad[4],front_group_bad[5],front_group_bad[6],front_group_bad[7]);
+            re4dc_log("front_native: group8 frame=%u checked=%u bad=%u unchecked=%u nopreview=%u opaque_vertex_alpha=%u\n",pG->Frame_cnt,
+                front_g8_checked,front_g8_bad,front_g8_unchecked,front_g8_nopreview,front_g8_adjusted);}
     }
     front_mode=(unsigned)mode;
 }
@@ -251,4 +289,7 @@ extern "C" void re4dc_draw_model_part(const void* model,const void* info_ptr,
     if(front_verify_part(&p))return;  // native replay: compared, not drawn
 #endif
     re4dc_model_submit(&p);
+#if RE4DC_FRONT_NATIVE>=2
+    front_cur=~0U;  // group 8: headers built later (deferred drain) are not this part's
+#endif
 }
