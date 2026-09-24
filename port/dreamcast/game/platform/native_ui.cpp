@@ -1280,6 +1280,47 @@ void preload_identities(){
     if(frame)for(auto& e:entries)if(e.valid && e.frame==frame)e.frame=frame-1;
     re4dc_log("native texture preload: frame=%u picked=%u resident=%u loads=%u skipped=%u full=%d used=%u budget=%u entries=%u us=%u\n",frame,n,resident,preload_loads-loads,
         preload_skipped-skipped,full?1:0,used,budget,kTextureCount,unsigned(timer_us_gettime64()-start));
+#if RE4DC_UI_VRAM && RE4DC_VRAM_CENSUS
+    void vram_census(const char*);vram_census("preload");
+#endif
+}
+#endif
+#if RE4DC_UI_VRAM && RE4DC_VRAM_CENSUS
+// VRAM_CENSUS (test only): texture RAM census. VRAM_PAGES reports its own lists; the KOS dlmalloc
+// heap is walked chunk by chunk (4-byte size word, PREV_INUSE in the next chunk; top chunk free).
+std::uintptr_t census_heap_base;
+#if RE4DC_VRAM_PAGES
+extern "C" void re4dc_vram_pages_census(unsigned* out);
+#else
+extern "C" struct mallinfo pvr_int_mallinfo(void);
+#endif
+void vram_census(const char* where){
+    unsigned c[13]={};
+#if RE4DC_VRAM_PAGES
+    re4dc_vram_pages_census(c);
+#else
+    if(census_heap_base){
+        const struct mallinfo mi=pvr_int_mallinfo();
+        const std::uintptr_t end=census_heap_base+unsigned(mi.arena);
+        std::uintptr_t ch=census_heap_base;
+        while(((ch+8)&31U)!=0)ch+=4;             // first chunk: its user pointer is 32-byte aligned
+        for(unsigned guard=0;ch+16<=end && guard<4096;++guard){
+            const unsigned sz=*reinterpret_cast<volatile const unsigned*>(ch+4)&~3U;
+            if(sz<16 || ch+sz>end+32)break;
+            const std::uintptr_t nx=ch+sz;
+            const bool inuse=nx+8<=end && (*reinterpret_cast<volatile const unsigned*>(nx+4)&1U);
+            if(inuse){++c[0];c[1]+=sz;}
+            else {++c[2];c[3]+=sz;if(sz>c[4])c[4]=sz;++c[5+(sz<2048?0:sz<8192?1:sz<32768?2:sz<131072?3:4)];}
+            ch=nx;
+        }
+        const unsigned tail=unsigned(PVR_RAM_INT_TOP-end); // never sbrk'd: free, contiguous with top
+        c[3]+=tail;
+    }
+#endif
+    unsigned ntex=0,tex_bytes=0;
+    for(const auto& e:entries)if(e.valid){++ntex;tex_bytes+=e.package.vram_bytes();}
+    re4dc_log("vram census: %s frame=%u pages=%d budget=%u used=%u textures=%u tex_bytes=%u claims=%u avail=%u allocs=%u alloc_bytes=%u extents=%u free=%u largest=%u hist=%u/%u/%u/%u/%u fails=%u peak_alloc=%u peak_free=%u retries=%u evicted=%u\n",
+        where,frame,RE4DC_VRAM_PAGES,vram_budget,used,ntex,tex_bytes,vram_claims,(unsigned)pvr_mem_available(),c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7],c[8],c[9],c[10],c[11],c[12],vram_retries,reclaimed);
 }
 #endif
 }
@@ -1699,6 +1740,9 @@ extern "C" void re4dc_ui_init(){
             unsigned(RE4DC_TA_VERTBUF_KB),2U,RE4DC_TA_DOUBLEBUF?"double-buffered":"single-bank use",unsigned(RE4DC_TA_OPB_BINS),unsigned(RE4DC_TA_OPB_OVERFLOW),(unsigned)pvr_mem_available());
 #endif
 #if RE4DC_NATIVE_MES
+#if RE4DC_UI_VRAM && RE4DC_VRAM_CENSUS
+        census_heap_base=PVR_RAM_INT_TOP-pvr_mem_available(); // no texture RAM allocated yet
+#endif
         glyph_init(); // before the UI_VRAM budget: the atlas is part of the accounted pool
 #endif
 #if RE4DC_UI_VRAM
@@ -1913,6 +1957,9 @@ extern "C" void re4dc_ui_present(){
     if(frame%120==0) re4dc_log("native UI: frame=%u quads=%u drawn=%u missing=%u unsupported=%u drops=%u vram=%u peak=%u staging=%u loads=%u freed=%u culled=%u fb=%08x,%08x black=%d\n",frame,nquad,drawn,missing,unsupported,dropped,used,peak,staging_peak,loads,reclaimed,culled,(unsigned)pvr_get_front_buffer(),(unsigned)pvr_get_back_buffer(),re4dc_vi_black());
 #if RE4DC_UI_VRAM
     if(frame%120==0) re4dc_log("native UI VRAM: frame=%u budget=%u used=%u free=%u rejects=%u retries=%u evicted=%u\n",frame,vram_budget,used,(unsigned)pvr_mem_available(),vram_rejects,vram_retries,reclaimed);
+#if RE4DC_VRAM_CENSUS
+    if(frame%120==0)vram_census("frame");
+#endif
 #endif
 #if RE4DC_EFFECT_SPRITES
     if(frame%120==0) re4dc_log("native effect sprites: frame=%u queued=%u direct=%u missing=%u dropped=%u capped=%u culled=%u peak=%u\n",frame,fx_queued,fx_direct,fx_missing,fx_dropped,fx_capped,fx_culled,fx_peak);
