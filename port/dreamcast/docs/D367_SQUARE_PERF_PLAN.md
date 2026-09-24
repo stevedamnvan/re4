@@ -115,6 +115,46 @@ Next, in order: (1) counter build to settle rows 5 and 6a and list which part ma
 (collision, hit volumes, attach points, IK, events); (2) row 1, the largest exact item; (3) the bounded
 skeleton experiment (3a, then 3b and 6b with the shadow check); (4) row 8.
 
+## Skeleton audit (2026-09-24, GAME_SKEL_AUDIT counter build, tree5; last 1800 square ticks)
+
+Arm tr4 (tr2 flags + GAME_SKEL_AUDIT=1): logic trace STRICT vs tr2 over 3035 ticks (read-only counters).
+partsWorldCalc hashes every input (local/parent matrices, scales, flags, addRot, pos) and every output
+before and after each call, per model; RotMatrix/low_RotMatrix note repeated angles per destination;
+getPartsPtr notes callers by phase. Parser: scratchpad sa_parse.py (skill scripts).
+
+Q1, repeated unchanged work: **rare.** 94.1 calls and 1390 parts per tick. Calls with bit-identical
+inputs and untouched outputs since the model's previous call: 2.7 calls / 59 parts per tick (4%, crows
+em28 and em26, same tick). Calls that changed nothing: 8.0 / 136 parts. 85 of 94 calls follow a real
+mutation of the model's outputs or inputs. The redundancy is structural instead:
+
+| caller (model) | calls/tick | parts/tick | pattern | dependency-tracking candidate | parts avoidable (est.) |
+|---|---|---|---|---|---|
+| MotionMove (em15 Ganados) | 14.5 | 493 | all 14 Ganados every tick, parked ones included | parked (unseen) Ganados: compute only the chains gameplay reads (collision parts 0/2 ...), the rest before a draw | ~200-270 |
+| cEm10::move (em15) | 7.25 | 247 | second full pass after em10NeckMove / em10WaistMove (they read parts 1-4) | first pass limited to what is read before the second pass | ~150-210 |
+| MotionMove + cPlayer::move (Leon) | 3.0 | 357 | three full 119-part passes per tick | same test between passes | ~119-238 |
+| crows / em26 / objects | ~70 | ~290 | small models; 59 parts exact repeats | skip exact repeats | ~59 |
+
+At ~3 us per part (partsWorldCalc self + Concat/MultVec/TransMatrix share) the candidates total
+**~0.5-0.8 k parts, ~1.6-2.4 hw ms/tick**, each still needing a consumer proof (source + STRICT).
+
+Rotation: RotMatrix 747 calls/tick, 59% all-zero angles (already served by GAME_ROT_CACHE), 21% same
+angles as the destination's previous call; low_RotMatrix 886 calls, 12% repeats. Exact memo gain ~0.1-0.2.
+
+Q2, observed part-matrix readers (getPartsPtr, per tick): collision cAtariInfo::getPos parts 0/2 (481),
+MotionMoveCore parts 0-15 (286), MotionMove (65), em10 neck/waist parts 1-4 (36), cloth (16), weapon
+attach cEmWep::setParentMatCalc parts 10/16/17 (11), Leon eye/waist/push/corner/damage (~10), plus
+presentation readers ModelTrans (293, Trans phase), cLightInfo (137), ModelRender (103). Inlined copies
+inside model.cpp and direct pList walks are not counted; one recording is not proof of non-use: every
+candidate above needs source inspection of its readers before a STRICT experiment.
+
+Q3, stacked: dependency tracking removes whole part updates, so it shrinks the base the matrix-kernel
+(3a/3b) and partsWorldCalc (4) rows act on by the same ~35-50%: after it, 3a+3b fall from ~1.1-1.5 to
+~0.6-0.9, row 4 from ~0.3-0.6 to ~0.2-0.4. The rotation memo overlaps FSCA (6b) by ~15%.
+
+**Result: dependency tracking and reuse expose ~2 hw ms/tick (1.6-2.4), not the ~12-19 still missing.**
+Revised best plausible retained work: ~25-31 hw ms/tick. The 14 ms allocation is not credible for the
+square under the gameplay constraints; the 30 fps architecture and budget need an explicit revision.
+
 ## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
 
 Engineering budgets (targets, not forecasts) for one tick: required simulation + shared model work
@@ -207,5 +247,6 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-24 | sq14 | sq5 + GAME_COL_PREFETCH v2 (record +4, vertex/normal +2) | 113.0 (-0.5) | - | STRICT tr1 vs tr2, 3073 ticks | committed 4723dff, in LH |
 | 09-24 | sq15 | sq13 stack, every tick drawn (normal baseline) | 104.5 | - | render only | the 30 fps baseline |
 | 09-24 | sq16 | sq13 stack + PACE_FORCE=A (never draw) | 39.5 retained/tick | - | STRICT tr2 vs tr3, 3277 ticks | retained-work baseline |
+| 09-24 | tr4 | GAME_SKEL_AUDIT counter build | - | - | STRICT tr2 vs tr4, 3035 ticks | exact repeats 4% of parts; structural candidates ~2 ms |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
