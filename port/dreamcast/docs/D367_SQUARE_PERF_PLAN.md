@@ -51,6 +51,37 @@ What this means:
   1.6, MakeWeightPalette 1.2, sincos 1.1, PSMTXMultVec 1.1, EspDelete 0.8, Hermite 0.7. By file:
   EmAtCheck + scenery collision 7.4, skeleton maths 7, effects 3.5, Trans 2.9, motion 1.9.
 
+**Retained work and normal baseline (2026-09-24, sq13 stack):**
+
+| arm | what it runs | hw ms/tick | trace |
+|---|---|---|---|
+| sq15 | draws every tick (normal play) | **104.5** | render only vs tr2 |
+| sq16 | PACE_CATCHUP=2 PACE_FORCE=A: every image dropped (no ModelRender, no ModelTrans) | **39.5** | STRICT tr2 vs tr3, 3277 ticks |
+
+- 39.5 is the work retained per tick today, not an irreducible floor. Drawing adds 65.0 per image;
+  ModelTrans for a kept image is ~6.3 (45.8 skipped-tick minus 39.5).
+- Retained work by system: skeleton and matrix maths ~14-15 (partsWorldCalc 2.8, mtx_sh4 kernels
+  Concat 1.6 / MultVec 1.1 / Inverse 0.6, math_sub RotMatrix/Hermite 3.5, trig 2.6, motion 1.9),
+  collision ~8 (at_mod EmAtCheck 3.1 incl. atchkCollect 1.9, atari 3.1, at_sub 1.7), effects ~4.5
+  (esp_sub, esp, est, esp48), cloth/pendulum ~1.6, IDSystem 0.9, remainder ~9.
+- Milestones: 15 fps at full speed needs roughly 20 retained + 25 drawing (2 x 20 + 25 = 65; today
+  2 x 39.5 + 65 = 144). 30 fps needs retained + drawing <= 33.3 in one tick (today 104.5).
+
+## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
+
+Engineering budgets (targets, not forecasts) for one tick: required simulation + shared model work
+14, actor presentation 8, scenery 5, packets/copies/submission/HUD/system 3, margin 3.3. Order:
+1. Explain the 39.5 retained ms by function and consumer (collision, attachments, hit volumes, events,
+   AI, RNG, thermal scope, shadows); bypass only proven presentation-only work, STRICT.
+2. Skeleton maths (FTRV/FIPR kernels, batching, reuse of unchanged outputs) under the last-bit FP
+   policy with a shadow comparison of hit/grounding/collision decisions; compact collision candidate
+   data with conservative rejection before the exact tests (order and ties preserved); effect
+   bookkeeping without changing RNG, order or rate.
+3. An integrated 8 ms actor path for Leon + the six active Ganados (submission, preparation, packets).
+4. r101 scenery to a measured 5 ms (asset pipeline: compact groups, baked light, hidden-surface removal).
+5. Serial integration; 15 fps at full speed as the intermediate gate, then 30 fps with no routine skips.
+Knob sweeps (fog, prefetch, crowd tiers) no longer take the main effort.
+
 Square census (ACT_CAP_LOG): 14 live Ganados, 6 active (all six must stay active: in view, in range,
 engaged), 8 parked. Tighter caps gain nothing; the remaining logic is Leon, collision, effects and the six.
 
@@ -126,5 +157,7 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-24 | sq12 | sq5 + PACE_CATCHUP=2 PACE_FORCE=2 (budget arm) | tau 45.3 / W 106.2 | W+tau 151.5 | - | the measured budget baseline |
 | 09-24 | sq13 | sq12 + CROWD_FLAT + COL_PREFETCH v1 + FOG_FAR=18000 + CROWD_NEAR=2/5/12 | tau 45.8 / W 99.3 | W+tau 145.1 | - | render cuts barely move the budget: G dominates |
 | 09-24 | sq14 | sq5 + GAME_COL_PREFETCH v2 (record +4, vertex/normal +2) | 113.0 (-0.5) | - | STRICT tr1 vs tr2, 3073 ticks | committed 4723dff, in LH |
+| 09-24 | sq15 | sq13 stack, every tick drawn (normal baseline) | 104.5 | - | render only | the 30 fps baseline |
+| 09-24 | sq16 | sq13 stack + PACE_FORCE=A (never draw) | 39.5 retained/tick | - | STRICT tr2 vs tr3, 3277 ticks | retained-work baseline |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
