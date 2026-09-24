@@ -412,6 +412,17 @@ GAME30_RENDER_EXEMPT_OBJS = \
 	$(OBJDIR)/native-reuse/room_package.o \
 	$(OBJDIR)/native-reuse/native_draw_plan.o \
 	$(OBJDIR)/native-reuse/source_lighting.o
+# GAME_CONCAT_COL=1 (design-logic P3, needs GAME_FP_CONTRACT=off): the contract-off MTXConcat kernel
+# computed column by column (b column loaded once, a_ik loaded straight into each product register)
+# and list-scheduled for SH-4 dual issue: the same fmul/fadd on the same operands in the same roles
+# (tools/game30/mtx_concat_col.py generates it; tools/game30/prove_concat_col.sh: fpsym2 --strict vs
+# the build's own C_MTXConcat over every alias partition). hwsim: 206 -> 102 cycles per call.
+GAME_CONCAT_COL ?= 0
+ifeq ($(GAME_CONCAT_COL),1)
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_CONCAT_COL=1 replaces the contract-off MTXConcat body: needs GAME_FP_CONTRACT=off)
+endif
+endif
 GAME30_DECOMP_SAFE = -fwrapv -fno-strict-aliasing -fno-delete-null-pointer-checks \
 	-fno-isolate-erroneous-paths-dereference
 GAME30_O2_FLAGS = -O2 $(GAME30_DECOMP_SAFE)
@@ -419,6 +430,9 @@ GAME30_FP_FLAGS =
 ifeq ($(GAME_FP_CONTRACT),off)
 GAME30_FP_FLAGS = -ffp-contract=off
 $(OBJDIR)/platform/mtx_sh4.o: KOS_CFLAGS += -DRE4DC_FP_CONTRACT_OFF=1
+ifeq ($(GAME_CONCAT_COL),1)
+$(OBJDIR)/platform/mtx_sh4.o: KOS_CFLAGS += -DRE4DC_CONCAT_COL=1
+endif
 # Render-only exemption (coordinator decision 2): these native renderer objects keep the default
 # contraction (fmac) because nothing they compute flows back into gameplay state: their FP results
 # go only to TA/PVR vertex data, renderer-private caches and draw lists (evidence in the game30
