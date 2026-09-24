@@ -67,6 +67,54 @@ What this means:
 - Milestones: 15 fps at full speed needs roughly 20 retained + 25 drawing (2 x 20 + 25 = 65; today
   2 x 39.5 + 65 = 144). 30 fps needs retained + drawing <= 33.3 in one tick (today 104.5).
 
+## Retained-work savings table (2026-09-24, sq16 never-draw arm, 39.54 hw ms/tick)
+
+Method: sq16 functions.tsv (cost columns) joined with the run's per-PC execution counts
+(trace/counts.bin over the 120 counted ticks: entry PC = calls, loop-body PCs = iterations);
+scratchpad tools retained.py / calls.py / loops.py. "Exact" = identical results (STRICT gate).
+"Last-bit" = the FP policy with a shadow comparison of hit/grounding/collision decisions.
+Residuals are estimates until measured; unknown rows need the counter build (next).
+
+Where the time is, by kind: load-use stalls 7.1, I-cache misses 4.5, D-cache misses 3.5 of 39.5
+(~15 ms waiting on memory); the rest is issue and FP dependency.
+
+| # | item | measured now (hw ms/tick) | structure (per tick) | change | residual est. | saving est. | class |
+|---|---|---|---|---|---|---|---|
+| 1 | EmAtCheck candidate walks (atchkCollect) | 1.92 (dep_load 1.45) | 46.5 walks, 6975 node visits, 651 pass (91% rejected) | alive-order array with deep prefetch, or a maintained candidate list; same order | 0.3-0.6 | 1.3-1.6 | exact |
+| 2 | Effect pool scans (EspDelete 0.78, ESP_IsActive 0.34, EfmDeleteSub 0.19, slot loops ~0.15) | 1.46 | 1024 slots per scan, ~421 live; ESP_IsActive 2048 calls | live-slot bitmap walked in index order | ~0.6 | ~0.8 | exact |
+| 3a | Matrix kernels, bit-exact tuning | Concat 1.57, MultVec 1.05, Inverse 0.64, Copy 0.12 | 2580 / 4884 / 493 / 659 calls; scalar, no fmov.d pair moves, no FTRV/FIPR | pair moves for loads/stores, inlining the MultVec call | - | 0.2-0.4 | exact |
+| 3b | Matrix kernels on FTRV | same | same | FTRV Concat / MultVec | Concat ~0.8, MultVec ~0.6 | +0.9-1.1 | last-bit |
+| 4 | partsWorldCalc self | 2.79 | 94 calls, 2236 part matrices, 1118 on the non-uniform-scale path (3 fdivs each, 3550 fdivs) | parent reciprocal reused across children, loop restructure | 2.2-2.5 | 0.3-0.6 | exact |
+| 5 | Repeated skeleton updates | part of the ~5.3 skeleton-world stage (4 + kernel share + TransMatrix 0.34) | 94 partsWorldCalc calls vs 13 motion updates: EmAtCheck recomputes after the push; object moves recompute static poses | skip when every input is bit-identical to the last computation | unknown | 0-2 | exact; counter build |
+| 6a | Rotation from angles (low_RotMatrix 0.80, RotMatrix 0.56) | 1.36 | 1633 calls; GAME_ROT_CACHE hits ~8% | reuse on identical angles | unknown | 0-0.6 | exact; counter build |
+| 6b | Trig (re4dc_sincosf 1.10, SINF 0.45, COSF 0.45, sinf 0.38, acosf 0.20) | 2.58 | ~4300 evaluations | FSCA | ~0.6 | +1.5-2.0 | last-bit |
+| 7 | Motion (Hermite 0.73, MotionMoveCore 0.26, MotionMove 0.15, IK 0.31) | 1.45 | 13 models, 287 Hermite calls | scheduling | ~1.25 | ~0.2 | exact |
+| 8 | Scenery collision tests (At_poly_line_ck 1.48, blkPolyLineCk + Core 1.48, lineOverlap 0.47, hitCheck2 0.40, hitCheckSphere 0.30, sphere/em line checks ~0.4) | ~4.5 | 1324 poly tests (179 insns each), 2465 block tests, 79 line queries | conservative block/poly rejection before the exact tests; same candidates and order | 3.0-3.7 | 0.8-1.5 | exact |
+| 9 | Other collision (ObjHitCheck, atchkPasses, getPos, sce_at, dmg) | ~1.8 | per-pair work | - | ~1.6 | ~0.2 | exact |
+| 10 | Effect behaviour for ~421 live effects (CommonMove, ChannelSet, esp48, ColorUpdate, AnmMove ...) | ~3.3 | RNG consumers, per effect per tick | layout/scheduling only | ~3.0 | ~0.3 | exact |
+| 11 | Cloth/pendulum | 0.95 | - | - | 0.85 | ~0.1 | exact |
+| 12 | Remainder | 8.15 | 853 functions; only 13 above 0.1 ms (2.26 total) | code layout / selective -O3 / LTO (an earlier I-cache relink lost) | 6-7 | 1-2 | exact, uncertain |
+| 13 | Everything else in skeleton (getPartsPtr, workAt, partsMatCalc, PSVECNormalize ...) | ~2.3 | 1421 getPartsPtr, 2935 workAt calls | - | ~2.1 | ~0.2 | exact |
+
+Totals (saving, hw ms/tick):
+- Exact, measured-basis rows (1, 2, 3a, 4, 7, 8, 9, 10, 11, 13): ~4.4-6.0.
+- + last-bit rows (3b, 6b): ~6.8-9.1.
+- + unknown rows at their upper bounds (5, 6a, 12): up to ~13.
+- **Best plausible retained work: ~27-33 hw ms/tick against the 14 target (25.5 needed) and the 15 fps
+  milestone's ~20 (19.5 needed).**
+
+Verdict: optimising the current per-tick work cannot reach 14 ms, and is unlikely to reach the ~20 ms
+of the 15 fps milestone. The work scales with what the square holds each tick: ~2236 part matrices,
+~421 live effects, ~150-node actor lists walked 46 times, 23 EmAtCheck bodies. At 30 fps every tick
+draws, so deferring presentation work does not help there: 30 fps in the square needs the retained
+work itself below ~20 with drawing under ~13, which this table does not support under the gameplay
+constraints. For 15 fps at full speed, one architectural lever remains: skip presentation-only work on
+skipped ticks (for example part matrices no gameplay code reads). Its size needs the consumer audit.
+
+Next, in order: (1) counter build to settle rows 5 and 6a and list which part matrices gameplay reads
+(collision, hit volumes, attach points, IK, events); (2) row 1, the largest exact item; (3) the bounded
+skeleton experiment (3a, then 3b and 6b with the shadow check); (4) row 8.
+
 ## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
 
 Engineering budgets (targets, not forecasts) for one tick: required simulation + shared model work
