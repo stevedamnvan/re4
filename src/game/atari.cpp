@@ -453,6 +453,26 @@ int polyBitCk(u32 no)
     return polyBit[no >> 3] & (1 << (no & 7));
 }
 
+#if defined(RE4DC_COL_PREFETCH) && RE4DC_COL_PREFETCH
+// GAME_COL_PREFETCH: cache hints for the collision walks (no stores, same answers).
+#define COL_PREFETCH(p) do { if (p) __builtin_prefetch(p); } while (0)
+// Polygon record of list entry i+4 and the vertex / normal of entry i+2 (its record was asked for two steps ago).
+static inline void colPrefetchPoly(cSat* sat, u16* idx, u16* end)
+{
+    if (idx + 4 < end) {
+        __builtin_prefetch(&sat->poly_p[idx[4]]);
+    }
+    if (idx + 2 < end) {
+        AtPoly* p = &sat->poly_p[idx[2]];
+        __builtin_prefetch(&sat->vtx[p->v[0]]);
+        __builtin_prefetch(&sat->norm_p[p->n]);
+    }
+}
+#else
+#define COL_PREFETCH(p) ((void) 0)
+#define colPrefetchPoly(sat, idx, end) ((void) 0)
+#endif
+
 // Segment (centre p, half direction dir, |dir| absDir) against the block's XZ box.
 int cSatBlock::lineOverlap(Vec* p, Vec* dir, Vec* absDir)
 {
@@ -779,6 +799,7 @@ int blkPolySphereCk(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, f32 r, int 
     int hit;
 
     while (blk) {
+        COL_PREFETCH(blk->next);
         if (blk->hitCheckSphere(pos0, pos1, r)) {
             if (blk->m_Flag & 1) {
                 hit = blkPolySphereCk(sat, (cSatBlock*) blk->idx, pos0, pos1, r, flag, nrm, mask);
@@ -816,7 +837,16 @@ int blkPolySphereCkCore(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, f32 r, 
         end = blk->m_nFloor + blk->m_nSlope + blk->m_nWall;
     }
     idx = &blk->idx[start];
+#if defined(RE4DC_COL_PREFETCH) && RE4DC_COL_PREFETCH
+    u16* idxEnd = &blk->idx[end];
+    if (start < end) {
+        for (int k = 0; k < 4 && start + k < end; k++) {
+            __builtin_prefetch(&sat->poly_p[idx[k]]);
+        }
+    }
+#endif
     for (i = start; i < end; i++, idx++) {
+        colPrefetchPoly(sat, idx, idxEnd);
         AtPoly* poly = &sat->poly_p[*idx];
         if (polyBitCk(*idx)) {
             continue;
@@ -918,6 +948,7 @@ int blkPolyLineCk(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag, int
     dir.y = 0.0f;
     mid.y = 0.0f;
     while (blk) {
+        COL_PREFETCH(blk->next);
         if (new_line_check == 0) {
             if (blk->hitCheckSphere(pos0, pos1, 0.0f)) {
                 if (blk->m_Flag & 1) {
@@ -975,6 +1006,14 @@ int blkPolyLineCkCore(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag,
     }
     n = end - start;
     idx = &blk->idx[start];
+#if defined(RE4DC_COL_PREFETCH) && RE4DC_COL_PREFETCH
+    u16* idxEnd = &blk->idx[end];
+    if (n > 0) {
+        for (int k = 0; k < 4 && k < n; k++) {
+            __builtin_prefetch(&sat->poly_p[idx[k]]);
+        }
+    }
+#endif
     idx--;
     while (n--) {
         u32 no;
@@ -982,6 +1021,7 @@ int blkPolyLineCkCore(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag,
         u32 bit;
         u32 attr;
         idx++;
+        colPrefetchPoly(sat, idx, idxEnd);
         no = *idx;
         poly = &sat->poly_p[no];
         bit = 1 << (no & 7);

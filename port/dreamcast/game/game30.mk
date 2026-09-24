@@ -103,6 +103,12 @@ endif
 ifeq ($(GAME_ATCHK),1)
 $(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_ATCHK=1
 endif
+# GAME_COL_PREFETCH=1: the scenery collision walks (block chains, block polygon lists) prefetch the next
+#                    block and the next polygon's record, vertex and normal. Loads only: same answers.
+GAME_COL_PREFETCH ?= 0
+ifeq ($(GAME_COL_PREFETCH),1)
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_COL_PREFETCH=1
+endif
 
 ifeq ($(LOGIC_TRACE),1)
 PLATFORM_OBJS += $(OBJDIR)/logic_trace.o
