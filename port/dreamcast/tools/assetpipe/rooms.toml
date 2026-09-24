@@ -21,6 +21,9 @@ pairs = [
     ["d6dac98a-dde12c66", "5c822bd9-c797afd4"], ["20b41c62-133dd8fa", "c8b602c8-633b846d"],
     # images in ss/cmn/ss_oc101.dat (12a489ae, 5e3c1264, 2b388d2d) and the route events (9264be9a)
     ["12a489ae-40772dd6", "5e3c1264-a53c4db5"], ["9264be9a-41e48d57", "2b388d2d-af0e5096"],
+    # r101 first entry (bswap-rtp2) and the r100 house fight (user play log, 2026-09-24)
+    ["a6d90f64-9a95aa05", "3976971a-8be3b5b1"], ["4d28f9bb-8deaf624", "8ecb10ec-b516c37d"],
+    ["1770ec7a-8119b489", "b308228f-3f8462a1"], ["3d9d333a-125fadf1", "d56e57e8-6edc9482"],
 ]
 
 [defaults]
