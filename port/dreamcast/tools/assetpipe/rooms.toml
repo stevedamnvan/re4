@@ -43,6 +43,10 @@ expect = { COMMON = "cdeade631a35b6e9514c31d4ec0dbd19f07c66c508b5611270257cebed1
 houses = ["1:17", "1:18"]    # item 21 house shells (bl_house_shell.py)
 landmarks = []               # never culled, never below bias 1
 
+[room.r100.standard.plan]
+house_tex = 128              # user 2026-09-23: 128 x 128 shell textures, as r101 (r100's VRAM pool is full:
+                             # 512 VQ is 66 KB a house, 128 is 6 KB)
+
 [room.r100.views]            # named review/pricing views; cam/toward from SCEN_LOG (scenery trials tour, arm C, 25 m);
                              # the game camera direction is not logged: cam->player is used, which matches the
                              # spawn frame (kept as a reference) but not the walking frames
@@ -71,10 +75,10 @@ expect = { MAINSCENARIO = "a2451febc6285d2126bb8255b56569f844edf1299a2e271f5ae11
 
 [room.r101.standard]         # houses: picked by size (houses_auto), kept only where a shell fits (house_err_cm)
 houses = []
-landmarks = []
+landmarks = ["0xff:45"]      # user 2026-09-23: the well in the village square (fight area) keeps its real mesh
 review_notes = [
-  "Houses: 10 BINs picked by size (radius 5-15 m, >= 700 tris, >= 4 m tall, at most 2 placements) and kept where a shell ladder rung fits (p90 <= 30 cm): 48 to 400 faces, 128 x 128 baked textures (256 would put the VRAM pool ~82 KB over).",
-  "BIN 45's 400-face shell also covers the well in the square, which becomes a cone (fight views). If that is wrong, exclude 45 (houses_auto.exclude) and it stays a biased structure.",
+  "Houses: 9 BINs picked by size (radius 5-15 m, >= 700 tris, >= 4 m tall, at most 2 placements) and kept where a shell ladder rung fits (p90 <= 30 cm): 48 to 400 faces, 128 x 128 baked textures (256 would put the VRAM pool ~82 KB over).",
+  "BIN 45 (the house with the well in the village square) is a landmark (user 2026-09-23): real mesh, bias 1, never culled, no shell.",
   "Trees: impostor atlases rendered by the pipeline (impostor.py). BIN 17 is a grove (24 placements of a 13 m cluster of thin trees with one centre), so near it the full mesh draws: 2.9 ms at the spawn. Splitting groves into single trees is the next lever.",
   "The ground (BIN 12, one 165 x 125 m mesh) costs about 1 ms at every view even at its coarsest option.",
   "Fences, posts and other clutter are culled only beyond 15 m here, and no object vanishes nearer than in Original (vanish guard).",
@@ -98,11 +102,11 @@ note = "Heap 4 free is Original's estimate minus the Standard package delta; the
 [room.r101.views]            # spawn: r100 AEV record 0 (door to r101) dstPos/dstAngle, the camera 0.3 m behind
                              # the head (1.29 m back, as at r100, is inside the slope); fight: the village square,
                              # ESL em15 20-31 at x -11..6 m, z -2..3 m (emleon00.esl, 10 mm units); house: the
-                             # 400-face shell of BIN 45 from the fight camera; w9_worst: W9 m-r101-FIN grid_3_1
+                             # 400-face shell of BIN 64 from the fight camera; w9_worst: W9 m-r101-FIN grid_3_1
 spawn = { player = [-52144.4, 90.6, 22524.3], angle = 2.122, back_mm = 300.0, up_mm = 1700.0, pitch = -5.0 }
 fight = { eye_xz = [-20000.0, 9000.0], at_xz = [-4000.0, 0.0] }
 fight_in = { eye_xz = [2000.0, -6000.0], at_xz = [-9000.0, 1000.0] }
-house = { bin = "0xff:45", from = "fight", distances_m = [20.0, 8.0] }
+house = { bin = "0xff:64", from = "fight", distances_m = [20.0, 8.0] }
 w9_worst = { eye = [3297.0, 1798.0, -19715.0], yaw = 315.0 }
 widest = { grid = "max_original_ms" }
 

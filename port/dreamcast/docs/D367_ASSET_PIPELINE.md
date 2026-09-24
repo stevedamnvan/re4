@@ -336,23 +336,33 @@ within 0.3 ms of W9's model rows, so no re-fit was needed):
 
 | Room | Standard named views | Standard grid p95 / max | views within 5 ms | Original grid p95 / max | heap 4 Std - Orig | VRAM Std - Orig |
 |---|---|---|---|---|---|---|
-| r100 | 5.7-10.7 | 7.37 / 10.7 | 155 / 215 | 17.6 / 24.9 | -294 KB | +170 KB (shells 132, atlases 82) |
-| r101 | 6.2-11.5 | 10.3 / 13.9 | 118 / 263 | 25.2 / 27.5 | -439 KB | +108 KB (10 shells at 128: 60, atlases 82) |
+| r100 | 5.7-10.7 | 7.37 / 10.7 | 155 / 215 | 17.6 / 24.9 | -294 KB | +50 KB (2 shells at 128: 12, atlases 82, dropped room textures -43) |
+| r101 | 6.2-12.4 | 10.8 / 14.5 | 117 / 263 | 25.2 / 27.5 | -411 KB | +102 KB (9 shells at 128: 54, atlases 82) |
 | r103 | 4.9-10.5 | 8.48 / 13.3 | 151 / 270 | 25.8 / 38.5 | -428 KB | +114 KB (3 shells at 256: 54, atlases 82) |
 
-r100's numbers include the vanish guard (before it: 7.34 / 10.6, 158 views). Every Standard package is
+r100's numbers include the vanish guard (before it: 7.34 / 10.6, 158 views). User decisions
+(2026-09-23), applied: r100's two shells use 128 x 128 textures like r101 (was 512 VQ: +170 KB VRAM;
+the hw ms are unchanged); r101 BIN 45 (the house with the well in the village square, fight area)
+is a landmark, so real mesh at bias 1 instead of a 400-face shell: +0.49 ms grid p95 (10.3 -> 10.8),
++0.6 ms grid max, +0.4 ms in the fight view, +29 KB heap 4, -6 KB VRAM. Every Standard package is
 no larger than Original's. The second set on disc is every Original package (1.51 / 1.01 / 1.13 MB)
 while biases are baked; section 15 weighs a runtime per-BIN table. Remaining cost: tree groves
 (one BIN, one centre: r101 17, r103 38/59, 2-3 ms when standing in them; splitting groves into single
 trees is the next lever), single large ground meshes (~1 ms at every view), the shells.
 
 Against the route budgets (review sheets, "Against the route memory budgets"):
-- r101 heap 4: ~1.46 MB free at entry in Original (design-r103 estimate) -> ~1.9 MB in Standard.
+- r101 heap 4: ~1.46 MB free at entry in Original (design-r103 estimate) -> ~1.87 MB in Standard.
 - r103 heap 4: with W8b compaction 1.10-1.55 MB -> 1.53-1.98 MB; without W8b -0.35..-0.20 MB ->
   +0.08..+0.23 MB. Standard fits without W8b, but below the 155 KB margin at the low end and below
   W8d's 330 KB gate, so W8b is still needed.
-- VRAM (pool 2,518 KB): r101 Original 2,371 KB measured -> Standard ~2,479 KB (~39 KB free); with 256
-  shells it would be ~82 KB over. r103 is an estimate (r101's non-room use + r103 room textures):
+- VRAM (pool 2,518 KB): r101 Original 2,371 KB measured -> Standard ~2,473 KB (~45 KB free); with 256
+  shells it would be ~82 KB over.
+- r100 VRAM: Original on m1 preloads 170 packages to 2,264,576 B (`full=1`) and then holds 2,328,064 B
+  with 135,848 B free (w11-ss17). Standard adds ~51 KB (net +2 texture entries: 2 shells + 5 atlases -
+  5 room textures no longer drawn), so ~84 KB (84,488 B) stays free. It fits the pool, but, as in
+  Original, that is below the preload's own first-sight reserve (TEX_RESIDENT_RESERVE_KB 256; the slot
+  reserve of 32 entries is unaffected). The next VRAM lever is the impostor atlases (82 KB: 8 views
+  or 64-texel cells). r103 is an estimate (r101's non-room use + r103 room textures):
   ~2,193 KB -> ~2,307 KB, ~211 KB free.
 
 ## 5. Camera model and view set

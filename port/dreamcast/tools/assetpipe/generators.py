@@ -434,7 +434,10 @@ class Gen:
             info.update(sha256=summary["sha256"], vanish_guard_levels=changed)
             return info
         return self.cache.step("scenery.vanish_guard", dict(room=room.name, owner=owner, vmin=vm),
-                               dict(pkg=pkg_obj.path(name)), fingerprint([here / "r4im.py"], {"rule": "empty>=vmin"}),
+                               # the summary JSON is an input too: two bias specs can give the same package
+                               # bytes (a one-level BIN) with different summaries
+                               dict(pkg=pkg_obj.path(name), summary=Path(str(pkg_obj.path(name)) + ".json")),
+                               fingerprint([here / "r4im.py"], {"rule": "empty>=vmin"}),
                                fn, label="%s %s vanish guard" % (room.name, owner))
 
     # ---- tree impostors for rooms without a pinned item 20 bake (impostor.py, pure Python + pvrtex)
