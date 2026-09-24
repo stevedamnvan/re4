@@ -37,10 +37,23 @@ void bind_actor_frame(){
 #if RE4DC_NATIVE_ACTOR_FAST
     // Meshlet path: per-part conversion scratch + skin tables; 96 KiB when
     // the buffer has it, else the same 56 KiB (larger parts then decline).
-    constexpr unsigned kFastBytes=96*1024;
+    // While a deferred LOD build waits, first the larger size it asks for,
+    // then 128 KiB (most parts' simplifier fits).
+    constexpr unsigned kFastBytes=96*1024,kLodBytes=128*1024;
+    if(const unsigned want=re4dc_actor_workspace_want()){
+        if(void* lw=re4dc_prim_tail(want,kReserve)){re4dc_actor_frame(lw,want);return;}
+        if(want>kLodBytes)
+            if(void* mw=re4dc_prim_tail(kLodBytes,kReserve)){re4dc_actor_frame(mw,kLodBytes);return;}
+    }
     if(void* fw=re4dc_prim_tail(kFastBytes,kReserve)){re4dc_actor_frame(fw,kFastBytes);return;}
 #endif
     void* w=re4dc_prim_tail(kBytes,kReserve);
+#if RE4DC_NATIVE_ACTOR_FAST && RE4DC_ACTOR_CROWD
+    // Crowds fill the buffer with per-info skin arrays: parts already
+    // converted still draw from a small workspace (skin tables only).
+    if(!w)for(unsigned small=32*1024;small>=12*1024;small-=10*1024)
+        if(void* sw=re4dc_prim_tail(small,kReserve)){re4dc_actor_frame(sw,small);return;}
+#endif
     re4dc_actor_frame(w,w?kBytes:0);
 }
 #endif
@@ -61,7 +74,6 @@ extern "C" int re4dc_actor_model_source(const void* info_ptr,Re4dcActorSource* o
     out->small_normals=(d->flags&0x20000000U)!=0;
     return 1;
 }
-#endif
 #if RE4DC_NATIVE_ACTOR_SKIN_LAZY
 // NATIVE_ACTOR_SKIN_LAZY: after re4dc_skin_materialize() gave a lazily
 // deferred info its arrays, the part view takes them as this bridge would.
@@ -71,6 +83,25 @@ extern "C" int re4dc_actor_model_buffers(Re4dcModelPart* p){
     p->normals=(const unsigned char*)info->pNrmBuf[pG->vtx_buf_no];
     return p->positions && p->normals;
 }
+#endif
+// Static prelit hint: no motion playing (Motion.pMot NULL), no shape
+// (vertex delta) table and no shape-animation flag on the info.
+extern "C" int re4dc_actor_model_prelit(const void* model,const void* info_ptr){
+    auto* m=(const cModel*)model;auto* info=(const cModelInfo*)info_ptr;
+    if(!m || !info || !info->pData)return 0;
+    return !m->pMotion && !info->pData->shapeOfs && !(info->be_flag&2);
+}
+#if RE4DC_ACTOR_CROWD
+#include "em10.h"
+// Crowd render class: Ganado-family enemies (cEm10 modules em10..em20;
+// cModel kindid 0) are 1, their head info (Em10Work::pHead) 2; else 0.
+extern "C" int re4dc_actor_model_class(const void* model,const void* info_ptr){
+    auto* m=(const cModel*)model;
+    if(!m || m->kindid!=0 || m->id<0x10 || m->id>0x20)return 0;
+    cEm10* em=(cEm10*)m;
+    return EM10_WK(em)->pHead==(const cModelInfo*)info_ptr?2:1;
+}
+#endif
 #endif
 extern "C" void re4dc_model_material(const void* object,float u,float v,unsigned flags){
     selected={};mask={};mask_ref=256;mask_same_uv=0;

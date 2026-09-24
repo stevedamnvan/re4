@@ -77,6 +77,14 @@ endif
 # (platform/native_actor_fast.cpp replaces native_actor.cpp). NATIVE_ACTOR_SKIN=1:
 # trans.cpp defers the render-only CalcSk1_x pass to draw-time skinning.
 # NATIVE_ACTOR_DIRECT=1: store-queue submission (needs the TA_DIRECT=1 API).
+# NATIVE_ACTOR_LOD=1: whole-part LOD levels, built after conversion (at most
+# NATIVE_ACTOR_LOD_BUDGET triangles simplified per frame, in the actor
+# workspace: 160 KiB asked for, 96 KiB enough for most parts) and drawn by
+# projected error <= NATIVE_ACTOR_LOD_PX px.
+# NATIVE_ACTOR_PRELIT=1: parts of unanimated, unmorphed models keep baked
+# RGB565 record colours, relit only when their light fold changes.
+# NATIVE_ACTOR_UV16=1: 16-bit UV vertices where the part's range allows
+# (native_ui.cpp header hook) and strip length 6 in the actor headers.
 NATIVE_ACTOR_FAST ?= 0
 NATIVE_ACTOR_SKIN ?= 0
 # NATIVE_ACTOR_SKIN_LAZY=1 (needs NATIVE_ACTOR_SKIN=1): a deferred-skin info
@@ -84,12 +92,29 @@ NATIVE_ACTOR_SKIN ?= 0
 # per Ganado); they are allocated at Render() only if one of its parts declines.
 NATIVE_ACTOR_SKIN_LAZY ?= 0
 NATIVE_ACTOR_DIRECT ?= 0
+NATIVE_ACTOR_LOD ?= 0
+NATIVE_ACTOR_LOD_PX ?= 2
+NATIVE_ACTOR_LOD_BUDGET ?= 128
+NATIVE_ACTOR_PRELIT ?= 0
+NATIVE_ACTOR_UV16 ?= 0
+# NATIVE_ACTOR_LOG=1: one actor-path statistics line in the boot log every 120 frames.
+NATIVE_ACTOR_LOG ?= 0
+# CROWD_LOD=1 (needs NATIVE_ACTOR_FAST=1, best with NATIVE_ACTOR_LOD=1): Ganado
+# render tiers by camera distance - the nearest CROWD_NEAR (and any within
+# CROWD_NEAR_M metres) drawn like Leon, mid (to CROWD_MID_M) at coarser LOD
+# with one light colour per part, far at the coarsest level. Leon, weapons and
+# objects are unchanged; nothing is culled.
+CROWD_LOD ?= 0
+CROWD_NEAR ?= 3
+CROWD_NEAR_M ?= 7
+CROWD_MID_M ?= 17
+CROWD_MID_PX ?= 8
 ifeq ($(NATIVE_ACTOR)$(NATIVE_ACTOR_FAST),11)
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor.o,$(PLATFORM_OBJS))
 else
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor_fast.o,$(PLATFORM_OBJS))
-ifneq ($(NATIVE_ACTOR_SKIN)$(NATIVE_ACTOR_DIRECT),00)
-$(error NATIVE_ACTOR_SKIN/NATIVE_ACTOR_DIRECT require NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1)
+ifneq ($(NATIVE_ACTOR_SKIN)$(NATIVE_ACTOR_DIRECT)$(NATIVE_ACTOR_LOD)$(NATIVE_ACTOR_PRELIT)$(NATIVE_ACTOR_UV16)$(CROWD_LOD),000000)
+$(error NATIVE_ACTOR_SKIN/DIRECT/LOD/PRELIT/UV16 and CROWD_LOD require NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1)
 endif
 endif
 ifeq ($(NATIVE_ACTOR_SKIN_LAZY)$(NATIVE_ACTOR_SKIN),10)
@@ -659,11 +684,15 @@ endif
 $(OBJDIR)/native-actor.h: native-actor-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_NATIVE_ACTOR %s\n#define RE4DC_NATIVE_ACTOR_FAST %s\n#define RE4DC_NATIVE_ACTOR_SKIN %s\n#define RE4DC_ACTOR_DIRECT %s\n#define RE4DC_NATIVE_ACTOR_SKIN_LAZY %s\n' '$(NATIVE_ACTOR)' '$(NATIVE_ACTOR_FAST)' '$(NATIVE_ACTOR_SKIN)' '$(NATIVE_ACTOR_DIRECT)' '$(NATIVE_ACTOR_SKIN_LAZY)' > $@.tmp
+	@printf '#define RE4DC_ACTOR_LOD_PX ((float)(%s))\n#define RE4DC_ACTOR_LOD_BUDGET %sU\n#define RE4DC_ACTOR_PRELIT %s\n#define RE4DC_ACTOR_UV16 %s\n#define RE4DC_ACTOR_LOG %s\n' '$(if $(filter 1,$(NATIVE_ACTOR_LOD)),$(NATIVE_ACTOR_LOD_PX),0)' '$(if $(filter 1,$(NATIVE_ACTOR_LOD)),$(NATIVE_ACTOR_LOD_BUDGET),0)' '$(NATIVE_ACTOR_PRELIT)' '$(NATIVE_ACTOR_UV16)' '$(NATIVE_ACTOR_LOG)' >> $@.tmp
+	@printf '#define RE4DC_ACTOR_CROWD %s\n#define RE4DC_ACTOR_CROWD_NEAR %sU\n#define RE4DC_ACTOR_CROWD_NEAR_M ((float)(%s))\n#define RE4DC_ACTOR_CROWD_MID_M ((float)(%s))\n#define RE4DC_ACTOR_CROWD_MID_PX ((float)(%s))\n' '$(CROWD_LOD)' '$(CROWD_NEAR)' '$(CROWD_NEAR_M)' '$(CROWD_MID_M)' '$(CROWD_MID_PX)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_model.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/native-actor.h
 $(OBJDIR)/platform/native_model.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-actor.h
 $(OBJDIR)/model_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/native-actor.h
+$(OBJDIR)/platform/native_ui.o: $(OBJDIR)/native-actor.h
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-actor.h
 ifeq ($(NATIVE_ACTOR_FAST),1)
 $(OBJDIR)/platform/native_actor_fast.o: PLATFORM_CPPFLAGS += -O2 -include $(OBJDIR)/d349-stack.h -include $(OBJDIR)/native-actor.h
 $(OBJDIR)/platform/native_actor_fast.o: $(OBJDIR)/d349-stack.h $(OBJDIR)/native-actor.h ../room/pvr_geometry.hpp platform/include/native_actor.hpp platform/include/native_model.h

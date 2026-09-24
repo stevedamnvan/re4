@@ -3424,11 +3424,7 @@ int re4dc_skin_defer_lazy(cModelInfo* info, ModelData* d)
 // Trans() allocated; the locked cache and GQR6 state are left untouched.
 // NATIVE_ACTOR_SKIN_LAZY: a NULL pPosBuf is allocated here first (primitive
 // buffer, same lifetime; no allocation -> 0 and the part is not drawn).
-#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
 extern "C" int re4dc_skin_materialize(const void* info_ptr, const float* palette)
-#else
-extern "C" void re4dc_skin_materialize(const void* info_ptr, const float* palette)
-#endif
 {
     cModelInfo* info = (cModelInfo*) info_ptr;
     ModelData* d = info->pData;
@@ -3456,9 +3452,7 @@ extern "C" void re4dc_skin_materialize(const void* info_ptr, const float* palett
     }
     g_skin_palette = 0;
     g_gqr6 = saved;
-#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
     return 1;
-#endif
 }
 #endif
 

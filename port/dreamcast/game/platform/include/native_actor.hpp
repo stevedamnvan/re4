@@ -22,6 +22,11 @@ struct Re4dcActorStats {
     unsigned conversions, conversion_rejects, meshlets, meshlets_culled, meshlets_clipped;
     unsigned vertices, slow_light_vertices, skinned_parts, materialized_infos, skin_registered;
     unsigned transient_conversions, strips_culled, meshlets_whole;
+    unsigned lod_parts, lod_rebuilds, lod_draws[4], triangles, bake_hits, bake_scaled, bake_builds, uv16_parts;
+    unsigned skin_dir_sets;
+    // NATIVE_ACTOR_CROWD: crowd models seen / parts and triangles drawn per
+    // tier (0 full: not a crowd class, 1 near, 2 mid, 3 far).
+    unsigned crowd_models, crowd_parts[4], crowd_triangles[4];
 };
 
 // Where the source keeps an info's unskinned arrays (model_bridge.cpp fills
@@ -41,6 +46,14 @@ void re4dc_actor_frame(void* workspace, unsigned bytes);
 // 0: declined before any side effect; the caller runs the generic path.
 int re4dc_actor_submit(const Re4dcModelPart* p);
 const Re4dcActorStats* re4dc_actor_stats();
+// NATIVE_ACTOR_FAST: LOD selection threshold in pixels of projected error
+// (0: always full detail; default RE4DC_ACTOR_LOD_PX = 2) and the per-frame
+// LOD build budget in triangles (0: never build; default
+// RE4DC_ACTOR_LOD_BUDGET = 128; parts over budget are rebuilt later).
+void re4dc_actor_lod(float pixels, unsigned budget_triangles);
+// NATIVE_ACTOR_FAST: workspace bytes this frame should get when the source
+// primitive buffer has them (a deferred LOD build is waiting), else 0.
+unsigned re4dc_actor_workspace_want();
 // Bytes needed for one info: 12 per source position + 4 per source normal.
 inline unsigned re4dc_actor_workspace_bytes(unsigned positions, unsigned normals) {
     return positions * 12U + normals * 4U;
@@ -49,6 +62,22 @@ inline unsigned re4dc_actor_workspace_bytes(unsigned positions, unsigned normals
 // ---- NATIVE_ACTOR_FAST ------------------------------------------------------
 // model_bridge.cpp: the unskinned arrays of a cModelInfo. 0 when unknown.
 int re4dc_actor_model_source(const void* info, Re4dcActorSource* out);
+// model_bridge.cpp: 1 when the model is currently neither animated (no
+// motion playing) nor morphed (no shape table / shape flag): its opaque parts
+// are converted with a baked-colour field (static prelit). Only a hint; the
+// draw re-validates the light fold and pose every frame.
+int re4dc_actor_model_prelit(const void* model, const void* info);
+// model_bridge.cpp (NATIVE_ACTOR_CROWD): 1 for a Ganado-family enemy's info,
+// 2 for its head info, 0 for everything else (Leon, weapons, objects).
+int re4dc_actor_model_class(const void* model, const void* info);
+// NATIVE_ACTOR_CROWD tuning: near count and distances (view space, source
+// units), mid-tier LOD threshold in pixels.
+void re4dc_actor_crowd(unsigned near_count, float near_distance, float mid_distance, float mid_pixels);
+
+// native_ui.cpp (NATIVE_ACTOR_UV16): PCW bits the next re4dc_model_packet_begin
+// sets/clears in its slab copy of the polygon header (16-bit UV, strip
+// length); that call consumes them whatever its result.
+void re4dc_model_next_header_pcw(unsigned set, unsigned clear);
 
 // ---- NATIVE_ACTOR_SKIN ------------------------------------------------------
 // Trans() side (trans.cpp commonScreenMatSub): after the source built this
@@ -62,11 +91,7 @@ int re4dc_actor_skin_register(unsigned frame, const void* info, const void* posi
 const float* re4dc_actor_skin_palette(const void* info, const void* position_buffer, unsigned* entries);
 // trans.cpp: run the source's own CalcSk1_x/_x2 for a registered info into
 // its pPosBuf/pNrmBuf from the saved palette (generic-path fallback).
-#if RE4DC_NATIVE_ACTOR_SKIN_LAZY
-int re4dc_skin_materialize(const void* info, const float* palette);  // 0: no arrays could be allocated
-#else
-void re4dc_skin_materialize(const void* info, const float* palette);
-#endif
+int re4dc_skin_materialize(const void* info, const float* palette);
 // native_model.cpp: before the generic path reads pPosBuf, make it valid.
 void re4dc_actor_materialize(const Re4dcModelPart* p);
 // NATIVE_ACTOR_SKIN_LAZY: a part of an info registered without arrays

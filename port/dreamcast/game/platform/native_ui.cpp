@@ -375,6 +375,9 @@ constexpr unsigned kModelDeferredSpillBytes=RE4DC_D349_RENDERER_STACK?8192:0;
 constexpr unsigned kModelPreparationBytes=RE4DC_D349_RENDERER_STACK?12288:0;
 constexpr unsigned kModelPacketBytes=kModelSlabBytes-kModelMetadataBytes-kModelStaticLightBytes-kModelDeferredSpillBytes-kModelPreparationBytes;
 pvr_vertex_t* model_packets; unsigned model_used,model_pending; Entry* model_handle;
+#if RE4DC_ACTOR_UV16
+unsigned next_pcw_set,next_pcw_clear; // actors30: re4dc_model_next_header_pcw, one packet_begin
+#endif
 int model_diagnostic=-1;
 unsigned model_parts,model_invalid,model_resource,model_overflow,model_input,model_output,model_peak,model_presented;
 unsigned model_capacity_rejects,model_state_rejects,model_texture_rejects,model_wrap_rejects,model_empty_parts,model_scale_rebuilds;
@@ -1810,8 +1813,16 @@ extern "C" void* re4dc_model_metadata_storage(unsigned* bytes){
     *bytes=model_packets?kModelMetadataBytes:0;
     return *bytes?reinterpret_cast<unsigned char*>(model_packets)+kModelPacketBytes+kModelPreparationBytes+kModelStaticLightBytes+kModelDeferredSpillBytes:nullptr;
 }
+#if RE4DC_ACTOR_UV16
+extern "C" void re4dc_model_next_header_pcw(unsigned set,unsigned clear){next_pcw_set=set;next_pcw_clear=clear;}
+#endif
 extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket* out){
     RE4DC_PROFILE_SCOPE(PacketPack);
+#if RE4DC_ACTOR_UV16
+    // The actor path's per-part PCW bits (16-bit UV, strip length) go on this
+    // part's slab copy only; the cached per-texture header stays generic.
+    const unsigned pcw_set=next_pcw_set,pcw_clear=next_pcw_clear;next_pcw_set=next_pcw_clear=0;
+#endif
     if(!re4dc_model_packet_reserve(p,out))return 0;
 #if RE4DC_UI_HANDLES
     const Re4dcModelPart* masked=nullptr;
@@ -1884,6 +1895,9 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
     }
 #endif
     re4dc::render::begin_pvr_packet(model_packets+model_used,count,header);
+#if RE4DC_ACTOR_UV16
+    model_packets[model_used].flags=(model_packets[model_used].flags&~pcw_clear)|pcw_set;
+#endif
     model_pending=model_used+count;model_handle=handle;
     out->vertices=model_packets+model_pending;out->capacity=kModelPacketBytes/32-model_pending;
     if(out->u_scale!=float(p->image.width)/t.width || out->v_scale!=float(p->image.height)/t.height)++model_scale_rebuilds;
