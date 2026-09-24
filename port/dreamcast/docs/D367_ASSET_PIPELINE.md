@@ -494,11 +494,13 @@ paths keep design-lowmode's names (`low/`, `texlow/`), which predate the renamin
 
 - Original outputs stage as today (`/cd/dc/native/<room>/`, `/cd/dc/tex/<d>/`).
 - Standard outputs that differ from Original stage under `/cd/dc/native/<room>/low/` and
-  `/cd/dc/texlow/<d>/<key>.re4tex`.
-- Each Standard directory carries an index (`native/<room>/low/index.txt`: file names;
-  `texlow/index.txt`: texture keys). The runtime reads it once at room entry and opens only the
-  listed Standard files, otherwise the Original path. There are no probe-opens: a failed iso9660
-  lookup re-reads the directory from the disc, which caused the ~0.2 s texture hitch.
+  `/cd/dc/texlow/[<d>/]<key>.re4tex` (QUALITY=1 builds only; section 16 is the runtime contract).
+- Each room's Standard set carries one index, `native/<room>/low/index.txt`: the Standard files,
+  the added texture keys, the dropped room texture keys and the per-mesh impostor / cull / shell
+  texture records (there is no separate `texlow/index.txt`). The runtime reads it once at room
+  entry and opens only the listed Standard files, otherwise the Original path. There are no
+  probe-opens: a failed iso9660 lookup re-reads the directory from the disc, which caused the
+  ~0.2 s texture hitch.
 - Actor meshes are per enemy type, not per room, and are the same in both modes (user
   decision): one prepared archive per enemy type, `em/em12.drs` and `em/em15.drs`, with levels
   L1 near / L2 mid / L2 far as pre-converted v4 blobs. They stage as mirror files
@@ -690,6 +692,16 @@ weights).
 `ASSETS=<out/<mode>/<route>>`. Explicit environment variables still win.
 - `TEXDIRS` order is: fixtures VQ overlay, then generated textures, then per-asset pins.
 - `assets.sh stage-env route` merges the three rooms.
+- A Standard build also writes `STDROOMS` (`<room>=out/standard/<room>`) and lays out
+  `out/standard/<room>/low/` + `texlow/`, the room's Standard disc files (section 16). A
+  `QUALITY=1` build stages both sets:
+  `ASSETS=out/original/<route> STD_ASSETS=out/standard/<route> stage.sh <build> <disc>`
+  (`STD_ASSETS` contributes only `STDROOMS`). `stage_std.py` checks each index against its files
+  and the staged Original packages (`orig` records), copies the set, prints a size report per
+  room and adds a `STDROOM` line per room to `stage-inputs.txt`. Builds without `QUALITY=1`
+  ignore `STDROOMS`: the disc's file tree is identical with and without it (checked
+  2026-09-23 on a staged route disc, 1,509 files; `disc.bin` itself differs run to run by
+  genisoimage timestamps).
 
 ## 14. Delivery steps
 
@@ -701,6 +713,7 @@ weights).
 | c | solver (`--plan solve` for Original) + `calibrate` | solver done in budget.py; calibrate open |
 | d | r101, r103 (Standard, built together: user decision 2026-09-23) | done: Original reproduces W9 FIN byte for byte; Standard with auto-picked shells, impostor.py atlases, vanish guard; `--verify` byte-identical (r101 263 steps, r103 132); review sheets with the heap 4 / VRAM budget tables. Calibration waits for W8g hwproject evidence |
 | e | overrides + upscale (source) + opt-in ai-upscale | |
+| g | Standard disc side (section 16): `stdindex.py` index + `low/`/`texlow/` layout, `stage_std.py`, `STDROOMS` in `stage.sh` | done: route disc with `QUALITY=1` adds exactly the 44 Standard files (r100 +1.31 MB, r101 +0.74 MB, r103 +0.85 MB) |
 | f | `assets.sh audit <room>`: bring-up gaps (missing-module stubs, missing packages, events without PS2 FMV, unported systems, heap/image estimate), seeded from R4_FIRST_STAGE_GAP_AUDIT.md and the next-room dependency brief | |
 
 ## 15. Design note: runtime per-BIN mode table (not built)
@@ -764,3 +777,179 @@ The shared build loses ~3-3.7 ms at the worst views and ~250 KB of heap savings.
 Build the table only if the disc gets tight. If it is built, make it an addition rather than a
 replacement: the table carries bias, impostor and cull, and the per-mode packages remain for
 geometry.
+
+## 16. Standard assets on disc: runtime contract
+
+This section is for the game-side builder of Standard mode (`QUALITY=1`). It defines what
+`stage.sh` puts on the disc for Standard, and what the runtime must do with it. The Original set
+stays exactly as it is today. The generator is `tools/assetpipe/stdindex.py`, called from
+`budget.py` at the end of a Standard build. Staging is `tools/d367/stage_std.py`, which
+`stage.sh` calls.
+
+### 16.1 Paths
+
+| Disc path | What | Staged when |
+|---|---|---|
+| `/cd/dc/native/<room>/<OWNER>.re4mesh` | Original packages (unchanged) | always |
+| `/cd/dc/native/<room>/low/index.txt` | the room's Standard index (16.3) | `QUALITY=1` build and `STDROOMS` given |
+| `/cd/dc/native/<room>/low/<OWNER>.re4mesh` | Standard package for OWNER; only owners whose Standard bytes differ from Original | same |
+| `/cd/dc/native/<room>/low/plan.json` | `re4dc-standard-plan/1`: for tools and evidence only; the runtime never reads it | same |
+| `/cd/dc/texlow/<crc>-<fnv>.re4tex` | textures that Standard adds (house shells, impostor atlases) | same |
+
+- `<room>` is `r%x%02x`, as in the Original path.
+- OWNER is `MAINSCENARIO`, `FILE_%02u` or `COMMON`, named as in `native_static.cpp`.
+- In `TEX_RESIDENT=1` builds, `texlow/` is fanned out exactly like `tex/`:
+  `/cd/dc/texlow/<first hex digit>/<crc>-<fnv>.re4tex`. The runtime can use the same path
+  formatter with `texlow` in place of `tex`.
+- Rooms in the current set: r100, r101, r103.
+
+### 16.2 Mode rules and residency
+
+The mode is frozen at `titleExit` (`re4dc_quality()`), so each room entry sees exactly one mode.
+
+**Original mode (and every `QUALITY=0` build).**
+- Never read `low/index.txt`.
+- Never open `low/` or `texlow/`.
+- Behaviour and residency are as today.
+
+**Standard mode.** At room entry, before the first package open:
+
+1. Read `native/<room>/low/index.txt` once, then parse it into fixed tables (16.4).
+   - A missing index means the room has no Standard set: open the Original packages and log it.
+     `lod_px` stays 5, which is today's `QUALITY=1` behaviour.
+   - Reject the whole index if it has a bad first line, a missing or wrong `end` count, a room
+     that is not this room, or a record that fails its check (16.3). A rejected index is treated
+     as missing. Never probe-open files: a failed iso9660 lookup re-reads the directory.
+2. Open packages as follows:
+   - **Owner with a `mesh` record:** open `native/<room>/low/<OWNER>.re4mesh`. The Original file
+     for that owner is not opened. Heap 4 still holds one package per owner, as today.
+   - **Owner without a `mesh` record:** open the Original path. The Standard set uses those
+     bytes unchanged (an `orig` record lists them).
+3. Textures:
+   - **Key with a `tex` record:** open it from `texlow/`. These keys never exist in `tex/`, and
+     Standard replaces no Original key.
+   - **`TEX_RESIDENT` room-entry preload:** after the room-identity pass, add the `tex` keys.
+     Their width, height and VRAM bytes are in the record. In the room-identity pass
+     (`preload_select(room_identities, ...)` only), skip every key with a `drop` record.
+   - A dropped key that is drawn anyway still loads on first sight, so a dropped key costs a
+     hitch, never a missing texture. The enemy, player and weapon passes are unchanged.
+4. **Per-mesh records** (`cull`, `imp`, `ptex`) are looked up by the mesh or part index in the
+   package that was opened for the owner. They apply only to that package.
+
+**Residency, file by file, in Standard mode.**
+
+| File | Resident in Standard | Resident in Original |
+|---|---|---|
+| `low/index.txt` | read into a <= 4 KB temporary buffer at room entry and freed after parsing; only the parsed tables stay (16.4) | never read |
+| `low/<OWNER>.re4mesh` | yes, in place of the Original file for that owner | never |
+| Original `<OWNER>.re4mesh` of a `mesh` owner | never opened | yes |
+| Original `<OWNER>.re4mesh` of an owner with no `mesh` record | yes (shared) | yes |
+| `texlow/*.re4tex` | on first sight, or preloaded with `TEX_RESIDENT` | never |
+| `tex/<drop key>` | not preloaded; first sight only | as today |
+| `low/plan.json` | never (tools only) | never |
+
+### 16.3 index.txt format (`re4dc-std 1`)
+
+The file is ASCII text with `\n` line ends. Tokens are separated by one space. A line starting
+with `#` is a comment. A reader ignores a line whose first token it does not know, so a later
+version can add record types. Hex keys are 8+8 lowercase digits, as in the package names.
+Integers are decimal. Floats are fixed-point with 3 decimals, in model units (mm). The line
+order is:
+1. the header line;
+2. `lod_px`;
+3. `mesh` lines;
+4. `orig` lines;
+5. `tex` lines;
+6. per owner, sorted by name: its `cull` lines, then its `imp` lines, then its `ptex` lines,
+   each ascending by mesh or part index;
+7. `drop` lines;
+8. the `end` line.
+
+| Record | Fields | Meaning / runtime check |
+|---|---|---|
+| `re4dc-std 1 <room>` | schema, version, room (`r101`) | first line; the version must be 1 and the room this room |
+| `lod_px <px>` | the lod_px the packages were built for (5) | log a mismatch with `re4dc_quality()->lod_px` |
+| `mesh <OWNER> <bytes> <sha16>` | package size and the first 16 hex digits of its sha256 | open `low/<OWNER>.re4mesh`; its size must equal `<bytes>` |
+| `orig <OWNER> <bytes> <sha16>` | the Original package this set was built against | staging checks it against the staged Original; the runtime may ignore it |
+| `tex <crc>-<fnv> <w> <h> <vram> <bytes>` | a texture Standard adds: size, VRAM bytes, file bytes | open from `texlow/`; add to the preload in Standard |
+| `drop <crc>-<fnv>` | a room texture no Standard package draws | skip it in the room-identity preload pass |
+| `cull <OWNER> <mesh> <bin> <common> <mm>` | distance cull | see below |
+| `imp <OWNER> <mesh> <bin> <common> <mm> <crc>-<fnv> <views> <cols> <cell_w> <cell_h> <atlas_w> <atlas_h> <cx> <cy> <cz> <half_w> <half_h>` | tree impostor (one line) | see below |
+| `ptex <OWNER> <part> <bin> <common> <crc>-<fnv> <w> <h>` | part texture (baked house shell) | see below |
+| `end <n>` | n = the number of lines before this one | guards against truncation |
+
+**Common rules.**
+- `<mesh>` is the `MeshRecord` index, and `<part>` the `MeshPart` index, in the package that
+  was opened for OWNER in Standard.
+- `<bin>` and `<common>` repeat that record's `bin` and `common`. The runtime checks
+  `meshes()[mesh].bin == bin && meshes()[mesh].common == common`, and for `ptex` that `part`
+  lies in `[first_part, first_part + part_count)` of such a mesh. A mismatch rejects the
+  index.
+- There is at most one `cull`, one `imp` and one `ptex` record per mesh or part.
+
+**`cull` (clutter distance cull).**
+- Let zc be the view depth of the mesh's bounds centre,
+  `modelview x ((bounds_min + bounds_max) / 2)`, in model units: `-z` in view space. The
+  pipeline priced exactly this.
+- When `zc >= mm`, the whole mesh instance draws nothing: no parts and no clusters.
+- The rule is independent of LOD. The W9b class rules inside r101/r103 packages are separate;
+  a runtime without W9b ignores them, as today.
+
+**`imp` (tree impostor).**
+- Same zc as `cull`. When `zc >= mm`, the mesh instance draws as one camera-facing
+  punch-through quad instead of its parts. Below `mm` it draws its geometry.
+- The fields are exactly item 20's `MeshImpostor`: `mesh`, `key_crc`, `key_fnv`, `views`,
+  `cols`, `cell_w`, `cell_h`, `atlas_w`, `atlas_h`, `centre[3]`, `half_w`, `half_h`, with the
+  same meaning. The atlas holds `views` cells, `cols` per row, row 0 at the top.
+  - Cell k looks along `-back_k`, with `back_k = (cos a, 0, -sin a)` and `a = 2 pi k / views`
+    in model space.
+  - The quad spans `half_w` / `half_h` around `centre`.
+  - Cell choice: `k = round(turns(-dz, dx) x views) mod views`, where (dx, dz) is the camera
+    direction in model space.
+  - The quad corners are `centre + (+-half_w x (bz, 0, -bx)) + (0, +-half_h, 0)`.
+  - Item 20's `mesh_impostor()` (patch `item20-tree-impostor.patch`, native_static.cpp) is a
+    working reference. Replace `RE4DC_TREE_IMPOSTOR_MM` with the record's `mm`, and
+    `v.package.impostor(m)` with a lookup in the parsed table.
+- Several records can share one atlas key (r100 COMMON BINs 1 and 2: the same tree model at
+  different sizes, each with its own centre and half sizes).
+- The atlas is the record's `<crc>-<fnv>`, from `texlow/`. Atlases are item 20's palettised VQ
+  packages: format 3 (`kPal4`), payload VQ, 4x4-texel codebook entries, and a 16-entry ARGB1555
+  palette behind the data (`data_size = 2048 + texels / 16 + 32`). The runtime needs item 20's
+  `texture_package.cpp` kPal4 support (validation, `bind_palettes` into one of 64 PVR palette
+  banks, `PVR_TXRFMT_PAL4BPP | VQ`). House-shell textures are ordinary RGB565 VQ.
+
+**`ptex` (baked shell texture).**
+- The part draws with the prepared package `<crc>-<fnv>` (`<w>` x `<h>`) instead of its source
+  image. Its UVs address that texture directly (0..1, scale 1).
+- This is item 21's `MeshTexture` (reference: `item21-house-shells.patch`,
+  `re4dc_model_texture()` around `mesh_submit`). The only change is that the record comes from
+  the table instead of LOD header `reserved[2]`.
+
+**What the packages already carry (no runtime work).**
+- Standard biases and the coarser LOD chain.
+- The vanish guard (empty-level errors).
+- Blender coarse variants (`geom`).
+- House-shell geometry, which replaces the source BIN in the package.
+- Collision, placement and sequencing never read any of this.
+
+**Why a sidecar and not the package.** Item 20 puts impostor records in LOD header words 5/6,
+and item 21 puts texture records in word 7. W9b uses words 5/6 for its class and rule tables,
+and the r101/r103 packages are W9b packages. Keeping the per-mesh records in `index.txt` leaves
+every package byte as the converter wrote it, and cannot collide with W9b.
+
+### 16.4 Sizes (current set)
+
+| Room | `mesh` owners (low/ bytes) | texlow (files / bytes / VRAM) | `drop` | `cull` / `imp` / `ptex` | index.txt |
+|---|---|---|---|---|---|
+| r100 | 7 of 7 (1,208,448) | 7 / 97,424 / 96,416 | 5 | 16 / 11 / 2 | 2,642 B, 58 lines |
+| r101 | 1 of 1 (592,416) | 14 / 141,440 / 139,424 | 6 | 12 / 5 / 9 | 2,259 B, 51 lines |
+| r103 | 1 of 1 (695,904) | 8 / 140,576 / 139,424 | 3 | 25 / 9 / 3 | 2,500 B, 53 lines |
+
+- The texlow VRAM column is the sum of every added texture's payload: the `tex` records'
+  `<vram>` field, which is what `texture_package.cpp` counts (`vram_bytes_ += data_size`).
+- The r101/r103 Standard sets have one owner, MAINSCENARIO; the other owners open the Original
+  file. r100's Standard set has all 7 owners.
+- Parsed-table bounds per room, rounded up with headroom: 16 `mesh`, 32 `tex`, 16 `drop`,
+  64 `cull` x 8 B, 32 `imp` x 48 B, 32 `ptex` x 16 B. That is about 3 KB of static tables for
+  the current room, rebuilt at each room entry.
+- A room that exceeds a bound is rejected (logged), and Original is used for that room.

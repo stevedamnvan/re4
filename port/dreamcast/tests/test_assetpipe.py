@@ -234,5 +234,125 @@ class VendorTests(unittest.TestCase):
             self.assertEqual(util.sha256_file(HERE / name), sha, name)
 
 
+class StandardDiscTests(unittest.TestCase):
+    """s16: the Standard index (stdindex.py) and its staging (tools/d367/stage_std.py)."""
+
+    def build(self, tmp):
+        import struct
+        from assetpipe import stdindex
+        tmp = pathlib.Path(tmp)
+        std_blob, _ = package(bump=200.0)
+        orig_blob, _ = package(bump=100.0)
+        pk_std, pk_orig = r4im.Package(std_blob), r4im.Package(orig_blob)
+        (tmp / "std").mkdir()
+        (tmp / "orig").mkdir()
+        (tmp / "std" / "MAINSCENARIO.re4mesh").write_bytes(std_blob)
+        (tmp / "orig" / "MAINSCENARIO.re4mesh").write_bytes(orig_blob)
+        tex = tmp / "0000000a-0000000b.re4tex"
+        tex.write_bytes(texture.HEADER.pack(b"RE4DCTX\0", 2, 48, 96, 1, 48, 144, 32, 0, 1, 0) +
+                        texture.TEXTURE.pack(b"t", 128, 128, 0, 144, 32, 3, 2, 0) + bytes(32))
+        (tmp / "plan.json").write_text("{}")
+        m = pk_std.meshes[0]
+        b, common = m[0], bool(m[1])
+        bins = {"MAINSCENARIO/0xff:%d" % b: {"cull_mm": 6000.0, "imp_mm": 3000.0}}
+        imp = {(0xff, b): dict(key=["0000000a", "0000000b"], views=16, cols=8, cell=[128, 128], atlas=[1024, 256],
+                               centre=[1.0, -0.0004, 3.25], half_w=10.0, half_h=20.0, tex_file=str(tex))}
+        shell = [dict(owner="0xff", bin=b, common=common, part=0, key=["0000000a", "0000000b"], width=128, height=128)]
+        used = sorted(stdindex.used_textures(pk_orig))
+        keys = ["%08x-%08x" % (i, i) for i in range(max(used) + 1)]
+        out = tmp / "out"
+        rep = stdindex.write_low(out, "r101", 5.0, [("MAINSCENARIO", 0xff, False)], {"MAINSCENARIO": pk_std},
+                                 {"MAINSCENARIO": tmp / "std" / "MAINSCENARIO.re4mesh"},
+                                 {"MAINSCENARIO": tmp / "orig" / "MAINSCENARIO.re4mesh"}, {"MAINSCENARIO": pk_orig},
+                                 bins, imp, shell, [tex], keys, tmp / "plan.json")
+        return out, rep, pk_std, b, keys, used
+
+    def test_index_records(self):
+        from assetpipe import stdindex
+        with tempfile.TemporaryDirectory() as tmp:
+            out, rep, pk, b, keys, used = self.build(tmp)
+            ix = stdindex.parse((out / "low" / "index.txt").read_text())
+            self.assertEqual(ix["room"], "r101")
+            self.assertEqual(ix["lod_px"], 5.0)
+            self.assertEqual([r[0] for r in ix["mesh"]], ["MAINSCENARIO"])
+            self.assertEqual(ix["cull"], [["MAINSCENARIO", "0", str(b), "0", "6000"]])
+            self.assertEqual(ix["imp"][0][:12], ["MAINSCENARIO", "0", str(b), "0", "3000", "0000000a-0000000b", "16",
+                                                 "8", "128", "128", "1024", "256"])
+            self.assertEqual(ix["imp"][0][12:], ["1.000", "0.000", "3.250", "10.000", "20.000"])
+            self.assertEqual(ix["ptex"], [["MAINSCENARIO", str(pk.meshes[0][6]), str(b), "0", "0000000a-0000000b",
+                                           "128", "128"]])
+            self.assertEqual(ix["tex"], [["0000000a-0000000b", "128", "128", "32", "176"]])
+            # the shelled part's source image is no longer drawn: dropped from the room preload
+            if len(list(pk.mesh_parts(0))) == 1:
+                self.assertEqual([d[0] for d in ix["drop"]], [keys[i] for i in used])
+            self.assertEqual(sorted(p.name for p in (out / "low").iterdir()),
+                             ["MAINSCENARIO.re4mesh", "index.txt", "plan.json"])
+            self.assertEqual(rep["low"], ["MAINSCENARIO"])
+
+    def test_identical_owner_not_in_low(self):
+        from assetpipe import stdindex
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            blob, _ = package()
+            (tmp / "a.re4mesh").write_bytes(blob)
+            lines, low, _, _ = stdindex.build("r103", 5, [("MAINSCENARIO", 0xff, False)],
+                                              {"MAINSCENARIO": r4im.Package(blob)}, {"MAINSCENARIO": tmp / "a.re4mesh"},
+                                              {"MAINSCENARIO": tmp / "a.re4mesh"}, {}, {}, [], [], [])
+            self.assertEqual(low, [])
+            self.assertEqual([x.split()[0] for x in lines], ["re4dc-std", "lod_px", "orig"])
+
+    def test_parse_rejects_truncation(self):
+        from assetpipe import stdindex
+        text = stdindex.finish(["re4dc-std 1 r100", "lod_px 5", "mesh COMMON 1 0"], ["00000001-00000002"])
+        self.assertTrue(text.endswith("end 4\n"))
+        self.assertEqual(stdindex.parse(text)["drop"], [["00000001-00000002"]])
+        for bad in (text.replace("end 4", "end 3"), "\n".join(text.splitlines()[:-1]) + "\n",
+                    text.replace("re4dc-std 1", "re4dc-std 2")):
+            with self.assertRaises(ValueError):
+                stdindex.parse(bad)
+
+    def test_image_key_is_the_runtime_identity(self):
+        import prepare_native_ui
+        from assetpipe import stdindex
+
+        class Im:
+            width, height, format, palette_format = 8, 4, 9, 2
+            data, palette_data = bytes(range(32)), bytes(range(32, 64))
+        self.assertEqual(stdindex.image_key(Im), prepare_native_ui.image_identity(Im)[0])
+        Im.palette_format, Im.palette_data = None, None
+        self.assertEqual(stdindex.image_key(Im), prepare_native_ui.image_identity(Im)[0])
+
+    def test_stage(self):
+        sys.path.insert(0, str(ROOT / "tools" / "d367"))
+        import stage_std
+        with tempfile.TemporaryDirectory() as tmp:
+            out, rep, pk, b, keys, used = self.build(tmp)
+            fx = pathlib.Path(tmp) / "fixtures"
+            (fx / "native" / "r101").mkdir(parents=True)
+            orig = pathlib.Path(tmp) / "orig" / "MAINSCENARIO.re4mesh"
+            (fx / "native" / "r101" / "MAINSCENARIO.re4mesh").write_bytes(orig.read_bytes())
+            line = stage_std.stage_room(fx, "r101", out, tex_resident=True)
+            self.assertIn("STDROOM r101", line)
+            for rel in ("native/r101/low/index.txt", "native/r101/low/MAINSCENARIO.re4mesh",
+                        "native/r101/low/plan.json", "texlow/0/0000000a-0000000b.re4tex"):
+                self.assertTrue((fx / rel).is_file(), rel)
+            self.assertEqual((fx / "native/r101/low/MAINSCENARIO.re4mesh").read_bytes(),
+                             (out / "low" / "MAINSCENARIO.re4mesh").read_bytes())
+            # a staged Original the set was not built against stops staging
+            (fx / "native" / "r101" / "MAINSCENARIO.re4mesh").write_bytes(b"x" + orig.read_bytes()[1:])
+            with self.assertRaises(SystemExit):
+                stage_std.stage_room(fx, "r101", out, tex_resident=False)
+            (fx / "native" / "r101" / "MAINSCENARIO.re4mesh").write_bytes(orig.read_bytes())
+            # an unlisted file in low/, or a Standard key that is also an Original key
+            (out / "low" / "FILE_00.re4mesh").write_bytes(b"?")
+            with self.assertRaises(SystemExit):
+                stage_std.stage_room(fx, "r101", out, tex_resident=False)
+            (out / "low" / "FILE_00.re4mesh").unlink()
+            (fx / "tex").mkdir()
+            (fx / "tex" / "0000000a-0000000b.re4tex").write_bytes(b"")
+            with self.assertRaises(SystemExit):
+                stage_std.stage_room(fx, "r101", out, tex_resident=False)
+
+
 if __name__ == "__main__":
     unittest.main()

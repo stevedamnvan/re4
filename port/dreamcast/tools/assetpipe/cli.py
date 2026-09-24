@@ -112,7 +112,7 @@ def stage_env(cfg, targets, mode):
     for t in targets:
         m = json.loads((cfg.root / "out" / mode / t / "manifest.json").read_text())
         for k, v in m["stage"].items():
-            if k in ("MESHROOMS", "TEXDIRS", "ROOMFILES", "NATIVEFILES"):
+            if k in ("MESHROOMS", "TEXDIRS", "ROOMFILES", "NATIVEFILES", "STDROOMS"):
                 parts = merged.get(k, "").split()
                 parts += [x for x in v.split() if x not in parts]
                 merged[k] = " ".join(parts)

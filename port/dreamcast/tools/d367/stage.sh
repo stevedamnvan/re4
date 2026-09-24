@@ -29,12 +29,23 @@
 # encoded by tools/ui_overrides.py exactly as the package they replace (16-bit or the
 # TEXDIRS VQ overlay; same size or it fails). It wins over TEXDIRS. UI_SOURCE is the GC
 # source tree (default /root/re4data). Unset: staging is unchanged.
+# QUALITY=1 builds also stage the Standard asset set of every room in STDROOMS="r100=<dir> .."
+# (<dir> = out/standard/<room> of tools/d367/assets.sh; docs/D367_ASSET_PIPELINE.md s16):
+# <dir>/low/ -> /cd/dc/native/<room>/low/ (Standard packages, index.txt, plan.json) and
+# <dir>/texlow/ -> /cd/dc/texlow/ (tools/d367/stage_std.py; checked against the staged Original
+# packages, sizes reported and recorded). STD_ASSETS=<out/standard/<route>> takes STDROOMS from
+# that stage.env (only that variable). ASSETS stays the Original set. Builds without QUALITY=1
+# ignore STDROOMS: their disc is unchanged.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 if [ -n "${ASSETS:-}" ]; then
   test -f "$ASSETS/stage.env" || { echo "stage: no $ASSETS/stage.env (run tools/d367/assets.sh)" >&2; exit 1; }
   # shellcheck disable=SC1091
   . "$ASSETS/stage.env"
+fi
+if [ -n "${STD_ASSETS:-}" ] && [ -z "${STDROOMS:-}" ]; then
+  test -f "$STD_ASSETS/stage.env" || { echo "stage: no $STD_ASSETS/stage.env (run tools/d367/assets.sh)" >&2; exit 1; }
+  STDROOMS=$(unset STDROOMS; . "$STD_ASSETS/stage.env"; echo "${STDROOMS:-}")
 fi
 build=${1:?usage: stage.sh <build-dir> <disc-dir>}
 out=${2:?usage: stage.sh <build-dir> <disc-dir>}
@@ -111,6 +122,18 @@ if grep -q 'TEX_RESIDENT=1' "$build/candidate.txt" 2>/dev/null && [ -d "$fixture
   for f in "$fixtures"/tex/*.re4tex; do b=$(basename "$f"); mkdir -p "$fixtures/tex/${b:0:1}"; mv "$f" "$fixtures/tex/${b:0:1}/"; done
   echo "stage: TEX_RESIDENT build: texture packages fanned out into tex/0..f" >&2
 fi
+std_inputs=
+if grep -Eq '(^|[[:space:]])QUALITY=1([[:space:]]|$)' "$build/candidate.txt" 2>/dev/null; then
+  if [ -n "${STDROOMS:-}" ]; then
+    std_args=(); grep -q 'TEX_RESIDENT=1' "$build/candidate.txt" 2>/dev/null && std_args+=(--tex-resident)
+    # shellcheck disable=SC2086
+    std_inputs=$(python3 -B "$here/stage_std.py" "$fixtures" "${std_args[@]}" $STDROOMS)
+  else
+    echo "stage.sh: WARNING: QUALITY=1 build staged without STDROOMS: Standard mode uses the Original packages" >&2
+  fi
+elif [ -n "${STDROOMS:-}" ]; then
+  echo "stage: STDROOMS ignored (build without QUALITY=1)" >&2
+fi
 if [ -n "${ROOMFILES:-}${MIRROR_OVERLAYS:-}" ]; then
   overlay=$(mktemp -d "${TMPDIR:-/tmp}/re4dc-mirror.XXXXXX")
   cp -al "$mirror"/. "$overlay/"
@@ -140,6 +163,7 @@ if [ -n "$aica" ]; then mv "$aica.json" "$out/aica-budget.json"; fi
   echo "build=$build candidate=$(cat "$build/candidate.txt" 2>/dev/null || echo '?')"
   if [ -n "${ASSETS:-}" ]; then echo "ASSETS=$ASSETS manifest-sha256=$(grep -o '"manifest_sha256": "[0-9a-f]*"' "$ASSETS"/manifest.json 2>/dev/null | cut -d'"' -f4 | cut -c1-16 | tr '
 ' ' ')"; fi
+  if [ -n "$std_inputs" ]; then printf '%s\n' "$std_inputs"; fi
   echo "MIRROR=${MIRROR:-/root/probe/d362-mirror} ROOMFILES=${ROOMFILES:-} FIXTURES_SRC=${FIXTURES_SRC:-/root/probe/d354v7-fixtures} KEYED=${KEYED:-$base/keyed12} MESHDIR=${MESHDIR:-} MESHROOMS=${MESHROOMS:-}"
   for d in ${TEXDIRS:-}; do
     echo "TEXDIR $d re4tex=$(ls "$d"/*.re4tex | wc -l)$([ "$d" = "$vq_overlay" ] && echo " vq-report-sha256=$(sha256sum < "$d/vq-native-ui-report.json" | cut -c1-16)")"

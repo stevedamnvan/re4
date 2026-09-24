@@ -635,7 +635,19 @@ def build_standard(ctx, name, only=None, review=True):
                                                                     if chosen[k].get(x)})
                            for k in keys_s if chosen[k].get("imp_mm") or chosen[k].get("cull_mm") or chosen[k].get("geom")})
     write_json(out / "plan.json", plan_json)
-    stage = {}
+    # the disc side (s16): low/ (Standard files + index.txt + plan.json) and texlow/ (added textures)
+    from . import stdindex
+    from .config import TOOLS
+    owners = [(o["name"], o["code"], bool(o["common"])) for o in room.owners() if o["name"] in final_objs]
+    shell_rows = []
+    for b in sorted(shells):
+        shell_rows += json.loads(shells[b][0].path("textures.json").read_text())["textures"]
+    disc_std = stdindex.write_low(
+        out, name, plan["px"], owners, pk_final, {n: final_objs[n].path(n + ".re4mesh") for n, _, _ in owners},
+        {n: orig_objs[n].path(n + ".re4mesh") for n, _, _ in owners}, pk_orig, plan_json["bins"],
+        {k: imp_recs[k] for k in used_imp}, shell_rows, list(shell_tex) + list(atlas_files),
+        stdindex.tpl_keys(gen.room_tpl(room), TOOLS), out / "plan.json")
+    stage = {"STDROOMS": "%s=%s" % (name, out)}
     if room.recipe.get("stage", "MESHROOMS") == "MESHDIR":
         stage["MESHDIR"] = str(mesh)
     else:
@@ -652,7 +664,7 @@ def build_standard(ctx, name, only=None, review=True):
                                    summary=summary, sizes=sizes),
                     shells={b: dict(faces=shells[b][1], p90_cm=shells[b][2], step=shells[b][0].key,
                                     info=shells[b][0].info) for b in sorted(shells)},
-                    views=view_rows, assets=sorted(assets, key=lambda a: a["id"]),
+                    disc_standard=disc_std, views=view_rows, assets=sorted(assets, key=lambda a: a["id"]),
                     steps=dict(**{"standard:" + n: o.key for n, o in sorted(final_objs.items())},
                                **{"shell:" + b: shells[b][0].key for b in sorted(shells)}),
                     stage=stage)
