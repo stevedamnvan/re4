@@ -189,6 +189,8 @@ long gc_read(int file, void* dst, unsigned len, unsigned ofs)
 #endif
 
 // ---------------------------------------------------------------- worker ops
+void qcfg_on_mount(u8* io);  // RE4DCCFG cache (S5, below)
+
 int op_mount()
 {
     memset(ss.live, 0, sizeof(ss.live));
@@ -211,6 +213,7 @@ int op_mount()
     ss.formatted = 1;
     char name[16];
     u8* blk = ss.work + kIoOff;
+    qcfg_on_mount(blk);
     for (int f = 0; f < (int) kFiles; ++f) {
         if (f == (int) kSysFile || (RE4DC_VMU_DEBUG_SLOT && f == 19)) {
             name_of(f, 0, name);
@@ -682,6 +685,82 @@ s32 CARDGetSerialNo(s32 chan, u64* serial)
 }
 
 }  // extern "C"
+
+// ---------------------------------------------------------------- RE4DCCFG (design-vmu S5)
+// The quality choice (platform/quality.h Re4dcQualityCfg, 32 B "R4CF") as the 2-block VMS file
+// RE4DCCFG (header + icon + record). The only writer: quality.cpp calls the store only when the
+// choice changes. Load: every mount (the boot RE4DCSYS mount runs before the title) caches the
+// record on the worker; the title reads that cache after joining the worker. Store: synchronous
+// in the title's frame (about 25 vblanks: mount + 2 blocks) with a transient game-heap block, so
+// the KOS heap is never used; refused while a card op runs or when the VMU is missing/full.
+#include "quality.h"
+void* mem_alloc(u32 size, const char* file, int line, int a, int b);  // src/game/main_mem.cpp
+void Mem_free(void* p);
+namespace {
+Re4dcQualityCfg qcfg_cache;
+int qcfg_state;  // 0 not read, 1 cached, -1 no RE4DCCFG on the mounted VMU
+constexpr unsigned kCfgBufBytes = 512 + 512 + 13 * 512 + 2 * 512;
+
+void qcfg_on_mount(u8* io)
+{
+    const int idx = vmus_find(&ss.st, "RE4DCCFG");
+    qcfg_state = -1;
+    if (idx >= 0 && vmus_read(&ss.st, idx, io, 1024, 2) == VMUS_OK && !memcmp(io + kVms, "R4CF", 4)) {
+        memcpy(&qcfg_cache, io + kVms, sizeof(qcfg_cache));
+        qcfg_state = 1;
+    }
+}
+}  // namespace
+
+extern "C" int re4dc_quality_cfg_load(Re4dcQualityCfg* out)
+{
+    if (ss.busy) return 0;
+    join();
+    if (qcfg_state != 1) return 0;
+    memcpy(out, &qcfg_cache, sizeof(*out));
+    return 1;
+}
+
+extern "C" int re4dc_quality_cfg_store(const Re4dcQualityCfg* rec)
+{
+#if RE4DC_VMU_GCRAW
+    (void) rec;
+    return 0;
+#else
+    if (ss.busy) return 0;
+    join();
+    u8* mem = (u8*) mem_alloc(kCfgBufBytes, __FILE__, __LINE__, 0, 13);
+    if (!mem) {
+        re4dc_log("card-vmu: cfg NOMEM (%u B)\n", kCfgBufBytes);
+        return 0;
+    }
+    const u32 t0 = re4dc_vi_retrace_count();
+    u8* io = mem + 512 + 512 + 13 * 512;
+    VmuStore st{};
+    int rc = vmus_pick(&st);
+    if (!rc) rc = vmus_mount(&st, mem, mem + 512, mem + 1024);
+    unsigned blocks = 0;
+    if (!rc) {
+        memset(io, 0, 1024);
+        memcpy(io + kVms, rec, sizeof(*rec));
+        blocks = vmus_package(io, "GRAPHICS", sizeof(*rec)) / 512;
+        const int idx = vmus_find(&st, "RE4DCCFG");
+        int inplace = 0;
+        if (idx >= 0 && vmus_file_blocks(&st, idx) == blocks) rc = vmus_rewrite(&st, idx, io, blocks);
+        else {
+            if (idx >= 0) vmus_delete(&st, "RE4DCCFG");
+            rc = vmus_write(&st, "RE4DCCFG", io, blocks, nullptr, &inplace);
+        }
+    }
+    Mem_free(mem);
+    re4dc_log("card-vmu: cfg store mode=%u blocks=%u vbl=%u rc=%d\n", (unsigned) rec->mode, blocks,
+              (unsigned) (re4dc_vi_retrace_count() - t0), rc);
+    if (rc) return 0;
+    memcpy(&qcfg_cache, rec, sizeof(qcfg_cache));
+    qcfg_state = 1;
+    return 1;
+#endif
+}
 #else  // RE4DC_VMU_SAVE
 // Memory card interface: no card. Every call reports CARD_RESULT_NOCARD, which
 // the game's card state machine (src/game/card.cpp) treats as "no memory
