@@ -44,7 +44,15 @@ STATE.md as a handover.
    window it is overwritten by the codec files, giving the invalid CTRL_IDs and then a call through a garbage
    pointer. Next: fixture log of the pool address vs the window at swap_open; if it overlaps, give the sub screen
    an empty controller pool while open and restore at close. Evidence `r101-direct-canon`, `r101-direct-canon2`.
-3. After both: frontier east walk to the r101 door on the canonical recipe, r101 census, then r101 to the bell.
+   Warp rig finding: its r101 first-visit codec runs **out of PVR memory** before the reset, so test the VRAM
+   exhaustion path alongside the EspgenArray hypothesis.
+3. **Route bugs found by the warp rig** (all open):
+   - r100 entered after s20 halts: em2a's module (id 28) is not in the image.
+   - `d354v7-fixtures` lacks the 16 r101 em15 motion keys and `m1stage.sh` uses it, so m1 route discs halt at
+     r101 (same gap as the Play disc).
+   - r101 scenery is grey without the STDROOMS asset set.
+   - The bell is counted at run time (kills or fight timer), not by flags; a bell preset needs a design decision.
+4. After these: frontier east walk to the r101 door on the canonical recipe, r101 census, then r101 to the bell.
 
 ## Parked patches (not committed; none passed every gate)
 
@@ -79,7 +87,7 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 | ARAM block swap | `blockswap/` | fix built, passing in Flycast | gates + commit (see above); list ARAM units per room |
 | r101 call reset | `subscreen2/` | investigation just started | root cause, fix |
 | Sub-screen draw order (Hunnigan, attache-case items invisible) | `subscreen2/` | cause found: native UI draws all 2D quads after models; `SS_UI_ORDER=1` designed (flush queued quads before sub-screen model parts, models on TR list) | build + screenshots (parked behind the call reset) |
-| Warp rig (DBG_WARP) | `warp/` | test builds; presets planned r100-spawn/post-radio/house-door/bridge/east-door, r101-entry/bell-fight | finish presets; prove s03 house scene and r101 door |
+| Warp rig (DBG_WARP) | `warp/` | works in Flycast (`DBG_WARP=1`, default image byte-identical at 84fc8ff and 8ac9f2d): debug start via `titleExit`, places Leon, applies room/scenario/find/unlock flags, answers the VMU card screen, door-test actions; presets via `tools/d367/warp.py`. Emulated time from boot: s03 movie 26.6 s (first scripted trigger ever), s44 22.7 s, r100 -> r101 door + r101 load 24.0 s, r101 bell fight by frame 300 (full route needs 223 s just to reach r100 control). WIP `warp/warp-rig-v1.patch` (`0540f0cf…4837`) fails `--cached --check`: pad.cpp/title.cpp hunks anchor on the uncommitted overlay | re-anchor per STATE.md, one rebuild + rerun, gate, land; add the frontier FIX_R101_CALL_DONE flag |
 | VRAM | `vram/` | 161 KB r100 gap = 2 KiB page-alignment pad per texture (KOS pvr_mem in-VRAM headers defeat the page check); fix A (page allocator, ~158 KB) built, arms pa0/pa1 run; TA_DOUBLEBUF study arms ds0/ds1/dst0/dst1 run (SUBSCREEN=0 both sides) | analyse; deliver A; bring doublebuf vs C to the user |
 | Door loading | `w10/` | U1+U2+U6: r100 door 10.22 -> 6.29-6.75 s (Flycast emulated), source blocked 1.03 -> 0.07 s; wall-time pad failed as an equaliser; frame-based hold (IO_PROBE test hook in cDvdQueue::Read) built, h0 baseline running | h1/h2/h6 held STRICT vs h0, in-room p99/max, deliver U0/U1/U2/U6 |
 | Logic | `design-logic/` | P1-P4, P3 (GAME_CONCAT_COL), P6 (GAME_SINCOS) and, after the hold, P3b (GAME_MULTVEC_SCHED, 45fd3d9 + README 43c0e75; r6 -0.28, r8 -0.13 hw ms) landed and in LH; FTRV **rejected** (~1.1 hw ms/tick but RNG diverges at tick 634, 3rd kill 3074 vs 3071; parked on branch `dl3-ftrv`); P10, GAME_SCHED rejected. CPU share at 30 fps: 70% at 6, 80% at 8 engaged Ganados | P5 r6 number and land; P8 check; confirm P7 reject; scripts in `tools/dl-scripts/` hard-code an old scratchpad path; DESIGN.md is v1 |
@@ -136,10 +144,17 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 - hwcal disc hides the memory card from the game; it only writes its own RE4DCCAL / RE4DCH1..5 files.
 - GCC 2.95 vs modern class layout (vptr position) breaks `this+offset` arithmetic; see the skill.
 
+## Landed during the hold
+
+2fe6fba TA_HASH, 0aa5cc9 group-8 PVR header compare, 45fd3d9 + 43c0e75 GAME_MULTVEC_SCHED (P3b, in LH),
+45138ce assets BIN 59 split + BIN 1 shell skip + level-rule fix. All 14 agents confirmed "held"; no Flycast,
+build or watcher of theirs is running.
+
 ## How to resume
 
 1. Read this file, the skill, and the area STATE.md files above.
-2. Land the ARAM fix first (its STATE has the gates), then the r101 call reset.
+2. Land the warp rig first (it makes every later gate a ~25 s run instead of a full route), then use it for the
+   ARAM fix's r101-door gate and the r101 call reset.
 3. Resume the other streams in the order of the dependency list in the route doc; every patch still goes through
    the commit procedure in the skill (sha check, HEAD guard, empty index, `git apply --check` / `--cached --check`,
    commit with the Co-Authored-By line, push, dirty count stays 75).
