@@ -69,7 +69,14 @@ extern "C" void* re4dc_ui_movie_texture();
 namespace {
 // Hard caps: every write is checked against them, nothing grows.
 // snd_stream_fill asks for half the 8 KiB ring per channel: 8 KiB interleaved.
-constexpr unsigned VideoCap=32768, AudioCap=16384, AudioStart=12288, CallbackCap=8192, ReadCap=16384;
+// Ring: the AICA ring per channel, 512 ms of 32 kHz PCM16. The player is one thread: a GD read
+// blocks audio polling, and a read that outlasts the fresh part of the ring (half of it after a
+// poll) loses audio for good, which puts every later picture behind the vblank clock. Seeks
+// after the game's own reads took up to 306 ms (r101s30 from the r101 fight); an 8 KiB ring
+// (128 ms) lost 717 ms in its first 3 s and dropped 1321 of 1331 pictures. The poll hands out
+// up to half the ring per channel (CallbackCap interleaved); AudioStart primes 320 ms before
+// the clock starts; VideoCap holds the video of those records plus one more.
+constexpr unsigned Ring=32768, VideoCap=65536, AudioCap=49152, AudioStart=40960, CallbackCap=Ring, ReadCap=16384;
 constexpr unsigned Rows=8, MaxWidth=320, MaxHeight=240;
 constexpr unsigned MaxAllocs=10;
 struct Movie {
@@ -85,9 +92,18 @@ struct Movie {
     unsigned long long sum_decode=0,sum_convert=0,sum_upload=0,duration_us=0;
     int heap_before=0,heap_active=0,terminal=0; unsigned vram_before=0,width=0,height=0;
     unsigned shown=0,dropped=0,late=0,cadence2=0,cadence_other=0,max_gap=0,last_submit=0,v0=0;
-    unsigned long long sum_present=0,max_present=0,sum_idle=0;
+    unsigned long long sum_present=0,max_present=0,sum_idle=0,starve_since=0;
+    unsigned starved=0;
     bool full=false,hw=false; void* tex=nullptr; unsigned yuv_timeouts=0;
+#if RE4DC_ROUTE_MOVIE_DIAG
+    const char* why=nullptr; unsigned reads=0,iter=0; unsigned long long read_us=0;
+#endif
 } m;
+#if RE4DC_ROUTE_MOVIE_DIAG
+#define MOVIE_WHY(s) (m.why=(s))
+#else
+#define MOVIE_WHY(s) ((void)0)
+#endif
 void* plm_alloc(size_t n){
     if(m.nallocs==MaxAllocs)return nullptr;
     void* p=re4dc_ui_stage_alloc((unsigned)n);
@@ -121,7 +137,11 @@ bool transport(void* destination,unsigned bytes){
             {Re4dcIoScope owner;unsigned aligned=n&~31U;
              if(aligned)ok=re4dc::storage::read_aligned_chunk(m.file,m.readbuf,aligned);
              if(ok&&aligned<n)ok=re4dc::storage::read_exact(m.file,m.readbuf+aligned,n-aligned);}
-            auto dt=timer_us_gettime64()-t;if(dt>m.max_read)m.max_read=dt;if(!ok)return false;
+            auto dt=timer_us_gettime64()-t;if(dt>m.max_read)m.max_read=dt;
+#if RE4DC_ROUTE_MOVIE_DIAG
+            ++m.reads;m.read_us+=dt;
+#endif
+            if(!ok){MOVIE_WHY("read");return false;}
             m.transport_left-=n;m.read_at=0;m.read_used=n;
         }
         unsigned n=m.read_used-m.read_at;if(n>bytes)n=bytes;
@@ -176,6 +196,9 @@ void memory(const char* phase){
 }
 int finish(int status){
     if(m.terminal)status=m.terminal;else m.terminal=status;
+#if RE4DC_ROUTE_MOVIE_DIAG
+    re4dc_log("route movie diag: id=%05x status=%d why=%s iter=%u reads=%u read_us=%llu" "\n",m.id,status,m.why?m.why:"-",m.iter,m.reads,m.read_us);
+#endif
     const unsigned presented=m.texture?re4dc_ui_movie_presented():0;
     if(m.stream>=0){snd_stream_stop(m.stream);snd_stream_destroy(m.stream);m.stream=-1;}
     // Retire only a service this movie initialised, after its own stream is gone.
@@ -230,8 +253,8 @@ bool open(unsigned id){
     m.hw=want_hw&&m.tex;
     if(want_hw&&!m.hw)return false;
     m.owns_service=!re4dc_movie_stream_initialized();
-    if(snd_stream_init_ex(2,8192)<0)return false;
-    m.stream=snd_stream_alloc(audio,8192);if(m.stream<0)return false;
+    if(snd_stream_init_ex(2,Ring)<0)return false;
+    m.stream=snd_stream_alloc(audio,Ring);if(m.stream<0)return false;
     m.staged+=re4dc_movie_stream_staged;
     m.heap_active=re4dc_ui_heap_free();
     memory("active");
@@ -397,27 +420,57 @@ extern "C" int re4dc_movie_play(unsigned id,unsigned mask,RouteMoviePictureTick 
             re4dc_log("route movie skip: id=%05x mask=%x picture=%u elapsed_us=%llu\n",m.id,pressed&mask,k,timer_us_gettime64()-m.entered);
             return finish(RE4DC_MOVIE_SKIP);
         }
-        if(!feed()||poll_audio()<0||m.failed)return finish(RE4DC_MOVIE_ERROR);
+#if RE4DC_ROUTE_MOVIE_DIAG
+        const unsigned long long d0=timer_us_gettime64();const unsigned r0=m.reads;const unsigned long long ru0=m.read_us;
+#endif
+        if(!feed()){MOVIE_WHY(m.why?m.why:"feed");return finish(RE4DC_MOVIE_ERROR);}
+        if(poll_audio()<0){MOVIE_WHY("poll_audio");return finish(RE4DC_MOVIE_ERROR);}
+        if(m.failed){MOVIE_WHY("audio_failed");return finish(RE4DC_MOVIE_ERROR);}
         const unsigned now=re4dc_vi_retrace_count(),due=m.v0+2*k;
+#if RE4DC_ROUTE_MOVIE_DIAG
+        {const unsigned long long fu=timer_us_gettime64()-d0;++m.iter;
+         if(m.iter<=24||fu>50000)re4dc_log("route movie diag: iter=%u k=%u now=%u due=%u frames=%u pending=%d feed_us=%llu reads=%u read_us=%llu pcm=%u" "\n",
+             m.iter,k,now,due,m.frames,pending?1:0,fu,m.reads-r0,m.read_us-ru0,m.pcm_used);}
+#endif
         if(pending&&now+1>=due){
             if(now>=due+2&&m.frames<m.expected_frames){++m.dropped;pending=nullptr;++k;}
             else{
                 if(now>due)++m.late;
-                if(!show(pending,k,now,tick))return finish(RE4DC_MOVIE_ERROR);
+                if(!show(pending,k,now,tick)){MOVIE_WHY("show");return finish(RE4DC_MOVIE_ERROR);}
                 pending=nullptr;++k;
             }
         }
-        if(!pending&&m.frames<m.expected_frames){
+        if(!pending&&m.frames<m.expected_frames&&!m.starve_since){
+#if RE4DC_ROUTE_MOVIE_DIAG
+            const unsigned long long c0=timer_us_gettime64();
+#endif
             pending=decode_next();
-            if(!pending)return finish(RE4DC_MOVIE_ERROR);
+#if RE4DC_ROUTE_MOVIE_DIAG
+            if(m.iter<=24||timer_us_gettime64()-c0>50000)re4dc_log("route movie diag: decode k=%u us=%llu ok=%d" "\n",k,timer_us_gettime64()-c0,pending?1:0);
+#endif
+            if(pending){m.starve_since=0;continue;}
+            // The input ran dry. A slow read (a GD seek after the game's own reads, ~190 ms)
+            // starts the picture clock late; the loop catches up by dropping pictures, which
+            // uses video faster than the audio-paced feed refills it (one record per picture).
+            // plm_video_decode returns NULL until the next picture is complete: wait for the
+            // next record. Ended input or 2 s without a picture is still an error.
+            if(!m.video_left){MOVIE_WHY("decode");return finish(RE4DC_MOVIE_ERROR);}
+            const unsigned long long t=timer_us_gettime64();
+            if(!m.starve_since){m.starve_since=t;++m.starved;}
+            else if(t-m.starve_since>2000000ULL){MOVIE_WHY("starved");return finish(RE4DC_MOVIE_ERROR);}
             continue;
         }
         if(!pending&&!m.audio_left&&!m.pcm_used&&m.samples>=m.last_real_sample+4096&&now>=m.v0+2*k)
             return finish(RE4DC_MOVIE_EOF);
-        if(timer_us_gettime64()-m.start>m.duration_us+10000000ULL)return finish(RE4DC_MOVIE_ERROR); // stalled media
+        if(timer_us_gettime64()-m.start>m.duration_us+10000000ULL){MOVIE_WHY("stalled");return finish(RE4DC_MOVIE_ERROR);} // stalled media
         auto t=timer_us_gettime64();
         while(re4dc_vi_retrace_count()==now&&timer_us_gettime64()-t<2000){} // ahead: wait (bounded) for the next field
         m.sum_idle+=timer_us_gettime64()-t;
+        if(m.starve_since&&!pending&&m.frames<m.expected_frames){
+            pending=decode_next();
+            if(pending)m.starve_since=0;
+            else if(timer_us_gettime64()-m.starve_since>2000000ULL){MOVIE_WHY("starved");return finish(RE4DC_MOVIE_ERROR);}
+        }
     }
 }
 extern "C" int re4dc_movie_cancel(){return m.entered?finish(RE4DC_MOVIE_CANCEL):RE4DC_MOVIE_CANCEL;}
