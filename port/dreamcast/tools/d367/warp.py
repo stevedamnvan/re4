@@ -42,13 +42,13 @@ PRESETS = {
     "r100-east-door": dict(room=0x100, pos=(96523, -6771, -8536), ang=2.247, rsf={0x100: [13]},
                            scenario={0: 0x10}, door=[("fwd", 30, 20), ("a", 60, 4), ("a", 150, 4), ("a", 240, 4)],
                            notes="at the r100 -> r101 door (door area 0 has no lock or flag)"),
-    # The same door in the natural after state (s03 + s20 done, ambush over). BLOCKED: entering
-    # r100 with flag 10 set spawns an ESL entry of em2a, whose module (id 28) is not in the image
-    # (HALT main_sub.cpp(1440) "DLL link/unlink failed"; evidence warp-east-1).
+    # The same door in the natural after state (s03 + s20 done, ambush over). Entering r100 with
+    # flag 10 set spawns em2a (traps): linked since e6f65cc (was HALT main_sub.cpp(1440), warp-east-1).
+    # The crow archive (em23) does not fit heap 4 in this state with Original packages.
     "r100-east-door-after": dict(room=0x100, pos=(96523, -6771, -8536), ang=2.247,
                                  rsf={0x100: R100_AFTER_S03_S20 + [4, 12, 14, 15]}, scenario={0: 0x10}, find=0x4000,
                                  door=[("fwd", 30, 20), ("a", 60, 4), ("a", 150, 4), ("a", 240, 4)],
-                                 notes="r101 door, after state: BLOCKED (em2a module 28 not in the image)"),
+                                 notes="r101 door, after state (crows absent: heap 4)"),
     # r101 fresh entry (first visit: typewriter + Hunnigan call via r101_execOperator2).
     "r101-entry": dict(room=0x101, notes="fresh r101 entry (first visit, Item_find 0x2000 clear)"),
     # The square before the fight: first visit done (Item_find 0x2000: no typewriter call), fight

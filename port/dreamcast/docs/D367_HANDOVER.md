@@ -5,7 +5,8 @@ without sub-agents. Landed so far in that mode: 23074db warp rig v2 (DBG_WARP), 
 from GD-ROM, 4980a40 + 976c93d SS_POOL_HIGH (the r101 call reset and the file-screen reset after it), a0c3079
 NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + converter: r101 scenery draws),
 ea1e2d3 VRAM_PAGES (default off), 9951d17 items 20+21 (TREE_IMPOSTOR/MESH_TEXTURES on W9b, default off), 010169c
-QUALITY_ASSETS (Standard selection, default off), 46b9f4f tex-vq6 (r101 textures VQ: the r101 VRAM blocker). The
+QUALITY_ASSETS (Standard selection, default off), 46b9f4f tex-vq6 (r101 textures VQ: the r101 VRAM blocker), e6f65cc
+em2a linked (r100 after-state entry). The
 sections below are updated for those; everything else is as at the hold.
 
 The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
@@ -49,7 +50,14 @@ STATE.md as a handover.
    Diagnosis tool for the next case: the heapwatch diag (test only; `/root/probe/d367-agents/warp/heapwatch-diag.py` patches tree3). It records heap-4
    cells in the window at open, then names the old owner of the first broken heap-12 cell.
 3. **Route bugs found by the warp rig** (all open):
-   - r100 entered after s20 halts: em2a's module (id 28) is not in the image.
+   - r100 entered after s20 halted (em2a, module id 28, not in the image). Fixed by e6f65cc, which does three things:
+     - links em2a;
+     - keeps its subArc: `new (em) cEm2a;` off the GC, because value-initialisation zeroed it and every trap
+       failed modelInit;
+     - binds the em2a/em21 cut cameras to the real static instead of a missing-symbol stub.
+     Open: in that state heap 4 is 172 KB short for the crow archive (em23.drs needs 0x36ac0, 0xcd80 free with
+     Original packages), so the crows are absent. Options: Standard packages (-294 KB heap 4), or trimming em2a.drs
+     (texture-only preparation as em21/em28).
    - `d354v7-fixtures` lacks the 16 r101 em15 motion keys and `m1stage.sh` uses it, so m1 route discs halt at
      r101 (same gap as the Play disc).
    - r101 scenery grey: fixed by W9b (8332a22). The staged r101/r103 packages are R4IM v3, which HEAD's runtime
@@ -174,7 +182,7 @@ build or watcher of theirs is running.
 1. Read this file, the skill, and the area STATE.md files above.
 2. Serial mode has landed the warp rig, ARAM fix, r101 call reset, FILE_01 reload, W9b, VRAM_PAGES, items 20+21,
    QUALITY_ASSETS and tex-vq6. Next in the serial backlog:
-   - the em2a module;
+   - r100 after-state crows (heap 4, see blocker 3);
    - the m1 restage with em15 keys;
    - r101 play-through to the bell;
    - r100 Standard proof.
