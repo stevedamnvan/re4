@@ -182,6 +182,11 @@ def build_room(ctx, name, mode="original", plan="recipe", only=None, review=True
             same = all(ctx.cache.file_hash(pinned / f) == h for f, h in vq.outputs.items() if f.endswith(".re4tex"))
             checks["vq_overlay_vs_pinned"] = "ok" if same else "differs"
         texdirs.append(("00-vq", vq, lambda rel: rel.endswith(".re4tex") and "/" not in rel))
+    pairs = cfg.rooms_cfg.get("material_pairs", {}).get("pairs", [])
+    if (logs or pairs) and cfg.path("gc_iso") and cfg.path("gc_iso").exists():
+        mp = gen.material_pairs(logs, pairs)
+        if mp.info.get("pairs"):
+            texdirs.append(("05-pairs", mp, lambda rel: rel.endswith(".re4tex") and "/" not in rel))
     bark = None
     if room.recipe.get("trees", {}).get("bark_png"):
         bark = gen.ps2_bark(room)

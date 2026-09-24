@@ -971,6 +971,17 @@ bool model_mask_key(const Re4dcModelPart* p,Key& key){
     hash_bytes(key,"R4MPv001",8);hash_bytes(key,words,sizeof(words));key.crc=~key.crc;
     return true;
 }
+// A material pair whose package failed to load: its color and mask identities, once per pair, so
+// the missing package can be built from the log (tools/d367/pairs_from_log.py, prepare_model_pairs).
+void log_pair_miss(const Re4dcModelPart* p,const Key& key){
+    static Key seen[32];static unsigned nseen=0;
+    for(unsigned i=0;i<nseen && i<32;++i)if(seen[i].crc==key.crc && seen[i].fnv==key.fnv)return;
+    seen[nseen++%32]=key;
+    Key color{},mask{};
+    if(!image_key(p->image,color) || !image_key(p->mask,mask))return;
+    re4dc_log("native UI: pair missing %08x-%08x color=%08x-%08x mask=%08x-%08x %ux%u\n",key.crc,key.fnv,
+              color.crc,color.fnv,mask.crc,mask.fnv,p->image.width,p->image.height);
+}
 #endif
 #if RE4DC_TEX_RESIDENT
 // Least-recently-REQUESTED eviction. A model part's lookup does not pin its
@@ -1215,7 +1226,7 @@ inline void palette_keep(unsigned index,const Re4dcUiImage& i){
 }
 Entry* resolve_full(const Re4dcUiImage& image,const Re4dcModelPart* masked,bool pin){
 #if RE4DC_D349_RENDERER_STACK
-    if(masked){Key key{};if(!model_mask_key(masked,key))return nullptr;return load(image,pin,&key);}
+    if(masked){Key key{};if(!model_mask_key(masked,key))return nullptr;Entry* e=load(image,pin,&key);if(!e)log_pair_miss(masked,key);return e;}
 #else
     (void)masked;
 #endif
@@ -2297,9 +2308,17 @@ extern "C" int re4dc_model_packet_begin(const Re4dcModelPart* p,Re4dcModelPacket
     if(p->material_flags&4){if(!model_mask_key(p,prepared)){++model_texture_rejects;return 0;}key=&prepared;}
 #endif
 #if RE4DC_MESH_TEXTURES
-    handle=load(p->image,false,key);if(!handle){++model_texture_rejects;return 0;}
+    handle=load(p->image,false,key);if(!handle){
+#if RE4DC_D349_RENDERER_STACK
+        if(key)log_pair_miss(p,*key);
+#endif
+        ++model_texture_rejects;return 0;}
 #else
-    Entry* handle=load(p->image,false,key);if(!handle){++model_texture_rejects;return 0;}
+    Entry* handle=load(p->image,false,key);if(!handle){
+#if RE4DC_D349_RENDERER_STACK
+        if(key)log_pair_miss(p,*key);
+#endif
+        ++model_texture_rejects;return 0;}
 #endif
 #endif
 #if RE4DC_MESH_TEXTURES

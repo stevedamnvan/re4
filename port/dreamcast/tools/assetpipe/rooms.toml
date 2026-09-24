@@ -7,6 +7,23 @@
 [route]
 rooms = ["r100", "r101", "r103"]
 
+[material_pairs]            # color:mask image identities of model parts drawn from one pair package
+# (prepare_native_ui.material_pair_identity). New ones come from run logs' "pair missing" lines
+# (pairs_from_log.py); these 9 r101 pairs (st1/r101.arc TPL 4) were recovered by hashing, before
+# that log line existed (warp-r101-pbdoor4: "package rejected: open failed").
+pairs = [
+    ["364dabd6-66e859d7", "45526173-bbdb5505"], ["364dabd6-66e859d7", "5bcbcb7b-3e187023"],
+    ["364dabd6-66e859d7", "3b3773c0-ca18c316"], ["364dabd6-66e859d7", "0d05b1bf-08b569e0"],
+    ["be099934-40a0a2d7", "3e902092-e4e309f3"], ["7c9873e2-9f7651a0", "ecb9ac8b-26f69e3e"],
+    ["d6dac98a-dde12c66", "6ec22ec5-86285dab"], ["a8d6ad09-e94a8f35", "8cd159eb-c6faa607"],
+    ["77bcda6e-2a354924", "3773a372-bd6d036f"],
+    # r103, from the runtime's pair-missing lines (warp-r101-pbdoor5)
+    ["d6dac98a-dde12c66", "5c822bd9-c797afd4"], ["20b41c62-133dd8fa", "c8b602c8-633b846d"],
+]
+# Not buildable from the GC disc yet (images 12a489ae, 5e3c1264, 2b388d2d are on no disc archive:
+# presumably the pipeline's own substitute packages, e.g. r103 PS2 trees; 9264be9a is in evd/*.evd):
+#   ["12a489ae-40772dd6", "5e3c1264-a53c4db5"] 128x256, ["9264be9a-41e48d57", "2b388d2d-af0e5096"] 64x64
+
 [defaults]
 kind = "smd"                 # BINs + placements from the room SMD
 owner = "0xff"

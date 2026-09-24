@@ -217,6 +217,28 @@ class Gen:
         return self.cache.step("texture.vq", dict(model_min_bytes=model_min_bytes, logs=[p.name for p in logs]),
                                dict(fixtures=fixtures, logs=logs), fp, fn, label="VQ overlay")
 
+    # ---- material-pair packages (a color image plus a separate mask image): the runtime's
+    # "pair missing" log lines plus rooms.toml [material_pairs], built from the GC disc
+    def material_pairs(self, logs, pairs):
+        iso = self.cfg.path("gc_iso")
+        fp = fingerprint([tool("d367/pairs_from_log.py"), tool("prepare_native_ui.py"), tool("le_mirror.py")],
+                         dict(python=sys.version.split()[0]))
+        logs = sorted(Path(p) for p in logs)
+        pairs = sorted(tuple(p) for p in pairs)
+
+        def fn(out, work):
+            cmd = [PY, "-B", tool("d367/pairs_from_log.py"), "--iso", iso, "--output", work / "pairs"]
+            for lg in logs:
+                cmd += ["--log", lg]
+            for c, m in pairs:
+                cmd += ["--pair", "%s:%s" % (c, m)]
+            run(cmd, cwd=work, log=work / "log.txt")
+            for f in sorted((work / "pairs").iterdir()):
+                shutil.copy2(f, out / f.name)
+            return dict(pairs=len(json.loads((out / "material-pairs.json").read_text())))
+        return self.cache.step("texture.pairs", dict(logs=[p.name for p in logs], pairs=[list(p) for p in pairs]),
+                               dict(iso=iso, logs=logs), fp, fn, label="material pairs")
+
     # ---- a replacement directory without some <OWNER>_<bin>.obj (e.g. planar2 minus the shelled houses)
     def subst_without(self, src, exclude):
         src_dir = Path(src.out if hasattr(src, "out") else src)
