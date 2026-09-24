@@ -1670,11 +1670,19 @@ void primInit()
         S32Set(pG->nPrim, pG->nPrim / 2);
 #line 2215 "D:/Bio4/Prog/game.cpp"
 #if defined(RE4DC_GAME) && !defined(__PPC__)
+#if RE4DC_SS_POOL_HIGH
+        // The sub screen keeps drawing through GetPrimBuff while its data fills the swapped window.
+        void* re4dc_ss_alloc_above(u32 size, const char* file, int line);  // sscrn_bridge.cpp
+        S32Set(pG->prim_cnt, (s32) re4dc_ss_alloc_above(pG->nPrim * buffer_count, "game.cpp", 2216));
+#else
+#line 2216 "D:/Bio4/Prog/game.cpp"
         S32Set(pG->prim_cnt, (s32) MEM_ALLOC(pG->nPrim * buffer_count, 1, 13));
+#endif
 #else
 #line 2215 "D:/Bio4/Prog/game.cpp"
         S32Set(pG->prim_cnt, (s32) MEM_ALLOC(pG->nPrim * 2, 1, 13));
 #endif
+#line 2217 "D:/Bio4/Prog/game.cpp"
         if ((u32) pG->prim_cnt < 0x80000000 || (u32) pG->prim_cnt > 0x82FFFFFF) {
             pLog->err(0, 0, "workInit() PRIM BUFFER SIZE WAS REDUCE %08X", pG->nPrim);
         }
