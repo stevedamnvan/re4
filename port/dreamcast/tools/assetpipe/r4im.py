@@ -184,6 +184,24 @@ class Package:
         return out
 
 
+def level_errors_bad(pk):
+    """The runtime's level rule (room/instanced_mesh.hpp MeshPackage::adopt, v2): within each
+    cluster every stored level error is finite and below 3.0e38, and no smaller than the level
+    before it; a package that breaks it is rejected and its owner draws on the generic path.
+    -> [(mesh, part, cluster, [errors])] of the clusters that break it (float32 as stored)."""
+    if not pk.lod:
+        return []
+    bad = []
+    for k in range(len(pk.meshes)):
+        for p in pk.mesh_parts(k):
+            fc, n = pk.part_lod[p]
+            for ci, c in enumerate(pk.clusters[fc:fc + n]):
+                errs = [struct.unpack("<f", struct.pack("<f", e))[0] for _, _, e in pk.levels[c[6]:c[6] + c[7]]]
+                if any(not (e < 3.0e38) or (i and e < errs[i - 1]) for i, e in enumerate(errs)):
+                    bad.append((k, p, ci, errs))
+    return bad
+
+
 def load(path):
     with open(path, "rb") as f:
         return Package(f.read())

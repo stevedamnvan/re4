@@ -349,13 +349,33 @@ def named_views(ctx, room, pkgs, grid, grid_ms_original):
 
 
 # ---------------------------------------------------------------------------- shells
+def _opaque_tris(obj_path):
+    """(opaque, all) triangle counts of a BIN OBJ (export_room_bins_obj.py): a face is alpha-masked
+    when its material's `_f<flags>` suffix has bit 4, the rule of bl_house_shell.py split_alpha."""
+    import re
+    opaque = total = 0
+    masked = False
+    for line in Path(obj_path).read_text().splitlines():
+        if line.startswith("usemtl"):
+            m = re.search(r"_f(\d+)$", line.strip())
+            masked = bool(m and int(m.group(1)) & 4)
+        elif line.startswith("f "):
+            n = len(line.split()) - 3
+            total += n
+            opaque += 0 if masked else n
+    return opaque, total
+
+
 def house_shells(ctx, room, classes, inv, plan):
     """{bin id: (Obj, faces)}: per house the first ladder rung whose p90 source->shell error
     is within plan house_err_cm (else the last rung). With plan `houses_auto` (size-picked
     candidates) a candidate no rung fits is not shelled: its class goes back to structure and
-    it is listed in plan['_shell_rejected']."""
+    it is listed in plan['_shell_rejected']. A candidate with no opaque triangle is not baked
+    (bl_house_shell.py shells the opaque surface; alpha-masked parts, flag 4, only ride along): it
+    stays structure and is listed in plan['_shell_skipped']. A bake that fails is an error."""
     out = {}
     rejected = plan.setdefault("_shell_rejected", {})
+    skipped = plan.setdefault("_shell_skipped", {})
     names = {o["code"]: o["name"] for o in room.owners()}
     for key, cls in sorted(classes.items()):
         if cls != "house":
@@ -364,15 +384,16 @@ def house_shells(ctx, room, classes, inv, plan):
         code, b = bid.split(":")
         skey = "%s_%d" % (owner, int(b))
         chosen = None
+        opaque, total = _opaque_tris(ctx.gen.bin_objs(room, [skey]).path(skey + ".obj"))
+        if not opaque:
+            if not plan.get("houses_auto"):
+                raise ValueError("%s: house %s has no opaque triangle to shell" % (room.name, key))
+            ctx.log("  shell %s: all %d triangles alpha-masked, nothing to shell; stays structure" % (skey, total))
+            skipped[key] = "all %d triangles alpha-masked" % total
+            classes[key] = "structure"
+            continue
         for faces in plan["house_faces"]:
-            try:
-                obj = ctx.gen.house_shell(room, skey, faces, plan["house_tex"])
-            except Exception as ex:        # a size-picked candidate the shell tool cannot bake
-                if not plan.get("houses_auto"):
-                    raise
-                ctx.log("  shell %s %d faces failed (%s); not shelled" % (skey, faces, str(ex).splitlines()[0][:80]))
-                chosen = (None, faces, 1e9)
-                break
+            obj = ctx.gen.house_shell(room, skey, faces, plan["house_tex"])
             err = (obj.info.get("source_to_shell_cm") or {}).get("p90", 1e9)
             chosen = (obj, faces, err)
             if err <= plan["house_err_cm"]:
@@ -449,6 +470,15 @@ def build_standard(ctx, name, only=None, review=True):
         if tb:
             specs = dict(specs, cluster_trees=["%s:%s" % ("0x%02x" % c if c >= 0xF0 else str(c), ranges(sorted(bs)))
                                                for c, bs in sorted(tb.items())])
+    # per-BIN cluster size (plan cluster_bins, e.g. r103 BIN 59: a 7 m tree the camera stands inside is
+    # split into ~500-triangle regions that pick their own levels); Standard packages only
+    charged = set()
+    if plan.get("cluster_bins"):
+        specs = dict(specs, cluster_bins=list(plan["cluster_bins"]))
+        owners_by_code = {o["code"]: o for o in room.owners()}
+        for c in plan["cluster_bins"]:
+            o = owners_by_code[int(c.split(":")[0], 0)]
+            charged.update((o["name"], b, bool(o["common"])) for b in parse_ranges(c.split(":")[1].split("=")[0]))
     # base Standard packages: recipe + shells (biases come from the solver below)
     base_objs = build_packages(ctx, room, specs, list(subs) + shell_dirs, scales)
     # coarse geometry variant (Blender reduction of ground/structure BINs), priced as extra options
@@ -494,7 +524,7 @@ def build_standard(ctx, name, only=None, review=True):
     grove_recs, tree_table = _grove_trees(ctx, room, base_objs, gs) if gs else ({}, {})
     for kk in grove_recs:
         imp_recs.pop(kk, None)      # a split grove offers per-tree impostors, not the whole-BIN one
-    inst_s = build_instances(pk_base, room.placements(), keyfn, trees=tree_table)
+    inst_s = build_instances(pk_base, room.placements(), keyfn, trees=tree_table, charged=charged)
     keys_s = sorted({i["key"] for i in inst_s})
     options = {k: class_options(classes.get(k, "structure"), plan, _imp_key(k) in imp_recs or
                                 _imp_key(k) in grove_recs) for k in keys_s}
@@ -515,7 +545,7 @@ def build_standard(ctx, name, only=None, review=True):
     pr_s = price(inst_s, views, options, cost, px=plan["px"], far=far, jobs=ctx.jobs)
     if coarse_obj is not None:
         pk_c = load_pkgs(coarse_objs)
-        inst_c = build_instances(pk_c, room.placements(), keyfn, trees=tree_table)
+        inst_c = build_instances(pk_c, room.placements(), keyfn, trees=tree_table, charged=charged)
         opt_c = {k: [dict(o, id="%s-%s" % (coarse["variant"], o["id"]), geom=coarse["variant"],
                           err_floor=coarse_err[k]) for o in options[k]] for k in sorted(coarse_err) if k in options}
         ctx.log("  pricing %d %s variants" % (sum(len(v) for v in opt_c.values()), coarse["variant"]))
@@ -555,10 +585,15 @@ def build_standard(ctx, name, only=None, review=True):
         for n in grew:
             final_objs[n] = redo[n]
     pk_final = load_pkgs(final_objs)
+    for n in sorted(pk_final):
+        bad = r4im.level_errors_bad(pk_final[n])
+        if bad:
+            raise RuntimeError("%s %s: %d clusters break the runtime level rule (finite, < 3.0e38, "
+                               "non-decreasing), e.g. mesh %d part %d cluster %d %s" % (name, n, len(bad), *bad[0]))
     if gs and _tree_rows(final_objs) != _tree_rows(base_objs):
         raise RuntimeError("%s: the final packages' grove clusters differ from the base packages'" % name)
     # what the staged packages cost (biases baked, runtime options only): the numbers reported
-    inst_f = build_instances(pk_final, room.placements(), keyfn, trees=tree_table)
+    inst_f = build_instances(pk_final, room.placements(), keyfn, trees=tree_table, charged=charged)
     opt_f = {k: [dict(id="final", bias=1.0, **{x: chosen[k][x] for x in ("imp_mm", "cull_mm", "split", "views")
                                                if chosen[k].get(x)})]
              for k in sorted({i["key"] for i in inst_f})}
@@ -706,6 +741,8 @@ def build_standard(ctx, name, only=None, review=True):
                     stage=stage)
     if plan.get("_shell_rejected"):
         manifest["shell_rejected_p90_cm"] = dict(sorted(plan["_shell_rejected"].items()))
+    if plan.get("_shell_skipped"):
+        manifest["shell_skipped"] = dict(sorted(plan["_shell_skipped"].items()))
     ctxb = room.recipe.get("standard", {}).get("budget_context")
     if ctxb:
         manifest["budget_context"] = ctxb
@@ -822,7 +859,10 @@ def _impostor_records(ctx, room, plan=None, classes=None, orig_objs=None):
     return recs
 
 
-NEVER = 3.0e38      # an empty level Original never reaches: Standard never picks it either
+# an empty level Original never reaches: Standard never picks it either. Finite and below the
+# runtime's 3.0e38 ceiling (MeshPackage::adopt rejects a package with a level error >= 3.0e38; the
+# float32 of 3.0e38 is just above it); at any view err x bias x scale x K / zmin is still ~1e25 px
+NEVER = 1.0e30
 
 
 def _vanish_min(room, pk_orig, px_std, px_orig):

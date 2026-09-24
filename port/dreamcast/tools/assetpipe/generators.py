@@ -159,6 +159,12 @@ class Gen:
         if spec.get("cluster_trees") and not supports(conv, "--lod-cluster-trees"):
             raise RuntimeError("%s: grove_split needs a converter with --lod-cluster-trees (HEAD, or the W9b "
                                "converter with w9b-lod-cluster-trees.patch)" % room.name)
+        # per-BIN cluster size ("0xff:59=8000"): a compact object split into regions (plan cluster_bins)
+        for c in spec.get("cluster_bins", []):
+            args += ["--lod-cluster-bins", c]
+        if spec.get("cluster_bins") and not supports(conv, "--lod-cluster-bins"):
+            raise RuntimeError("%s: cluster_bins needs a converter with --lod-cluster-bins (HEAD, or the W9b "
+                               "converter with w9b-lod-cluster-bins.patch)" % room.name)
         subst_dirs = []
         for i, s in enumerate(substitutes):
             subst_dirs.append(Path(s.out if hasattr(s, "out") else s))
@@ -326,7 +332,7 @@ class Gen:
             shutil.copy2(script, w / "bl_decimate.py")
             (w / "spec.json").write_text(json.dumps(spec, indent=1, sort_keys=True))
             try:
-                run([blender, "-b", "--threads", "1", "--factory-startup", "--python", win(w / "bl_decimate.py"), "--",
+                run([blender, "-b", "--threads", "1", "--factory-startup", "--python-exit-code", "1", "--python", win(w / "bl_decimate.py"), "--",
                      win(w / "in"), win(w / "out"), win(w / "spec.json")], cwd=w, log=work / "blender.txt",
                     timeout=7200)
                 for f in sorted((w / "out" / variant).glob("*.obj")):
@@ -378,7 +384,7 @@ class Gen:
                 shutil.copy2(f, w / "tex" / f.name)
             shutil.copy2(shell_py, w / "bl_house_shell.py")
             try:
-                run([blender, "-b", "--threads", "1", "--factory-startup", "--python", win(w / "bl_house_shell.py"), "--",
+                run([blender, "-b", "--threads", "1", "--factory-startup", "--python-exit-code", "1", "--python", win(w / "bl_house_shell.py"), "--",
                      win(w / (key + ".obj")), win(w / "tex"), win(w / "out")] + args, cwd=w, log=work / "blender.txt",
                     timeout=3600)
                 shells = work / "shells"
@@ -431,6 +437,10 @@ class Gen:
                             if cnt == 0 and err < v:
                                 struct.pack_into("<f", data, llo + 12 * li + 8, v)
                                 changed += 1
+            bad = r4im.level_errors_bad(r4im.Package(bytes(data)))
+            if bad:
+                raise RuntimeError("%s: %d clusters break the runtime level rule after the guard, e.g. %s"
+                                   % (name, len(bad), bad[0]))
             (out / name).write_bytes(bytes(data))
             summary = json.loads(Path(str(pkg_obj.path(name)) + ".json").read_text())
             summary["sha256"] = hashlib.sha256(bytes(data)).hexdigest()
@@ -477,7 +487,7 @@ class Gen:
             shutil.copy2(bark.path("preview/ps2-bark-vq.png"), w / "in" / "ps2-bark-vq.png")
             shutil.copy2(bake_py, w / "bl_impostor_bake.py")
             try:
-                run([blender, "-b", "--threads", "1", "--factory-startup", "--python", win(w / "bl_impostor_bake.py"),
+                run([blender, "-b", "--threads", "1", "--factory-startup", "--python-exit-code", "1", "--python", win(w / "bl_impostor_bake.py"),
                      "--", win(w / "in"), win(w / "out")] + args, cwd=w, log=work / "blender.txt", timeout=3600)
                 shutil.copytree(w / "out", out / "bake")
             finally:

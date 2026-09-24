@@ -300,8 +300,12 @@ modes. Every Standard manifest records heap 4 per package (Original, Standard, d
    the ladder `house_faces`; the first rung whose p90 source-to-shell error is <= `house_err_cm`
    is used. r100: 48, 96 and 200 faces break the houses (p90 1.2-3.7 m); 400 faces pass (21 and
    26 cm), the same count as the approved low512 shells. The review shows the rejected rungs.
-   A size-picked candidate that no rung fits (or that the bake fails on) is not shelled: it
-   goes back to structure and the manifest lists it (`shell_rejected_p90_cm`).
+   A size-picked candidate that no rung fits is not shelled: it goes back to structure and the
+   manifest lists it (`shell_rejected_p90_cm`). A candidate with no opaque triangle (every part
+   alpha-masked, flag 4: bl_house_shell.py shells the opaque surface only) is not baked at all and
+   is listed in `shell_skipped` (r103 BIN 1: 800 alpha-masked triangles). A bake that fails is an
+   error: Blender runs with `--python-exit-code 1`, so a script exception fails the step with
+   Blender's log instead of a missing output file.
 3. Options per class (`[plan.standard.options]`): extra LOD bias, tree impostor centre depth
    (item 20 records), clutter cull centre depth; plus, for ground/structure, the same options on
    a Blender reduction (`scenery.decimate`, bl_decimate.py) whose p90 error is <= `max_p90_mm`
@@ -341,7 +345,7 @@ within 0.3 ms of W9's model rows, so no re-fit was needed):
 |---|---|---|---|---|---|---|
 | r100 | 5.7-10.7 | 7.37 / 10.7 | 155 / 215 | 17.6 / 24.9 | -294 KB | +14 KB (2 shells at 128: 12, 8-view atlases 46, dropped room textures -44) |
 | r101 | 4.0-11.5 | 10.27 / 12.6 | 127 / 263 | 25.2 / 27.5 | -413 KB | +81 KB (9 shells at 64: 27, 8-view atlases 26, 9 tree atlases 62, dropped room textures -34) |
-| r103 | 4.5-10.2 | 8.50 / 11.9 | 157 / 270 | 25.8 / 38.5 | -402 KB | +160 KB (3 shells at 256: 54, atlases 46, 13 tree atlases 82) |
+| r103 | 4.5-9.7 | 8.27 / 9.85 | 162 / 270 | 25.8 / 38.5 | -397 KB | +160 KB (3 shells at 256: 54, atlases 46, 13 tree atlases 82) |
 
 r100's numbers include the vanish guard (before it: 7.34 / 10.6, 158 views). User decisions
 (2026-09-23), applied: r100's two shells use 128 x 128 textures like r101 (was 512 VQ: +170 KB VRAM;
@@ -358,8 +362,10 @@ chose per-tree impostors at 3 m for all four. Against the rows before it (extra 
 at 5.2k cycles each): r101 grid p95 10.80 -> 10.27, max 14.45 -> 12.58, named max 12.41 -> 11.49,
 spawn 3.97, views within 5 ms 117 -> 127, heap 4 -2 KB more saved, VRAM +26 KB; r103 grid p95
 8.48 -> 8.50, max 13.31 -> 11.85, named max 10.46 -> 10.19, views within 5 ms 151 -> 157, heap 4
-+26 KB (the split package is larger), VRAM +46 KB. r103 BIN 59 (camera inside one tree's canopy,
-2.0-2.25 ms) is a separate lever (16.6).
++26 KB (the split package is larger), VRAM +46 KB. r103 BIN 59 (camera inside one tree's canopy)
+is split into regions (16.6, user option B): r103 grid p95 8.50 -> 8.27, max 11.85 -> 9.85, named
+max 10.19 -> 9.70, cow_pen 10.19 -> 8.46, house_20m 9.42 -> 7.91, views within 5 ms 157 -> 162;
+heap 4 +5.5 KB, VRAM 0.
 VRAM trims (user, 2026-09-23), texture only, so the modelled hw ms are unchanged (grid p95 / max
 and named max as above in all three rooms): r101's whole-BIN tree atlases (BINs 14/15/16) at 8
 views instead of 16 (-20,480 B) and its 9 shell textures at 64 x 64 instead of 128 (-27,648 B);
@@ -643,7 +649,7 @@ manifest hash.
 | ps2_trees, ps2_tree_texture, vq_native_ui (pvrtex) | yes | bark `5b403509...` |
 | aica_banks | yes | already content-cached |
 | room_smd release, prepare_native_ui, convert_tpl | yes | |
-| Blender steps (planar decimation, house shell bake) | yes with pins (measured) | run as `blender -b --threads 1 --factory-startup`; fixed seeds and sample counts in the scripts; inputs sorted. Without `--threads 1` the same shell came out with the same metrics but a different vertex order (and so different OBJ/PNG/JSON bytes) than with a different thread count, so a machine with another core count would not reproduce it. `blender_threads` is part of the fingerprint. |
+| Blender steps (planar decimation, house shell bake) | yes with pins (measured) | run as `blender -b --threads 1 --factory-startup --python-exit-code 1` (a script exception fails the step); fixed seeds and sample counts in the scripts; inputs sorted. Without `--threads 1` the same shell came out with the same metrics but a different vertex order (and so different OBJ/PNG/JSON bytes) than with a different thread count, so a machine with another core count would not reproduce it. `blender_threads` is part of the fingerprint. |
 | impostor bake (item 20, `tree.bake`) | yes with pins (measured) | Blender Workbench, `--threads 1`, flat light, inputs from the cached ps2_trees / ps2_bark steps; at 16 views it reproduces the pinned bake (`r100_impostors`) byte for byte (PNGs, `.re4tex`, `impostors.json`) |
 | impostor.py (other rooms), vanish guard | yes (measured) | pure Python + pinned pvrtex; verified in the r101/r103 `--verify` runs |
 | convert_route_movies (ffmpeg) | yes with pins | `-threads 1`, pinned version |
@@ -950,7 +956,11 @@ order is:
 
 **What the packages already carry (no runtime work).**
 - Standard biases and the coarser LOD chain.
-- The vanish guard (empty-level errors).
+- The vanish guard (empty-level errors). An empty level Original never reaches stores 1.0e30, not
+  3.0e38: `MeshPackage::adopt` rejects a package whose level errors are not finite, below 3.0e38
+  and non-decreasing per cluster, and the float32 of 3.0e38 is just above it (r100 FILE_01/02 were
+  rejected in play). `r4im.level_errors_bad` mirrors the rule; the guard step and the Standard
+  build fail on any break.
 - Blender coarse variants (`geom`).
 - House-shell geometry, which replaces the source BIN in the package.
 - Collision, placement and sequencing never read any of this.
@@ -966,7 +976,7 @@ every package byte as the converter wrote it, and cannot collide with W9b.
 |---|---|---|---|---|---|
 | r100 | 7 of 7 (1,208,448) | 7 / 60,560 / 59,552 | 5 | 16 / 11 / 2 | 2,622 B, 58 lines |
 | r101 | 1 of 1 (590,112) | 21 / 121,168 / 118,144 | 6 | 12 / 3 + 9 `impt` / 9 | 3,357 B, 65 lines |
-| r103 | 1 of 1 (722,560) | 19 / 189,616 / 186,880 | 3 | 25 / 7 + 13 `impt` / 3 | 4,280 B, 75 lines |
+| r103 | 1 of 1 (728,096) | 19 / 189,616 / 186,880 | 3 | 25 / 7 + 13 `impt` / 3 | 4,280 B, 75 lines |
 
 - The texlow VRAM column is the sum of every added texture's payload: the `tex` records'
   `<vram>` field, which is what `texture_package.cpp` counts (`vram_bytes_ += data_size`).
@@ -1026,10 +1036,27 @@ switch than for a 16-view atlas. A split grove's clusters beyond the first per d
 `c_cluster` = 5,200 cycles each (costmodel.toml: the arms fit's per-cluster figure, the
 conservative end; the fitted per-part cost already covers unsplit packages).
 
-### 16.6 Levers not built
+### 16.6 r103 BIN 59: a tree the camera stands inside (per-BIN cluster size)
 
-- **r103 BIN 59, the camera inside a canopy.** One 3,976-triangle tree (6 placements, radius
-  7.7 m) costs 2.0-2.25 ms at cow_pen and house_20m, where the camera stands inside its canopy
-  (centre depth -3.2 m: never an impostor). Candidates: a Blender coarse variant for tree
-  canopies, a canopy-split (trunk vs crown clusters with the crown's own impostor), or a
-  near-cull of crown clusters behind the camera. Not part of the grove split.
+BIN 59 is one 7 m dead tree (3,976 triangles, 6 placements). The converter keeps a compact object
+whole (k-d splits need an extent over 0.4 x `--lod-cluster` = 8 m), so it was one cluster whose
+level is chosen at the nearest point of its box: with the camera within the box's depth range that
+point clamps to the near plane and all 3,973 triangles draw at any bias or impostor distance (up to
+3.86 hw ms, 2.25 at cow_pen, 2.02 at house_20m; about 20 grid views over 2 ms). Its next level is
+572 triangles (~19 cm error), with nothing between.
+
+**Built (user option B, 2026-09-23).** `convert_room_bins.py --lod-cluster-bins OWNER:BINS=MM` sets
+the cluster size of the named BINs only (byte-identical when absent: Original reproduces W9 FIN
+and r100/r101 Standard are unchanged). r103's plan sets `cluster_bins = ["0xff:59=8000"]`: 8
+regions of ~500 triangles, each with its own levels, culled and LOD-picked on its own box. The
+look near the camera is unchanged (full detail where the camera is). `camera.py` charges the
+extra drawn clusters `c_cluster`, as a split grove's. BIN 59: max 3.86 -> 3.42 ms (grid_0_1, the
+camera 1.9 m from a trunk inside the crown), cow_pen 2.25 -> 0.51, house_20m 2.02 -> 0.52; views
+over 2 ms 20 -> 7. Package +5.5 KB heap 4, VRAM 0. The W9b converter gets the same option
+(`w9b-lod-cluster-bins.patch`, on top of W9b + w9b-lod-cluster-trees.patch).
+
+**Measured and not taken.** A level cap (never the full level): BIN 59 max 0.68 ms, but ~19 cm
+error where the camera stands. PS2 r103 BIN 74 as a substitute (691 triangles, 0.90 ms max): a
+much sparser tree (trunk and ~6 branches against GC's full crown), and PS2 has it at 1 of the 6
+spots. Blender collapse stops at 2,252 triangles (p90 17-22 cm, normals 52 degrees off on
+average) and the house-shell bake at 1,726: neither reduces this mesh usefully.

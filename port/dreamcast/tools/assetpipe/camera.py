@@ -88,11 +88,13 @@ class Camera:
         return True, z
 
 
-def build_instances(pkgs, placements, key_of, trees=None):
+def build_instances(pkgs, placements, key_of, trees=None, charged=None):
     """pkgs: {owner name: r4im.Package}. -> [instance] with world-space boxes.
     key_of(placement) -> asset key (str). trees: {(owner name, bin, common): [dict(part, first,
     count, centre, radius)]} for split groves (--lod-cluster-trees): part = index among the
-    mesh's parts, clusters [first, first + count) of that part, centre / radius in model units."""
+    mesh's parts, clusters [first, first + count) of that part, centre / radius in model units.
+    charged: {(owner name, bin, common)} BINs split by a per-BIN cluster size (--lod-cluster-bins):
+    their drawn clusters beyond the first per part are charged c_cluster, as a split grove's."""
     out = []
     for w in placements:
         pk = pkgs.get(w["owner"])
@@ -124,6 +126,8 @@ def build_instances(pkgs, placements, key_of, trees=None):
                 cls.append((box, levels, rad))
             parts.append(cls)
         inst = dict(key=key_of(w), scale=scale, sphere=(oc, math.sqrt(sum(x * x for x in oe))), parts=parts)
+        if charged and (w["owner"], w["bin"], bool(w["common"])) in charged:
+            inst["charge_clusters"] = True
         rows = (trees or {}).get((w["owner"], w["bin"], bool(w["common"])))
         if rows:
             inst["trees"] = [dict(centre=tuple(M[r][0] * t["centre"][0] + M[r][1] * t["centre"][1] +
@@ -263,7 +267,7 @@ def _eval_view(args):
             for oi in range(len(opts)):
                 if drawn[oi]:
                     acc[oi][4] += 1
-                if trees and ndrawn[oi] > 1:
+                if (trees or inst.get("charge_clusters")) and ndrawn[oi] > 1:
                     # a split grove's extra clusters: priced explicitly (the fitted per-part cost
                     # covers the cluster counts of unsplit packages)
                     acc[oi][10] += ndrawn[oi] - 1

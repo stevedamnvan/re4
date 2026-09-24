@@ -396,6 +396,43 @@ class GroveSplitTests(unittest.TestCase):
         self.assertNotIn("extra_clusters", pr0.counts["g"][0])
         self.assertLess(pr0.ms["g"][0][0], pr.ms["g"][0][0])
 
+    def test_level_rule_mirror(self):
+        # MeshPackage::adopt: finite (< 3.0e38) and non-decreasing level errors per cluster
+        from assetpipe import budget
+        self.assertEqual(r4im.level_errors_bad(self.pk), [])
+        self.assertLess(budget.NEVER, 3.0e38)
+        import struct as st
+        self.assertLess(st.unpack("<f", st.pack("<f", budget.NEVER))[0], 3.0e38)
+        data = bytearray(self.blob)
+        llo = r4im.LOD_HEADER.unpack_from(data, r4im.HEADER.size)[4]
+        n = len(self.pk.levels)
+        st.pack_into("<f", data, llo + 12 * (n - 1) + 8, 3.0e38)
+        self.assertTrue(r4im.level_errors_bad(r4im.Package(bytes(data))))
+
+    def test_cluster_bins_charge(self):
+        # a BIN split by --lod-cluster-bins pays c_cluster per drawn cluster beyond the first, as a split grove
+        view = [dict(eye=(10000.0, 1600.0, -15000.0), yaw=0.0, pitch=0.0)]
+        opts = {"g": [dict(id="mesh", bias=1.0)]}
+        plain = build_instances({"X": self.pk}, [self.w], lambda w: "g")
+        charged = build_instances({"X": self.pk}, [self.w], lambda w: "g", charged={("X", 0, False)})
+        p0 = price(plain, view, opts, self.cfg.cost, far=100000.0, jobs=1)
+        p1 = price(charged, view, opts, self.cfg.cost, far=100000.0, jobs=1)
+        self.assertNotIn("extra_clusters", p0.counts["g"][0])
+        self.assertEqual(p1.counts["g"][0].get("extra_clusters"), 2)
+        self.assertGreater(p1.ms["g"][0][0], p0.ms["g"][0][0])
+
+    def test_shell_skips_all_alpha_bins(self):
+        import tempfile
+        from pathlib import Path
+        from assetpipe.budget import _opaque_tris
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "a.obj"
+            f.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nusemtl p0_t2_a3_f4\nf 1 2 3\nf 2 4 3\n"
+                         "usemtl p1_t5_a255_f0\nf 1 2 3 4\n")
+            self.assertEqual(_opaque_tris(f), (2, 4))
+            f.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl p0_t2_a3_f4\nf 1 2 3\n")
+            self.assertEqual(_opaque_tris(f), (0, 1))
+
     def test_whole_bin_view_error(self):
         # a whole-BIN impostor's view-quantisation error is sin(pi / views) of its atlas
         import math

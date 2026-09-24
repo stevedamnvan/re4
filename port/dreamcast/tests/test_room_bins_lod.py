@@ -389,5 +389,25 @@ class GroveClusterTests(unittest.TestCase):
         self.assertNotEqual(base, split)
 
 
+
+class ClusterBinsTests(unittest.TestCase):
+    """--lod-cluster-bins: a per-BIN cluster size (r103 BIN 59), and no change anywhere else."""
+
+    def test_only_the_named_bin_splits(self):
+        a = grid_bin(33, spacing=1.0, bump=2.0)          # 32 x 32 units: one cluster at the default size
+        base, s0 = convert([a, a])
+        self.assertEqual([m['parts'][0]['clusters'] for m in s0['meshes_detail']], [1, 1])
+        other, _ = convert([a, a], cluster_bins={(1, 7): 16.0})   # a BIN not in the package
+        self.assertEqual(base, other)
+        split, s1 = convert([a, a], cluster_bins={(1, 1): 16.0})
+        counts = [m['parts'][0]['clusters'] for m in s1['meshes_detail']]
+        self.assertEqual(counts[0], 1)
+        self.assertGreater(counts[1], 1)
+        self.assertNotEqual(base, split)
+        # the same size as the default is the default
+        same, _ = convert([a, a], cluster_bins={(1, 1): 20000.0})
+        self.assertEqual(base, same)
+
+
 if __name__ == '__main__':
     unittest.main()
