@@ -6,7 +6,7 @@ from GD-ROM, 4980a40 + 976c93d SS_POOL_HIGH (the r101 call reset and the file-sc
 NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + converter: r101 scenery draws),
 ea1e2d3 VRAM_PAGES (default off), 9951d17 items 20+21 (TREE_IMPOSTOR/MESH_TEXTURES on W9b, default off), 010169c
 QUALITY_ASSETS (Standard selection, default off), 46b9f4f tex-vq6 (r101 textures VQ: the r101 VRAM blocker), e6f65cc
-em2a linked (r100 after-state entry). The
+em2a linked (r100 after-state entry), 4f530e3 warp `trg` (r101 bell reached by warp). The
 sections below are updated for those; everything else is as at the hold.
 
 The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
@@ -70,7 +70,14 @@ STATE.md as a handover.
      - VRAM_PAGES alone (ea1e2d3) did not help r101: 4,613 vs 5,177 failed uploads, same progress.
    - r100 westward walk: FILE_01 failed to reload (heap-4 fragmentation); fixed by NATIVE_PKG_HIGH (a0c3079, M1).
      Without it, area 1 ran at ~4 fps in Flycast (source fallback); with it, 15 fps.
-   - The bell is counted at run time (kills or fight timer), not by flags; a bell preset needs a design decision.
+   - The bell: warp preset `r101-bell` (4f530e3) arms the source's DebugTrg(0) shortcut at room frame 1200, so the
+     fight reaches event 30 without 15 kills (test builds only; default images byte-identical). warp-bell1: event 30
+     runs to its end, room save flags 02000000 -> 03200000, Leon in control in the empty square.
+   - **New blocker: the bell movie r101s30 does not play from the fight.** It decoded 7 of 1331 pictures, dropped
+     all 7 (never uploaded) and ended RE4DC_MOVIE_ERROR after 11.5 s; the cutscene took its end path. warp-bridge-2
+     showed the same once for r100s44 (bridge-1/3 played it). The pictures fell behind the vblank clock from the
+     first one: decode or GD reads starved while the fight's threads/streams were still live. Next: instrument
+     native_movie.cpp's loop (per-picture feed/decode/read time, the failing return) on the r101-bell preset.
 4. After these: frontier east walk to the r101 door on the canonical recipe, r101 census, then r101 to the bell.
 
 ## Parked patches (not committed; none passed every gate)
@@ -186,7 +193,7 @@ build or watcher of theirs is running.
    QUALITY_ASSETS and tex-vq6. Next in the serial backlog:
    - r100 after-state crows (heap 4, see blocker 3);
    - the m1 restage with em15 keys;
-   - r101 play-through to the bell;
+   - r101 bell movie (r101s30 errors from the fight, blocker above), then r101 -> r103;
    - r100 Standard proof.
 3. Resume the other streams in the order of the dependency list in the route doc; every patch still goes through
    the commit procedure in the skill (sha check, HEAD guard, empty index, `git apply --check` / `--cached --check`,
