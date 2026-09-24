@@ -39,6 +39,27 @@ class Discover(unittest.TestCase):
             self.assertEqual(d.heap4_bytes(tmp, "em/em23.drs"), 0x36ac0)
             self.assertIsNone(d.heap4_bytes(tmp, "em/none.drs"))
 
+    def test_source_size_and_room_container(self):
+        class Iso:
+            files = {"Em/em18.drs": bytes(0x24) + struct.pack(">I", 633120) + bytes(8), "St1/r102.das": b"x"}
+
+            def find(self, rel):
+                return next((k for k in self.files if k.lower() == rel.lower()), None)
+
+            def read(self, rel):
+                return self.files[self.find(rel)]
+        iso = Iso()
+        self.assertEqual(d.source_heap4_bytes(iso, "em/em18.drs"), 633120)
+        self.assertIsNone(d.source_heap4_bytes(iso, "em/em99.drs"))
+        self.assertIsNone(d.source_heap4_bytes(None, "em/em18.drs"))
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "st1").mkdir()
+            self.assertEqual(d.room_container(tmp, iso, 0x102), {"dar": False, "arc": False, "source": True})
+            (Path(tmp) / "st1/r102.dar").write_bytes(b"d")
+            (Path(tmp) / "st1/r102.arc").write_bytes(b"arc")
+            self.assertEqual(d.room_container(tmp, iso, 0x102), {"dar": True, "arc": True, "source": True, "arc_bytes": 3})
+            self.assertFalse(d.room_container(tmp, iso, 0x1ff)["source"])
+
 
 if __name__ == "__main__":
     unittest.main()
