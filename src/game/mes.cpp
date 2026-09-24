@@ -15,9 +15,7 @@ extern MessageFont MesFont[4];
 #include "re4dc_platform.h"
 #if !defined(__PPC__) && RE4DC_NATIVE_MES
 #include "native_ui.h"
-extern "C" void GXGetProjectionv(float*);  // gx_stub.cpp (as ui_bridge.cpp declares them)
-extern "C" void GXGetViewportv(float*);
-extern "C" void GXProject(float, float, float, const float[3][4], const float*, const float*, float*, float*, float*);
+extern "C" void GXGetViewportv(float*);  // gx_stub.cpp (as ui_bridge.cpp declares it)
 #endif
 #endif
 #include "dvd.h"
@@ -1116,7 +1114,10 @@ void draw(MesQue* q)
     // NATIVE_MES=1: the GX stub sinks the glyph below. Hand the same glyph to the native UI
     // queue instead (platform/native_ui.cpp re4dc_ui_glyph): texel window u+l..u+l+cw, v..v+cellH
     // of sheet 0 with its TLUT, colour from the queue entry, the rectangle x..x+w, y..y+h through
-    // the projection and viewport messageCamera() set (mapped to 640x480 as ui_bridge.cpp does).
+    // messageCamera()'s ortho over the current viewport, mapped to 640x480 as ui_bridge.cpp maps
+    // GXProject: x' = (vp.x + x * vp.w / 512) * 640 / vp.w = vp.x * 640 / vp.w + x * 1.25 (y the
+    // same with 384 / 480). Only the offsets depend on the viewport; they are recomputed when it
+    // changes (once per frame, plus around the sub screen map's own viewports).
     u += l;
     x1 = x + w;
     y1 = y + h;
@@ -1124,8 +1125,9 @@ void draw(MesQue* q)
         const TEXDescriptor* d = font->m_tpl->descriptorArray;  // sheet 0 (MessageFont::create)
         const TEXHeader* th = t->pTex;
         Re4dcUiGlyph g;
-        f32 pm[7], vp[6], sx0, sy0, sx1, sy1, sz;
-        Mtx id;
+        static f32 last_vp[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+        static f32 ox, oy;
+        f32 vp[6];
         g.sheet = th->data;
         g.sheet_w = th->width;
         g.sheet_h = th->height;
@@ -1142,15 +1144,19 @@ void draw(MesQue* q)
         g.v = v;
         g.cw = cw;
         g.ch = cellH;
-        GXGetProjectionv(pm);
         GXGetViewportv(vp);
-        PSMTXIdentity(id);
-        GXProject((f32) x, (f32) y, 0.0f, id, pm, vp, &sx0, &sy0, &sz);
-        GXProject((f32) x1, (f32) y1, 0.0f, id, pm, vp, &sx1, &sy1, &sz);
-        g.x0 = sx0 * 640.0f / vp[2];
-        g.y0 = sy0 * 480.0f / vp[3];
-        g.x1 = sx1 * 640.0f / vp[2];
-        g.y1 = sy1 * 480.0f / vp[3];
+        if (vp[0] != last_vp[0] || vp[1] != last_vp[1] || vp[2] != last_vp[2] || vp[3] != last_vp[3]) {
+            last_vp[0] = vp[0];
+            last_vp[1] = vp[1];
+            last_vp[2] = vp[2];
+            last_vp[3] = vp[3];
+            ox = vp[0] * 640.0f / vp[2];
+            oy = vp[1] * 480.0f / vp[3];
+        }
+        g.x0 = ox + (f32) x * 1.25f;
+        g.y0 = oy + (f32) y * 1.25f;
+        g.x1 = ox + (f32) x1 * 1.25f;
+        g.y1 = oy + (f32) y1 * 1.25f;
         g.argb = ((u32) ca << 24) | ((u32) cr << 16) | ((u32) cg << 8) | cb;
         re4dc_ui_glyph(&g);
     }
