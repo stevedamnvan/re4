@@ -8,6 +8,10 @@
 #include "db_log.h"
 #include "main_mem.h"
 #include "math_sub.h"
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+// GAME_SINCOS (design-logic P6): sinf + cosf of one angle, bit-identical (game30_trig.c).
+extern "C" void re4dc_sincosf(float x, float* s, float* c);
+#endif
 
 extern "C" {
 f32 asinf(f32 x);
@@ -308,12 +312,18 @@ void RotMatrix(Mtx m, Vec* rot)
     f32 szsx;
     f32 czcx;
 
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+    re4dc_sincosf(rot->x, &sx, &cx);
+    re4dc_sincosf(rot->y, &sy, &cy);
+    re4dc_sincosf(rot->z, &sz, &cz);
+#else
     sx = sinf(rot->x);
     sy = sinf(rot->y);
     sz = sinf(rot->z);
     cx = cosf(rot->x);
     cy = cosf(rot->y);
     cz = cosf(rot->z);
+#endif
     szcx = sz * cx;
     szsx = sz * sx;
     czsx = cz * sx;

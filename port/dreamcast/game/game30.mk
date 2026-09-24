@@ -78,6 +78,19 @@ endif
 GAME_PWC_DIAG ?= 0
 GAME_ATCHK ?= 0
 GAME_MOTION_INDEX ?= 0
+# GAME_SINCOS=1 (design-logic P6, needs GAME_TRIG=1): RotMatrix and the SDK rotation builders take sin and
+#                    cos of one angle from re4dc_sincosf (game30_trig.c: one |x| test and argument reduction,
+#                    the same kernels): bit-identical by construction, all 2^32 inputs checked on the host
+#                    (tools/game30/sincos_exhaustive.sh).
+GAME_SINCOS ?= 0
+ifneq ($(GAME_SINCOS),0)
+ifneq ($(GAME_TRIG),1)
+$(error GAME_SINCOS needs GAME_TRIG=1)
+endif
+$(OBJDIR)/game30_trig.o: KOS_CFLAGS += -DRE4DC_SINCOS=1
+$(OBJDIR)/src/game/math_sub.o: GAME_CPPFLAGS += -DRE4DC_SINCOS=1
+$(OBJDIR)/sdk/mtx.o: SDK_CFLAGS += -DRE4DC_SINCOS=1
+endif
 ifeq ($(GAME_MOTION_INDEX),1)
 $(OBJDIR)/platform/native_motion.o: PLATFORM_CPPFLAGS += -DRE4DC_MOTION_INDEX=1
 endif

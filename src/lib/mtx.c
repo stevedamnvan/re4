@@ -1,6 +1,10 @@
 #include <dolphin.h>
 #include <dolphin/mtx.h>
 #include "fake_tgmath.h"
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+/* GAME_SINCOS (design-logic P6): sinf + cosf of one angle, bit-identical (game30_trig.c) */
+void re4dc_sincosf(float x, float *s, float *c);
+#endif
 
 static f32 Unit01[2] = {
     0.0f,
@@ -556,15 +560,23 @@ void C_MTXRotRad(Mtx m, char axis, f32 rad) {
     f32 cosA;
 
     ASSERTMSGLINE(1447, m, "MTXRotRad():  NULL MtxPtr 'm' ");
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+    re4dc_sincosf(rad, &sinA, &cosA);
+#else
     sinA = sinf(rad);
     cosA = cosf(rad);
+#endif
     C_MTXRotTrig(m, axis, sinA, cosA);
 }
 
 void PSMTXRotRad(Mtx m, char axis, f32 rad) {
     f32 sinA, cosA;
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+    re4dc_sincosf(rad, &sinA, &cosA);
+#else
     sinA = sinf(rad);
     cosA = cosf(rad);
+#endif
     PSMTXRotTrig(m, axis, sinA, cosA);
 }
 
@@ -743,8 +755,12 @@ static void __PSMTXRotAxisRadInternal(register Mtx m, const register Vec* axis, 
 void PSMTXRotAxisRad(Mtx m, const Vec* axis, f32 rad) {
     f32 sinT, cosT;
 
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+    re4dc_sincosf(rad, &sinT, &cosT);
+#else
     sinT = sinf(rad);
     cosT = cosf(rad);
+#endif
 
     __PSMTXRotAxisRadInternal(m, axis, sinT, cosT);
 }
@@ -764,8 +780,12 @@ void C_MTXRotAxisRad(Mtx m, const Vec* axis, f32 rad) {
     ASSERTMSGLINE(1677, m, "MTXRotAxisRad():  NULL MtxPtr 'm' ");
     ASSERTMSGLINE(1678, axis, "MTXRotAxisRad():  NULL VecPtr 'axis' ");
 
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+    re4dc_sincosf(rad, &s, &c);
+#else
     s = sinf(rad);
     c = cosf(rad);
+#endif
     t = 1 - c;
     C_VECNormalize(axis, &vN);
     x = vN.x;

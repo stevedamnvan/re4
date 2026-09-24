@@ -11,6 +11,10 @@
  * flush-to-zero like the SH-4's FPSCR.DN=1): tools/trig_exhaustive.c.
  * sf_sin.o and sf_cos.o drop out of the link (game30.mk); the kernels and ef_rem_pio2 stay for
  * tanf and the large-argument path.
+ * GAME_SINCOS=1 (design-logic P6) adds re4dc_sincosf: sinf and cosf of one argument with the |x| test
+ * and the argument reduction done once. Each output is the same kernel call on the same reduced
+ * argument (rem_pio2f is a pure function of x) that sinf / cosf make, so both are bit-identical by
+ * construction; checked for all 2^32 inputs on the host (tools/game30/sincos_exhaustive.sh).
  */
 #include "fdlibm.h"
 
@@ -211,3 +215,30 @@ float cosf(float x)
 	    }
 	}
 }
+
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+/* design-logic P6: *s = sinf(x), *c = cosf(x) (the two functions above, one argument reduction) */
+void re4dc_sincosf(float x, float *s, float *c)
+{
+	float y[2],z=0.0;
+	__int32_t n,ix;
+	GET_FLOAT_WORD(ix,x);
+	ix &= 0x7fffffff;
+	if(ix <= 0x3f490fd8) {
+	    *s = k_sinf(x,z,0);
+	    *c = k_cosf(x,z);
+	} else if (ix>=0x7f800000) {
+	    *s = x-x;
+	    *c = x-x;
+	} else {
+	    n = rem_pio2f(x,y);
+	    switch(n&3) {
+		case 0: *s =  k_sinf(y[0],y[1],1); *c =  k_cosf(y[0],y[1]); break;
+		case 1: *s =  k_cosf(y[0],y[1]);   *c = -k_sinf(y[0],y[1],1); break;
+		case 2: *s = -k_sinf(y[0],y[1],1); *c = -k_cosf(y[0],y[1]); break;
+		default:
+			*s = -k_cosf(y[0],y[1]);   *c =  k_sinf(y[0],y[1],1); break;
+	    }
+	}
+}
+#endif
