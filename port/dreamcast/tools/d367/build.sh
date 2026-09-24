@@ -10,6 +10,10 @@ cd "$REPO"
 exec 7>"/tmp/d367-build-$(printf %s "$REPO" | md5sum | cut -c1-12).lock"
 flock -n 7 || { echo "another game build is running in this tree" >&2; exit 1; }
 SLOT=; [ -x /root/probe/d367-buildslot.sh ] && SLOT=/root/probe/d367-buildslot.sh
+# Reproducible images: GCC takes __DATE__/__TIME__ from SOURCE_DATE_EPOCH (the VMU debug slot
+# prints them). Fixed by default so A/B and knob-off identity checks compare equal; a release
+# build may pass its own value.
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1790000000}
 # PVR_PIPELINE=2 needs the async-present KOS (patches/README.md); other sets keep d336.
 case " ${EXTRA_MAKE:-} " in *" PVR_PIPELINE=2 "*) kos_default=/root/work/kos-re4dc-d367 ;; *) kos_default=/root/work/kos-re4dc-d336 ;; esac
 export RE4DC_KOS_BASE=${RE4DC_KOS_BASE:-$kos_default}
