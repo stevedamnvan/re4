@@ -55,6 +55,47 @@ class Lint(unittest.TestCase):
             self.assertEqual([f for f in w.lint_module(REPO, mod) if f["severity"] == "error"], [], mod)
 
 
+FIXABLE = '''void EmZZInit(cEm* em)
+{
+    new (em) cEmZZ();
+}
+static cEm* work(u32 no)
+{
+    return (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * no);
+}
+void scan()
+{
+    for (i = 0; i < EmMgr.nArray; i++) {
+        cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
+        e->x = 1;
+    }
+    while (!ok(em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * (i = (i + 1) % EmMgr.nArray)))) {
+    }
+}
+'''
+
+
+class Fix(unittest.TestCase):
+    def test_fix_rewrites_and_lints_clean(self):
+        new, done = w.fix_text(FIXABLE)
+        self.assertEqual([(f["rule"], f["line"], f["fix"]) for f in done],
+                         [("value-init", 3, "fixed"), ("slot-math", 7, "review"), ("slot-math", 12, "fixed"),
+                          ("slot-math", 15, "manual")])
+        self.assertIn("#if defined(RE4DC_GAME) && !defined(__PPC__)\n", new)
+        self.assertIn("    new (em) cEmZZ;\n#else\n    new (em) cEmZZ();\n#endif", new)
+        self.assertIn("    return (cEm*) EmMgr.workAt(no);\n#else\n", new)
+        self.assertIn("        cEm* e = (cEm*) EmMgr.workAt(i);\n        if (!e) continue;\n#else\n", new)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "a.cpp").write_text(new)
+            left = [(f["rule"], f["line"]) for f in w.lint_file(tmp, "a.cpp")]
+        self.assertEqual([r for r, _ in left], ["slot-math"])   # only the manual one
+        self.assertEqual(w.fix_text(new)[0], new)   # idempotent: fixed lines sit in #else of __PPC__
+
+    def test_fix_leaves_already_ported_code(self):
+        self.assertEqual(w.fix_text(TRAPS)[1][0]["rule"], "value-init")
+        self.assertEqual(len(w.fix_text(TRAPS)[1]), 2)   # cEmYY() and the raw `EmMgr.size * 2` (manual)
+
+
 class Wire(unittest.TestCase):
     def test_wire_writes_the_four_edits_once(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -28,7 +28,7 @@ import struct
 from pathlib import Path
 
 from .util import write_json
-from .wiring import lint_module, wire as wire_module
+from .wiring import fix_module, lint_module, wire as wire_module
 from . import enemy_heap, events as event_files, standard
 from .rooms import GcIso
 
@@ -162,7 +162,7 @@ def lint_problems(mod, findings):
                                          f["file"], f["line"], f["text"][:90]) for f in findings]
 
 
-def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=False):
+def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=False, fix=False):
     repo = Path(repo or cfg.path("checkout") or Path(__file__).resolve().parents[4])
     room = int(room_name.lstrip("r"), 16)
     game = cfg.path("game_data")
@@ -195,6 +195,18 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
     rcfg = cfg.room(room_name).get("demand", {})
     rows, problems, warnings = [], [], []
     smod = stage_module(repo, room)
+    fixed = []
+
+    def fixes(mod):
+        """--fix: rewrite the mechanical traps first; "review"/"manual" ones stay findings to read."""
+        if not fix:
+            return
+        for f in fix_module(repo, mod):
+            fixed.append(dict(f, module=mod))
+            if f["fix"] != "fixed":
+                warnings.append("%s: fix %s %s %s:%d  %s" % (mod, f["fix"], f["rule"], f["file"], f["line"], f["text"][:90]))
+    if smod:
+        fixes(smod)
     stage_lint = lint_module(repo, smod) if smod else []
     problems.extend(lint_problems(smod, [f for f in stage_lint if f["severity"] == "error"]))
     warnings.extend(lint_problems(smod, [f for f in stage_lint if f["severity"] != "error"]))
@@ -215,6 +227,7 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
         if mod:
             rid = rel_id(repo, mod)
             r["module_id"] = rid
+            fixes(mod)
             r["lint"] = lint_module(repo, mod)
             errors = [f for f in r["lint"] if f["severity"] == "error"]
             if wire and rid is not None:
@@ -279,7 +292,7 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
     std, std_problems = standard.budgets(standard.std_set(cfg.root, room_name), budget,
                                          cfg.room(room_name).get("standard", {}).get("budget_context", {}))
     problems.extend(std_problems)
-    res = {"room": room_name, "container": rc, "events": evs, "standard": std, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
+    res = {"room": room_name, "container": rc, "fixed": fixed, "events": evs, "standard": std, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
            "script": sc, "entries": entries, "demand": rows, "heap4": heap, "problems": problems, "warnings": warnings,
            "stage_module": smod,
            "inputs": {"repo": str(repo), "game_data": str(game), "prepared": str(prepared), "missing": bs["missing_file"]}}
@@ -330,6 +343,8 @@ def report(res):
     rc = res.get("container") or {}
     print("  room container: %s" % ("prepared (arc %d B)" % rc.get("arc_bytes", 0) if rc.get("dar") and rc.get("arc")
                                      else "NOT prepared" + (" (source on disc)" if rc.get("source") else "")))
+    for f in res.get("fixed", []):
+        print("  fix %-6s %-10s %s %s:%d" % (f["fix"], f["rule"], f["module"], f["file"], f["line"]))
     for e in res.get("events", []):
         if not e["on_disc"]:
             print("  event %s: not on the disc (named only)" % e["event"])

@@ -32,13 +32,16 @@ def main(argv=None):
     ap.add_argument("--log", type=Path, help="discover: a run's run-output.txt to compare with the prediction")
     ap.add_argument("--wire", action="store_true", help="discover: write the missing module wiring into --repo "
                     "(Makefile MODULES, modules.cpp; the ENEMY_DEMAND audit list only when the lint is clean)")
+    ap.add_argument("--fix", action="store_true", help="discover: rewrite the value-init and slot-math lint traps in "
+                    "--repo's module sources (GC line kept under #else); asm-alias/vptr-offset stay manual")
     a = ap.parse_args(argv)
     cfg = Config(a.costmodel)
     if cmd == "discover":
         from .discover import discover, report
         rc = 0
         for t in _targets(cfg, a.target):
-            res = discover(cfg, t, repo=a.repo, obj=a.obj, log=a.log, out_dir=cfg.root / "discover", wire=a.wire)
+            res = discover(cfg, t, repo=a.repo, obj=a.obj, log=a.log, out_dir=cfg.root / "discover", wire=a.wire,
+                           fix=a.fix)
             print(dumps(res)) if a.json else report(res)
             rc |= bool(res["problems"])
         return rc

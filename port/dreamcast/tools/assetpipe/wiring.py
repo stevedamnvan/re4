@@ -20,6 +20,16 @@ with __PPC__ undefined and RE4DC_GAME defined, other macros 0 as in cpp):
                 through EmMgr.workAt(n) with a null check.
   vptr-offset   `(u8*)this + 4 + ...`: GCC 2.95 put the vptr after the introducing class's fields,
                 modern GCC at offset 0; hand-written offsets past it are wrong here.
+
+Fix (`discover --fix`): the two mechanical rules are rewritten the way e6f65cc fixed em2a, the
+original line kept under `#else` for the GameCube build, so the fixed file lints clean:
+  value-init    `new (p) cEmXX();` -> `new (p) cEmXX;` under `#if defined(RE4DC_GAME) && !defined(__PPC__)`.
+  slot-math     `(T*) ((u8*) EmMgr.pArray + EmMgr.size * n)` with a plain index -> `(T*) EmMgr.workAt(n)`
+                under `#if !defined(__PPC__)`; a pointer declared from it as the first statement of
+                a for/while body also gets `if (!p) continue;` (unbacked slots read as absent).
+                Any other shape (a return, a condition, a complex index) is rewritten without a
+                null check and reported "review": the caller decides what an absent slot means.
+asm-alias and vptr-offset need a person (the alias target, the class layout) and are only reported.
 """
 import re
 import runpy
@@ -102,6 +112,67 @@ def lint_module(repo, mod):
     for s in module_sources(repo, mod):
         out += lint_file(repo, s)
     return out
+
+
+VALUE_INIT_LINE = re.compile(r"^(\s*)((?:[\w:<>\*\s]+=\s*)?new\s*\(\s*[\w.>-]+\s*\)\s*c\w+)\s*\(\s*\)\s*;\s*(//.*)?$")
+SLOT_EXPR = re.compile(r"\(\s*(c\w+)\s*\*\s*\)\s*\(\s*\(\s*u8\s*\*\s*\)\s*EmMgr\s*\.\s*pArray\s*\+\s*"
+                       r"EmMgr\s*\.\s*size\s*\*\s*(\w+)\s*\)")
+SLOT_DECL = re.compile(r"^\s*(?:c\w+\s*\*\s*)?(\w+)\s*=\s*\(\s*c\w+\s*\*\s*\)\s*EmMgr\.workAt")
+LOOP_HEAD = re.compile(r"^\s*(?:for|while)\s*\(.*\)\s*\{\s*$")
+
+
+def fix_text(text, rel="a.cpp"):
+    """Rewrite the value-init and slot-math traps in the lines the Dreamcast build compiles.
+    Returns (new text, [finding + {"fix": "fixed" | "review" | "manual"}])."""
+    lines = text.split("\n")
+    active = {n for n, _ in active_lines(text)}
+    out, done = [], []
+    prev_code = ""
+    for n, line in enumerate(lines, 1):
+        code = line.split("//")[0]
+        if n not in active:
+            out.append(line)
+            continue
+        m = VALUE_INIT_LINE.match(line)
+        if m and RULES[0][2].search(code):
+            ind = m.group(1)
+            out += ["#if defined(RE4DC_GAME) && !defined(__PPC__)",
+                    ind + "// Value-initialisation would zero the fields cEmMgr::construct set (e6f65cc).",
+                    ind + m.group(2) + ";", "#else", line, "#endif"]
+            done.append({"rule": "value-init", "file": rel, "line": n, "text": line.strip(), "fix": "fixed"})
+        elif RULES[1][2].search(code):
+            new = SLOT_EXPR.sub(lambda x: "(%s*) EmMgr.workAt(%s)" % (x.group(1), x.group(2)), line)
+            if new == line or RULES[1][2].search(new.split("//")[0]):
+                out.append(line)
+                done.append({"rule": "slot-math", "file": rel, "line": n, "text": line.strip(), "fix": "manual"})
+            else:
+                ind = re.match(r"\s*", line).group(0)
+                d = SLOT_DECL.match(new)
+                guard = d and LOOP_HEAD.match(prev_code)
+                out += ["#if !defined(__PPC__)", ind + "// Unbacked sparse enemy slots read as absent (as em21's scans).", new]
+                if guard:
+                    out.append(ind + "if (!%s) continue;" % d.group(1))
+                out += ["#else", line, "#endif"]
+                done.append({"rule": "slot-math", "file": rel, "line": n, "text": line.strip(),
+                             "fix": "fixed" if guard else "review"})
+        else:
+            out.append(line)
+        if code.strip():
+            prev_code = code
+    return "\n".join(out), done
+
+
+def fix_module(repo, mod, write=True):
+    """fix_text over the module's units; writes the files when `write`. Returns the fix records."""
+    done = []
+    for rel in module_sources(repo, mod):
+        p = Path(repo) / rel
+        text = p.read_text(errors="replace")
+        new, d = fix_text(text, rel)
+        if write and new != text:
+            p.write_text(new)
+        done += d
+    return done
 
 
 def _sub1(text, pat, repl, what):
