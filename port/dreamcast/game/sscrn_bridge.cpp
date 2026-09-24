@@ -430,6 +430,12 @@ extern "C" void re4dc_subscreen_swap_close(SubScreenWork* wk)
 // ------------------------------------------------------------------------------ W11 fixture
 #if RE4DC_W11_FIXTURE
 namespace {
+// Item id of file `no` (ss_file.cpp fileNo2Id; that one lives in the sub screen module).
+u16 file_item_id(unsigned no)
+{
+    return u16(no <= 0xC ? no + 0xAB : no <= 0x15 ? no + 0x3B : no <= 0x1F ? no + 0xDE : 0xAC);
+}
+
 struct Fixture {
     bool loaded;
     unsigned die_after, die_count, dies;    // "die <frames> <count> [room]"
@@ -453,6 +459,12 @@ struct Fixture {
     // shown (padscript gate for the button that closes it); shots mes<i>-30/90/180.
     struct Mes { unsigned frames, no, kind, room, item, num, at; bool fired; } mes[4];
     unsigned nmes;
+    // "file <frames> <no> [room]" (decimal file number 1..31, hex room; up to 4 lines, in order): once
+    // `frames` room frames in, with no event, sub screen or message up, open file `no` in the file
+    // reader as picking it up does (sce_at.cpp item type 0xA: SubScreenOpen(SS_OPEN_FILE, 0),
+    // get_item_id = its item id; the reader adds it to the owned files). State w11f=<i>/1 once open.
+    struct File { unsigned frames, no, room; bool fired; } file[4];
+    unsigned nfile;
 };
 Fixture fx{};
 
@@ -490,6 +502,12 @@ void load_fixture()
             m.room = v2;
             re4dc_log("w11 fixture: mes %u at room frame %u no=%x kind=%u room=%03x item=%x num=%u\n", fx.nmes, m.frames,
                       m.no, m.kind, m.room, m.item, m.num);
+        } else if (fx.nfile < 4 && sscanf(line, "file %u %u %x", &a, &b, &r) >= 2) {
+            Fixture::File& f = fx.file[fx.nfile++];
+            f.frames = a;
+            f.no = b;
+            f.room = r;
+            re4dc_log("w11 fixture: file %u at room frame %u no=%u room=%03x\n", fx.nfile, f.frames, f.no, f.room);
         } else if (sscanf(line, "done %u", &a) == 1) {
             fx.done_events = a;
         }
@@ -605,6 +623,20 @@ extern "C" int re4dc_w11_room_poll(unsigned generation)
         m.at = fx.room_frames;
         re4dc_fixture_state("w11m", int(i + 1), 1);
         re4dc_log("w11 fixture: mes %u shown (no=%x kind=%u) at room frame %u\n", i + 1, m.no, m.kind, fx.room_frames);
+        break;
+    }
+    for (unsigned i = 0; i < fx.nfile; ++i) {
+        Fixture::File& f = fx.file[i];
+        if (f.fired) continue;
+        if (fx.room_frames < f.frames || (f.room && unsigned(pG->room_id) != f.room) || SubScreenWk.type ||
+            (pG->System_flg & 0x1000) || (cMes.mes[0].be_flag & 1) || s16(pG->pl_life) <= 0)
+            break;
+        if (SubScreenOpen(SS_OPEN_FILE, 0) == 0) break;  // one is already requested
+        SubScreenWk.get_item_id = file_item_id(f.no);
+        f.fired = true;
+        re4dc_fixture_state("w11f", int(i + 1), 1);
+        re4dc_log("w11 fixture: file %u opened (no=%u id=%x) at room frame %u\n", i + 1, f.no,
+                  unsigned(SubScreenWk.get_item_id), fx.room_frames);
         break;
     }
     if (fx.life_value >= 0 && !fx.life_done && fx.room_frames >= fx.life_after) {
