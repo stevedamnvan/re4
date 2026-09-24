@@ -399,7 +399,15 @@ bash port/dreamcast/tools/d367/assets.sh discover r100 --repo <tree> --obj <OBJD
   options first, then the largest needs-contract ones. r100 (2026-09-24): nothing qualified is left;
   em21 motion-stream (<= 294,240 B) alone covers the 171,328 B crows shortfall; em23 + em2a
   (motion + textures + em2a's 17,152 B REL) is the alternative.
-- Not covered yet: event actors (evd files), other stages' list rules, Standard-mode budgets, VRAM.
+- **Events** (tools/assetpipe/events.py): every `evd/r<room>sNN.evd` the room script names, read from
+  the GC ISO: size, asset bytes, actors (kind-3 model sets: em10/em13/em15/em16 Ganados, pl00 Leon,
+  pl07 Ashley, obm objects ...). An evd is self-contained (its asset table holds the models,
+  textures and motion), so event actors need no enemy REL or archive. The check: a route movie
+  (sources.toml `route_movies`; the movie presents the event, the evd is never loaded) or the
+  prepared evd with its qualified `.evq` (native_event_file.cpp refuses one without). Names not on
+  the disc (r100s01/s02/s42) are listed only. Route (2026-09-24): every r100/r101 event has a movie,
+  r101's evds are also qualified, r103 names none.
+- Not covered yet: other stages' list rules, Standard-mode budgets, VRAM.
 
 ## GDEMU image (W10)
 

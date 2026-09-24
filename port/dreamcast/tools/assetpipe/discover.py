@@ -19,7 +19,8 @@ archives fit the room's measured heap-4 room for them (rooms.toml [room.X.demand
 Round 2 (wiring.py): the porting-trap lint over each needed module and the room's stage module, and
 `--wire`, which writes the module wiring (MODULES, modules.cpp, and the ENEMY_DEMAND audit list when
 the lint is clean) into the checked tree; and the heap-4 options per enemy archive (enemy_heap.py)
-with a plan that covers a shortfall.
+with a plan that covers a shortfall; and the room's events (events.py: evd actors, route movie or
+prepared + qualified evd).
 """
 import json
 import re
@@ -28,7 +29,8 @@ from pathlib import Path
 
 from .util import write_json
 from .wiring import lint_module, wire as wire_module
-from . import enemy_heap
+from . import enemy_heap, events as event_files
+from .rooms import GcIso
 
 ESL_REC = struct.Struct(">BBBBIHBB3h3hHh4x")   # include/em_set.h EmListData (big-endian source)
 EM_SLOTS = 4                                     # read.cpp EmReadModule[4]
@@ -242,7 +244,10 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
         problems.append("heap 4: enemy archives %d > measured room %d (short %d)" % (total, budget, total - budget))
     else:
         heap["verdict"] = "fits (%d spare)" % (budget - total)
-    res = {"room": room_name, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
+    iso = GcIso(cfg.path("gc_iso")) if cfg.path("gc_iso") and Path(cfg.path("gc_iso")).exists() else None
+    evs, ev_problems = event_files.events(repo, room, iso, prepared, cfg.path("route_movies"))
+    problems.extend(ev_problems)
+    res = {"room": room_name, "events": evs, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
            "script": sc, "entries": entries, "demand": rows, "heap4": heap, "problems": problems, "warnings": warnings,
            "stage_module": smod,
            "inputs": {"repo": str(repo), "game_data": str(game), "prepared": str(prepared), "missing": bs["missing_file"]}}
@@ -288,6 +293,14 @@ def report(res):
             r.get("heap4_bytes", "-"), ",".join(r["reasons"]),
             ("  build " + " ".join("%s=%s" % (k, "ok" if v is True else ("NO" if v is False else (v or "none")))
                                    for k, v in b.items())) if b else ""))
+    for e in res.get("events", []):
+        if not e["on_disc"]:
+            print("  event %s: not on the disc (named only)" % e["event"])
+            continue
+        print("  event %s %8d B %3d assets  %s  actors %s" % (
+            e["event"], e["bytes"], e["assets"],
+            "movie" if e["movie"] else ("evd qualified" if e["prepared"] and e["qualified"] else "EVD MISSING"),
+            " ".join("%s x%d" % kv for kv in e["actor_groups"].items())))
     h = res["heap4"]
     print("  heap 4: %d enemy archives (slots %d), worst case %d bytes, budget %s: %s" % (
         h["enemy_archives"], h["slots"], h["worst_case_bytes"], h["budget_bytes"], h["verdict"]))
