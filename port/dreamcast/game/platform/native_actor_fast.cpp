@@ -2360,7 +2360,12 @@ unsigned select_level(const Re4dcModelPart& p, const BlobHeader& b, float near_d
 #ifndef RE4DC_ACTOR_CROWD_MID_PX
 #define RE4DC_ACTOR_CROWD_MID_PX 8.0f
 #endif
+#ifndef RE4DC_ACTOR_CROWD_FLAT
+#define RE4DC_ACTOR_CROWD_FLAT 0
+#endif
 constexpr bool kCrowd = RE4DC_ACTOR_CROWD != 0;
+// CROWD_FLAT: the near tier also draws with one light colour per part.
+constexpr bool kCrowdFlat = RE4DC_ACTOR_CROWD_FLAT != 0;
 enum Tier : unsigned { kTierFull = 0, kTierNear = 1, kTierMid = 2, kTierFar = 3 };
 constexpr float kSourceUnitsPerMetre = 1000.0f;
 unsigned crowd_near_count = RE4DC_ACTOR_CROWD_NEAR;
@@ -2839,7 +2844,7 @@ extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
     if (!build_lights(p, f, blob->center, lights)) lights.prepared = re4dc::render::prepare_actor_lights(*p.lighting);
     lights.source = p.lighting;
     const unsigned tier = crowd_class > 0 ? crowd_tier(p, crowd_class) : kTierFull;
-    if (tier >= kTierMid && lights.fast && !lights.constant) {
+    if (tier >= (kCrowdFlat ? kTierNear : kTierMid) && tier != kTierFull && lights.fast && !lights.constant) {
         lights.constant = true;
         lights.constant_rgb = part_colour(lights);
     }

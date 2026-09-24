@@ -109,6 +109,9 @@ CROWD_NEAR ?= 3
 CROWD_NEAR_M ?= 7
 CROWD_MID_M ?= 17
 CROWD_MID_PX ?= 8
+# CROWD_FLAT=1 (with CROWD_LOD=1): the near tier also takes one light colour per
+# part (flat Ganado lighting, Standard); Leon, weapons and objects stay per-vertex lit.
+CROWD_FLAT ?= 0
 ifeq ($(NATIVE_ACTOR)$(NATIVE_ACTOR_FAST),11)
 PLATFORM_OBJS := $(filter-out $(OBJDIR)/platform/native_actor.o,$(PLATFORM_OBJS))
 else
@@ -749,6 +752,7 @@ $(OBJDIR)/native-actor.h: native-actor-force
 	@printf '#define RE4DC_NATIVE_ACTOR %s\n#define RE4DC_NATIVE_ACTOR_FAST %s\n#define RE4DC_NATIVE_ACTOR_SKIN %s\n#define RE4DC_ACTOR_DIRECT %s\n#define RE4DC_NATIVE_ACTOR_SKIN_LAZY %s\n' '$(NATIVE_ACTOR)' '$(NATIVE_ACTOR_FAST)' '$(NATIVE_ACTOR_SKIN)' '$(NATIVE_ACTOR_DIRECT)' '$(NATIVE_ACTOR_SKIN_LAZY)' > $@.tmp
 	@printf '#define RE4DC_ACTOR_LOD_PX ((float)(%s))\n#define RE4DC_ACTOR_LOD_BUDGET %sU\n#define RE4DC_ACTOR_PRELIT %s\n#define RE4DC_ACTOR_UV16 %s\n#define RE4DC_ACTOR_LOG %s\n' '$(if $(filter 1,$(NATIVE_ACTOR_LOD)),$(NATIVE_ACTOR_LOD_PX),0)' '$(if $(filter 1,$(NATIVE_ACTOR_LOD)),$(NATIVE_ACTOR_LOD_BUDGET),0)' '$(NATIVE_ACTOR_PRELIT)' '$(NATIVE_ACTOR_UV16)' '$(NATIVE_ACTOR_LOG)' >> $@.tmp
 	@printf '#define RE4DC_ACTOR_CROWD %s\n#define RE4DC_ACTOR_CROWD_NEAR %sU\n#define RE4DC_ACTOR_CROWD_NEAR_M ((float)(%s))\n#define RE4DC_ACTOR_CROWD_MID_M ((float)(%s))\n#define RE4DC_ACTOR_CROWD_MID_PX ((float)(%s))\n' '$(CROWD_LOD)' '$(CROWD_NEAR)' '$(CROWD_NEAR_M)' '$(CROWD_MID_M)' '$(CROWD_MID_PX)' >> $@.tmp
+	@printf '#define RE4DC_ACTOR_CROWD_FLAT %s\n' '$(CROWD_FLAT)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJDIR)/platform/native_model.o $(OBJDIR)/model_bridge.o: $(OBJDIR)/native-actor.h
