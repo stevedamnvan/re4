@@ -300,4 +300,38 @@ int DVDChangeDiskAsync(DVDCommandBlock* block, DVDDiskID* id, DVDCBCallback call
     return 1;
 }
 
+
+// GD-ROM is the source's ARAM tier (datactrl.cpp): a unit staged "in ARAM" keeps no
+// copy; when the source brings it back to MRAM its own disc file is read straight
+// into the MRAM destination, blocking the caller like a synchronous ARAM DMA.
+int re4dc_aram_file_read(const char* name, void* dst, unsigned bytes)
+{
+    const uint64_t start = timer_us_gettime64();
+    char path[128];
+    int ok = 0;
+    if (dst && bytes && re4dc_dvd_native_path(name, path, sizeof(path))) {
+        Re4dcIoScope io;
+        file_t f = fs_open(path, O_RDONLY);
+        if (f >= 0) {
+            ok = fs_total(f) >= (ssize_t) bytes;
+            unsigned char* p = (unsigned char*) dst;
+            unsigned n = bytes;
+            while (ok && n) {
+                const ssize_t got = fs_read(f, p, n);
+                if (got <= 0 || (unsigned) got > n) {
+                    ok = 0;
+                } else {
+                    p += got;
+                    n -= (unsigned) got;
+                }
+            }
+            fs_close(f);
+        }
+    }
+    const uint64_t us = timer_us_gettime64() - start;
+    re4dc_log("aram file: read %s bytes=%u wait_us=%lu success=%d\n", name, bytes,
+              (unsigned long) (us > 0xffffffffULL ? 0xffffffffULL : us), ok);
+    return ok;
+}
+
 }  // extern "C"

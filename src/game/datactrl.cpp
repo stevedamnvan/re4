@@ -19,6 +19,11 @@
 #if defined(RE4DC_GAME)
 #include "native_event_file.h"
 #endif
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+// GD-ROM is the ARAM tier (platform/dvd.cpp): a unit's ARAM copy is its disc file.
+extern "C" int re4dc_aram_file_read(const char* name, void* dst, unsigned bytes);
+extern "C" void re4dc_missing(const char* name);
+#endif
 
 extern "C" {
 void OSReport(const char* fmt, ...);
@@ -325,6 +330,19 @@ void cDataUnit::setLoadToMram()
             break;
         }
 #endif
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        // No ARAM copy exists: re-read the unit's disc file into the destination now
+        // (blocking, like the source's synchronous DMA). The ARQ request below still
+        // runs so condition 5 -> MRAM_OK lands on the same check as on GC.
+        if (!re4dc_aram_file_read(m_name, (void*) dest, m_size)) {
+            m_err = 3;
+            checkMallocRelease();
+            pLog->err(0, 0, "cDataUnit::setLoadToMram disc re-read error");
+            re4dc_missing("ARAM_TO_MRAM disc re-read failed");
+            break;
+        }
+        DCFlushRange((void*) dest, m_size);
+#endif
         no = Aram.DmaTransReq(1, (u32) m_addr, dest, m_size, wait);
         m_id = no;
         if (no >= 0) {
@@ -386,6 +404,17 @@ void cDataUnit::setLoadToAram()
             OSReport("DC:%s check FILE_READY bytes=%u\n", m_name, m_size);
             break;
         }
+#endif
+#if defined(RE4DC_GAME) && !defined(__PPC__)
+        // GD-ROM is the ARAM tier: the disc file is the unit's ARAM copy. Record the ARAM
+        // address and size only (no discarded read); ARAM_TO_MRAM re-reads the file.
+        m_addr = (void*) dest;
+        m_id = -1;
+        m_condition = 4;
+        m_command = 0;
+        m_wait = 0;
+        OSReport("DC:%s set ARAM_LOAD (disc-backed) check ARAM_OK\n", m_name);
+        break;
 #endif
 #line 366 "D:/Bio4/Prog/datactrl.cpp"
         no = DvdReadN(m_name, NULL, dest, 0, 0, wait | 0x8, __FILE__, __LINE__);
