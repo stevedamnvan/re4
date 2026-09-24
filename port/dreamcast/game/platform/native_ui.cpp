@@ -75,6 +75,9 @@
 #ifndef RE4DC_UI_HEADERS
 #define RE4DC_UI_HEADERS 0
 #endif
+#ifndef RE4DC_NATIVE_MES
+#define RE4DC_NATIVE_MES 0 // message glyphs: see re4dc_ui_glyph()
+#endif
 // TEX_RESIDENT=1 (default off = previous image): no texture load while moving.
 // Packages open without the runtime payload CRC (verified at staging); each
 // bound room/enemy/player/weapon identity set is preloaded on the first frame
@@ -1434,6 +1437,213 @@ extern "C" void re4dc_ui_retire_room(){
 #if RE4DC_NATIVE_STATIC
 extern "C" unsigned re4dc_ui_frame(){return frame;}
 #endif
+#if RE4DC_NATIVE_MES
+// NATIVE_MES=1 (Makefile; default off = previous image): message glyphs. mes.cpp draw() sends
+// each glyph here instead of to the GX stub (which sinks it). Glyph texels live in one 256x256
+// PAL4 twiddled atlas (32 KiB of VRAM, allocated in re4dc_ui_init() before the UI_VRAM budget is
+// taken from the pool, so the texture cache and the room preload account for it): 64 cells of
+// 32x32, each holding one glyph decoded on first use from the font's GC CI4 sheet and kept least
+// recently used. A cell used by the previous frame is only rewritten after its render fence; a
+// cell used by this frame never (the glyph is then counted as "full" and not drawn). Font TLUTs
+// go to 16-entry palette banks in ARGB8888 (no other native path uses the palette). Glyph order
+// is the source order: a run of consecutive glyphs is one sentinel entry in the UI quad queue.
+namespace {
+#ifndef RE4DC_NATIVE_MES_CELLS
+#define RE4DC_NATIVE_MES_CELLS 64
+#endif
+static_assert(RE4DC_NATIVE_MES_CELLS==64 || RE4DC_NATIVE_MES_CELLS==128,"NATIVE_MES_CELLS: 64 (256x256) or 128 (256x512)");
+// A 256x512 twiddled texture is two 256x256 squares one after the other; cell c: square c/64, cell c%64 in it.
+constexpr unsigned kGlyphCells=RE4DC_NATIVE_MES_CELLS,kGlyphCapacity=384,kGlyphBanks=8,kGlyphAtlasH=kGlyphCells/8*32,kGlyphAtlasBytes=256*kGlyphAtlasH/2;
+struct GlyphCell { const void* sheet; const void* clut; short u,v; unsigned char cw,ch,bank; bool valid; unsigned frame; };
+struct GlyphQuad { short x0,y0,x1,y1; unsigned char cell,cw,ch,bank; unsigned argb; }; // x/y in 1/4 px
+static_assert(sizeof(GlyphQuad)==16);
+struct GlyphBank { const void* clut; unsigned sum; bool valid; };
+pvr_ptr_t glyph_atlas;
+GlyphCell glyph_cells[kGlyphCells];
+GlyphQuad glyph_quads[kGlyphCapacity];
+GlyphBank glyph_banks[kGlyphBanks];
+pvr_poly_hdr_t glyph_headers[kGlyphBanks];
+bool glyph_header_ready[kGlyphBanks];
+unsigned char glyph_hint[128];
+bool glyph_total_first;
+unsigned short glyph_twx[32],glyph_twy[32]; // PVR twiddle: y bits to even, x bits to odd positions
+unsigned nglyph,glyph_peak,glyph_total,glyph_drawn,glyph_hits,glyph_misses,glyph_evictions,glyph_fenced,glyph_full,
+    glyph_dropped,glyph_unsupported,glyph_culled,glyph_font_changes,glyph_logged_total,glyph_logged_problems;
+Entry* const kGlyphRun=reinterpret_cast<Entry*>(glyph_cells); // sentinel handle, never dereferenced
+void glyph_init(){
+    for(unsigned i=0;i<32;++i){
+        unsigned x=0,y=0;
+        for(unsigned k=0;k<5;++k)if(i>>k&1){x|=2U<<(2*k);y|=1U<<(2*k);}
+        glyph_twx[i]=(unsigned short)x;glyph_twy[i]=(unsigned short)y;
+    }
+    const unsigned before=pvr_mem_available();
+    glyph_atlas=pvr_mem_malloc(kGlyphAtlasBytes);
+    if(!glyph_atlas){re4dc_log("native mes: glyph atlas allocation FAILED (free=%u); message text off\n",before);return;}
+    alignas(32) static const unsigned char zero[512]={};
+    for(unsigned n=0;n<kGlyphAtlasBytes;n+=sizeof(zero))pvr_txr_load(zero,(char*)glyph_atlas+n,sizeof(zero));
+    pvr_set_pal_format(PVR_PAL_ARGB8888);
+    re4dc_log("native mes: glyph atlas 256x%u PAL4 at %p, %u B (pool %u -> %u before the UI budget), %u cells, %u glyphs/frame\n",
+        kGlyphAtlasH,glyph_atlas,kGlyphAtlasBytes,before,(unsigned)pvr_mem_available(),kGlyphCells,kGlyphCapacity);
+}
+unsigned glyph_color(unsigned c,unsigned format){
+    auto x5=[](unsigned v){return (v<<3)|(v>>2);};
+    switch(format){
+    case 0: return ((c>>8)<<24)|((c&255)*0x010101U);                                        // IA8
+    case 1: return 0xff000000U|(x5(c>>11)<<16)|((((c>>5)&63)<<2|((c>>5)&63)>>4)<<8)|x5(c&31); // RGB565
+    default:
+        if(c&0x8000)return 0xff000000U|(x5((c>>10)&31)<<16)|(x5((c>>5)&31)<<8)|x5(c&31);      // RGB5A3 opaque
+        {const unsigned a=(c>>12)&7;
+         return (((a<<5)|(a<<2)|(a>>1))<<24)|(((c>>8)&15)*17<<16)|(((c>>4)&15)*17<<8)|((c&15)*17);}
+    }
+}
+int glyph_bank(const void* clut,unsigned format,unsigned entries){
+    if(!clut || format>2 || entries<16)return -1;
+    const unsigned char* p=static_cast<const unsigned char*>(clut);
+    unsigned sum=format;
+    for(unsigned i=0;i<32;++i)sum=sum*31+p[i];
+    int free_bank=-1;
+    for(unsigned b=0;b<kGlyphBanks;++b){
+        if(glyph_banks[b].valid && glyph_banks[b].clut==clut && glyph_banks[b].sum==sum)return int(b);
+        if(!glyph_banks[b].valid && free_bank<0)free_bank=int(b);
+    }
+    if(free_bank<0)return -1;
+    for(unsigned i=0;i<16;++i)pvr_set_pal_entry(unsigned(free_bank)*16+i,glyph_color((p[2*i]<<8)|p[2*i+1],format));
+    glyph_banks[free_bank]={clut,sum,true};
+    re4dc_log("native mes: palette bank %d <- tlut %p format %u\n",free_bank,clut,format);
+    return free_bank;
+}
+int glyph_cell(const Re4dcUiGlyph& g){
+    const unsigned h=((unsigned)(std::size_t)g.sheet>>5^unsigned(g.u)*7U^unsigned(g.v)*131U)&127U;
+    auto match=[&g](const GlyphCell& c){return c.valid && c.sheet==g.sheet && c.clut==g.clut && c.u==g.u && c.v==g.v && c.cw==g.cw && c.ch==g.ch;};
+    if(const unsigned k=glyph_hint[h])if(match(glyph_cells[k-1])){glyph_cells[k-1].frame=frame;++glyph_hits;return int(k-1);}
+    for(unsigned i=0;i<kGlyphCells;++i)if(match(glyph_cells[i])){glyph_hint[h]=(unsigned char)(i+1);glyph_cells[i].frame=frame;++glyph_hits;return int(i);}
+    const int bank=glyph_bank(g.clut,g.clut_format,g.clut_entries);
+    if(bank<0){++glyph_unsupported;return -1;}
+    // Victim: an idle cell (neither this frame nor the previous one), invalid first, then the
+    // least recently used; else a previous-frame cell after the render fence; else none.
+    int victim=-1;
+    for(unsigned i=0;i<kGlyphCells;++i){
+        const GlyphCell& c=glyph_cells[i];
+        if(c.frame+1>=frame && frame)continue;
+        if(victim<0 || (!c.valid && glyph_cells[victim].valid) || (c.valid==glyph_cells[victim].valid && c.frame<glyph_cells[victim].frame))victim=int(i);
+    }
+    if(victim<0){
+        for(unsigned i=0;i<kGlyphCells;++i)if(glyph_cells[i].frame!=frame){victim=int(i);break;}
+        if(victim<0){++glyph_full;return -1;}
+#if RE4DC_PVR_PIPELINE
+        present_fence(); // the previous scene may still sample this cell
+#endif
+        ++glyph_fenced;
+    }
+    GlyphCell& c=glyph_cells[victim];
+    if(c.valid)++glyph_evictions;
+    ++glyph_misses;
+    // Decode the 32x32 window at (u, v) (the glyph plus the sheet texels right of / below it,
+    // which bilinear filtering reads there as on the GameCube); clamp at the sheet edges.
+    alignas(32) unsigned char cell[512];
+    std::memset(cell,0,sizeof(cell));
+    const unsigned char* s=static_cast<const unsigned char*>(g.sheet);
+    const unsigned bw=g.sheet_w>>3;
+    for(unsigned y=0;y<32;++y){
+        const int yy=g.v+int(y);
+        const unsigned sy=unsigned(yy<0?0:yy>=int(g.sheet_h)?int(g.sheet_h)-1:yy);
+        const unsigned char* row=s+(sy>>3)*bw*32+(sy&7)*4;
+        for(unsigned x=0;x<32;++x){
+            const int xx=g.u+int(x);
+            const unsigned sx=unsigned(xx<0?0:xx>=int(g.sheet_w)?int(g.sheet_w)-1:xx);
+            const unsigned byte=row[(sx>>3)*32+((sx&7)>>1)];
+            const unsigned index=(sx&1)?byte&15:byte>>4;
+            const unsigned t=glyph_twx[x]|glyph_twy[y];
+            cell[t>>1]|=(unsigned char)((t&1)?index<<4:index);
+        }
+    }
+    const unsigned cx=unsigned(victim)&7,cy=(unsigned(victim)>>3)&7,square=unsigned(victim)>>6;
+    pvr_txr_load(cell,(char*)glyph_atlas+square*32768U+((glyph_twx[cx]|glyph_twy[cy])<<9),sizeof(cell));
+    c={g.sheet,g.clut,(short)g.u,(short)g.v,(unsigned char)g.cw,(unsigned char)g.ch,(unsigned char)bank,true,frame};
+    glyph_hint[h]=(unsigned char)(victim+1);
+    return victim;
+}
+const pvr_poly_hdr_t& glyph_header(unsigned bank){
+    if(!glyph_header_ready[bank]){
+        pvr_poly_cxt_t c;
+        pvr_poly_cxt_txr(&c,PVR_LIST_TR_POLY,PVR_TXRFMT_PAL4BPP|PVR_TXRFMT_4BPP_PAL(bank)|PVR_TXRFMT_TWIDDLED,256,kGlyphAtlasH,glyph_atlas,PVR_FILTER_BILINEAR);
+        c.gen.culling=PVR_CULLING_NONE;c.depth.comparison=PVR_DEPTHCMP_ALWAYS;c.depth.write=PVR_DEPTHWRITE_DISABLE;
+        c.blend.src=PVR_BLEND_SRCALPHA;c.blend.dst=PVR_BLEND_INVSRCALPHA;c.txr.env=PVR_TXRENV_MODULATEALPHA;c.txr.uv_clamp=PVR_UVCLAMP_UV;
+        pvr_poly_compile(&glyph_headers[bank],&c);glyph_header_ready[bank]=true;
+    }
+    return glyph_headers[bank];
+}
+// One run: a header when the palette bank changes, then a 4-vertex strip per glyph (a strip
+// after an end-of-strip vertex reuses the last header).
+void glyph_draw_run(unsigned first,unsigned count){
+    alignas(32) pvr_vertex_t buf[1+4*16];
+    unsigned n=0;int bank=-1;
+    auto flush=[&]{
+        if(!n)return;
+#if RE4DC_PVR_STREAM
+        stream_send(buf,n*sizeof(pvr_vertex_t));
+#else
+        re4dc::render::submit_pvr(buf,n*sizeof(pvr_vertex_t));
+#endif
+        n=0;
+    };
+    for(unsigned i=first;i<first+count && i<nglyph;++i){
+        const GlyphQuad& g=glyph_quads[i];
+        if(n+5>sizeof(buf)/sizeof(buf[0]))flush();
+        if(g.bank!=bank){std::memcpy(&buf[n++],&glyph_header(g.bank),sizeof(pvr_vertex_t));bank=g.bank;}
+        constexpr float kH=float(kGlyphAtlasH);
+        const float u0=float((g.cell&7)*32)/256.0f,v0=float((g.cell>>3)*32)/kH;
+        const float x[4]={g.x0*0.25f,g.x1*0.25f,g.x0*0.25f,g.x1*0.25f},y[4]={g.y0*0.25f,g.y0*0.25f,g.y1*0.25f,g.y1*0.25f};
+        const float u[4]={u0,u0+g.cw/256.0f,u0,u0+g.cw/256.0f},v[4]={v0,v0,v0+g.ch/kH,v0+g.ch/kH};
+        for(unsigned k=0;k<4;++k){
+            pvr_vertex_t& p=buf[n++];
+            p.flags=k==3?PVR_CMD_VERTEX_EOL:PVR_CMD_VERTEX;p.x=x[k];p.y=y[k];p.z=1.0f;p.u=u[k];p.v=v[k];p.argb=g.argb;p.oargb=0;
+        }
+        ++glyph_drawn;
+    }
+    flush();
+}
+short glyph_quarter(float f){f*=4.0f;return (short)(f<-32000.0f?-32000:f>32000.0f?32000:int(f<0?f-0.5f:f+0.5f));}
+}
+extern "C" void re4dc_ui_glyph(const Re4dcUiGlyph* g){
+    if(!frame_ready || !glyph_atlas)return;
+#if RE4DC_PVR_STREAM
+    if(stream_aborted)return;
+#endif
+    ++glyph_total;
+    if((g->argb>>24)==0){++glyph_culled;return;}
+    if(g->format!=8 || !g->sheet || g->cw<=0 || g->cw>32 || g->ch<=0 || g->ch>32 || !g->sheet_w || !g->sheet_h ||
+       (g->sheet_w&7) || (g->sheet_h&7)){++glyph_unsupported;return;}
+    if(nglyph==kGlyphCapacity){++glyph_dropped;return;}
+    const bool extend=nquad && handles[nquad-1]==kGlyphRun && quads[nquad-1].image.width+quads[nquad-1].image.height==nglyph;
+#if RE4DC_D349_RENDERER_STACK
+    if(!extend && (nquad+1)*sizeof(Re4dcUiQuad)>deferred_top){++glyph_dropped;return;}
+#else
+    if(!extend && nquad==kQuadCount){++glyph_dropped;return;}
+#endif
+    const int cell=glyph_cell(*g);
+    if(cell<0)return;
+    if(!glyph_total_first){glyph_total_first=true;
+        re4dc_log("native mes: first glyph frame=%u sheet=%p %ux%u window=%d,%d %dx%d at %d,%d-%d,%d argb=%08x\n",frame,g->sheet,g->sheet_w,g->sheet_h,
+            g->u,g->v,g->cw,g->ch,int(g->x0),int(g->y0),int(g->x1),int(g->y1),g->argb);}
+    glyph_quads[nglyph]={glyph_quarter(g->x0),glyph_quarter(g->y0),glyph_quarter(g->x1),glyph_quarter(g->y1),(unsigned char)cell,
+        (unsigned char)g->cw,(unsigned char)g->ch,glyph_cells[cell].bank,g->argb};
+    if(extend)++quads[nquad-1].image.height;
+    else {
+        Re4dcUiQuad* q=new(quads+nquad) Re4dcUiQuad{};
+        q->image.width=nglyph;q->image.height=1; // run: first glyph, count
+        handles[nquad++]=kGlyphRun;
+    }
+    if(++nglyph>glyph_peak)glyph_peak=nglyph;
+}
+// MessageFont::create(): a font buffer may be reloaded with other content at the same address.
+extern "C" void re4dc_ui_glyph_fonts_changed(){
+    for(auto& c:glyph_cells)c.valid=false;
+    for(auto& b:glyph_banks)b.valid=false;
+    std::memset(glyph_hint,0,sizeof(glyph_hint));
+    ++glyph_font_changes;
+}
+#endif
 extern "C" void re4dc_ui_init(){
     if(ready)return;
     pvr_init_params_t params=pvr_default_params;
@@ -1466,6 +1676,9 @@ extern "C" void re4dc_ui_init(){
         re4dc_log("native VRAM layout: vertbuf=%u KiB x%u banks (%s) opb_bins=%u overflow=%u texture_pool_free=%u\n",
             unsigned(RE4DC_TA_VERTBUF_KB),2U,RE4DC_TA_DOUBLEBUF?"double-buffered":"single-bank use",unsigned(RE4DC_TA_OPB_BINS),unsigned(RE4DC_TA_OPB_OVERFLOW),(unsigned)pvr_mem_available());
 #endif
+#if RE4DC_NATIVE_MES
+        glyph_init(); // before the UI_VRAM budget: the atlas is part of the accounted pool
+#endif
 #if RE4DC_UI_VRAM
         {
             const unsigned pool=pvr_mem_available(),reserve=RE4DC_UI_VRAM_RESERVE_KB*1024U;
@@ -1497,6 +1710,9 @@ extern "C" void re4dc_ui_begin(){
     if(model_diagnostic==1 && frame%120==0)
         re4dc_log("native model DIAGNOSTIC boundary: frame=%u previous_bytes=%u committed_parts=%u invalid=%u resource=%u overflow=%u presented=%u\n",frame,model_used*32,model_parts,model_invalid,model_resource,model_overflow,model_presented);
     nquad=0;model_used=0;++frame;
+#if RE4DC_NATIVE_MES
+    nglyph=0;
+#endif
 #if RE4DC_PVR_PIPELINE
     // The previous scene may still render/await its flip: do not wait here.
     // Its fence precedes this frame's scene begin and any VRAM change.
@@ -1572,6 +1788,9 @@ extern "C" void re4dc_ui_present(){
 #endif
     for(unsigned i=0;i<nquad && !movie_override && !re4dc_vi_black();++i){
         if(!handles[i])continue;
+#if RE4DC_NATIVE_MES
+        if(handles[i]==kGlyphRun){glyph_draw_run(quads[i].image.width,quads[i].image.height);continue;}
+#endif
         const auto& q=quads[i];const auto& t=handles[i]->package.textures()[0];
 #if RE4DC_UI_HEADERS
         // Stable HUD/UI elements: the header (texture binding, blend) is compiled
@@ -1675,6 +1894,14 @@ extern "C" void re4dc_ui_present(){
 #endif
 #if RE4DC_EFFECT_SPRITES
     if(frame%120==0) re4dc_log("native effect sprites: frame=%u queued=%u direct=%u missing=%u dropped=%u capped=%u culled=%u peak=%u\n",frame,fx_queued,fx_direct,fx_missing,fx_dropped,fx_capped,fx_culled,fx_peak);
+#endif
+#if RE4DC_NATIVE_MES
+    if(frame%120==0 && (glyph_total!=glyph_logged_total || glyph_full+glyph_dropped+glyph_unsupported!=glyph_logged_problems)){
+        glyph_logged_total=glyph_total;glyph_logged_problems=glyph_full+glyph_dropped+glyph_unsupported;
+        unsigned live=0;for(const auto& c:glyph_cells)live+=c.valid;
+        re4dc_log("native mes: frame=%u glyphs=%u peak=%u total=%u drawn=%u cells=%u/%u hits=%u misses=%u evictions=%u fenced=%u full=%u dropped=%u unsupported=%u culled=%u fonts=%u\n",
+            frame,nglyph,glyph_peak,glyph_total,glyph_drawn,live,kGlyphCells,glyph_hits,glyph_misses,glyph_evictions,glyph_fenced,glyph_full,glyph_dropped,glyph_unsupported,glyph_culled,glyph_font_changes);
+    }
 #endif
 #if RE4DC_UI_HANDLES
     if(frame%120==0) re4dc_log("native UI handles: frame=%u hits=%u misses=%u bypass=%u\n",frame,handle_hits,handle_misses,handle_bypass);

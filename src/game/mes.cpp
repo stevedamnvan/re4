@@ -13,6 +13,12 @@ extern MessageFont MesFont[4];
 #include "mes.h"
 #if !defined(__PPC__)
 #include "re4dc_platform.h"
+#if !defined(__PPC__) && RE4DC_NATIVE_MES
+#include "native_ui.h"
+extern "C" void GXGetProjectionv(float*);  // gx_stub.cpp (as ui_bridge.cpp declares them)
+extern "C" void GXGetViewportv(float*);
+extern "C" void GXProject(float, float, float, const float[3][4], const float*, const float*, float*, float*, float*);
+#endif
 #endif
 #include "dvd.h"
 #include "db_log.h"
@@ -234,6 +240,9 @@ void MessageFont::create(int w, int h, TEXPalette* tpl, u8* width)
     }
     pWidth = width;
     be_flag = 1;
+#if !defined(__PPC__) && RE4DC_NATIVE_MES
+    re4dc_ui_glyph_fonts_changed();  // native glyph atlas: this buffer may hold another font now
+#endif
     t = m_mTex;
     m_char_w = w;
     m_char_h = h;
@@ -1103,6 +1112,51 @@ void draw(MesQue* q)
     }
     fog.r = fog.g = fog.b = fog.a = 0;
     GXSetFog(0, 0.0f, 0.0f, ZNEAR, ZFAR, fog);
+#if !defined(__PPC__) && RE4DC_NATIVE_MES
+    // NATIVE_MES=1: the GX stub sinks the glyph below. Hand the same glyph to the native UI
+    // queue instead (platform/native_ui.cpp re4dc_ui_glyph): texel window u+l..u+l+cw, v..v+cellH
+    // of sheet 0 with its TLUT, colour from the queue entry, the rectangle x..x+w, y..y+h through
+    // the projection and viewport messageCamera() set (mapped to 640x480 as ui_bridge.cpp does).
+    u += l;
+    x1 = x + w;
+    y1 = y + h;
+    {
+        const TEXDescriptor* d = font->m_tpl->descriptorArray;  // sheet 0 (MessageFont::create)
+        const TEXHeader* th = t->pTex;
+        Re4dcUiGlyph g;
+        f32 pm[7], vp[6], sx0, sy0, sx1, sy1, sz;
+        Mtx id;
+        g.sheet = th->data;
+        g.sheet_w = th->width;
+        g.sheet_h = th->height;
+        g.format = th->format;
+        g.clut = NULL;
+        g.clut_format = 0;
+        g.clut_entries = 0;
+        if (th->format - 8 <= 1 && d->CLUTHeader != NULL) {
+            g.clut = d->CLUTHeader->data;
+            g.clut_format = d->CLUTHeader->format;
+            g.clut_entries = d->CLUTHeader->numEntries;
+        }
+        g.u = u;
+        g.v = v;
+        g.cw = cw;
+        g.ch = cellH;
+        GXGetProjectionv(pm);
+        GXGetViewportv(vp);
+        PSMTXIdentity(id);
+        GXProject((f32) x, (f32) y, 0.0f, id, pm, vp, &sx0, &sy0, &sz);
+        GXProject((f32) x1, (f32) y1, 0.0f, id, pm, vp, &sx1, &sy1, &sz);
+        g.x0 = sx0 * 640.0f / vp[2];
+        g.y0 = sy0 * 480.0f / vp[3];
+        g.x1 = sx1 * 640.0f / vp[2];
+        g.y1 = sy1 * 480.0f / vp[3];
+        g.argb = ((u32) ca << 24) | ((u32) cr << 16) | ((u32) cg << 8) | cb;
+        re4dc_ui_glyph(&g);
+    }
+    (void) texW;
+    (void) texH;
+#else
     setAttribute(t);
     GXBegin(0x80, 0, 4);
     u += l;
@@ -1124,6 +1178,7 @@ void draw(MesQue* q)
     GXWGFifo->s16 = y1;
     GXColor4u8(cr, cg, cb, ca);
     GXTexCoord2f32((f32) u / texW, (f32) (v + cellH) / texH);
+#endif
     LightMgr.setFog();
 }
 

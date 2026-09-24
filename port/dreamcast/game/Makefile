@@ -195,6 +195,23 @@ $(IO_PROBE_OBJS): PLATFORM_CPPFLAGS += -include $(OBJDIR)/io-probe.h
 $(OBJDIR)/ui_bridge.o: $(OBJDIR)/io-probe.h
 $(OBJDIR)/ui_bridge.o: GAME_CPPFLAGS += -include $(OBJDIR)/io-probe.h
 OBJS = $(NATIVE_REUSE_OBJS) $(GAME_OBJS) $(MODULE_OBJS) $(PLATFORM_OBJS) $(SDK_OBJS)
+# NATIVE_MES=1 (default 0: the default image does not change): message text. mes.cpp draw() emits
+# each glyph through the GX stub, which sinks it, so no cMes text (prompts, pickups, the picker,
+# card and sub screen messages) was visible. With the knob each glyph is a native UI quad in the
+# source draw order, textured from a 256x256 PAL4 glyph atlas (32 KiB of VRAM taken before the
+# UI_VRAM budget, 64 LRU cells decoded on first use from the font's CI4 sheet). Render only.
+# NATIVE_MES_CELLS=128: a 256x512 atlas (64 KiB) for pages with more than 64 distinct glyphs.
+NATIVE_MES ?= 0
+NATIVE_MES_CELLS ?= 64
+.PHONY: native-mes-force
+$(OBJDIR)/native-mes.h: native-mes-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_NATIVE_MES %s\n#define RE4DC_NATIVE_MES_CELLS %s\n' '$(NATIVE_MES)' '$(NATIVE_MES_CELLS)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/platform/native_ui.o $(OBJDIR)/src/game/mes.o: $(OBJDIR)/native-mes.h
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -include $(OBJDIR)/native-mes.h
+$(OBJDIR)/src/game/mes.o: GAME_CPPFLAGS += -include $(OBJDIR)/native-mes.h
 # D367 quality modes (design-lowmode DESIGN.md A). QUALITY=1 (default 0: the default image does
 # not change) adds platform/quality.cpp (state, presets, /cd/dc/quality.txt, the RE4DCCFG record
 # through re4dc_quality_cfg_load/store, in memory until the VMU layer links them; freeze at game start) and quality_picker.cpp (the once-per-boot "Graphics quality" picker at

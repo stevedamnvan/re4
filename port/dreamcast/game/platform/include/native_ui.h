@@ -18,8 +18,22 @@ struct Re4dcEffectSprite {
     unsigned color;                      // ARGB, material colour after TEV scale
     unsigned char src, dst, screen, pad; // PVR blend factors; screen: depth always, no fog
 };
+// NATIVE_MES=1 (mes.cpp draw()): one message glyph, the texel window u..u+cw, v..v+ch of a
+// GameCube CI4 font sheet (8x8 texel tiles, as on the disc) with its TLUT (GX format 0 IA8,
+// 1 RGB565, 2 RGB5A3; big-endian entries), drawn over x0,y0..x1,y1 (640x480) with argb
+// modulating the texel, alpha blended (the source SRCALPHA / INVSRCALPHA, TEV modulate).
+struct Re4dcUiGlyph {
+    const void* sheet;
+    const void* clut;
+    unsigned sheet_w, sheet_h, format, clut_format, clut_entries;
+    int u, v, cw, ch;
+    float x0, y0, x1, y1;
+    unsigned argb;
+};
 extern "C" {
 int re4dc_effect_sprite(const Re4dcEffectSprite*);
+void re4dc_ui_glyph(const Re4dcUiGlyph*);
+void re4dc_ui_glyph_fonts_changed();
 void re4dc_ui_init();
 void re4dc_ui_begin();
 void re4dc_ui_present();
