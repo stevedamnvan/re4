@@ -104,8 +104,16 @@ struct GlobalWork {
     union {
         u16 next_room;     // 0x28  room id (stage << 8 | room) being entered (snd: room BGM / door tables)
         struct {
+#if defined(__PPC__)
             u8 next_stage; // 0x28  (sce_at sceAtFunc_door stores the door destination byte by byte)
             u8 next_room_no;  // 0x29
+#else
+            // Little-endian: the halfword's high byte (the stage) is the second byte. The GC order
+            // made a 1:03 door read as next_room 0x301 (warp-r101-pbdoor2: HALT, no r301 container);
+            // symmetric ids such as 0x101 hid it.
+            u8 next_room_no;
+            u8 next_stage;
+#endif
         };
     };
     u8 next_point;         // 0x2A  spawn point in the next room (room_jmp CRoomInfo::setNextPos clears it)
