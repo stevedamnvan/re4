@@ -59,6 +59,8 @@ Paths are under `/root/probe/d367-agents/`. Rebase anything whose base is older 
 | `std-runtime/patches/item21-house-shells-84fc8ff.patch` | `3af4c52b…f51bf` | after item 20 | run with textured packages |
 | `std-runtime/patches/std-assets-wip-84fc8ff.patch` | `229f2710…8362` | 84fc8ff | WIP; low/FILE_01/02 rejected ("level error": assets wrote 3.0e38, rebuilding with 1e30) |
 | `vmu/kit-autoload-wip2.diff` (DBG_AUTOLOAD narrow starts) | `f8df61ad…67a1b2` | tree7 on 5f32de5 | rebase; gates A/B/C; its staging halts at r100 entry (213 texture opens fail, watchdog main.cpp:548) |
+| `vram/vram-pages-a-v1.patch` (VRAM_PAGES fix A) | `ad364080…f324` | ed24efa (applies at 8ac9f2d) | STRICT pair + hwproject. Flycast: alloc overhead 209,216 -> 0 B; preload 2.13 -> 2.40 MB resident; frame times unchanged |
+| `pacing/pace-v1v2-0825810.patch` | `a8370cde…1ba0` | 0825810 (applies at 8ac9f2d) | route v2 reruns, game vs wall time at 20 fps, hw ms per skipped tick, Flycast p50/p99 with enemies, picker backdrop on screen |
 | `w10/w10-door-u0/u1/u2/u6.patch` | stale | 5f32de5 | regenerate with `w10/tools/mkpatch_door.sh`; equalised STRICT via dvdhold (h0 baseline first) |
 | frontier `FIX_R101_CALL_DONE` (test only) | commit 2f97c09 on tree4 `m1-fx` | pre-8ac9f2d | Makefile tail conflict; rebase, then run r101e |
 | `assets/patches/w9b-lod-cluster-trees.patch` | `635f20a6…` | | parked W9b add-on |
@@ -80,7 +82,7 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 | Door loading | `w10/` | U1+U2+U6: r100 door 10.22 -> 6.29-6.75 s (Flycast emulated), source blocked 1.03 -> 0.07 s; wall-time pad failed as an equaliser; frame-based hold (IO_PROBE test hook in cDvdQueue::Read) built, h0 baseline running | h1/h2/h6 held STRICT vs h0, in-room p99/max, deliver U0/U1/U2/U6 |
 | Logic | `design-logic/` | P1-P4, P3 (GAME_CONCAT_COL), P6 (GAME_SINCOS) landed and in LH; FTRV **rejected** (changes RNG/kill timing in the shot fixture); P10, GAME_SCHED rejected | land P3b+P5 pair; P8 check; confirm P7 reject |
 | Enemies | `actors30/` | actor tiers in PERF (-19.9 hw ms at 8 Ganados); ACT_CAP code landed off; ACTOR_FOG_GATE approved (objscr beyond 25 m fog: -7.8 hw ms quiet r100) | fb-diff + STRICT gates, then PERF; item 4 Leon <=5 ms |
-| Rendering | `builder/` | R1 (FRONT_TEXOBJ) landed, not in recipe (-0.45); TA_HASH and group-8 compare in progress | R2 (8 KiB records 128/160/448, ~-9.5 hw ms expected); W9b plus two parked add-ons |
+| Rendering | `builder/` | R1 (FRONT_TEXOBJ) landed, not in recipe (-0.45); TA_HASH (2fe6fba) and group-8 PVR header compare (0aa5cc9, 0 bad of 210,800 parts) landed after the hold; canonical-recipe fight fixture does not reach gameplay (VMU_SAVE/VMU_DEBUG_SLOT card screens, NATIVE_MES/SUBSCREEN_OVL title stall), gates ran on `scripts/bmk2.sh` | R2 (8 KiB records 128/160/448, ~-9.5 hw ms expected); W9b plus two parked add-ons |
 | Standard assets, pipeline | `assets/` | Standard r100/r101/r103, disc staging, grove split (8 views), user VRAM trims landed; BIN 59 option B (kd split, same look) approved and in progress; BIN 1 shell failure fix in progress | finish B59 + shell fix; W9b add-ons: `patches/w9b-lod-cluster-trees.patch` (+ B59 one) |
 | Standard assets, runtime | `std-runtime/` | contract s16 implemented in part (impt); item 20 rebase; low/ rejection fallback fixed | item 20 -> item 21 -> per-mode selection -> r100 proof; note ~77 KB PT-list VRAM at init |
 | Frame pacing | `pacing/` | v1/v2 built; opt-in LOGIC_TRACE_MASK_RENDER for the render-only be_flag bit; picker question + RE4DCCFG bits 16-17 | rebase on 2ba789c picker; remaining gates |
@@ -91,10 +93,15 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 ## Waiting on the user
 
 - **TA_DOUBLEBUF vs option C.** C (single-bank PVR layout) would grow the texture pool 2.64 -> 3.87/4.19 MB but
-  rules out TA_DOUBLEBUF. Evidence so far: the CPU blocks ~19 ms/frame on the previous render+flip in the fight,
-  so doublebuf may be worth ~15 -> 20 fps in Flycast fights and is likely needed for 20 fps. Bank 1's TA buffer
-  holds the SUBSCREEN backing, so doublebuf needs a single-bank switch while a sub screen is open. Measurement
-  arms are run; numbers pending in `vram/`.
+  rules out TA_DOUBLEBUF. Measured (vram/, SUBSCREEN=0 both arms, 8 live Ganados, Flycast wall ms):
+  quiet p50/p99 66.8/68.8 -> 53.9/59.8 (15.0 -> 18.4 fps); fight p50/p99 117.7/213.5 -> 106.7/197.5, mean
+  124.7 -> 111.7; frozen crowd 100.2 -> 87.9. The whole wait is the stream_open fence (~12.5 ms/frame); with
+  doublebuf wall = busy and every frame is presented; STRICT over 3,473 ticks; texture pool unchanged. The
+  hwproject pair (116.1 vs 147.5) is invalid (mismatched windows) and needs a rerun. **VRAM agent recommends
+  doublebuf** once sub-screen option (b) exists: a ~15-line `pvr_set_vbuf_doublebuf()` in the pinned d367 KOS
+  (fence, ta_target=0, vbuf_doublebuf=0, pvr_sync_reg_buffer() at open, back at close; <=1 frame per open/close).
+  C gives up this ~12.5 ms/frame (roughly 16 vs 20 fps at the 50 ms target). Study patch
+  `vram/ta-doublebuf-study-v1.patch` (sha `fb601d8e…c9f9c`), conflicts with SUBSCREEN=1 until (b).
 - **r103 implementation go-ahead** (plan only so far).
 
 ## User decisions this session (also in the skill)
