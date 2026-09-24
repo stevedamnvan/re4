@@ -1,0 +1,250 @@
+// D367 B1: Ganado activation cap (ACT_CAP=N in game30.mk; default 0 = not built).
+//
+// At most N Ganados (ids 0x10..0x20) are "active" per logic tick: they run emMove (AI, motion,
+// skeleton) as usual. The others are "parked": cEmMgr::move skips their emMove and only keeps
+// plDist2 current (the value emMove would write), so the group throttles (em10DashCk /
+// em10StayCk count others by plDist2 and EM_STATUS_ACTIVE) keep counting them exactly.
+// A parked Ganado stays in EmMgr's alive list with its be_flag, hp, position, routine and motion
+// state untouched, so every alive / kill / wave / bell / door query sees it as before.
+//
+// Never parked (always active, even beyond N):
+//   * not in the plain AI routine (r_no_0 != 1): init, damage, death, events, anything scripted;
+//   * a threat routine: find, attack, grab, door / window bash, ladder, or holding the player;
+//   * a pending damage record (dmg.m_Flag), the player's lock-on target, hp <= 0;
+//   * within the engagement radius RE4DC_ACT_CAP_RANGE_M (horizontal, like plDist2). 12 m is
+//     em10StayCk's own outer limit (L_pl_route > 12000 never stays, em10.cpp:23201) and the r101
+//     tower rule's radius (144000000, em10.cpp:23128): L_pl_route is only refreshed inside a
+//     Ganado's own move, and a route distance is at least the straight one, so a Ganado parked
+//     beyond 12 m can never be counted as "closer" in another Ganado's StayCk;
+//   * inside the previous frame's full view frustum inflated by RE4DC_ACT_CAP_VIEW_M;
+//   * activated less than kHoldTicks ago (no thrash at the boundary).
+// The rest are ranked by distance (the active ones get a 20% distance bonus: hysteresis) and the
+// nearest fill the N slots.
+//
+// Resume is seamless because a parked Ganado is out of view and nothing about it changed: the
+// next emMove continues its routine and motion from where they stopped, at the same position.
+// Rendering is not hooked at all: ModelTrans frustum-culls before any skinning, so a parked
+// Ganado costs nothing to draw; if the camera swings onto one between the logic tick and the
+// render, it is drawn in its held pose (no pop-in) and becomes active on the next tick.
+//
+// RE4DC_ACT_CAP_CREEP=K (default 4, 0 = frozen): a parked Ganado still runs one full emMove
+// every K ticks (staggered by slot so the cost is spread). It keeps walking its own AI route
+// with collision at 1/K speed, so the crowd still closes in and the fight's pressure holds; the
+// game's own weapon-zoom slow motion runs EmMgr.move every 3rd frame the same way.
+//
+// With N at or above the number of live Ganados nothing is ever parked and cEmMgr::move runs
+// exactly the reference code path (the selection only reads game state): the logic trace is
+// STRICT against the reference build.
+#include "global.h"
+#include "player.h"
+#include "em.h"
+#include "view.h"
+#include "geometry.h"
+#include "camera.h"
+#include "re4dc_platform.h"
+
+#ifndef RE4DC_ACT_CAP
+#define RE4DC_ACT_CAP 0
+#endif
+#ifndef RE4DC_ACT_CAP_ROOM
+#define RE4DC_ACT_CAP_ROOM 0x101   // stage << 8 | room; 0 = every room
+#endif
+#ifndef RE4DC_ACT_CAP_RANGE_M
+#define RE4DC_ACT_CAP_RANGE_M 12
+#endif
+#ifndef RE4DC_ACT_CAP_VIEW_M
+#define RE4DC_ACT_CAP_VIEW_M 3
+#endif
+#ifndef RE4DC_ACT_CAP_CREEP
+#define RE4DC_ACT_CAP_CREEP 4
+#endif
+#ifndef RE4DC_ACT_CAP_LOG
+#define RE4DC_ACT_CAP_LOG 0   // N > 0: one "AC" stats line per N ticks through re4dc_log
+#endif
+
+namespace {
+constexpr int kMax = 64;          // EmMgr holds far fewer Ganados; extras are never parked
+constexpr unsigned kHoldTicks = 45;
+constexpr f32 kRange2 = (f32) (RE4DC_ACT_CAP_RANGE_M * 1000) * (f32) (RE4DC_ACT_CAP_RANGE_M * 1000);
+constexpr f32 kViewR = (f32) (RE4DC_ACT_CAP_VIEW_M * 1000);
+constexpr f32 kBodyY = 900.0f;     // sphere centre above the feet
+constexpr f32 kBodyR = 1200.0f;    // Ganado body radius
+
+struct Entry {
+    cEm* em;
+    u32 serial;
+    u32 activeSince;   // tick it last became active
+    u8 parked;
+    u8 seen;
+    u8 must;
+    u8 slot;
+    f32 key;
+};
+Entry g_e[kMax];
+int g_n;
+u32 g_tick;
+
+// Stats (RE4DC_ACT_CAP_LOG): per window, max/sum of the per-tick counts.
+struct Stats {
+    u32 ticks, live, act, park, must, eng, threat, creep, resumes, parks;
+    u32 maxLive, maxAct, maxEng, maxThreat;
+} g_st;
+
+inline bool isGanado(const cEm* e) { return e->id >= 0x10 && e->id <= 0x20; }
+
+// Never-park states (routine numbers: em10.cpp:588-708, EM_RTN / EmRoutineSet em10.cpp:549-562).
+bool threat(cEm* e)
+{
+    // r_no_0: 0 init, 2 damage, 3 die, 4 scenario. A Ganado only reaches r_no_0 = 0xFF (deleted,
+    // counted as a kill by SceCountEmAlive) by running its die routine, and the die routine clears
+    // EM_STATUS_ACTIVE (em10.cpp:16036): parking one there would stall r101's kill count.
+    if (e->r_no_0 != 1) return true;
+    // r_no_1: park only walking / idle routines (whitelist). Everything else stays active:
+    // find 0x0D (em10SomebodyFindNowCk blocks the others' shout), attacks 0x21-0x32 / 0x6D, grabs
+    // 0x33-0x3A, door / window bash 0x3D / 0x3F (one basher at a time, em10DootAtkCk), ladders and
+    // jumps 0x40-0x45, falls, knock-down / wake, pickups, fuse lighting and every scripted routine.
+    switch (e->r_no_1) {
+    case 0x00: case 0x01: case 0x02:             // Wait, Keeper, Hide
+    case 0x07: case 0x08: case 0x09:             // r101 Bucket, Suki, Cart (village idles)
+    case 0x10: case 0x11: case 0x12: case 0x13:  // Walk, Dash, Back, Goto
+    case 0x14: case 0x15:                        // GuardWalk, Turn180
+    case 0x1A: case 0x1B: case 0x1D:             // SitDown, Stay, Guard
+    case 0x4C: case 0x4E: case 0x4F:             // R100WalkStay, StayWalk, AttackWait
+    case 0x5D:                                   // FindLost
+        break;
+    default:
+        return true;
+    }
+    if (pPL->dmgType == (int) e) return true;   // holds the player (EmCatchPLSet, em_sub.cpp:2453)
+    return false;
+}
+
+bool inView(const cEm* e)
+{
+    GeoSphere s;
+    s.pos.x = e->pos.x;
+    s.pos.y = e->pos.y + kBodyY;
+    s.pos.z = e->pos.z;
+    s.r = kBodyR + kViewR;
+    return collision_sphere_hexahedron(&s, (GeoHexahedron*) CameraViewFrustumPtr(&pG->Cam)) != 0;
+}
+
+bool roomOn()
+{
+    if (!pG || !pPL) return false;
+    if (RE4DC_ACT_CAP_ROOM && (((u32) pG->stage_no << 8) | pG->room_no) != (u32) RE4DC_ACT_CAP_ROOM) return false;
+    // event pause / frozen characters: emMove already skips or the scene is scripted
+    if (pG->Status_flg[1] & 0x10000000) return false;
+    if (pG->Stop_flg & 0x20000000) return false;
+    return true;
+}
+
+Entry* find(cEm* e)
+{
+    for (int i = 0; i < g_n; i++)
+        if (g_e[i].em == e && g_e[i].serial == e->serial) return &g_e[i];
+    if (g_n == kMax) return 0;
+    Entry& n = g_e[g_n++];
+    n.em = e; n.serial = e->serial; n.activeSince = g_tick; n.parked = 0; n.seen = 0; n.must = 0;
+    n.slot = (u8) (g_n - 1); n.key = 0.0f;
+    return &n;
+}
+
+void logStats()
+{
+#if RE4DC_ACT_CAP_LOG
+    if (g_st.ticks < RE4DC_ACT_CAP_LOG) return;
+    const unsigned t = g_st.ticks;
+    re4dc_log("AC t=%u n=%u live=%u/%u act=%u/%u park=%u must=%u eng=%u/%u thr=%u/%u creep=%u res=%u prk=%u\n",
+              (unsigned) pG->Frame_cnt, t, g_st.live * 10 / t, g_st.maxLive, g_st.act * 10 / t, g_st.maxAct,
+              g_st.park * 10 / t, g_st.must * 10 / t, g_st.eng * 10 / t, g_st.maxEng, g_st.threat * 10 / t,
+              g_st.maxThreat, g_st.creep, g_st.resumes, g_st.parks);
+    g_st = Stats();
+#endif
+}
+}  // namespace
+
+// Called by cEmMgr::move once per tick, before the emMove loop. Reads game state only.
+extern "C" void re4dc_act_cap_select(void)
+{
+    g_tick++;
+    for (int i = 0; i < g_n; i++) g_e[i].seen = 0;
+    const bool on = roomOn();
+    int live = 0, must = 0, eng = 0, thr = 0;
+    if (pPL) {
+        for (cEm* e = EmMgr.pAlive; e; e = (cEm*) e->pNext) {
+            if ((e->be_flag & 0x201) != 1 || !isGanado(e)) continue;
+            Entry* x = find(e);
+            if (!x) continue;
+            x->seen = 1;
+            live++;
+            const f32 dx = pPL->pos.x - e->pos.x, dz = pPL->pos.z - e->pos.z;
+            const f32 d2 = dx * dx + dz * dz;
+            const bool t = threat(e);
+            const bool near = d2 < kRange2;
+            eng += near;
+            thr += t;
+            x->must = !on || t || near || e->hp <= 0 || e->dmg.m_Flag || pPL->pLockEm == e ||
+                      (!x->parked && g_tick - x->activeSince < kHoldTicks) || inView(e);
+            x->key = x->parked ? d2 : d2 * 0.64f;
+            must += x->must;
+        }
+    }
+    // drop entries whose Ganado is gone (dead, destroyed, room change)
+    int w = 0;
+    for (int i = 0; i < g_n; i++)
+        if (g_e[i].seen) { g_e[w] = g_e[i]; g_e[w].slot = (u8) w; w++; }
+    g_n = w;
+    // fill the free slots nearest first (selection by repeated minimum: n is small)
+    int slots = RE4DC_ACT_CAP - must;
+    for (int i = 0; i < g_n; i++) g_e[i].seen = g_e[i].must;   // seen = chosen active
+    while (slots-- > 0) {
+        int best = -1;
+        for (int i = 0; i < g_n; i++)
+            if (!g_e[i].seen && (best < 0 || g_e[i].key < g_e[best].key)) best = i;
+        if (best < 0) break;
+        g_e[best].seen = 1;
+    }
+    int act = 0, park = 0;
+    for (int i = 0; i < g_n; i++) {
+        Entry& x = g_e[i];
+        const u8 p = !x.seen;
+        if (x.parked && !p) { x.activeSince = g_tick; g_st.resumes++; }
+        if (!x.parked && p) g_st.parks++;
+        x.parked = p;
+        act += !p; park += p;
+    }
+#if RE4DC_ACT_CAP_LOG
+    if (live) {
+        g_st.ticks++; g_st.live += live; g_st.act += act; g_st.park += park; g_st.must += must;
+        g_st.eng += eng; g_st.threat += thr;
+        if ((u32) live > g_st.maxLive) g_st.maxLive = live;
+        if ((u32) act > g_st.maxAct) g_st.maxAct = act;
+        if ((u32) eng > g_st.maxEng) g_st.maxEng = eng;
+        if ((u32) thr > g_st.maxThreat) g_st.maxThreat = thr;
+        logStats();
+    }
+#else
+    (void) act; (void) park; (void) eng; (void) thr;
+#endif
+}
+
+// 1 when cEmMgr::move must skip this work's emMove this tick (parked and not its creep tick).
+extern "C" int re4dc_act_cap_parked(cEm* e)
+{
+    for (int i = 0; i < g_n; i++) {
+        const Entry& x = g_e[i];
+        if (x.em != e) continue;
+        if (!x.parked || x.serial != e->serial) return 0;
+        // hit or killed earlier in this tick (explosion, another Ganado): react this tick
+        if ((e->be_flag & 0x201) != 1 || e->hp <= 0 || e->dmg.m_Flag) return 0;
+#if RE4DC_ACT_CAP_CREEP
+        if ((g_tick + x.slot) % RE4DC_ACT_CAP_CREEP == 0) {
+            g_st.creep++;
+            return 0;
+        }
+#endif
+        return 1;
+    }
+    return 0;
+}

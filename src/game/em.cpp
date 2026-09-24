@@ -220,6 +220,25 @@ int cEmMgr::arrayAlloc(u32 n)
     return 1;
 }
 
+#if RE4DC_ACT_CAP
+// D367 B1 activation cap (game30.mk ACT_CAP, port/dreamcast/game/act_cap.cpp).
+extern "C" void re4dc_act_cap_select(void);
+extern "C" int re4dc_act_cap_parked(cEm* em);
+
+// A parked Ganado's tick instead of emMove: only the player distance, computed as emMove does,
+// which the other Ganados' group throttles read (em10DashCk / em10StayCk).
+static void emParkMove(cEm* em)
+{
+    f32 dx;
+    f32 dz;
+
+    dz = pPL->pos.z - em->pos.z;
+    dx = pPL->pos.x - em->pos.x;
+    em->plDist2 = dx * dx + dz * dz;
+    em->l_sub = 1e16f;
+}
+#endif
+
 // Per-frame character update (game loop): dieCheck, the enemy route check, then emMove on every
 // live work. Under Stop_flg 0x20000000 (characters frozen) only the partner (pSUB) moves, and
 // not when Stop_flg 0x1000 freezes her too.
@@ -231,12 +250,21 @@ void cEmMgr::move()
     dieCheck();
     RouteCk();
     if (!(pG->Stop_flg & 0x20000000)) {
+#if RE4DC_ACT_CAP
+        re4dc_act_cap_select();
+#endif
         p = pAlive;
         func = emMove;
         while (p) {
             cEm* cur = p;
 
             p = (cEm*) p->pNext;
+#if RE4DC_ACT_CAP
+            if (re4dc_act_cap_parked(cur)) {
+                emParkMove(cur);
+                continue;
+            }
+#endif
             func(cur);
         }
     } else if (pSUB && !(pG->Stop_flg & 0x1000)) {

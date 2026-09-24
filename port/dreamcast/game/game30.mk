@@ -523,3 +523,38 @@ $(OBJDIR)/fdlibm/%.o: $(ROOT)/src/lib/fdlibm/%.c
 	@mkdir -p $(dir $@)
 	kos-cc $(KOS_CFLAGS) -w $(GAME_OPT) -ffp-contract=off $(GAME30_DECOMP_SAFE) -I$(ROOT)/include -MMD -MP -c $< -o $@
 endif
+
+# ---------------------------------------------------------------------------------------------
+# D367 B1 (user-approved census item; CHANGES GAMEPLAY once it parks): ACT_CAP=N caps the Ganados
+# (ids 0x10..0x20) that run their AI / motion tick at N per logic tick (act_cap.cpp). The others
+# are parked: no emMove, plDist2 kept current, still alive in EmMgr for every counter (kill count,
+# waves, bell, doors). Engaged, threatening, damaged, in-view or near Ganados are never parked.
+# 0 (default) builds nothing. N at or above the live Ganado count parks nothing and the logic trace
+# is STRICT against the reference.
+#   ACT_CAP_ROOM=0xSSRR  room the cap works in (default 0x101 = r101; 0 = every room)
+#   ACT_CAP_RANGE_M=M    engagement radius in metres, never parked inside it (default 12)
+#   ACT_CAP_VIEW_M=M     view frustum inflation in metres (default 3)
+#   ACT_CAP_CREEP=K      a parked Ganado still runs every K-th tick, staggered (default 4; 0 = frozen)
+#   ACT_CAP_LOG=N        one "AC" stats line per N ticks through re4dc_log (measurement builds only)
+# em.o depends on the generated header in every build, so switching N (or back to 0) in one OBJDIR
+# recompiles it; the default build compiles em.cpp without it (RE4DC_ACT_CAP undefined = off).
+ACT_CAP ?= 0
+ACT_CAP_ROOM ?= 0x101
+ACT_CAP_RANGE_M ?= 12
+ACT_CAP_VIEW_M ?= 3
+ACT_CAP_CREEP ?= 4
+ACT_CAP_LOG ?= 0
+.PHONY: act-cap-force
+$(OBJDIR)/act-cap.h: act-cap-force
+	@mkdir -p $(dir $@)
+	@printf '#define RE4DC_ACT_CAP %s\n#define RE4DC_ACT_CAP_ROOM %s\n#define RE4DC_ACT_CAP_RANGE_M %s\n#define RE4DC_ACT_CAP_VIEW_M %s\n#define RE4DC_ACT_CAP_CREEP %s\n#define RE4DC_ACT_CAP_LOG %s\n' '$(ACT_CAP)' '$(ACT_CAP_ROOM)' '$(ACT_CAP_RANGE_M)' '$(ACT_CAP_VIEW_M)' '$(ACT_CAP_CREEP)' '$(ACT_CAP_LOG)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJDIR)/src/game/em.o: $(OBJDIR)/act-cap.h
+ifneq ($(ACT_CAP),0)
+PLATFORM_OBJS += $(OBJDIR)/act_cap.o
+$(OBJDIR)/src/game/em.o: GAME_CPPFLAGS += -include $(OBJDIR)/act-cap.h
+$(OBJDIR)/act_cap.o: act_cap.cpp $(OBJDIR)/act-cap.h
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -include $(OBJDIR)/act-cap.h -MMD -MP -c $< -o $@
+endif
