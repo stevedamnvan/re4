@@ -59,12 +59,14 @@ Paths are under `/root/probe/d367-agents/`. Rebase anything whose base is older 
 | `std-runtime/patches/item21-house-shells-84fc8ff.patch` | `3af4c52b…f51bf` | after item 20 | run with textured packages |
 | `std-runtime/patches/std-assets-wip-84fc8ff.patch` | `229f2710…8362` | 84fc8ff | WIP; low/FILE_01/02 rejected ("level error": assets wrote 3.0e38, rebuilding with 1e30) |
 | `vmu/kit-autoload-wip2.diff` (DBG_AUTOLOAD narrow starts) | `f8df61ad…67a1b2` | tree7 on 5f32de5 | rebase; gates A/B/C; its staging halts at r100 entry (213 texture opens fail, watchdog main.cpp:548) |
+| `actors30/actor-fog-gate.patch` (ACTOR_FOG_GATE) | `9b3e1b3d…d0b` | 8ac9f2d | STRICT only over 629 ticks; n8 fb-diff; hw ms quiet + n8; user call on the 1-pixel diff (below). Knob-off identity passes |
 | `vram/vram-pages-a-v1.patch` (VRAM_PAGES fix A) | `ad364080…f324` | ed24efa (applies at 8ac9f2d) | STRICT pair + hwproject. Flycast: alloc overhead 209,216 -> 0 B; preload 2.13 -> 2.40 MB resident; frame times unchanged |
 | `pacing/pace-v1v2-0825810.patch` | `a8370cde…1ba0` | 0825810 (applies at 8ac9f2d) | route v2 reruns, game vs wall time at 20 fps, hw ms per skipped tick, Flycast p50/p99 with enemies, picker backdrop on screen |
 | `w10/w10-door-u0/u1/u2/u6.patch` | stale | 5f32de5 | regenerate with `w10/tools/mkpatch_door.sh`; equalised STRICT via dvdhold (h0 baseline first) |
 | frontier `FIX_R101_CALL_DONE` (test only) | commit 2f97c09 on tree4 `m1-fx` | pre-8ac9f2d | Makefile tail conflict; rebase, then run r101e |
 | `assets/patches/w9b-lod-cluster-trees.patch` | `635f20a6…` | | parked W9b add-on |
-| logic P3b / P5 / P7 / P8 (`design-logic/`) | `11a2a36a…` / `0330a81a…` / `c19340ab…` / `ae53b44a…` | | P3b+P5 pair to land; P7 reject to confirm; P8 check |
+| logic P5 `design-logic/patches/design-logic-p5-vec-inline.patch` | `a65b8c15…d1d929` | 0825810 on top of P3b | r6 hw number (STRICT r11 3516 / route 5975, identity, r8 -0.24 done) |
+| logic P7 `…-p7-hermite-flat.patch` / P8 `…-p8-getpos-memo.patch` | `f843705d…` / `d1415f2b…` | 0825810 | P7: r8 +0.52 (layout effect), leaning reject, r6 check; P8: STRICT done, memo check run (0 mismatches) + hw runs |
 
 Open question for the user from std-runtime: `TREE_IMPOSTOR=1` enables the PT polygon list at PVR init before the
 quality mode is known, costing ~77 KB VRAM in Original mode too.
@@ -80,8 +82,8 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 | Warp rig (DBG_WARP) | `warp/` | test builds; presets planned r100-spawn/post-radio/house-door/bridge/east-door, r101-entry/bell-fight | finish presets; prove s03 house scene and r101 door |
 | VRAM | `vram/` | 161 KB r100 gap = 2 KiB page-alignment pad per texture (KOS pvr_mem in-VRAM headers defeat the page check); fix A (page allocator, ~158 KB) built, arms pa0/pa1 run; TA_DOUBLEBUF study arms ds0/ds1/dst0/dst1 run (SUBSCREEN=0 both sides) | analyse; deliver A; bring doublebuf vs C to the user |
 | Door loading | `w10/` | U1+U2+U6: r100 door 10.22 -> 6.29-6.75 s (Flycast emulated), source blocked 1.03 -> 0.07 s; wall-time pad failed as an equaliser; frame-based hold (IO_PROBE test hook in cDvdQueue::Read) built, h0 baseline running | h1/h2/h6 held STRICT vs h0, in-room p99/max, deliver U0/U1/U2/U6 |
-| Logic | `design-logic/` | P1-P4, P3 (GAME_CONCAT_COL), P6 (GAME_SINCOS) landed and in LH; FTRV **rejected** (changes RNG/kill timing in the shot fixture); P10, GAME_SCHED rejected | land P3b+P5 pair; P8 check; confirm P7 reject |
-| Enemies | `actors30/` | actor tiers in PERF (-19.9 hw ms at 8 Ganados); ACT_CAP code landed off; ACTOR_FOG_GATE approved (objscr beyond 25 m fog: -7.8 hw ms quiet r100) | fb-diff + STRICT gates, then PERF; item 4 Leon <=5 ms |
+| Logic | `design-logic/` | P1-P4, P3 (GAME_CONCAT_COL), P6 (GAME_SINCOS) and, after the hold, P3b (GAME_MULTVEC_SCHED, 45fd3d9 + README 43c0e75; r6 -0.28, r8 -0.13 hw ms) landed and in LH; FTRV **rejected** (~1.1 hw ms/tick but RNG diverges at tick 634, 3rd kill 3074 vs 3071; parked on branch `dl3-ftrv`); P10, GAME_SCHED rejected. CPU share at 30 fps: 70% at 6, 80% at 8 engaged Ganados | P5 r6 number and land; P8 check; confirm P7 reject; scripts in `tools/dl-scripts/` hard-code an old scratchpad path; DESIGN.md is v1 |
+| Enemies | `actors30/` | actor tiers in PERF (-19.9 hw ms at 8 Ganados); ACT_CAP code landed off; ACTOR_FOG_GATE built (18 cObjScr parts beyond 25 m fog cost 7.8 hw ms quiet r100); worktrees wt8/wt9/wtc kept; build dirs need a candidate.txt or the TEX_RESIDENT fan-out breaks | finish fog-gate gates, then PERF; item 4 Leon <=5 ms |
 | Rendering | `builder/` | R1 (FRONT_TEXOBJ) landed, not in recipe (-0.45); TA_HASH (2fe6fba) and group-8 PVR header compare (0aa5cc9, 0 bad of 210,800 parts) landed after the hold; canonical-recipe fight fixture does not reach gameplay (VMU_SAVE/VMU_DEBUG_SLOT card screens, NATIVE_MES/SUBSCREEN_OVL title stall), gates ran on `scripts/bmk2.sh` | R2 (8 KiB records 128/160/448, ~-9.5 hw ms expected); W9b plus two parked add-ons |
 | Standard assets, pipeline | `assets/` | Standard r100/r101/r103, disc staging, grove split (8 views), user VRAM trims landed; BIN 59 option B (kd split, same look) approved and in progress; BIN 1 shell failure fix in progress | finish B59 + shell fix; W9b add-ons: `patches/w9b-lod-cluster-trees.patch` (+ B59 one) |
 | Standard assets, runtime | `std-runtime/` | contract s16 implemented in part (impt); item 20 rebase; low/ rejection fallback fixed | item 20 -> item 21 -> per-mode selection -> r100 proof; note ~77 KB PT-list VRAM at init |
@@ -103,6 +105,9 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
   C gives up this ~12.5 ms/frame (roughly 16 vs 20 fps at the 50 ms target). Study patch
   `vram/ta-doublebuf-study-v1.patch` (sha `fb601d8e…c9f9c`), conflicts with SUBSCREEN=1 until (b).
 - **r103 implementation go-ahead** (plan only so far).
+- **ACTOR_FOG_GATE pixel.** In the frozen quiet frame exactly one pixel differs, (292,150): (148,137,115) off vs
+  (148,137,123) on, a fully fogged object pixel (same-arm controls 0). Accept it, or cull only beyond far + a margin.
+- **TREE_IMPOSTOR PT list** costs ~77 KB VRAM in Original mode too (see Parked patches).
 
 ## User decisions this session (also in the skill)
 
