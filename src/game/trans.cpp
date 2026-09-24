@@ -241,6 +241,16 @@ int g_material_tex_coord;
 int g_specular_tev_stage;
 void* g_prev_tpl_addr;
 void* g_prev_add_tpl_addr;
+// D367 records30 FRONT_TEXOBJ (R1; obj/records30.h, default off = previous image).
+#ifndef RE4DC_FRONT_TEXOBJ
+#define RE4DC_FRONT_TEXOBJ 0
+#endif
+#if RE4DC_FRONT_TEXOBJ && RE4DC_FRONT_NATIVE && defined(__sh__)
+static void frontTexFlush();
+#define FRONT_TEX_FLUSH() frontTexFlush()
+#else
+#define FRONT_TEX_FLUSH()
+#endif
 
 GXTexObj g_Get_tex_obj;
 Mtx specular_mat;
@@ -448,6 +458,7 @@ static void RefractShaderSetup(cModel* m, cModelInfo* info, ModelPart* part, Mtx
 // a render-to-texture manager's texture (0xF8..).
 void org_LoadTexObj(u32 id, int map)
 {
+    FRONT_TEX_FLUSH();
     GxWork* gx = GXWORK();
 
     if (id <= 0xF7) {
@@ -1259,6 +1270,7 @@ void ModelRender(cModel* m)
     u32 frontBeFlag = m->be_flag;
     void* frontTpl = g_prev_tpl_addr;
     void* frontAddTpl = g_prev_add_tpl_addr;
+    FRONT_TEX_FLUSH();
     if (frontNative) {
         memcpy(frontTexObj, GXWORK()->texObj, sizeof(frontTexObj));
         re4dc_front_verify(1);
@@ -1337,6 +1349,7 @@ void ModelRender(cModel* m)
 // the display list; foot shadows afterwards. flag bit0 = the shadow / depth pass (no alpha).
 void commonModelTrans(cModel* m, cModelInfo* info, Mtx viewMat, int flag)
 {
+    FRONT_TEX_FLUSH();
     static int bl[5][4] = {
         {1, 4, 5, 0},
         {1, 4, 1, 0},
@@ -1672,6 +1685,167 @@ static int frontNativeOk(cModel* m)
 // TPL cache, wrap fix-up and cTexChg swaps); per part the material texture (animated frame, UV
 // scroll), the alpha mask (part flags 4), the model's colour-stage scale and the faded material
 // alpha. `dry` (FRONT_NATIVE=2 replay): no foot shadow or draw mark.
+#if RE4DC_FRONT_TEXOBJ
+// D367 records30 FRONT_TEXOBJ (R1): the texture objects of a TPL set, built once. The source
+// re-initialises gx->texObj[0..n) (GXInitTexObj per descriptor, after the wrap fix-up) whenever
+// a model's TPL differs from the previous model's, then applies that model's cTexChg swaps.
+// Here that state is kept symbolic: the cached object words of (TPL, added TPL, count, wrap fix-up)
+// plus the swap result as an index remap, and the parts read their object from it. gx->texObj is
+// written (the same bytes) only when something else reads it: the source path, org_LoadTexObj,
+// the FRONT_NATIVE=2 snapshot, or before a new set with fewer objects (whose tail keeps the old
+// objects, as in the source). Swaps with an index outside the set, and sets that do not fit the
+// cache, take the source loop. Render only.
+namespace {
+struct FtRec { u32 w[4]; };  // GXInitTexObj stub words 0..3 (4..7 are zero)
+struct FtKey { void* tpl; void* add; void* data0; u16 first; u8 count; u8 wrap; };
+constexpr u32 kFtKeys = 32, kFtRecs = 512;  // r100 fight peak: 21 keys, 394 records
+FtKey ft_keys[kFtKeys];
+FtRec ft_recs[kFtRecs];
+u32 ft_nkeys, ft_nrecs, ft_room = ~0U;
+const FtKey* ft_cur;  // the set gx->texObj holds symbolically (0: gx->texObj is current)
+u8 ft_remap[0xF8];
+int ft_swapped;
+u32 ft_hits, ft_builds, ft_fallbacks, ft_flushes, ft_resets, ft_block = ~0U;
+TEXDescriptor* ftDesc(cModelInfo* info, u32 i)
+{
+    TEXPalette* tpl = (TEXPalette*) info->tpl_addr;
+    if (tpl->numDescriptors == 0) {
+        return TEXGet(info->pAddTpl, i);
+    } else if (i < tpl->numDescriptors) {
+        return TEXGet(tpl, i);
+    }
+    return TEXGet(info->pAddTpl, i - tpl->numDescriptors);
+}
+void ftObj(GXTexObj* o, const FtRec& r)
+{
+    u32* w = (u32*) o;
+    for (u32 k = 0; k < sizeof(GXTexObj) / 4; k++) {
+        w[k] = k < 4 ? r.w[k] : 0;
+    }
+}
+const FtKey* ftLookup(cModelInfo* info, ModelData* d, u32 n)
+{
+    const u32 room = ((u32) pG->stage_no << 8) | pG->room_no;
+    const u8 wrap = (s32) d->flags < 0;
+    if (n == 0 || n > 0xF8) {
+        return 0;
+    }
+    void* data0 = ftDesc(info, 0)->textureHeader->data;
+    if (room != ft_room) {
+        frontTexFlush();
+        ft_room = room;
+        ft_nkeys = ft_nrecs = 0;
+    }
+    for (u32 k = 0; k < ft_nkeys; k++) {
+        const FtKey& key = ft_keys[k];
+        if (key.tpl == info->tpl_addr && key.add == info->pAddTpl && key.count == n && key.wrap == wrap && key.data0 == data0) {
+            ++ft_hits;
+            return &key;
+        }
+    }
+    if (ft_nkeys == kFtKeys || ft_nrecs + n > kFtRecs) {
+        frontTexFlush();
+        ft_nkeys = ft_nrecs = 0;
+        ++ft_resets;
+    }
+    FtKey& key = ft_keys[ft_nkeys++];
+    key.tpl = info->tpl_addr;
+    key.add = info->pAddTpl;
+    key.data0 = data0;
+    key.first = (u16) ft_nrecs;
+    key.count = (u8) n;
+    key.wrap = wrap;
+    for (u32 i = 0; i < n; i++) {
+        TEXDescriptor* td = ftDesc(info, i);
+        TEXHeader* h = td->textureHeader;
+        if (wrap) {
+            h->wrapT = 1;
+            h->wrapS = 1;
+        }
+        FtRec& r = ft_recs[ft_nrecs++];
+        r.w[0] = (u32) h->data;
+        r.w[1] = ((u32) (u16) h->width << 16) | (u16) h->height;
+        r.w[2] = (u32) h->format;
+        r.w[3] = ((u32) h->wrapS << 8) | (u32) h->wrapT | ((u32) (u8) (h->minLOD == h->maxLOD ? 0 : 1) << 16);
+    }
+    if (wrap) {
+        // The fix-up rewrote the headers: sets of this TPL cached without it are stale.
+        for (u32 k = 0; k + 1 < ft_nkeys; k++) {
+            if (ft_keys[k].tpl == key.tpl && !ft_keys[k].wrap) {
+                ft_keys[k].tpl = 0;
+            }
+        }
+    }
+    ++ft_builds;
+    return &key;
+}
+// The source's `if (TPL changed) { init texObj; pTexChg->move }` for model m, info: 1 when it was
+// taken symbolically, 0 when the caller must run the source loop (gx->texObj is then current).
+int frontTexInit(cModel* m, cModelInfo* info, ModelData* d)
+{
+    const u32 n = ((TEXPalette*) info->tpl_addr)->numDescriptors + info->nAddTex;
+    const FtKey* key = ftLookup(info, d, n);
+    cTexChg* chg = MODEL_EXT(m)->pTexChg;
+    if (key && chg) {
+        u8 remap[0xF8];
+        for (u32 i = 0; i < n; i++) {
+            remap[i] = (u8) i;
+        }
+        const u8* p = chg->tbl;
+        for (int i = 0; i < chg->num; i++, p += 2) {
+            if (p[0] >= n || p[1] >= n) {
+                key = 0;
+                break;
+            }
+            remap[p[0]] = remap[p[1]];
+        }
+        if (key) {
+            memcpy(ft_remap, remap, n);
+        }
+    }
+    if (!key) {
+        frontTexFlush();
+        ++ft_fallbacks;
+        return 0;
+    }
+    if (ft_cur && ft_cur->count > n) {
+        frontTexFlush();  // the tail beyond n keeps the previous set's objects
+    }
+    ft_cur = key;
+    ft_swapped = chg != 0;
+    if (pG->Frame_cnt / 600 != ft_block) {
+        ft_block = pG->Frame_cnt / 600;
+        re4dc_log("front_texobj: frame=%u hits=%u builds=%u fallbacks=%u flushes=%u resets=%u keys=%u recs=%u\n", pG->Frame_cnt,
+                  ft_hits, ft_builds, ft_fallbacks, ft_flushes, ft_resets, ft_nkeys, ft_nrecs);
+    }
+    return 1;
+}
+// The object a part reads for texture `id` (gx->texObj[id] in the source).
+inline const void* frontTexObj(GxWork* gx, u32 id)
+{
+    if (id > 0xF7) {
+        return 0;
+    }
+    if (ft_cur && id < ft_cur->count) {
+        return &ft_recs[ft_cur->first + (ft_swapped ? ft_remap[id] : id)];
+    }
+    return &gx->texObj[id];
+}
+}
+static void frontTexFlush()
+{
+    if (!ft_cur) {
+        return;
+    }
+    GxWork* gx = GXWORK();
+    const FtRec* r = ft_recs + ft_cur->first;
+    for (u32 i = 0; i < ft_cur->count; i++) {
+        ftObj(&gx->texObj[i], r[ft_swapped ? ft_remap[i] : i]);
+    }
+    ft_cur = 0;
+    ++ft_flushes;
+}
+#endif
 static void frontNativeModelTrans(cModel* m, Mtx viewMat, int dry)
 {
     GxWork* gx = GXWORK();
@@ -1771,28 +1945,33 @@ static void frontNativeModelTrans(cModel* m, Mtx viewMat, int dry)
             GXLoadNrmMtxImm(nrm, 0);
         }
         if (g_prev_tpl_addr != info->tpl_addr || g_prev_add_tpl_addr != info->pAddTpl) {
-            for (i = 0; i < ((TEXPalette*) info->tpl_addr)->numDescriptors + info->nAddTex; i++) {
-                TEXPalette* tpl = (TEXPalette*) info->tpl_addr;
-                TEXDescriptor* td;
-                if (tpl->numDescriptors == 0) {
-                    td = TEXGet(info->pAddTpl, i);
-                } else if (i < tpl->numDescriptors) {
-                    td = TEXGet(tpl, i);
-                } else {
-                    td = TEXGet(info->pAddTpl, i - tpl->numDescriptors);
+#if RE4DC_FRONT_TEXOBJ
+            if (!frontTexInit(m, info, d))
+#endif
+            {
+                for (i = 0; i < ((TEXPalette*) info->tpl_addr)->numDescriptors + info->nAddTex; i++) {
+                    TEXPalette* tpl = (TEXPalette*) info->tpl_addr;
+                    TEXDescriptor* td;
+                    if (tpl->numDescriptors == 0) {
+                        td = TEXGet(info->pAddTpl, i);
+                    } else if (i < tpl->numDescriptors) {
+                        td = TEXGet(tpl, i);
+                    } else {
+                        td = TEXGet(info->pAddTpl, i - tpl->numDescriptors);
+                    }
+                    if ((s32) d->flags < 0) {
+                        TEXHeader* wh = td->textureHeader;
+                        wh->wrapT = 1;
+                        wh->wrapS = 1;
+                    }
+                    // GXInitTexObjLOD is a sink: only the base object is kept.
+                    GXInitTexObj(&gx->texObj[i], td->textureHeader->data, td->textureHeader->width, td->textureHeader->height,
+                                 td->textureHeader->format, td->textureHeader->wrapS, td->textureHeader->wrapT,
+                                 td->textureHeader->minLOD == td->textureHeader->maxLOD ? 0 : 1);
                 }
-                if ((s32) d->flags < 0) {
-                    TEXHeader* wh = td->textureHeader;
-                    wh->wrapT = 1;
-                    wh->wrapS = 1;
+                if (MODEL_EXT(m)->pTexChg != 0) {
+                    MODEL_EXT(m)->pTexChg->move(gx->texObj);
                 }
-                // GXInitTexObjLOD is a sink: only the base object is kept.
-                GXInitTexObj(&gx->texObj[i], td->textureHeader->data, td->textureHeader->width, td->textureHeader->height,
-                             td->textureHeader->format, td->textureHeader->wrapS, td->textureHeader->wrapT,
-                             td->textureHeader->minLOD == td->textureHeader->maxLOD ? 0 : 1);
-            }
-            if (MODEL_EXT(m)->pTexChg != 0) {
-                MODEL_EXT(m)->pTexChg->move(gx->texObj);
             }
         }
         PSet(g_prev_tpl_addr, info->tpl_addr);
@@ -1807,10 +1986,19 @@ static void frontNativeModelTrans(cModel* m, Mtx viewMat, int dry)
             if ((t->flags & 2) && t->anim != 0) {
                 texId = (t->anim + 4)[t->frame];
             }
+#if RE4DC_FRONT_TEXOBJ
+            re4dc_model_material((GXTexObj*) frontTexObj(gx, texId), t->u, t->v, t->flags);
+#else
             re4dc_model_material(texId <= 0xF7 ? &gx->texObj[texId] : 0, t->u, t->v, t->flags);
+#endif
             if (part->flags & 4) {
                 u8 ref = m->alpha_omit;
-                re4dc_model_alpha_material(part->alphaTex <= 0xF7 ? &gx->texObj[part->alphaTex] : 0,
+                re4dc_model_alpha_material(
+#if RE4DC_FRONT_TEXOBJ
+                    (GXTexObj*) frontTexObj(gx, part->alphaTex),
+#else
+                    part->alphaTex <= 0xF7 ? &gx->texObj[part->alphaTex] : 0,
+#endif
                                           ref == 0xFF ? part->alphaRef : ref, !(info->flagsDC & 8));
             }
             GXSetTevColorOp(0, 0, 0, scale, 1, 0);
@@ -1899,27 +2087,32 @@ static int sceneryGate(cModel* m)
         parts += info->pData->displist_num;
         ModelData* id = info->pData;
         if (g_prev_tpl_addr != info->tpl_addr || g_prev_add_tpl_addr != info->pAddTpl) {
-            for (u32 i = 0; i < ((TEXPalette*) info->tpl_addr)->numDescriptors + info->nAddTex; i++) {
-                TEXPalette* tpl = (TEXPalette*) info->tpl_addr;
-                TEXDescriptor* td;
-                if (tpl->numDescriptors == 0) {
-                    td = TEXGet(info->pAddTpl, i);
-                } else if (i < tpl->numDescriptors) {
-                    td = TEXGet(tpl, i);
-                } else {
-                    td = TEXGet(info->pAddTpl, i - tpl->numDescriptors);
+#if RE4DC_FRONT_TEXOBJ
+            if (!frontTexInit(m, info, id))
+#endif
+            {
+                for (u32 i = 0; i < ((TEXPalette*) info->tpl_addr)->numDescriptors + info->nAddTex; i++) {
+                    TEXPalette* tpl = (TEXPalette*) info->tpl_addr;
+                    TEXDescriptor* td;
+                    if (tpl->numDescriptors == 0) {
+                        td = TEXGet(info->pAddTpl, i);
+                    } else if (i < tpl->numDescriptors) {
+                        td = TEXGet(tpl, i);
+                    } else {
+                        td = TEXGet(info->pAddTpl, i - tpl->numDescriptors);
+                    }
+                    if ((s32) id->flags < 0) {
+                        TEXHeader* wh = td->textureHeader;
+                        wh->wrapT = 1;
+                        wh->wrapS = 1;
+                    }
+                    GXInitTexObj(&gx->texObj[i], td->textureHeader->data, td->textureHeader->width, td->textureHeader->height,
+                                 td->textureHeader->format, td->textureHeader->wrapS, td->textureHeader->wrapT,
+                                 td->textureHeader->minLOD == td->textureHeader->maxLOD ? 0 : 1);
                 }
-                if ((s32) id->flags < 0) {
-                    TEXHeader* wh = td->textureHeader;
-                    wh->wrapT = 1;
-                    wh->wrapS = 1;
+                if (MODEL_EXT(m)->pTexChg != 0) {
+                    MODEL_EXT(m)->pTexChg->move(gx->texObj);
                 }
-                GXInitTexObj(&gx->texObj[i], td->textureHeader->data, td->textureHeader->width, td->textureHeader->height,
-                             td->textureHeader->format, td->textureHeader->wrapS, td->textureHeader->wrapT,
-                             td->textureHeader->minLOD == td->textureHeader->maxLOD ? 0 : 1);
-            }
-            if (MODEL_EXT(m)->pTexChg != 0) {
-                MODEL_EXT(m)->pTexChg->move(gx->texObj);
             }
         }
         PSet(g_prev_tpl_addr, info->tpl_addr);

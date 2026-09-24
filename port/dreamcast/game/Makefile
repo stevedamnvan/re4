@@ -718,3 +718,5 @@ include safecuts.mk
 include effects30.mk
 # D367 scenery30 (PLAN_ADMIT_LEAN, SCENERY_GATE, MODEL_SLAB_LATCH; default off: no effect).
 include scenery30.mk
+# D367 records30 (FRONT_TEXOBJ; default off: no effect).
+include records30.mk
