@@ -97,6 +97,8 @@ void re4dc_quality_freeze(const char* where);
 // about 35 vblanks when the VMU layer is linked). Returns 1 when stored or unchanged.
 int re4dc_quality_pace(void);
 int re4dc_quality_set_pace(int pace);
+// QUALITY_ASSETS: 1 when the frozen mode is Standard (select the Standard asset set).
+int re4dc_quality_std_assets(void);
 // PERF_HUD: v[0] = mode, v[1] = feature word. Returns 2.
 int re4dc_quality_hud(unsigned v[2]);
 

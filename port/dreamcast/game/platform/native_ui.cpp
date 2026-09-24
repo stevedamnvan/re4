@@ -967,7 +967,15 @@ bool model_mask_key(const Re4dcModelPart* p,Key& key){
 // the flat /cd/dc/tex directory (~550 packages, 17+ sectors) overflowed the
 // iso9660 16-sector inode cache, so every open re-read the directory from the
 // disc (~0.2 s per first-sight texture in Flycast at r100, ~0.3 s at r101).
+#if RE4DC_QUALITY_ASSETS
+// Standard (s16.2): the keys the room's index adds live in texlow/ (never in tex/).
+extern "C" int re4dc_std_texlow(unsigned crc,unsigned fnv);
+extern "C" int re4dc_std_dropped(unsigned crc,unsigned fnv);
+extern "C" int re4dc_std_texture(unsigned i,unsigned out[5]);
+#define RE4DC_TEX_PATH(buf,key) std::sprintf(buf,re4dc_std_texlow((key).crc,(key).fnv)?"/cd/dc/texlow/%x/%08x-%08x.re4tex":"/cd/dc/tex/%x/%08x-%08x.re4tex",(key).crc>>28,(key).crc,(key).fnv)
+#else
 #define RE4DC_TEX_PATH(buf,key) std::sprintf(buf,"/cd/dc/tex/%x/%08x-%08x.re4tex",(key).crc>>28,(key).crc,(key).fnv)
+#endif
 #else
 #define RE4DC_TEX_PATH(buf,key) std::sprintf(buf,"/cd/dc/tex/%08x-%08x.re4tex",(key).crc,(key).fnv)
 #endif
@@ -1234,10 +1242,16 @@ unsigned preload_least(unsigned width,unsigned height){
 }
 struct PreloadPick { Key key; unsigned short width,height,format; };
 PreloadPick preload_picks[kTextureCount];
+#if RE4DC_QUALITY_ASSETS
+bool preload_room_pass; // Standard: skip the index's drop keys in the room-identity pass only
+#endif
 void preload_select(const re4dc::texture::SourceIdentityTable& table,unsigned& n,unsigned& resident,unsigned& bytes,unsigned limit,unsigned byte_limit){
     for(unsigned i=0;i<table.count() && n+resident<limit;++i){
         unsigned crc,fnv,width,height,format;
         if(!table.record(i,crc,fnv,width,height,format) || !width || !height || width>1024 || height>1024)continue;
+#if RE4DC_QUALITY_ASSETS
+        if(preload_room_pass && re4dc_std_dropped(crc,fnv))continue;
+#endif
         const Key key{crc,fnv};
         bool known=false;
         for(auto& e:entries)if(e.valid && e.key==key){if(e.frame!=frame){e.frame=frame;++resident;bytes+=e.package.vram_bytes();}known=true;break;}
@@ -1259,7 +1273,22 @@ void preload_identities(){
     const unsigned limit=kTextureCount>RE4DC_TEX_RESIDENT_RESERVE_SLOTS+pinned?kTextureCount-RE4DC_TEX_RESIDENT_RESERVE_SLOTS-pinned:0;
     const unsigned byte_limit=budget>reserve+pinned_bytes?budget-reserve-pinned_bytes:0;
     unsigned n=0,resident=0,bytes=0; // resident: already uploaded, pinned for the loop
+#if RE4DC_QUALITY_ASSETS
+    preload_room_pass=true;preload_select(room_identities,n,resident,bytes,limit,byte_limit);preload_room_pass=false;
+    // Standard: the textures the index adds (shells, impostor atlases), after the room pass.
+    {unsigned t[5];
+     for(unsigned i=0;re4dc_std_texture(i,t) && n+resident<limit;++i){
+        const Key key{t[0],t[1]};
+        bool known=false;
+        for(auto& e:entries)if(e.valid && e.key==key){if(e.frame!=frame){e.frame=frame;++resident;bytes+=e.package.vram_bytes();}known=true;break;}
+        for(const auto& m:missing_keys)if(!known && (m.crc|m.fnv) && m==key)known=true;
+        for(unsigned k=0;k<n && !known;++k)if(preload_picks[k].key==key)known=true;
+        if(known || bytes+t[4]>byte_limit)continue;
+        preload_picks[n++]={key,(unsigned short)t[2],(unsigned short)t[3],5};bytes+=t[4];
+     }}
+#else
     preload_select(room_identities,n,resident,bytes,limit,byte_limit);
+#endif
     for(auto& e:enemy_identities)if(e.archive)preload_select(e.table,n,resident,bytes,limit,byte_limit);
     preload_select(player_identities,n,resident,bytes,limit,byte_limit);preload_select(weapon_identities,n,resident,bytes,limit,byte_limit);
     // Package-name order ("%08x-%08x": crc, then fnv).

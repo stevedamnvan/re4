@@ -260,9 +260,15 @@ extern "C" void re4dc_dbgslot_poll(unsigned generation, unsigned room_frames);
 extern "C" void re4dc_warp_room_enter(void);
 extern "C" void re4dc_warp_poll(void);
 #endif
+#if RE4DC_QUALITY_ASSETS
+extern "C" void re4dc_std_room_enter(unsigned room);   // platform/native_static.cpp
+#endif
 extern "C" void re4dc_room_enter(){
 #if RE4DC_QUALITY
     re4dc_quality_freeze("room");
+#endif
+#if RE4DC_QUALITY_ASSETS
+    re4dc_std_room_enter((unsigned(pG->stage_no)<<8)|pG->room_no); // before any package open
 #endif
 #if RE4DC_IO_PROBE
     io_cycle_enter();

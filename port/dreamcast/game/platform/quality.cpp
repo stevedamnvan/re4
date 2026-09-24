@@ -225,6 +225,10 @@ extern "C" void re4dc_quality_freeze(const char* where)
     log_state(where);
 }
 
+#if RE4DC_QUALITY_ASSETS
+extern "C" int re4dc_quality_std_assets(void) { return q.frozen && q.mode == RE4DC_QUALITY_STANDARD; }
+#endif
+
 extern "C" int re4dc_quality_hud(unsigned v[2])
 {
     v[0] = q.mode;

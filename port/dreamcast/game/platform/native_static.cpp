@@ -20,6 +20,7 @@
 #include <cmath>
 #include <stdio.h>
 #include <cstring>
+#include <cstdlib>
 #include "native_static.h"
 #if RE4DC_QUALITY
 #include "quality.h"
@@ -127,8 +128,40 @@ extern "C" int re4dc_model_pt_begin(unsigned crc,unsigned fnv,unsigned width,uns
 extern "C" void re4dc_model_texture(const unsigned* key);
 #endif
 
+#if RE4DC_QUALITY_ASSETS
+#if !RE4DC_QUALITY || !RE4DC_TREE_IMPOSTOR || !RE4DC_MESH_TEXTURES
+#error QUALITY_ASSETS needs QUALITY=1 TREE_IMPOSTOR=1 MESH_TEXTURES=1
+#endif
+extern "C" int re4dc_fixture_read(const char* path,char* buffer,unsigned size);   // os.cpp
+#endif
+
 namespace {
 using re4dc::room::Package;
+#if RE4DC_QUALITY_ASSETS
+// Standard asset set (D367_ASSET_PIPELINE.md s16). re4dc_std_room_enter() parses
+// native/<room>/low/index.txt once per room entry (Standard mode only) into these
+// fixed tables; the text buffer is freed after parsing. A rejected or missing index
+// leaves the room on the Original packages (lod_px stays the Standard 5).
+struct StdTex { unsigned crc,fnv; unsigned short width,height; unsigned vram; };
+struct StdKey { unsigned crc,fnv; };
+struct StdCull { unsigned char view,common; unsigned short mesh,bin; float mm; };
+struct StdImp { unsigned char view,common; unsigned short bin; float mm; re4dc::room::MeshImpostor rec; };
+struct StdPtex { unsigned char view,common; unsigned short part,bin; unsigned key[4]; };
+// s16.5 split groves: one impostor per tree = a cluster range of one part.
+struct StdImpt { unsigned char view,common; unsigned short bin,part,first,count; float mm; re4dc::room::MeshImpostor rec; };
+constexpr unsigned kStdMesh=16,kStdTex=32,kStdDrop=16,kStdCull=64,kStdImp=32,kStdPtex=32,kStdImpt=32,kStdText=4096;
+constexpr unsigned kStdTokens=24; // widest record: impt, 21 tokens
+struct StdRoom {
+    unsigned room=~0U; bool active=false;                 // active: index accepted for this room
+    unsigned mesh_bytes[8]; unsigned char mesh_views;     // bit per mesh view: open low/<OWNER>
+    unsigned char checked;                                // bit per mesh view: records verified at open
+    unsigned ntex,ndrop,ncull,nimp,nptex,nimpt;
+    StdTex tex[kStdTex]; StdKey drop[kStdDrop]; StdCull cull[kStdCull]; StdImp imp[kStdImp]; StdPtex ptex[kStdPtex]; StdImpt impt[kStdImpt];
+};
+StdRoom std_room;
+unsigned std_stats[6]; // culled draws, impostor records used, baked parts, low/ opens, tree quads, tree cluster ranges drawn
+#endif
+
 constexpr unsigned kViews=6;           // main + source blocks 0..4
 constexpr unsigned kMaxMaterials=64;   // per-frame key ownership is one mask word
 // Package coordinates are source world units times --source-unit-scale.
@@ -158,6 +191,143 @@ const char* owner_name(unsigned index,char* out,unsigned size){
     return out;
 }
 
+#if RE4DC_QUALITY_ASSETS
+constexpr unsigned kStdCommon=kViews; // COMMON's mesh view (mesh_views[kCommonView])
+int std_owner(const char* s){
+    if(!std::strcmp(s,"COMMON"))return int(kStdCommon);
+    char name[16];
+    for(unsigned i=0;i<kViews;++i)if(!std::strcmp(owner_name(i,name,sizeof(name)),s))return int(i);
+    return -1;
+}
+bool std_hex_key(const char* s,unsigned& crc,unsigned& fnv){
+    char* e=nullptr;
+    crc=unsigned(std::strtoul(s,&e,16));if(e!=s+8 || *e!='-')return false;
+    fnv=unsigned(std::strtoul(e+1,&e,16));return e==s+17 && !*e;
+}
+// Splits one line into at most kStdTokens space-separated tokens (in place).
+unsigned std_tokens(char* line,char** t){
+    unsigned n=0;
+    for(char* s=line;*s && n<kStdTokens;){
+        while(*s==' ')++s;
+        if(!*s)break;
+        t[n++]=s;
+        while(*s && *s!=' ')++s;
+        if(*s)*s++=0;
+    }
+    return n;
+}
+// Parses the index text; false (with a log line) rejects the whole index.
+bool std_parse(char* text,unsigned room){
+    StdRoom& r=std_room;
+    unsigned lines=0;bool header=false,ended=false;
+    char* next=text;
+    while(*next && !ended){
+        char* line=next;
+        while(*next && *next!='\n')++next;
+        if(*next)*next++=0;
+        if(!*line)continue;                      // an empty last line
+        if(*line=='#'){++lines;continue;}
+        char* t[kStdTokens];const unsigned n=std_tokens(line,t);
+        if(!n){++lines;continue;}
+        const char* k=t[0];
+        const auto num=[](const char* s){return unsigned(std::strtoul(s,nullptr,10));};
+        const auto fp=[](const char* s){return float(std::strtod(s,nullptr));};
+        if(!header){
+            char want[8];snprintf(want,sizeof(want),"r%x%02x",room>>8,room&255U);
+            if(n!=3 || std::strcmp(k,"re4dc-std") || std::strcmp(t[1],"1") || std::strcmp(t[2],want)){
+                re4dc_log("quality assets: index header rejected (room %s)\n",want);return false;}
+            header=true;++lines;continue;
+        }
+        if(!std::strcmp(k,"end")){
+            if(n!=2 || num(t[1])!=lines){re4dc_log("quality assets: index end %s != %u lines\n",n>1?t[1]:"-",lines);return false;}
+            ended=true;continue;
+        }
+        ++lines;
+        if(!std::strcmp(k,"lod_px")){
+            if(n>=2 && unsigned(fp(t[1])+0.5f)!=unsigned(re4dc_quality()->lod_px+0.5f))
+                re4dc_log("quality assets: index lod_px %s, runtime %u\n",t[1],unsigned(re4dc_quality()->lod_px));
+        }else if(!std::strcmp(k,"mesh")){
+            const int v=n>=4?std_owner(t[1]):-1;
+            if(v<0 || (r.mesh_views>>v)&1U){re4dc_log("quality assets: bad mesh record %s\n",n>1?t[1]:"-");return false;}
+            r.mesh_views|=1U<<v;r.mesh_bytes[v]=num(t[2]);
+        }else if(!std::strcmp(k,"tex")){
+            StdTex x{};
+            if(n<6 || !std_hex_key(t[1],x.crc,x.fnv) || r.ntex>=kStdTex){re4dc_log("quality assets: bad tex record\n");return false;}
+            x.width=(unsigned short)num(t[2]);x.height=(unsigned short)num(t[3]);x.vram=num(t[4]);r.tex[r.ntex++]=x;
+        }else if(!std::strcmp(k,"drop")){
+            StdKey x{};
+            if(n<2 || !std_hex_key(t[1],x.crc,x.fnv) || r.ndrop>=kStdDrop){re4dc_log("quality assets: bad drop record\n");return false;}
+            r.drop[r.ndrop++]=x;
+        }else if(!std::strcmp(k,"cull")){
+            const int v=n>=6?std_owner(t[1]):-1;
+            if(v<0 || r.ncull>=kStdCull){re4dc_log("quality assets: bad cull record\n");return false;}
+            r.cull[r.ncull++]={(unsigned char)v,(unsigned char)(num(t[4])!=0),(unsigned short)num(t[2]),(unsigned short)num(t[3]),fp(t[5])};
+        }else if(!std::strcmp(k,"imp")){
+            const int v=n>=18?std_owner(t[1]):-1;
+            StdImp x{};
+            unsigned kc=0,kf=0;
+            if(v<0 || r.nimp>=kStdImp || !std_hex_key(t[6],kc,kf)){re4dc_log("quality assets: bad imp record\n");return false;}
+            x.view=(unsigned char)v;x.bin=(unsigned short)num(t[3]);x.common=(unsigned char)(num(t[4])!=0);x.mm=fp(t[5]);
+            auto& q=x.rec;q.mesh=num(t[2]);q.key_crc=kc;q.key_fnv=kf;
+            q.views=(std::uint16_t)num(t[7]);q.cols=(std::uint16_t)num(t[8]);q.cell_w=(std::uint16_t)num(t[9]);q.cell_h=(std::uint16_t)num(t[10]);
+            q.atlas_w=(std::uint16_t)num(t[11]);q.atlas_h=(std::uint16_t)num(t[12]);
+            q.centre[0]=fp(t[13]);q.centre[1]=fp(t[14]);q.centre[2]=fp(t[15]);q.half_w=fp(t[16]);q.half_h=fp(t[17]);q.reserved=0;
+            if(!q.views || !q.cols || !q.cell_w || !q.cell_h || !(q.half_w>0.0f) || !(q.half_h>0.0f)){re4dc_log("quality assets: bad imp values\n");return false;}
+            r.imp[r.nimp++]=x;
+        }else if(!std::strcmp(k,"impt")){
+            const int v=n>=21?std_owner(t[1]):-1;
+            StdImpt x{};unsigned kc=0,kf=0;
+            if(v<0 || r.nimpt>=kStdImpt || !std_hex_key(t[9],kc,kf)){re4dc_log("quality assets: bad impt record\n");return false;}
+            x.view=(unsigned char)v;x.bin=(unsigned short)num(t[3]);x.common=(unsigned char)(num(t[4])!=0);
+            x.part=(unsigned short)num(t[5]);x.first=(unsigned short)num(t[6]);x.count=(unsigned short)num(t[7]);x.mm=fp(t[8]);
+            auto& q=x.rec;q.mesh=num(t[2]);q.key_crc=kc;q.key_fnv=kf;
+            q.views=(std::uint16_t)num(t[10]);q.cols=(std::uint16_t)num(t[11]);q.cell_w=(std::uint16_t)num(t[12]);q.cell_h=(std::uint16_t)num(t[13]);
+            q.atlas_w=(std::uint16_t)num(t[14]);q.atlas_h=(std::uint16_t)num(t[15]);
+            q.centre[0]=fp(t[16]);q.centre[1]=fp(t[17]);q.centre[2]=fp(t[18]);q.half_w=fp(t[19]);q.half_h=fp(t[20]);q.reserved=0;
+            if(!q.views || !q.cols || !q.cell_w || !q.cell_h || !x.count || x.first+x.count>64U || !(q.half_w>0.0f) || !(q.half_h>0.0f)){
+                re4dc_log("quality assets: bad impt values\n");return false;}
+            r.impt[r.nimpt++]=x;
+        }else if(!std::strcmp(k,"ptex")){
+            const int v=n>=8?std_owner(t[1]):-1;
+            StdPtex x{};
+            if(v<0 || r.nptex>=kStdPtex || !std_hex_key(t[5],x.key[0],x.key[1])){re4dc_log("quality assets: bad ptex record\n");return false;}
+            x.view=(unsigned char)v;x.part=(unsigned short)num(t[2]);x.bin=(unsigned short)num(t[3]);x.common=(unsigned char)(num(t[4])!=0);
+            x.key[2]=num(t[6]);x.key[3]=num(t[7]);r.ptex[r.nptex++]=x;
+        }
+        // orig and unknown record types: ignored (staging checks orig)
+    }
+    if(!header || !ended){re4dc_log("quality assets: index truncated (no end line)\n");return false;}
+    return true;
+}
+// Verifies this view's records against the package opened for it (s16.3: mesh
+// index in range with the recorded bin/common; ptex part inside such a mesh).
+bool std_check_view(unsigned view,const re4dc::room::MeshPackage& pk){
+    const StdRoom& r=std_room;
+    const unsigned meshes=pk.header().mesh_count;
+    const auto ok=[&](unsigned m,unsigned bin,unsigned common){
+        return m<meshes && pk.meshes()[m].bin==bin && (pk.meshes()[m].common!=0)==(common!=0);};
+    for(unsigned i=0;i<r.ncull;++i)if(r.cull[i].view==view && !ok(r.cull[i].mesh,r.cull[i].bin,r.cull[i].common))return false;
+    for(unsigned i=0;i<r.nimp;++i)if(r.imp[i].view==view && !ok(r.imp[i].rec.mesh,r.imp[i].bin,r.imp[i].common))return false;
+    for(unsigned i=0;i<r.nimpt;++i){
+        const StdImpt& x=r.impt[i];if(x.view!=view)continue;
+        if(!ok(x.rec.mesh,x.bin,x.common))return false;
+        const auto& rec=pk.meshes()[x.rec.mesh];
+        if(x.part<rec.first_part || x.part>=rec.first_part+rec.part_count)return false;
+        if(x.first+x.count>pk.part_lods()[x.part].cluster_count)return false;
+        for(unsigned j=0;j<r.nimp;++j)if(r.imp[j].view==view && r.imp[j].rec.mesh==x.rec.mesh)return false; // imp or impt, never both
+    }
+    for(unsigned i=0;i<r.nptex;++i){
+        const StdPtex& x=r.ptex[i];if(x.view!=view)continue;
+        bool found=false;
+        for(unsigned m=0;m<meshes && !found;++m){
+            const auto& rec=pk.meshes()[m];
+            found=ok(m,x.bin,x.common) && x.part>=rec.first_part && x.part<rec.first_part+rec.part_count;
+        }
+        if(!found)return false;
+    }
+    return true;
+}
+#endif
 void retire(View& v){
     v.package.close();
     if(v.storage){re4dc_static_free(v.storage);stats.package_bytes-=v.bytes;--stats.owners_open;}
@@ -541,9 +711,20 @@ bool open(MeshView& v,unsigned index,unsigned room){
     if(index==kCommonView)snprintf(name,sizeof(name),"COMMON");
     else owner_name(index,name,sizeof(name));
     snprintf(path,sizeof(path),"/cd/dc/native/r%x%02x/%s.re4mesh",room>>8,room&255U,name);
+#if RE4DC_QUALITY_ASSETS
+    const unsigned view=unsigned(&v-mesh_views);
+    const bool low=std_room.active && std_room.room==room && ((std_room.mesh_views>>view)&1U);
+    if(low){snprintf(path,sizeof(path),"/cd/dc/native/r%x%02x/low/%s.re4mesh",room>>8,room&255U,name);++std_stats[3];}
+#endif
     const file_t file=fs_open(path,O_RDONLY);
     if(file==FILEHND_INVALID){++stats.open_failures;re4dc_log("native mesh: %s missing\n",path);return false;}
     const unsigned size=unsigned(fs_total(file));
+#if RE4DC_QUALITY_ASSETS
+    if(low && size!=std_room.mesh_bytes[view]){
+        re4dc_log("quality assets: %s is %u B, index says %u: Original package\n",path,size,std_room.mesh_bytes[view]);
+        fs_close(file);std_room.mesh_views&=~(1U<<view);v.attempted=false;return open(v,index,room);
+    }
+#endif
     const unsigned package_bytes=(size+31U)&~31U;
     // Header first: the placement table is sized from its mesh count.
     re4dc::room::MeshHeader head{};
@@ -567,9 +748,23 @@ bool open(MeshView& v,unsigned index,unsigned room){
     if(!storage){re4dc_log("native mesh: %s not loaded (size=%u heap=%d)\n",path,size,stats.heap_before);return false;}
     if(!v.package.adopt(storage,size,RE4DC_MESH_LOD!=0)){
         re4dc_log("native mesh: %s rejected: %s\n",path,v.package.error());
-        re4dc_static_free(storage);++stats.open_failures;return false;
+        re4dc_static_free(storage);++stats.open_failures;
+#if RE4DC_QUALITY_ASSETS
+        // A rejected Standard package: this owner opens its Original package instead.
+        if(low){std_room.mesh_views&=~(1U<<view);v.attempted=false;re4dc_log("quality assets: Original package for this owner\n");return open(v,index,room);}
+#endif
+        return false;
     }
     v.storage=storage;v.bytes=package_bytes+table+kLutBytes+gather;
+#if RE4DC_QUALITY_ASSETS
+    // Per-mesh records apply only to the package they were built against.
+    if(std_room.active && std_room.room==room){
+        if(!low || !std_check_view(view,v.package)){
+            if(low)re4dc_log("quality assets: %s records do not match the package: records off for this room\n",path);
+            if(low){std_room.ncull=std_room.nimp=std_room.nptex=std_room.nimpt=0;}
+        }else std_room.checked|=1U<<view;
+    }
+#endif
     if(gather)v.gather=reinterpret_cast<re4dc::room::CompactVertex12*>(storage+package_bytes+table+kLutBytes);
     if(table){v.entries=reinterpret_cast<MeshEntry*>(storage+package_bytes);v.capacity=capacity;std::memset(v.entries,0,table);}
 #if RE4DC_MESH_FASTPATH
@@ -693,6 +888,9 @@ struct MeshDraw : Emitter {
     // fogged past the View far) instead of going through the clipper.
     float cull_far=0;
     unsigned part_index=0; // v2: index into the package's part LOD table
+#if RE4DC_QUALITY_ASSETS
+    std::uint64_t skip_clusters=0; // Standard impt: clusters (bit = index in the part) drawn as tree quads
+#endif
     float lod_scale=0;     // v2: level error (model units) * lod_scale <= depth
     re4dc::room::CompactBatch batch{};
     // v3: an indexed meshlet's corners are gathered from its part pool into
@@ -815,6 +1013,9 @@ struct MeshDraw : Emitter {
         const auto& lod=package.part_lods()[part_index];
         const auto* clusters=package.clusters();const auto* levels=package.levels();
         for(unsigned c=lod.first_cluster;c<lod.first_cluster+lod.cluster_count;++c){
+#if RE4DC_QUALITY_ASSETS
+            if(skip_clusters && c-lod.first_cluster<64U && ((skip_clusters>>(c-lod.first_cluster))&1U))continue;
+#endif
             const auto& cl=clusters[c];
             float lo[3],hi[3];
             for(unsigned a=0;a<3;++a){lo[a]=float(cl.bounds_min[a]);hi[a]=float(cl.bounds_max[a]);}
@@ -922,6 +1123,41 @@ extern "C" void re4dc_static_retire_all(){
 #endif
 }
 extern "C" const Re4dcStaticStats* re4dc_static_stats(){return &stats;}
+#if RE4DC_QUALITY_ASSETS
+// ui_bridge.cpp re4dc_room_enter(): after the quality freeze, before any package
+// of the room opens. Original never reads the index (nor low/ or texlow/).
+extern "C" void re4dc_std_room_enter(unsigned room){
+    StdRoom& r=std_room;
+    r.room=room;r.active=false;r.mesh_views=0;r.checked=0;r.ntex=r.ndrop=r.ncull=r.nimp=r.nptex=r.nimpt=0;
+    if(!re4dc_quality_std_assets())return;
+    char path[64];snprintf(path,sizeof(path),"/cd/dc/native/r%x%02x/low/index.txt",room>>8,room&255U);
+    char* text=static_cast<char*>(std::malloc(kStdText));
+    const int n=text?re4dc_fixture_read(path,text,kStdText):-1;
+    if(n<=0){re4dc_log("quality assets: %s missing: Original packages\n",path);std::free(text);return;}
+    if(n>=int(kStdText)){re4dc_log("quality assets: %s larger than %u B: Original packages\n",path,kStdText);std::free(text);return;}
+    text[n]=0;
+    r.active=std_parse(text,room);
+    std::free(text);
+    if(!r.active){r.mesh_views=0;r.ntex=r.ndrop=r.ncull=r.nimp=r.nptex=r.nimpt=0;re4dc_log("quality assets: %s rejected: Original packages\n",path);return;}
+    re4dc_log("quality assets: %s mesh=%02x tex=%u drop=%u cull=%u imp=%u impt=%u ptex=%u\n",path,r.mesh_views,r.ntex,r.ndrop,r.ncull,r.nimp,r.nimpt,r.nptex);
+}
+// native_ui.cpp: texture keys Standard adds (texlow/), and the room keys it drops.
+extern "C" int re4dc_std_texlow(unsigned crc,unsigned fnv){
+    const StdRoom& r=std_room;if(!r.active)return 0;
+    for(unsigned i=0;i<r.ntex;++i)if(r.tex[i].crc==crc && r.tex[i].fnv==fnv)return 1;
+    return 0;
+}
+extern "C" int re4dc_std_dropped(unsigned crc,unsigned fnv){
+    const StdRoom& r=std_room;if(!r.active)return 0;
+    for(unsigned i=0;i<r.ndrop;++i)if(r.drop[i].crc==crc && r.drop[i].fnv==fnv)return 1;
+    return 0;
+}
+// i-th added texture: key, size and VRAM bytes; 0 past the end.
+extern "C" int re4dc_std_texture(unsigned i,unsigned out[5]){
+    const StdRoom& r=std_room;if(!r.active || i>=r.ntex)return 0;
+    const StdTex& t=r.tex[i];out[0]=t.crc;out[1]=t.fnv;out[2]=t.width;out[3]=t.height;out[4]=t.vram;return 1;
+}
+#endif
 #if RE4DC_TREE_IMPOSTOR
 // native_ui re4dc_model_finish_source_draws(): after the OP pass, before the
 // translucent drain. One PT packet per (atlas, fog) with each quad as a
@@ -1139,6 +1375,10 @@ void log_stats(unsigned frame){
 #if RE4DC_TREE_IMPOSTOR
         re4dc_log("native static: frame=%u impostors=%u parts_skipped=%u queue_full=%u batches=%u switch_mm=%u\n",frame,
             impostor_stats[0],impostor_stats[1],impostor_stats[2],impostor_stats[3],unsigned(RE4DC_TREE_IMPOSTOR_MM));
+#if RE4DC_QUALITY_ASSETS
+        if(std_room.active)re4dc_log("quality assets: frame=%u culled=%u imp=%u baked=%u low_opens=%u tree_quads=%u tree_geom=%u checked=%02x\n",frame,
+            std_stats[0],std_stats[1],std_stats[2],std_stats[3],std_stats[4],std_stats[5],std_room.checked);
+#endif
 #endif
     }
 }
@@ -1232,7 +1472,18 @@ std::uint32_t impostor_color(const MeshView& v,const re4dc::room::MeshRecord& me
 // the whole object; its other parts follow that decision.
 int mesh_impostor(MeshView& v,unsigned mesh_index,const re4dc::room::MeshPart& part,const Re4dcModelPart& p,
                   float near,float far){
+#if RE4DC_QUALITY_ASSETS
+    // Standard: the index's imp records replace the package's (s16.3), with their own switch depth.
+    re4dc::room::MeshImpostor* r=nullptr;float switch_mm=float(RE4DC_TREE_IMPOSTOR_MM);
+    if(std_room.active){
+        const unsigned view=unsigned(&v-mesh_views);
+        if((std_room.checked>>view)&1U)
+            for(unsigned i=0;i<std_room.nimp;++i)if(std_room.imp[i].view==view && std_room.imp[i].rec.mesh==mesh_index){
+                r=&std_room.imp[i].rec;switch_mm=std_room.imp[i].mm;break;}
+    }else r=const_cast<re4dc::room::MeshImpostor*>(v.package.impostor(mesh_index));
+#else
     auto* r=const_cast<re4dc::room::MeshImpostor*>(v.package.impostor(mesh_index));
+#endif
     if(!r)return 0;
     const unsigned frame=re4dc_ui_frame();
     const auto& mesh=v.package.meshes()[mesh_index];
@@ -1246,7 +1497,12 @@ int mesh_impostor(MeshView& v,unsigned mesh_index,const re4dc::room::MeshPart& p
     const float* m=p.modelview;const float* C=r->centre;
     float c[3];
     for(unsigned i=0;i<3;++i)c[i]=m[4*i]*C[0]+m[4*i+1]*C[1]+m[4*i+2]*C[2]+m[4*i+3];
+#if RE4DC_QUALITY_ASSETS
+    if(!(-c[2]>=switch_mm))return 0;
+    if(std_room.active)++std_stats[1];
+#else
     if(!(-c[2]>=float(RE4DC_TREE_IMPOSTOR_MM)))return 0;
+#endif
     const float scale=std::sqrt(m[0]*m[0]+m[1]*m[1]+m[2]*m[2]);
     if(-c[2]-(r->half_w>r->half_h?r->half_w:r->half_h)*scale>far){impostor_queued=true;return 1;} // as its clusters
     if(impostor_count>=kImpostorQuads){++impostor_stats[2];return 0;}
@@ -1275,6 +1531,46 @@ int mesh_impostor(MeshView& v,unsigned mesh_index,const re4dc::room::MeshPart& p
     if(left==4 || right==4 || top==4 || bottom==4)return 1;
     q.record=r;q.cell=std::uint16_t(cell);q.fog=p.source_key[2]?1:0;q.argb=impostor_color(v,mesh,*r);
     ++impostor_count;++impostor_stats[0];
+    return 1;
+}
+#endif
+#if RE4DC_QUALITY_ASSETS
+// s16.5: one tree of a split grove. 1: the tree is its quad (queued, or hidden
+// beyond the far plane / off screen): skip its clusters. 0: draw its clusters.
+int tree_quad(MeshView& v,const re4dc::room::MeshRecord& mesh,StdImpt& t,const Re4dcModelPart& p,float near,float far){
+    const unsigned frame=re4dc_ui_frame();
+    if(impostor_frame!=frame){impostor_frame=frame;impostor_count=0;}
+    if(impostor_flushed==frame)return 0; // after this frame's PT batches: geometry
+    re4dc::room::MeshImpostor* r=&t.rec;
+    const float* m=p.modelview;const float* C=r->centre;
+    float c[3];
+    for(unsigned i=0;i<3;++i)c[i]=m[4*i]*C[0]+m[4*i+1]*C[1]+m[4*i+2]*C[2]+m[4*i+3];
+    if(!(-c[2]>=t.mm))return 0;
+    const float scale=std::sqrt(m[0]*m[0]+m[1]*m[1]+m[2]*m[2]);
+    if(-c[2]-(r->half_w>r->half_h?r->half_w:r->half_h)*scale>far)return 1;
+    if(impostor_count>=kImpostorQuads){++impostor_stats[2];return 0;}
+    const float dx=-(m[0]*c[0]+m[4]*c[1]+m[8]*c[2]),dz=-(m[2]*c[0]+m[6]*c[1]+m[10]*c[2]);
+    const float length=std::sqrt(dx*dx+dz*dz),bx=length>0?dx/length:1.0f,bz=length>0?dz/length:0.0f;
+    unsigned cell=unsigned(turns(-dz,dx)*float(r->views)+0.5f);
+    if(cell>=r->views)cell-=r->views;
+    ImpostorQuad& q=impostor_queue[impostor_count];
+    const float* P=p.projection;const float* V=p.viewport;
+    unsigned left=0,right=0,top=0,bottom=0;
+    for(unsigned k=0;k<4;++k){
+        const float sx=(k&1)?r->half_w:-r->half_w,sy=(k&2)?-r->half_h:r->half_h;
+        const float x=C[0]+sx*bz,y=C[1]+sy,z=C[2]-sx*bx;
+        const float vx=m[0]*x+m[1]*y+m[2]*z+m[3],vy=m[4]*x+m[5]*y+m[6]*z+m[7],vz=m[8]*x+m[9]*y+m[10]*z+m[11];
+        if(!(-vz>near))return 0;
+        const float inv=1.0f/(-vz);
+        float* s=q.s[k];
+        s[0]=(V[2]*.5f*(P[1]*vx+P[2]*vz)*inv+V[0]+V[2]*.5f)*640.f/V[2];
+        s[1]=(-V[3]*.5f*(P[3]*vy+P[4]*vz)*inv+V[1]+V[3]*.5f)*480.f/V[3];
+        s[2]=inv;
+        left+=s[0]<0;right+=s[0]>640.0f;top+=s[1]<0;bottom+=s[1]>480.0f;
+    }
+    if(left==4 || right==4 || top==4 || bottom==4)return 1;
+    q.record=r;q.cell=std::uint16_t(cell);q.fog=p.source_key[2]?1:0;q.argb=impostor_color(v,mesh,*r);
+    ++impostor_count;++impostor_stats[0];++std_stats[4];
     return 1;
 }
 #endif
@@ -1344,6 +1640,22 @@ int mesh_submit(const Re4dcModelPart& p){
     if(p.projection[0]!=0 || p.viewport[2]<=0 || p.viewport[3]<=0)return 0;
     const float near=p.projection[6]/(p.projection[5]-1),far=p.projection[6]/p.projection[5];
     if(!re4dc::render::is_finite(near)||!re4dc::render::is_finite(far)||near<=0||far<=near)return 0;
+#if RE4DC_QUALITY_ASSETS
+    // Standard clutter cull (s16.3): the mesh's bounds centre at view depth >= mm draws nothing.
+    if(std_room.active){
+        const unsigned view=unsigned(&v-mesh_views);
+        if((std_room.checked>>view)&1U)
+            for(unsigned i=0;i<std_room.ncull;++i){
+                const StdCull& c=std_room.cull[i];
+                if(c.view!=view || c.mesh!=e->mesh)continue;
+                const float* m=drawn->modelview;
+                const float cx=(mesh.bounds_min[0]+mesh.bounds_max[0])*0.5f,cy=(mesh.bounds_min[1]+mesh.bounds_max[1])*0.5f,
+                            cz=(mesh.bounds_min[2]+mesh.bounds_max[2])*0.5f;
+                if(-(m[8]*cx+m[9]*cy+m[10]*cz+m[11])>=c.mm){++std_stats[0];return 1;}
+                break;
+            }
+    }
+#endif
 #if RE4DC_TREE_IMPOSTOR
     {
         float cull=far;
@@ -1361,6 +1673,27 @@ int mesh_submit(const Re4dcModelPart& p){
     if(re4dc_model_defer_part(drawn))return 1;
 #endif
     MeshDraw d{{*drawn,{},near,far},v.package,*part,v.lut,v.gather};
+#if RE4DC_QUALITY_ASSETS
+    if(std_room.active && std_room.nimpt){
+        const unsigned view=unsigned(&v-mesh_views),index=unsigned(part-v.package.parts());
+        if((std_room.checked>>view)&1U){
+            float quad_far=far;
+#if RE4DC_NATIVE_FOG
+            if(drawn->source_key[2] && fog_now.far>near && fog_now.far<far)quad_far=fog_now.far;
+#endif
+            unsigned trees=0,quads=0;
+            for(unsigned i=0;i<std_room.nimpt;++i){
+                StdImpt& t=std_room.impt[i];
+                if(t.view!=view || t.part!=index)continue;
+                ++trees;
+                if(tree_quad(v,mesh,t,*drawn,near,quad_far)){d.skip_clusters|=((std::uint64_t(1)<<t.count)-1U)<<t.first;++quads;}
+                else ++std_stats[5];
+            }
+            const unsigned all=v.package.part_lods()[index].cluster_count;
+            if(trees && quads==trees && all<=64U && d.skip_clusters==(all==64U?~std::uint64_t(0):(std::uint64_t(1)<<all)-1U))return 1;
+        }
+    }
+#endif
     d.alpha=(drawn->alpha_state&255U)<<24;d.vertex_alpha=vertex_alpha;
     d.cull_far=far;
 #if RE4DC_MESH_DIRECT
@@ -1406,8 +1739,22 @@ int mesh_submit(const Re4dcModelPart& p){
 #if RE4DC_MESH_TEXTURES
     // A part with a texture record (a baked house shell) binds that package.
     unsigned baked[4];
+#if RE4DC_QUALITY_ASSETS
+    // Standard: the index's ptex records replace the package's texture records (s16.3).
+    const unsigned* texture=nullptr;
+    if(std_room.active){
+        const unsigned view=unsigned(&v-mesh_views),index=unsigned(part-v.package.parts());
+        if((std_room.checked>>view)&1U)
+            for(unsigned i=0;i<std_room.nptex;++i)if(std_room.ptex[i].view==view && std_room.ptex[i].part==index){texture=std_room.ptex[i].key;++std_stats[2];break;}
+        if(texture)re4dc_model_texture(texture);
+    }else{
+        const auto* record=v.package.texture(unsigned(part-v.package.parts()));
+        if(record){baked[0]=record->key_crc;baked[1]=record->key_fnv;baked[2]=record->width;baked[3]=record->height;re4dc_model_texture(baked);texture=baked;}
+    }
+#else
     const auto* texture=v.package.texture(unsigned(part-v.package.parts()));
     if(texture){baked[0]=texture->key_crc;baked[1]=texture->key_fnv;baked[2]=texture->width;baked[3]=texture->height;re4dc_model_texture(baked);}
+#endif
     const int result=d.run();
     if(texture)re4dc_model_texture(nullptr);
 #else

@@ -223,10 +223,22 @@ QUALITY ?= 0
 QUALITY_DEFAULT ?= 1
 QUALITY_PICKER ?= 1
 QUALITY_DEBUG ?= 0
+# QUALITY_ASSETS=1 (default 0 = previous image; needs QUALITY=1 TREE_IMPOSTOR=1 MESH_TEXTURES=1
+# TEX_RESIDENT=1): in Standard mode each room entry reads native/<room>/low/index.txt
+# (D367_ASSET_PIPELINE.md s16) and draws the Standard set: low/<OWNER>.re4mesh packages,
+# texlow/ textures, per-mesh cull / impostor / baked-texture records, the room preload
+# without the dropped keys. Original never reads low/ or texlow/.
+QUALITY_ASSETS ?= 0
+ifeq ($(QUALITY_ASSETS),1)
+ifneq ($(QUALITY)$(TREE_IMPOSTOR)$(MESH_TEXTURES)$(TEX_RESIDENT),1111)
+$(error QUALITY_ASSETS=1 requires QUALITY=1 TREE_IMPOSTOR=1 MESH_TEXTURES=1 TEX_RESIDENT=1)
+endif
+endif
 .PHONY: quality-force
 $(OBJDIR)/quality-knobs.h: quality-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_QUALITY %s\n#define RE4DC_QUALITY_DEFAULT %s\n#define RE4DC_QUALITY_PICKER %s\n#define RE4DC_QUALITY_DEBUG %s\n' '$(QUALITY)' '$(QUALITY_DEFAULT)' '$(QUALITY_PICKER)' '$(QUALITY_DEBUG)' > $@.tmp
+	@printf '#define RE4DC_QUALITY_ASSETS %s\n' '$(QUALITY_ASSETS)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 QUALITY_PLATFORM = $(OBJDIR)/platform/quality.o $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_ui.o
