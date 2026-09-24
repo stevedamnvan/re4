@@ -225,6 +225,15 @@ is never generated. For the r100 after-state crows (171,328 B short in Original)
 (packages -282,560 B, 111,232 spare); for Original the cheapest option is a new em21 motion-stream contract
 (<= 294,240 B). r101's enemy heap-4 room is measured (3,048,704 B, fits 1,595,136 spare); r103's waits for W8b.
 
+User decisions 2026-09-24 (later): (1) **r103: go.** Implement design-r103 PLAN (W8b room-archive compaction, W8c
+textures + the post-bell radio stream, W8d census, W8e bell -> door -> r103; the r103 -> r106 exit fades to the title
+on test discs). This is the end of the opening route. (2) **r100 Standard look approved and TREE_IMPOSTOR's 77 KB
+(PT list) approved:** Standard stays the default and QUALITY_ASSETS=1 joins the M1 recipe after its gates (r100
+Standard run, STRICT Standard vs Original, hw ms). With the Standard packages the r100 after-state crows fit (111 KB
+spare). (3) **ACTOR_FOG_GATE's 1-pixel difference: delegated** ("make whatever looks good and is not too
+computationally intensive"): prefer zero visible difference (cull only beyond far + a margin) unless the margin
+costs more than ~0.2 hw ms against the 1-pixel variant; decided by the hwproject pair.
+
 User decisions 2026-09-23: (1) the fight floor (smoother-slower vs choppier-faster) is deferred until real numbers exist; it stays the PACE_FLOOR_FPS knob, default 15. (2) One early console timing run of a self-running r100 fight calibration disc is approved, purely to calibrate the hardware model (results on screen and on the VMU). All other console tests still wait for r100 -> r101 -> r103. (3) Gameplay-equivalent maths in game logic (SH-4 FTRV/FIPR for skeleton and foot IK) is approved as a measured option under the existing last-bit FP policy: deterministic but not bit-identical, with collision checked separately before adoption.
 
 ## 20 fps hardware budget (2026-09-23)

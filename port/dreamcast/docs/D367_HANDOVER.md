@@ -134,6 +134,10 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 
 ## Waiting on the user
 
+Nothing (2026-09-24): the user answered every open decision; see the route doc
+("User decisions 2026-09-24 (later)"). r103 is go; Standard look + TREE_IMPOSTOR 77 KB are approved; the fog-gate
+pixel is delegated (zero visible difference unless the margin costs > ~0.2 hw ms).
+
 - **DONE (b7a7e2d): TA_DOUBLEBUF with sub-screen option (b), in the canonical recipe.** Measured gain on the
   canonical base: r100 quiet -1.9 ms/frame Flycast, r101 fight 0 (CPU-bound); see the route doc. Background:
   C (single-bank PVR layout) would grow the texture pool 2.64 -> 3.87/4.19 MB but
