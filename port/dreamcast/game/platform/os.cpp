@@ -106,9 +106,15 @@ void OSReport(const char* fmt, ...)
     re4dc_log("%s", line);
 }
 
+#if RE4DC_VMU_DEBUG_SLOT
+extern "C" void re4dc_dbgslot_ring(unsigned kind, unsigned a, unsigned b);
+#endif
 void OSPanic(const char* file, int line, const char* msg, ...)
 {
     va_list ap;
+#if RE4DC_VMU_DEBUG_SLOT
+    re4dc_dbgslot_ring(4, (unsigned) line, 0);
+#endif
     printf("OSPanic %s:%d: ", file, line);
     va_start(ap, msg);
     vprintf(msg, ap);

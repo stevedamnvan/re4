@@ -33,6 +33,9 @@ static int ringReadBuffer(uint8_t* data, int len)
 static dbgio_handler_t g_ringHandler = {
     "re4ring", ringDetected, ringInit, ringShutdown, ringSetIrqUsage, ringFlush, ringWriteBuffer, ringReadBuffer, {NULL}};
 
+#if RE4DC_VMU_DEBUG_SLOT
+extern "C" void re4dc_dbgslot_ring(unsigned kind, unsigned a, unsigned b);
+#endif
 static void onFault(irq_t code, irq_context_t* ctx, void* data)
 {
     (void) data;
@@ -48,6 +51,9 @@ static void onFault(irq_t code, irq_context_t* ctx, void* data)
                   (unsigned long) ctx->r[i + 3]);
     }
     re4dc_set_stage(0xDEAD0000ul | (unsigned long) code);
+#if RE4DC_VMU_DEBUG_SLOT
+    re4dc_dbgslot_ring(3, (unsigned) ctx->pc, (unsigned) ctx->pr);  // kept in RAM for the next debug save
+#endif
     irq_disable();
     for (;;) {
     }

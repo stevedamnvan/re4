@@ -364,8 +364,8 @@ struct Fixture {
     unsigned done_events;                   // "done <events>": "w11 done" 300 game frames after
     bool done_logged;
     unsigned save_after, save_count, saves; // "save <frames> <count> [room] [slot]": the typewriter's
-    unsigned save_room, save_slot;          // CardSave(slot, 1) (sce_at.cpp type 8), once per room
-    unsigned save_generation;               // generation, `frames` room frames in
+    unsigned save_room, save_slot;          // CardSave(slot, 1) (sce_at.cpp type 8), every `frames`
+                                            // room frames (card screen frames do not count)
 };
 Fixture fx{};
 
@@ -489,10 +489,9 @@ extern "C" int re4dc_w11_room_poll(unsigned generation)
         re4dc_log("w11 fixture: life %d -> %d\n", int(s16(pG->pl_life)), fx.life_value);
         pG->pl_life = u16(fx.life_value);
     }
-    if (fx.save_count && fx.saves < fx.save_count && fx.save_generation != generation &&
-        fx.room_frames >= fx.save_after && (!fx.save_room || unsigned(pG->room_id) == fx.save_room) &&
+    if (fx.save_count && fx.saves < fx.save_count && fx.room_frames >= fx.save_after * (fx.saves + 1) &&
+        (!fx.save_room || unsigned(pG->room_id) == fx.save_room) &&
         !SubScreenWk.type && !(pG->System_flg & 0x1000) && s16(pG->pl_life) > 0) {
-        fx.save_generation = generation;
         ++fx.saves;
         census("save");
         player_state("save");

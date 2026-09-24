@@ -8,6 +8,9 @@
 #include <stdio.h>
 
 #include "re4dc_platform.h"
+#if RE4DC_VMU_DEBUG_SLOT
+extern "C" unsigned re4dc_dbgslot_pad(unsigned buttons);  // dbgslot_bridge.cpp
+#endif
 
 typedef signed char s8;
 typedef unsigned char u8;
@@ -353,6 +356,10 @@ u32 PADRead(PADStatus* status)
             u16 real = mapped.button | ((st->buttons & CONT_Z) ? PAD_TRIGGER_Z : 0);
             p->button = (u16) (re4dcBlockDebugChords(real, re4dc_pad_debug_state(), &maps[0]) | scripted);
         }
+#if RE4DC_VMU_DEBUG_SLOT
+        // Debug slot chord (hold L + START): START never reaches the game while L is held.
+        if (i == 0) p->button &= (u16) ~re4dc_dbgslot_pad(p->button);
+#endif
 #if RE4DC_ROUTE_MOVIES
         // A consumed movie skip stays masked until its buttons are released
         // (after the debug-chord filter, which rewrites p->button).

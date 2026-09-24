@@ -249,12 +249,19 @@ extern "C" void re4dc_room_leave(){
 #if RE4DC_QUALITY
 extern "C" void re4dc_quality_freeze(const char* where);
 #endif
+#if RE4DC_VMU_DEBUG_SLOT
+extern "C" void re4dc_dbgslot_room_enter();
+extern "C" void re4dc_dbgslot_poll(unsigned generation, unsigned room_frames);
+#endif
 extern "C" void re4dc_room_enter(){
 #if RE4DC_QUALITY
     re4dc_quality_freeze("room");
 #endif
 #if RE4DC_IO_PROBE
     io_cycle_enter();
+#endif
+#if RE4DC_VMU_DEBUG_SLOT
+    re4dc_dbgslot_room_enter();                         // ring entry; FILE 20 start (dbgslot_bridge.cpp)
 #endif
     re4dc_room4_open();
     room_frames=0;steady_logged=false;
@@ -300,6 +307,9 @@ extern "C" int re4dc_room_cycle_poll(){
     re4dc_w11_room_poll(generation);                    // death / life fixture (sscrn_bridge.cpp)
 #endif
     ++room_frames;
+#if RE4DC_VMU_DEBUG_SLOT
+    re4dc_dbgslot_poll(generation, room_frames);        // L+START debug save (dbgslot_bridge.cpp)
+#endif
 #if RE4DC_IO_PROBE
     io_cycle_frame(room_frames);
 #endif

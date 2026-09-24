@@ -171,9 +171,15 @@ void re4dc_log(const char* fmt, ...)
     }
 }
 
+#if RE4DC_VMU_DEBUG_SLOT
+void re4dc_dbgslot_ring(unsigned kind, unsigned a, unsigned b);
+#endif
 void re4dc_missing(const char* name)
 {
     re4dc_log("RE4DC MISSING: %s called; halting\n", name);
+#if RE4DC_VMU_DEBUG_SLOT
+    re4dc_dbgslot_ring(2, (unsigned) name, 0);
+#endif
     fflush(stdout);
     for (;;) {
         thd_sleep(1000);
