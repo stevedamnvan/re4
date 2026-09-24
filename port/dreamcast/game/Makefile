@@ -650,6 +650,11 @@ NATIVE_STATIC_OWNERS ?= 1
 # NATIVE_MESH=1 draws instanced per-BIN meshes (<owner>.re4mesh, COMMON.re4mesh)
 # instead of placement-baked packages; owner mask bit 6 is the room's common set.
 NATIVE_MESH ?= 0
+# NATIVE_PKG_HIGH=1 carves native static/mesh packages from the top of the highest heap-4 free cell
+# that fits (OSAlloc's first fit hands out the lowest). The packages then stack at the high end and a
+# retired area's hole joins the free space below it instead of being split by the game's later
+# allocations (r100: FILE_01 414 KB failed to reload walking west with 552 KB free in two cells).
+NATIVE_PKG_HIGH ?= 0
 # MESH_LOD=1 also accepts R4IM v2 packages (convert_room_bins.py --lod) and draws,
 # per visible cluster, the coarsest level within MESH_LOD_PX projected pixels.
 MESH_LOD ?= 0
@@ -662,6 +667,11 @@ FOG_FAR ?= 0
 ifeq ($(NATIVE_FOG),1)
 ifneq ($(NATIVE_STATIC),1)
 $(error NATIVE_FOG requires NATIVE_STATIC=1 (platform/native_static.cpp owns the fog state))
+endif
+endif
+ifeq ($(NATIVE_PKG_HIGH),1)
+ifneq ($(NATIVE_STATIC),1)
+$(error NATIVE_PKG_HIGH requires NATIVE_STATIC=1)
 endif
 endif
 ifeq ($(NATIVE_STATIC),1)
@@ -677,6 +687,7 @@ $(OBJDIR)/native-static.h: native-static-force
 	@mkdir -p $(dir $@)
 	@printf '#define RE4DC_NATIVE_STATIC %s\n#define RE4DC_NATIVE_STATIC_OWNERS %sU\n#define RE4DC_NATIVE_MESH %s\n' '$(NATIVE_STATIC)' '$(NATIVE_STATIC_OWNERS)' '$(NATIVE_MESH)' > $@.tmp
 	@printf '#define RE4DC_MESH_LOD %s\n#define RE4DC_MESH_LOD_PX %s\n#define RE4DC_NATIVE_FOG %s\n#define RE4DC_FOG_FAR %s\n' '$(MESH_LOD)' '$(MESH_LOD_PX)' '$(NATIVE_FOG)' '$(FOG_FAR)' >> $@.tmp
+	@printf '#define RE4DC_NATIVE_PKG_HIGH %s\n' '$(NATIVE_PKG_HIGH)' >> $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 NATIVE_STATIC_PLATFORM = $(OBJDIR)/platform/native_static.o $(OBJDIR)/platform/native_model.o $(OBJDIR)/platform/native_ui.o \

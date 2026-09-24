@@ -6,6 +6,9 @@
 #include "main_mem.h"
 #include "gx.h"
 #include "native_ui.h"
+#if RE4DC_NATIVE_STATIC && RE4DC_NATIVE_PKG_HIGH
+#include "re4dc_platform.h"
+#endif
 extern "C" void GXGetProjectionv(float*);
 extern "C" void GXGetViewportv(float*);
 extern "C" void GXProject(float,float,float,const float[3][4],const float*,const float*,float*,float*,float*);
@@ -414,6 +417,46 @@ void room_free4(void* p,const char* who){
     cell->magic=0;--room4.live_cells;room4.live_bytes-=cell->bytes;
     OSFreeToHeap(Heap[4].handle,cell);
 }
+#if RE4DC_NATIVE_STATIC && RE4DC_NATIVE_PKG_HIGH
+// NATIVE_PKG_HIGH: room_alloc4 from the top of the highest free heap-4 cell that fits. The cell is
+// laid out as mem_alloc's (32-byte header, payload, 32-byte MAD tag for the heap-4 census) and
+// joins the allocated list as OSAllocFromHeap's does, so room_free4 / OSFreeToHeap return it.
+void* room_alloc4_high(unsigned bytes,const char* tag){
+    if(!room4.live || !memCheckHeapActive(4)){
+        ++room4.refused;
+        re4dc_log("room lifecycle: refused %s bytes=%u outside a live room heap\n",tag,bytes);
+        return nullptr;
+    }
+    // SystemMemInit hands the aligned arena start to OSInitAlloc, which puts the descriptors there.
+    auto* d=reinterpret_cast<OSHeapDescriptor*>((u32(re4dc_mem.heap)+0x1FU)&~0x1FU)+Heap[4].handle;
+    const u32 payload=(bytes+sizeof(Room4Cell)+0x1FU)&~0x1FU;
+    const s32 size=s32(payload+0x40U);
+    OSHeapCell* best=nullptr;
+    for(OSHeapCell* c=d->free;c;c=c->next)if(c->size>=size)best=c;  // address order: the last fit is highest
+    if(!best)return nullptr;
+    OSHeapCell* cell;
+    if(best->size-size<0x40){
+        if(best->prev)best->prev->next=best->next;else d->free=best->next;
+        if(best->next)best->next->prev=best->prev;
+        cell=best;
+    }else{
+        best->size-=size;
+        cell=reinterpret_cast<OSHeapCell*>(reinterpret_cast<u8*>(best)+best->size);
+        cell->size=size;
+    }
+    cell->prev=nullptr;cell->next=d->allocated;
+    if(cell->next)cell->next->prev=cell;
+    d->allocated=cell;
+    auto* p=reinterpret_cast<u8*>(cell)+0x20;
+    u8* t=p+payload;
+    t[0]=0;t[1]='M';t[2]='A';t[3]='D';
+    snprintf(reinterpret_cast<char*>(t)+4,0x1C,"%s(0)",tag);
+    auto* rc=reinterpret_cast<Room4Cell*>(p);
+    *rc={kRoom4Magic,room4.generation,bytes,{}};
+    ++room4.live_cells;room4.live_bytes+=bytes;
+    return rc+1;
+}
+#endif
 }
 // gameRoomMemInit rebuilt heap 4: a new generation of native cells may start.
 extern "C" void re4dc_room4_open(){++room4.generation;room4.live_cells=0;room4.live_bytes=0;room4.live=true;}
@@ -493,7 +536,11 @@ extern "C" void* re4dc_static_alloc(unsigned bytes){
         re4dc_log("native static: reject bytes=%u heap4_free=%d reserve=%u\n",bytes,before,kSourceReserve);
         return nullptr;
     }
+#if RE4DC_NATIVE_PKG_HIGH
+    return room_alloc4_high(bytes,"native static package");
+#else
     return room_alloc4(bytes,"native static package",false);
+#endif
 }
 extern "C" void re4dc_static_free(void* data){room_free4(data,"native static package");}
 #endif
