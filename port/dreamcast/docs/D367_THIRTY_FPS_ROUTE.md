@@ -206,6 +206,17 @@ The game runs one logic tick per rendered frame (main.cpp waits for GetSystemVcn
 
 User decision 2026-09-24: TA_DOUBLEBUF (async TA double buffer, ~12.5 ms/frame of stream_open wait removed; hw projection ~16 -> 20 fps at the 50 ms target) is adopted and option C (single-bank PVR layout, bigger texture pool) is dropped. It lands after sub-screen option (b) (single-bank TA while a sub screen is open) and a matched-window hwproject pair.
 
+**TA_DOUBLEBUF landed (b7a7e2d, 2026-09-24) and is in the canonical recipe (PERF).** Option (b) as designed:
+`pvr_set_vbuf_doublebuf()` (KOS patch kos-804b319-vbuf-switch) drops the TA to one bank while the sub-screen
+backing holds bank 1, and stream_open switches back lazily. Gates: knob-off identity; inventory open/close in r100
+and in the r101 fight (backing hash ok, no HALT); logic trace STRICT over 3,604 ticks; hwproject r101 fight
+145.0 vs 145.7 hw ms (CPU-equal, matched game-logic rows). **Measured gain on the canonical recipe is smaller than
+the study's ~12.5 ms:** Flycast PC-sampler wall in r100 quiet 73.2 -> 71.3 ms mean (p99 79 -> 74; the single-bank
+fence waited 1.7 ms/frame), and 106.2 -> 106.2 ms in the r101 fight (the fence waited 0.08 ms/frame, since the frame
+is CPU-bound). The study used a lighter SUBSCREEN=0 fixture (53.9 ms busy). The wait is at most one render per
+frame and appears only when the CPU part of a frame is close to the render time, which is where the lane is
+heading (50 ms target). Re-measure it on hardware with the calibration disc.
+
 User decisions 2026-09-23: (1) the fight floor (smoother-slower vs choppier-faster) is deferred until real numbers exist; it stays the PACE_FLOOR_FPS knob, default 15. (2) One early console timing run of a self-running r100 fight calibration disc is approved, purely to calibrate the hardware model (results on screen and on the VMU). All other console tests still wait for r100 -> r101 -> r103. (3) Gameplay-equivalent maths in game logic (SH-4 FTRV/FIPR for skeleton and foot IK) is approved as a measured option under the existing last-bit FP policy: deterministic but not bit-identical, with collision checked separately before adoption.
 
 ## 20 fps hardware budget (2026-09-23)

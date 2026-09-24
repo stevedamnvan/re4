@@ -7,7 +7,7 @@ The plan and measurements are in `port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md`.
 ```
 LH="NO_EH=1 NATIVE_ACTOR=1 NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN=1 PVR_FAST_WAKE=1 BRIDGE_LEAN=1 PVR_PIPELINE=2 MESH_LOD=1 MESH_LOD_PX=3 NATIVE_FOG=1 COPY_LEAN=1 FRONT_LEAN=1 MESH_DIRECT=1 TA_DIRECT=1 NATIVE_ACTOR_DIRECT=1 UI_VRAM=1 TA_VERTBUF_KB=2048 GAME_FP_CONTRACT=off GAME_CPU=1 GAME_ROT_CACHE=1 GAME_O2=hot GAME_TRIG=1 GAME_PWC_DIAG=1 GAME_ATCHK=1 GAME_MOTION_INDEX=1 GAME_CONCAT_COL=1 GAME_SINCOS=1 GAME_MULTVEC_SCHED=1 AICA_AUDIO=1 RELEASE_FLAGS=1"
 M1="ROUTE_MOVIES=1 AICA_STREAMS=1 SUBSCREEN=1 UI_HANDLES=1 TEX_RESIDENT=1 FX_LEAN=1 EM10_SHARED=1 ARENA_FIT=1 GAME_COLD_OS=1 SOUND_REGION_BYTES=0x60000 MOTION_FAST_READ=1 NATIVE_ACTOR_SKIN_LAZY=1 QUALITY=1 VMU_SAVE=1 VMU_DEBUG_SLOT=1 NATIVE_MES=1 SUBSCREEN_OVL=1 SS_POOL_HIGH=1 NATIVE_PKG_HIGH=1"
-PERF="FRONT_NATIVE=1 HW_LEAN=1 FOG_FAR=25000 EFFECT_LEAN=1 EFFECT_SPRITES=1 PLAN_ADMIT_LEAN=1 SCENERY_GATE=1 MODEL_SLAB_LATCH=1 NATIVE_ACTOR_LOD=1 NATIVE_ACTOR_PRELIT=1 CROWD_LOD=1"
+PERF="FRONT_NATIVE=1 HW_LEAN=1 FOG_FAR=25000 EFFECT_LEAN=1 EFFECT_SPRITES=1 PLAN_ADMIT_LEAN=1 SCENERY_GATE=1 MODEL_SLAB_LATCH=1 NATIVE_ACTOR_LOD=1 NATIVE_ACTOR_PRELIT=1 CROWD_LOD=1 TA_DOUBLEBUF=1"
 EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
 # stage: TEXDIRS="$VQ $P/tex" (tex-vq5 + PS2 bark); EFFECT_SPRITES=1 makes stage.sh prepend the
 # tex-fx cache itself (tools/d367/tex_fx.sh). User discs add UI_OVERRIDES=/root/re4data/overrides/ui.
@@ -16,7 +16,10 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
 - `LH`: the game30 logic recipe (12.0 hw ms/tick), plus the bit-exact logic cuts GAME_PWC_DIAG=1 / GAME_ATCHK=1 / GAME_MOTION_INDEX=1 (-2.65 / -3.25 hw ms/tick at 6 / 8 engaged Ganados) and GAME_CONCAT_COL=1 (dbe1abb, a further -1.06 / -1.25; needs GAME_FP_CONTRACT=off). Rejected: GAME_PWC_FAST (+0.45 hw ms), GAME_SCHED=game (no logic gain). Never ship GAME_PWC_DIAG=2 (test-only check build). `M1`: route and memory knobs for the playable disc. `QUALITY=1` is the Standard/Original picker after Start (766332d); Standard is the default. Its text draws through NATIVE_MES=1 (native cMes glyph atlas, 32 KB VRAM). VMU saves (6d5d6a9/cd0343a): `VMU_SAVE=1` saves to the VMU (17 blocks per save, never formats, overwrites in place when full, heap 4 -16 KB) and stores the picker choice as RE4DCCFG; `VMU_DEBUG_SLOT=1` adds the RE4DCDBG debug slot (hold L+START 1 s in play, reload as FILE 20; ~96 KB taken from heap 4 only during the save, refused with a log line if short) that the user asked to keep on the first disc for reloads. `SUBSCREEN_OVL=1` loads the sub-screen code from /cd/dc/sscrn.ovl at each open (heap 4 +112 KB; ~+0.1-0.2 s per open on GD-ROM).
 - `PERF` lists landed lane steps: FRONT_NATIVE (c881fba, -4.1 hw ms), the approved 25 m fog far
   plane, the native effect sprites (a0a32aa), and D1 + S1a + the slab latch (27fb5a5; fight p99
-  488 -> 172 ms in Flycast, -2.4 hw ms at 25 m).
+  488 -> 172 ms in Flycast, -2.4 hw ms at 25 m), and TA_DOUBLEBUF (b7a7e2d: the TA double-buffered in
+  play, a single bank while a sub screen is open; needs `patches/kos-804b319-vbuf-switch.patch` in the
+  d367 KOS worktree, which subscreen.mk checks with nm; r100 quiet 73.2 -> 71.3 ms Flycast mean, the
+  r101 fight unchanged because it is CPU-bound; the gain grows as CPU per frame falls).
 - Add each new lane step here when it lands. Untracked -D knobs don't trigger rebuilds: delete the
   tree ELF, use a fresh OBJDIR per flag set, and record the ELF sha256.
 
