@@ -349,6 +349,8 @@ The glyph swap for Z/C-stick prompts is still to do. No Z or C-stick glyph textu
 
 ## Route plan (frontier units)
 
+**Milestone 1 disc verified as an r100 disc (2026-09-23, 84fc8ff, canonical README recipe incl. NATIVE_MES, SUBSCREEN_OVL, VMU_SAVE, actor tiers).** Title (2026 art) -> picker (text visible, no backdrop yet) -> intro 1971/2360 frames -> s40 1175/1175 -> radio call (subtitles visible; transceiver video panes blank) -> r100 play (~15 fps Flycast) -> inventory open/close (backing hash ok) -> typewriter save to VMU (RE4DCS01A, 17 blocks). Heap 4 at r100 entry 8,988,032 B; s40 heap 433,824 B; lowest in-play VRAM free 18,632 B. 0 HALT/FAULT/MISSING. **Blocker for r101:** the east-walk area-block swap (r100_03 ARAM_TO_MRAM) reads stale data because the port had no ARAM backing (ARQPostRequest copied nothing); fix in progress = GD-ROM as ARAM, blocking re-read of the unit file on ARAM_TO_MRAM (same logic tick, STRICT). **VRAM:** 161 KB of the r100 gap is a 2 KiB page-alignment pad per texture (KOS pvr_mem in-VRAM headers defeat the page check); page allocator (option A) in progress; a single-bank PVR layout (option C, +1.2-1.5 MB pool, rules out TA_DOUBLEBUF) goes to the user with its fps cost. User trims for Standard VRAM: r101 remaining grove atlases to 8 views + shells 64 VQ; r100 tree atlases re-baked at 8 views.
+
 Assessment: the recovered game reaches r100 gameplay. r101 and r103 have never
 run in it; "r101 works" commits are the separate room viewer.
 
