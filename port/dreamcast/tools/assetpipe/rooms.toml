@@ -106,6 +106,10 @@ heap4_margin_kb = 155
 vram = { pool = 2578176, original_used = 2428032, source = "r101 measured, design-r103 PLAN" }
 note = "Heap 4 free is Original's estimate minus the Standard package delta; the margin is the 155 KB kept at r100 s40 / r101."
 
+[room.r101.demand]           # discover: heap 4 room for enemy archives (canonical recipe), measured
+enemy_heap4_bytes = 3048704   # heap4 census in the fight: free 1,595,136 with em15 0x116300 + em26 0x2c0a0 + em28 0x20a60 live
+enemy_heap4_source = "warp-dbp0-fight-orig (Original) = warp-dbp0-fight (Standard), edf0cc4 canonical + DBG_WARP"
+
 [room.r101.views]            # spawn: r100 AEV record 0 (door to r101) dstPos/dstAngle, the camera 0.3 m behind
                              # the head (1.29 m back, as at r100, is inside the slope); fight: the village square,
                              # ESL em15 20-31 at x -11..6 m, z -2..3 m (emleon00.esl, 10 mm units); house: the
@@ -158,6 +162,9 @@ heap4_margin_kb = 155
 heap4_gate_kb = 330
 vram = { pool = 2578176, original_used = 2245760, source = "estimate, not measured: r101's non-room VRAM + r103's room textures" }
 note = "Original free ranges from design-r103 PLAN.md section 3; the W8d gate is 330 KB free (155 margin + 175 W11). Standard free = Original free - (Standard - Original) scenery package bytes. The corpses stay (gore rule) and are not part of the scenery budget."
+
+# [room.r103.demand]: not measurable yet. r103 needs the W8b room-archive compaction to load
+# (budget_context above; the r103 go-ahead is a pending user decision). Measure at its first run.
 
 [room.r103.views]            # spawn: r101 AEV record 2 (door to r103); cow_pen: W9 grid_2_1, the worst view
                              # with enemies (cows, ESL 95/97); w9_worst: W9 grid_4_4
