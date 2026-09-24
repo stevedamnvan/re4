@@ -499,10 +499,13 @@ def build_standard(ctx, name, only=None, review=True):
     options = {k: class_options(classes.get(k, "structure"), plan, _imp_key(k) in imp_recs or
                                 _imp_key(k) in grove_recs) for k in keys_s}
     for k in keys_s:
-        if _imp_key(k) in grove_recs:
-            for o in options[k]:
-                if o.get("imp_mm"):
-                    o.update(split=True, views=int(gs.get("views", 8)), id=o["id"] + "-trees")
+        for o in options[k]:
+            if not o.get("imp_mm"):
+                continue
+            if _imp_key(k) in grove_recs:
+                o.update(split=True, views=int(gs.get("views", 8)), id=o["id"] + "-trees")
+            else:           # the whole-BIN atlas's view count sets its view-quantisation error
+                o["views"] = int(imp_recs[_imp_key(k)]["views"])
     # empty LOD levels: no nearer vanishing than Original (priced here, patched into the packages)
     vmin = _vanish_min(room, pk_orig, plan["px"], cost["lod"]["px"])
     for k in keys_s:
@@ -773,9 +776,13 @@ def _imp_key(k):
 
 
 def _impostor_records(ctx, room, plan=None, classes=None, orig_objs=None):
-    """{(code, bin): record + image}: r100 from the pinned item 20 bake; a room whose plan sets
-    `impostors` from impostor.py (every tree-class BIN of the recipe package)."""
-    if room.name == "r100":
+    """{(code, bin): record + image}: r100 from the item 20 Blender bake of its PS2 tree models
+    (plan `impostors`: generators.tree_bake; without it the pinned 16-view bake); another room whose
+    plan sets `impostors` from impostor.py (every tree-class BIN of the recipe package)."""
+    if room.name == "r100" and plan and plan.get("impostors"):
+        spec = plan["impostors"]
+        d = ctx.gen.tree_bake(room, spec.get("views", 16), spec.get("cell", 128)).out
+    elif room.name == "r100":
         try:
             d = ctx.cfg.path("r100_impostors")
         except KeyError:

@@ -446,6 +446,53 @@ class Gen:
                                fingerprint([here / "r4im.py"], {"rule": "empty>=vmin"}),
                                fn, label="%s %s vanish guard" % (room.name, owner))
 
+    # ---- r100 PS2-tree impostors (item 20: Blender bl_impostor_bake.py + tree_impostors.py)
+    def tree_bake(self, room, views=16, cell=128, light="flat"):
+        """One atlas per PS2 tree model of room.recipe["trees"] (the GC BINs using a model share it),
+        baked by Blender 5.2 (Windows, a copy in sources [paths] blender_work, Workbench, --threads 1)
+        from the ps2_trees() OBJs and the ps2_bark() preview, then encoded by tree_impostors.py (kPal4
+        VQ). Outputs as the pinned item 20 bake: impostors.json, tex/<crc>-<fnv>.re4tex, preview/<model>.png;
+        bake/ keeps Blender's atlases and report."""
+        import subprocess
+        bake_py, enc_py = item_tool("bl_impostor_bake.py"), item_tool("tree_impostors.py")
+        blender = Path(self.cfg.src["blender"])
+        bwork = Path(self.cfg.src["blender_work"])
+        trees, bark = self.ps2_trees(room), self.ps2_bark(room)
+        st = blender.stat()
+        fp = fingerprint([bake_py, enc_py, tool("convert_tpl.py"), self.pvrtex],
+                         dict(python=sys.version.split()[0], blender_threads="1",
+                              blender="%s:%d:%d" % (blender.name, st.st_size, int(st.st_mtime))))
+        args = ["--views", str(int(views)), "--cell", str(int(cell)), "--light", light]
+
+        def win(p):
+            return subprocess.run(["wslpath", "-w", str(p)], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+
+        def fn(out, work):
+            w = bwork / ("tree-bake-%s-%d" % (room.name, os.getpid()))
+            if w.exists():
+                shutil.rmtree(w)
+            (w / "out").mkdir(parents=True)
+            shutil.copytree(trees.out, w / "in")
+            shutil.copy2(bark.path("preview/ps2-bark-vq.png"), w / "in" / "ps2-bark-vq.png")
+            shutil.copy2(bake_py, w / "bl_impostor_bake.py")
+            try:
+                run([blender, "-b", "--threads", "1", "--factory-startup", "--python", win(w / "bl_impostor_bake.py"),
+                     "--", win(w / "in"), win(w / "out")] + args, cwd=w, log=work / "blender.txt", timeout=3600)
+                shutil.copytree(w / "out", out / "bake")
+            finally:
+                shutil.rmtree(w, ignore_errors=True)
+            run([PY, "-B", enc_py, work / "enc", "--bake", out / "bake", "--trees", trees.out,
+                 "--pvrtex", self.pvrtex], cwd=work, log=work / "log.txt", env=det_env(dict(PYTHONPATH=str(TOOLS))))
+            for d in ("tex", "preview"):
+                shutil.copytree(work / "enc" / d, out / d)
+            shutil.copy2(work / "enc" / "impostors.json", out / "impostors.json")
+            m = json.loads((out / "impostors.json").read_text())
+            return dict(views=m["views"], cell_h=m["cell_h"], atlases=len(m["atlases"]), records=len(m["records"]),
+                        vram_bytes=m["vram_bytes"])
+        return self.cache.step("tree.bake", dict(room=room.name, args=args), dict(trees=trees, bark=bark), fp, fn,
+                               label="%s tree bake %d views h%d" % (room.name, views, cell))
+
     # ---- tree impostors for rooms without a pinned item 20 bake (impostor.py, pure Python + pvrtex)
     def room_impostors(self, room, owner, pkg_obj, bins, views=16, cell=128, ss=4, jobs=1):
         """Atlases + records for tree BINs `bins` [(code, bin, common)] of owner `owner` (a package step

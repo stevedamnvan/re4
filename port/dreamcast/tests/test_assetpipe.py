@@ -396,6 +396,20 @@ class GroveSplitTests(unittest.TestCase):
         self.assertNotIn("extra_clusters", pr0.counts["g"][0])
         self.assertLess(pr0.ms["g"][0][0], pr.ms["g"][0][0])
 
+    def test_whole_bin_view_error(self):
+        # a whole-BIN impostor's view-quantisation error is sin(pi / views) of its atlas
+        import math
+        plain = build_instances({"X": self.pk}, [self.w], lambda w: "g")
+        view = [dict(eye=(10000.0, 1600.0, -15000.0), yaw=0.0, pitch=0.0)]
+        opts = {"g": [dict(id="mesh", bias=1.0), dict(id="v16", bias=1.0, imp_mm=1000.0, views=16),
+                      dict(id="v8", bias=1.0, imp_mm=1000.0, views=8)]}
+        pr = price(plain, view, opts, self.cfg.cost, far=100000.0, jobs=1)
+        q = pr.quality["g"]
+        self.assertEqual(pr.counts["g"][1]["imps"], 1)
+        self.assertEqual(q[0], 0.0)
+        self.assertGreater(q[1], 0.0)
+        self.assertAlmostEqual(q[2] / q[1], math.sin(math.pi / 8) / math.sin(math.pi / 16), places=9)
+
     def test_impt_records(self):
         from assetpipe import stdindex
         with tempfile.TemporaryDirectory() as tmp:

@@ -199,8 +199,10 @@ texture's mean screen fraction over the view set. A size change costs
 `coverage * max(0, log2(needed / given))`.
 
 **Budgets.**
-- VRAM: the room set must fit `pool - resident`. The pool is 2.58 MB at `TA_VERTBUF_KB=2048`;
-  resident is UI + Leon + weapons + core, measured from run logs.
+- VRAM: the room set must fit `pool - resident`. With NATIVE_MES the pool is 2,610,888 B and the
+  accounted texture budget 2,545,352 B (2,485.7 KB; 2,578,176 B before NATIVE_MES); resident is
+  UI + Leon + weapons + core, measured from run logs. Allocation padding and fragmentation come on
+  top of the accounted bytes (161,280 B at r100's peak, m1-final-verifyB).
 - Room-entry load time: bytes / 1.5 MB/s (the GDEMU planning rate); reported only.
 
 ### 4.5 TA parameter memory (hard limit)
@@ -228,12 +230,13 @@ manifest.
 
 ### 4.7 Tree impostors and house shells (discrete options)
 
-**Impostor.** Beyond depth D, a tree is one quad from a 16-view atlas: 4 records, 1 strip, ~150
-cycles batched. The view quantisation (22.5 deg, so an error of at most sin 11.25 deg = 0.195)
-gives an impostor screen error `e_imp = 0.195 * r * K / z`. The distance rule is
-`D = 0.195 * r * K / P_imp`. `P_imp` = 20 px reproduces the approved 12 m for the r100 trees
-(r ~ 3 m), so the user's judgement is itself a fitted coefficient, stored with its provenance. A
-new judgement re-fits it. Atlas VRAM comes from the generator report (84 KB for the r100 set).
+**Impostor.** Beyond depth D, a tree is one quad from an N-view atlas: 4 records, 1 strip, ~150
+cycles batched. The view quantisation (360/N deg, so an error of at most sin(180/N deg): 0.195 at
+16 views, 0.383 at 8) gives an impostor screen error `e_imp = sin(pi/N) * r * K / z`; camera.py
+takes N from each atlas. The distance rule is `D = 0.195 * r * K / P_imp` (16 views). `P_imp` =
+20 px reproduces the approved 12 m for the r100 trees (r ~ 3 m), so the user's judgement is itself
+a fitted coefficient, stored with its provenance. A new judgement re-fits it. Atlas VRAM comes from
+the generator report (r100 set: 84 KB at 16 views, 46 KB at 8).
 
 **House shell.** The user decision is the mid mesh with 512 VQ, everywhere, with no near swap:
 `[house] policy = "always"`. The cost is the shell's own counts (550-800 triangles) plus 66 KB of
@@ -336,8 +339,8 @@ within 0.3 ms of W9's model rows, so no re-fit was needed):
 
 | Room | Standard named views | Standard grid p95 / max | views within 5 ms | Original grid p95 / max | heap 4 Std - Orig | VRAM Std - Orig |
 |---|---|---|---|---|---|---|
-| r100 | 5.7-10.7 | 7.37 / 10.7 | 155 / 215 | 17.6 / 24.9 | -294 KB | +50 KB (2 shells at 128: 12, atlases 82, dropped room textures -43) |
-| r101 | 4.0-11.5 | 10.27 / 12.6 | 127 / 263 | 25.2 / 27.5 | -413 KB | +128 KB (9 shells at 128: 54, atlases 46, 9 tree atlases 62) |
+| r100 | 5.7-10.7 | 7.37 / 10.7 | 155 / 215 | 17.6 / 24.9 | -294 KB | +14 KB (2 shells at 128: 12, 8-view atlases 46, dropped room textures -44) |
+| r101 | 4.0-11.5 | 10.27 / 12.6 | 127 / 263 | 25.2 / 27.5 | -413 KB | +81 KB (9 shells at 64: 27, 8-view atlases 26, 9 tree atlases 62, dropped room textures -34) |
 | r103 | 4.5-10.2 | 8.50 / 11.9 | 157 / 270 | 25.8 / 38.5 | -402 KB | +160 KB (3 shells at 256: 54, atlases 46, 13 tree atlases 82) |
 
 r100's numbers include the vanish guard (before it: 7.34 / 10.6, 158 views). User decisions
@@ -357,21 +360,30 @@ spawn 3.97, views within 5 ms 117 -> 127, heap 4 -2 KB more saved, VRAM +26 KB; 
 8.48 -> 8.50, max 13.31 -> 11.85, named max 10.46 -> 10.19, views within 5 ms 151 -> 157, heap 4
 +26 KB (the split package is larger), VRAM +46 KB. r103 BIN 59 (camera inside one tree's canopy,
 2.0-2.25 ms) is a separate lever (16.6).
+VRAM trims (user, 2026-09-23), texture only, so the modelled hw ms are unchanged (grid p95 / max
+and named max as above in all three rooms): r101's whole-BIN tree atlases (BINs 14/15/16) at 8
+views instead of 16 (-20,480 B) and its 9 shell textures at 64 x 64 instead of 128 (-27,648 B);
+r100's 5 PS2-tree atlases re-baked at 8 views (`tree.bake`: item 20's Blender bake, --threads 1;
+-36,864 B, 84,128 -> 47,264 B).
 
 Against the route budgets (review sheets, "Against the route memory budgets"):
 - r101 heap 4: ~1.46 MB free at entry in Original (design-r103 estimate) -> ~1.87 MB in Standard.
 - r103 heap 4: with W8b compaction 1.10-1.55 MB -> 1.53-1.98 MB; without W8b -0.35..-0.20 MB ->
   +0.08..+0.23 MB. Standard fits without W8b, but below the 155 KB margin at the low end and below
   W8d's 330 KB gate, so W8b is still needed.
-- VRAM (pool 2,518 KB): r101 Original 2,371 KB measured -> Standard ~2,499 KB (~19 KB free) with
-  the grove split (~2,473 KB, ~45 KB free, before it); with 256 shells it would be ~82 KB over.
-- r100 VRAM: Original on m1 preloads 170 packages to 2,264,576 B (`full=1`) and then holds 2,328,064 B
-  with 135,848 B free (w11-ss17). Standard adds ~51 KB (net +2 texture entries: 2 shells + 5 atlases -
-  5 room textures no longer drawn), so ~84 KB (84,488 B) stays free. It fits the pool, but, as in
-  Original, that is below the preload's own first-sight reserve (TEX_RESIDENT_RESERVE_KB 256; the slot
-  reserve of 32 entries is unaffected). The next VRAM lever is the impostor atlases (82 KB: 8 views
-  or 64-texel cells). r103 is an estimate (r101's non-room use + r103 room textures):
-  ~2,193 KB -> ~2,354 KB, ~164 KB free (with the grove split; ~211 KB free before it).
+- VRAM, against the accounted budget of 2,485.7 KB (2,545,352 B, NATIVE_MES) and, as an estimate,
+  the physical pool (2,610,888 B less r100's measured 161,280 B of padding/fragmentation):
+  - r100: Original peaks at 2,430,976 B accounted with 18,632 B of the pool free
+    (m1-final-verifyB). Standard adds 14,496 B (2 shells + 5 atlases - 5 room textures no longer
+    drawn; +51,360 B with 16-view atlases): 2,445,472 B, 99,880 B under the budget, ~4.0 KB of the
+    pool free.
+  - r101: Original 2,371 KB measured; Standard adds 83,328 B (131,456 B before the trims):
+    ~2,452.4 KB, ~33.3 KB under the budget; with r100's padding the pool would be ~60 KB short
+    (evictions and re-reads, not missing textures). Only an r101 run can measure its padding.
+  - r103 (estimate: r101's non-room use + r103 room textures): ~2,193 KB -> ~2,354 KB, ~132 KB
+    under the budget, ~38 KB of the pool free with r100's padding.
+  - Levers not taken: r101 BIN 13's wide cells at 64 x 64 (-12 KB), BIN 17's cells at 32 x 64
+    (-21 KB), 256 shells would add ~12 KB each.
 
 ## 5. Camera model and view set
 
@@ -420,7 +432,8 @@ tools unchanged:
 |---|---|---|---|
 | `scenery.r4im` | convert_room_bins.py (`--smd` or `--bins`, `--lod*`, `--lod-substitute`, and W9b's `--lod-floor/--lod-share/--class*` when the converter has them) | `<OWNER>.re4mesh` | r100: `MESHDIR`; others: `MESHROOMS` |
 | `tree.ps2` | ps2_trees.py (`--room`, `--dc-uv`) + ps2_tree_texture.py | replacement OBJs, bark `.re4tex` | via `--lod-substitute`; bark via `TEXDIRS` |
-| `tree.impostor` | r100: the pinned item 20 bake (bl_impostor_bake.py + tree_impostors.py). Other rooms: `assetpipe/impostor.py` (pure Python, render.py; kPal4 packaging from the vendored tree_impostors.py) | atlases `.re4tex`, `impostors.json` records (+ `rgb`) | `TEXDIRS` |
+| `tree.bake` | r100 (plan `impostors`): item 20's Blender bake of the PS2 tree models (vendored bl_impostor_bake.py, Blender --threads 1) encoded by tree_impostors.py; one atlas per PS2 model | `bake/`, atlases `.re4tex`, `impostors.json` records | `TEXDIRS` |
+| `tree.impostor` | r100 without a plan `impostors`: the pinned item 20 bake (sources.toml `r100_impostors`, 16 views). Other rooms: `assetpipe/impostor.py` (pure Python, render.py; kPal4 packaging from the vendored tree_impostors.py) | atlases `.re4tex`, `impostors.json` records (+ `rgb`) | `TEXDIRS` |
 | `texture.room_tpl` | SMD rooms: TPL 0 of the SMD's TPL table (every r101/r103 placement uses it) | `<room>.tpl` | review textures, VRAM |
 | `scenery.bin_obj` | export_room_bins_obj.py (`--export` for r100, `--smd <das>` for SMD rooms) | `<OWNER>_<bin>.obj` | shells, decimation |
 | `scenery.vanish_guard` | generators.vanish_guard (4.9.1 step 6) | package with empty-level errors raised | as the package |
@@ -631,7 +644,7 @@ manifest hash.
 | aica_banks | yes | already content-cached |
 | room_smd release, prepare_native_ui, convert_tpl | yes | |
 | Blender steps (planar decimation, house shell bake) | yes with pins (measured) | run as `blender -b --threads 1 --factory-startup`; fixed seeds and sample counts in the scripts; inputs sorted. Without `--threads 1` the same shell came out with the same metrics but a different vertex order (and so different OBJ/PNG/JSON bytes) than with a different thread count, so a machine with another core count would not reproduce it. `blender_threads` is part of the fingerprint. |
-| impostor bake (item 20) | pinned artifact | the r100 atlases are a pinned input (sources.toml `r100_impostors`), hashed by content like an AI output |
+| impostor bake (item 20, `tree.bake`) | yes with pins (measured) | Blender Workbench, `--threads 1`, flat light, inputs from the cached ps2_trees / ps2_bark steps; at 16 views it reproduces the pinned bake (`r100_impostors`) byte for byte (PNGs, `.re4tex`, `impostors.json`) |
 | impostor.py (other rooms), vanish guard | yes (measured) | pure Python + pinned pvrtex; verified in the r101/r103 `--verify` runs |
 | convert_route_movies (ffmpeg) | yes with pins | `-threads 1`, pinned version |
 | review renders | yes | pure-Python rasteriser |
@@ -951,8 +964,8 @@ every package byte as the converter wrote it, and cannot collide with W9b.
 
 | Room | `mesh` owners (low/ bytes) | texlow (files / bytes / VRAM) | `drop` | `cull` / `imp` / `ptex` | index.txt |
 |---|---|---|---|---|---|
-| r100 | 7 of 7 (1,208,448) | 7 / 97,424 / 96,416 | 5 | 16 / 11 / 2 | 2,642 B, 58 lines |
-| r101 | 1 of 1 (590,112) | 21 / 169,296 / 166,272 | 6 | 12 / 3 + 9 `impt` / 9 | 3,401 B, 65 lines |
+| r100 | 7 of 7 (1,208,448) | 7 / 60,560 / 59,552 | 5 | 16 / 11 / 2 | 2,622 B, 58 lines |
+| r101 | 1 of 1 (590,112) | 21 / 121,168 / 118,144 | 6 | 12 / 3 + 9 `impt` / 9 | 3,357 B, 65 lines |
 | r103 | 1 of 1 (722,560) | 19 / 189,616 / 186,880 | 3 | 25 / 7 + 13 `impt` / 3 | 4,280 B, 75 lines |
 
 - The texlow VRAM column is the sum of every added texture's payload: the `tex` records'

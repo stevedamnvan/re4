@@ -44,8 +44,10 @@ houses = ["1:17", "1:18"]    # item 21 house shells (bl_house_shell.py)
 landmarks = []               # never culled, never below bias 1
 
 [room.r100.standard.plan]
-house_tex = 128              # user 2026-09-23: 128 x 128 shell textures, as r101 (r100's VRAM pool is full:
+house_tex = 128              # user 2026-09-23: 128 x 128 shell textures (r100's VRAM pool is full:
                              # 512 VQ is 66 KB a house, 128 is 6 KB)
+impostors = { views = 8, cell = 128 }   # user 2026-09-23 (VRAM trim r100-a): the item 20 Blender bake of the
+                                        # 5 PS2 tree models re-run at 8 views (generators.tree_bake; 1024x128)
 
 [room.r100.views]            # named review/pricing views; cam/toward from SCEN_LOG (scenery trials tour, arm C, 25 m);
                              # the game camera direction is not logged: cam->player is used, which matches the
@@ -77,18 +79,17 @@ expect = { MAINSCENARIO = "a2451febc6285d2126bb8255b56569f844edf1299a2e271f5ae11
 houses = []
 landmarks = ["0xff:45"]      # user 2026-09-23: the well in the village square (fight area) keeps its real mesh
 review_notes = [
-  "Houses: 9 BINs picked by size (radius 5-15 m, >= 700 tris, >= 4 m tall, at most 2 placements) and kept where a shell ladder rung fits (p90 <= 30 cm): 48 to 400 faces, 128 x 128 baked textures (256 would put the VRAM pool ~82 KB over).",
+  "Houses: 9 BINs picked by size (radius 5-15 m, >= 700 tris, >= 4 m tall, at most 2 placements) and kept where a shell ladder rung fits (p90 <= 30 cm): 48 to 400 faces, 64 x 64 baked textures (VRAM trim 2, user 2026-09-23).",
   "BIN 45 (the house with the well in the village square) is a landmark (user 2026-09-23): real mesh, bias 1, never culled, no shell.",
-  "Trees: impostor atlases rendered by the pipeline (impostor.py). BIN 17 is a grove (24 placements of a 13 m cluster of thin trees with one centre), so near it the full mesh draws: 2.9 ms at the spawn. Splitting groves into single trees is the next lever.",
+  "Trees: 8-view impostor atlases rendered by the pipeline (impostor.py; VRAM trim 1, user 2026-09-23). The groves (BINs 13 and 17) are split into single trees, one 8-view atlas per tree (s16.5).",
   "The ground (BIN 12, one 165 x 125 m mesh) costs about 1 ms at every view even at its coarsest option.",
   "Fences, posts and other clutter are culled only beyond 15 m here, and no object vanishes nearer than in Original (vanish guard).",
 ]
 
 [room.r101.standard.plan]
-house_tex = 128              # VRAM: ~150 KB free in the r101 pool (design-r103 PLAN): 10 shells at 256 (18 KB each)
-                             # + atlases put Standard 234 KB over Original; at 128 (6 KB each) it fits
+house_tex = 64               # user 2026-09-23 (VRAM trim 2): 64 x 64 (3 KB each; 128 is 6 KB, 256 is 18 KB)
 houses_auto = { min_radius_mm = 5000.0, max_radius_mm = 15000.0, min_tris = 700, min_height_mm = 4000.0, max_instances = 2 }
-impostors = { views = 16, cell = 128, ss = 4 }   # tree atlases rendered by impostor.py (r100: pinned item 20 bake)
+impostors = { views = 8, cell = 128, ss = 4 }    # user 2026-09-23 (VRAM trim 1): whole-BIN tree atlases at 8 views
 grove_split = { views = 8, cell = 128, ss = 4 }  # user 2026-09-23 (option B): groves split into trees, one
                                                  # 8-view 512x128 atlas per tree (s16.5)
 # fences, posts and rails are clutter-sized: culled at 6 m they vanish from the cow pen and the
@@ -136,7 +137,7 @@ review_notes = [
 [room.r103.standard.plan]
 house_tex = 256
 houses_auto = { min_radius_mm = 5000.0, max_radius_mm = 15000.0, min_tris = 700, min_height_mm = 4000.0, max_instances = 2 }
-impostors = { views = 16, cell = 128, ss = 4 }   # tree atlases rendered by impostor.py (r100: pinned item 20 bake)
+impostors = { views = 16, cell = 128, ss = 4 }   # tree atlases rendered by impostor.py
 grove_split = { views = 8, cell = 128, ss = 4 }  # user 2026-09-23 (option B): groves split into trees, one
                                                  # 8-view 512x128 atlas per tree (s16.5)
 # fences, posts and rails are clutter-sized: culled at 6 m they vanish from the cow pen and the

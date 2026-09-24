@@ -68,8 +68,8 @@ bytes_per_substrip = 12
 margin_bytes = 155000      # design-lowmode A5: r100 s40 / r101 margin
 
 [impostor]
-p_imp_px = 20.0            # e_imp = 0.195*r*K/z; 20 px reproduces the approved 12 m (r ~ 3 m)
-view_error = 0.195         # sin(11.25 deg): 16 views
+p_imp_px = 20.0            # e_imp = 0.195*r*K/z (16 views); 20 px reproduces the approved 12 m (r ~ 3 m)
+view_error = 0.195         # sin(11.25 deg): 16 views. Pricing uses sin(pi / views) of each atlas (camera.py)
 quad_cycles = 150.0        # frame_ms.py batch model: 4 records + 150 cycles per quad
 atlas_header_cycles = 200.0
 distances_mm = [0.0, 20000.0, 15000.0, 12000.0, 10000.0]

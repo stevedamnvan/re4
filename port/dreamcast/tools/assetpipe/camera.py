@@ -196,8 +196,9 @@ def _eval_view(args):
                 a[3] += 1
                 a[8] += 1
                 imp_done[oi] = True
-                # impostor view-quantisation error vs the full mesh (best option has none)
-                e = 0.195 * rad_obj * K / max(depth_obj, 1.0)
+                # impostor view-quantisation error vs the full mesh (best option has none):
+                # half the angle between atlas views, sin(pi / views)
+                e = math.sin(math.pi / o.get("views", 16)) * rad_obj * K / max(depth_obj, 1.0)
                 ar = min(1.0, math.pi * (rad_obj * K / max(depth_obj, 1.0)) ** 2 / area_div)
                 a[9] += e * ar
         for pi, clusters in enumerate(inst["parts"]):
