@@ -61,7 +61,11 @@ struct OSFontHeader {
 static inline void SetU16(u16& d, u16 v) { d = v; }
 // Message slot address as an expression (not an inline call): the multiply lands in the same pseudo
 // as the sum, which is what the original codegen shows.
+#if defined(__PPC__)
 #define MES(no) ((Message*) ((no) * sizeof(Message) + (u32) this + sizeof(u32)))
+#else
+#define MES(no) (&mes[no])  // GCC class layout: see MessageControl::getMes (mes.h)
+#endif
 static inline void PtrSet(void*& d, void* v) { d = v; }
 
 // Font file: offsets to the TPL and to the width table.
@@ -870,6 +874,20 @@ void Message::WidthCk()
             }
             if (n > 15) {
                 pLog->err(0, 0, "Message [%d]: line overflow!!", 0);
+#if !defined(__PPC__)
+                // The original only logs and keeps measuring: m_width[n] and, after the pass,
+                // m_pos0_x[0..n) are written past their 16 entries, through the other slots and
+                // the .bss after cMes. Real text never has 16 lines; a slot walking bytes that
+                // are not text does (a 0x0003 word is a line break). End the pass here.
+                static bool logged;
+                if (!logged) {
+                    logged = true;
+                    re4dc_log("Message::WidthCk: line overflow (pMes %p); pass ended at 16 lines (logged once)\n", m_pMes);
+                }
+                n = 16;
+                flags2 &= ~8;
+                break;
+#endif
             }
         } else {
             if (qp != NULL && qp >= qbase + 0x100) {

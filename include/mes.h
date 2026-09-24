@@ -194,8 +194,17 @@ public:
     virtual ~MessageControl() {}
 
     MesWork* getWork() { return &mes[0]; }
-    // Slot address the way the original computes it (index scaled first, then the base).
+    // Slot address the way the original computes it (index scaled first, then the base). That
+    // arithmetic holds for GCC 2.95 (the original), which puts the vtable pointer after the fields
+    // of the class that introduces it (x0 at 0, mes[] at 4, Message's vptr at 0xE8). The Dreamcast
+    // compiler puts it first: mes[] is at +8 and every Message field sits 4 bytes later, so the
+    // same sum lands 4 bytes before the slot (Delete() cleared stop_bak bit 0 and left be_flag
+    // set; setLayout wrote charSpace / m_line_gap into other fields; getMes(n)->m_sel misread).
+#if defined(__PPC__)
     Message* getMes(int no) { return (Message*) (no * sizeof(Message) + (u32) this + sizeof(u32)); }
+#else
+    Message* getMes(int no) { return &mes[no]; }
+#endif
 
     void setLayout(int no, int layout);
     void setLanguage(int lang);
