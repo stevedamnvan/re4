@@ -760,6 +760,12 @@ extern "C" int re4dc_ioprobe_hud(unsigned v[4]);
 #if RE4DC_QUALITY
 extern "C" int re4dc_quality_hud(unsigned v[2]);   // platform/quality.cpp
 #endif
+#ifndef RE4DC_VMU_DEBUG_SLOT
+#define RE4DC_VMU_DEBUG_SLOT 0
+#endif
+#if RE4DC_VMU_DEBUG_SLOT
+extern "C" int re4dc_dbgslot_hud(unsigned v[2]);   // dbgslot_bridge.cpp
+#endif
 void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_bytes,unsigned ta_capacity,bool ta_fault){
     HudBatch& b=hud_batch;b.n=1;
     pvr_poly_cxt_t c;pvr_poly_cxt_col(&c,PVR_LIST_TR_POLY);
@@ -771,7 +777,7 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     constexpr float X=40,BX=100,Y=324,R=18,PX=4.0f/1000.0f,MAXW=480;
     const unsigned us[5]={flip_us,period,busy,render_us,wait_us};
     const std::uint32_t colors[6]={0xe0ffffffU,0xe040ff40U,0xe0ffff40U,0xe040ffffU,0xe0ff40ffU,ta_fault?0xf0ff2020U:0xe0ffa040U};
-    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,(6+RE4DC_IO_PROBE+RE4DC_QUALITY)*R+6,0x90000000U);   // backdrop
+    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,(6+RE4DC_IO_PROBE+RE4DC_QUALITY+RE4DC_VMU_DEBUG_SLOT)*R+6,0x90000000U);   // backdrop
     for(unsigned r=0;r<5;++r){
         hud_number(b,X,Y+r*R,(us[r]+50)/100,true,colors[r]);
         hud_rect(b,BX,Y+r*R+2,std::min(MAXW,float(us[r])*PX),8,colors[r]);
@@ -793,6 +799,13 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     re4dc_quality_hud(qv);
     hud_number(b,X,Y+(6+RE4DC_IO_PROBE)*R,qv[0],false,0xe080ff80U);
     hud_number(b,X+60,Y+(6+RE4DC_IO_PROBE)*R,qv[1],false,0xe080ff80U);
+#endif
+#if RE4DC_VMU_DEBUG_SLOT
+    // Debug slot row (orange): status (1 OK, 2 ERR, 3 BUSY, 4 NOMEM) and the debug save count.
+    unsigned dv[2];
+    re4dc_dbgslot_hud(dv);
+    hud_number(b,X,Y+(6+RE4DC_IO_PROBE+RE4DC_QUALITY)*R,dv[0],false,0xe0ffb060U);
+    hud_number(b,X+60,Y+(6+RE4DC_IO_PROBE+RE4DC_QUALITY)*R,dv[1],false,0xe0ffb060U);
 #endif
     hud_flush(b);
 }

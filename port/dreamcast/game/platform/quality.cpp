@@ -2,7 +2,7 @@
 // Design: design-lowmode DESIGN.md A1/A3/A4. Render-side only; see quality.h.
 //
 // /cd/dc/quality.txt (test fixture, wins over the VMU; skips the picker unless picker=1):
-//   mode=standard|original   features=+lod,-lod   picker=0|1
+//   mode=standard|original   features=+lod,-lod   picker=0|1   pace=0..3 (calls set_pace)
 // Stored choice: the 32-byte RE4DCCFG record (quality.h Re4dcQualityCfg, design-vmu layout),
 // read once at the title and stored only when the picker's choice changes, through
 // re4dc_quality_cfg_load/store. The VMU layer (design-vmu S5) owns the card file; the weak
@@ -34,6 +34,7 @@ Re4dcQuality q = {RE4DC_QUALITY_DEFAULT, 0, RE4DC_QSRC_DEFAULT, 0, kPreset[RE4DC
                   RE4DC_QUALITY_DEFAULT ? 5.0f : float(RE4DC_MESH_LOD_PX)};
 bool inited;
 int file_picker = -1;              // quality.txt picker= (-1: not given)
+int file_pace = -1;                // quality.txt pace= (-1: not given; test fixture for set_pace)
 uint32_t file_set, file_clear;     // quality.txt feature overrides
 uint8_t stored_mode = 0xFF;        // mode in the stored record (0xFF: none)
 uint32_t stored_features;
@@ -41,7 +42,7 @@ uint32_t stored_features;
 void apply(int mode)
 {
     q.mode = uint8_t(mode ? RE4DC_QUALITY_STANDARD : RE4DC_QUALITY_ORIGINAL);
-    q.features = (kPreset[q.mode] | file_set) & ~file_clear;
+    q.features = ((kPreset[q.mode] | file_set) & ~file_clear & ~uint32_t(RQ_PACE_MASK)) | (q.features & RQ_PACE_MASK);
     q.lod_px = (q.features & RQ_LOD_COARSE) ? 5.0f : float(RE4DC_MESH_LOD_PX);
 }
 
@@ -70,6 +71,8 @@ void parse_file(char* t)
             if (!strcmp(s + 5, "standard")) mode = RE4DC_QUALITY_STANDARD;
             else if (!strcmp(s + 5, "original")) mode = RE4DC_QUALITY_ORIGINAL;
             else re4dc_log("quality: quality.txt unknown mode '%s'\n", s + 5);
+        } else if (!strncmp(s, "pace=", 5)) {
+            file_pace = atoi(s + 5) & 3;
         } else if (!strncmp(s, "picker=", 7)) {
             file_picker = atoi(s + 7) ? 1 : 0;
         } else if (!strncmp(s, "features=", 9)) {
@@ -105,6 +108,7 @@ void cfg_read()
     }
     stored_mode = r.mode;
     stored_features = r.features;
+    q.features = (q.features & ~uint32_t(RQ_PACE_MASK)) | (r.features & RQ_PACE_MASK);
     apply(r.mode);
     q.source = RE4DC_QSRC_VMU;
     re4dc_log("quality: RE4DCCFG mode=%s\n", r.mode == RE4DC_QUALITY_STANDARD ? "standard" : "original");
@@ -162,6 +166,7 @@ extern "C" void re4dc_quality_init(void)
     static char text[256];
     const int n = re4dc_fixture_read("/cd/dc/quality.txt", text, sizeof(text) - 1);
     if (n > 0) { text[n] = 0; parse_file(text); }
+    if (file_pace >= 0) re4dc_quality_set_pace(file_pace);
     re4dc_kos_heap_state(&kos_free1, &used, &kos_break1);
     if (!RE4DC_QUALITY_PICKER || file_picker == 0 || (n > 0 && file_picker != 1)) q.chosen = 1;
     re4dc_log("quality: init kos_free %u->%u break %u->%u file=%d picker=%s\n", kos_free0, kos_free1, kos_break0,
@@ -187,6 +192,21 @@ extern "C" void re4dc_quality_toggle(uint32_t feature)
     if (q.frozen) return;
     q.features ^= feature & RQ_WIRED;
     q.lod_px = (q.features & RQ_LOD_COARSE) ? 5.0f : float(RE4DC_MESH_LOD_PX);
+}
+
+extern "C" int re4dc_quality_pace(void)
+{
+    return int((q.features & RQ_PACE_MASK) >> RQ_PACE_SHIFT);
+}
+
+extern "C" int re4dc_quality_set_pace(int pace)
+{
+    re4dc_quality_init();
+    q.features = (q.features & ~uint32_t(RQ_PACE_MASK)) | ((uint32_t(pace) << RQ_PACE_SHIFT) & RQ_PACE_MASK);
+    re4dc_log("quality: pace=%d\n", re4dc_quality_pace());
+    if (stored_mode == q.mode && stored_features == q.features) return 1;
+    cfg_write();
+    return stored_features == q.features;
 }
 
 extern "C" void re4dc_quality_picker_done(void)

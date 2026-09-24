@@ -40,6 +40,16 @@ enum {
     RQ_CROWD = 1u << 7,
     RQ_FX_DRAWCAP = 1u << 8,
     RQ_WIRED = RQ_LOD_COARSE,
+    // Frame pacing setting (design-pacing; the pacing builder reads it): a 2-bit field, not a
+    // preset bit. Kept across mode changes and stored in RE4DCCFG with the mode.
+    RQ_PACE_SHIFT = 16,
+    RQ_PACE_MASK = 3u << 16,
+};
+enum {
+    RE4DC_PACE_DEFAULT = 0,   // the build's PACE_* knobs
+    RE4DC_PACE_SMOOTH = 1,
+    RE4DC_PACE_FAST = 2,
+    RE4DC_PACE_OFF = 3,
 };
 
 typedef struct Re4dcQuality {
@@ -82,6 +92,11 @@ void re4dc_quality_toggle(uint32_t feature);
 void re4dc_quality_picker_done(void);
 // Game start (titleExit / first room entry): freezes the state and logs it.
 void re4dc_quality_freeze(const char* where);
+// Pacing setting (RE4DC_PACE_*). set_pace works before and after the freeze (an options
+// setting, not a render preset) and stores RE4DCCFG when the value changes (a VMU write of
+// about 35 vblanks when the VMU layer is linked). Returns 1 when stored or unchanged.
+int re4dc_quality_pace(void);
+int re4dc_quality_set_pace(int pace);
 // PERF_HUD: v[0] = mode, v[1] = feature word. Returns 2.
 int re4dc_quality_hud(unsigned v[2]);
 

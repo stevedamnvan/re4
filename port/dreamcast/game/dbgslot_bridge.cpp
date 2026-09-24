@@ -17,6 +17,9 @@
 //  - Load: FILE 20 in the normal Load list (platform/card.cpp maps bh4_data19 to RE4DCDBG); after
 //    the load the first room entry restores the RNG and switches the start to continue semantics,
 //    so Leon appears at the saved position.
+//  - Status (design 4.3): "DBG SAVE n / OK", "ERR x", "BUSY", "NOMEM" on the VMU LCD (KOS vmufb,
+//    192 B BSS, queued like any LCD write; retried while the maple frame is busy) and, in PERF_HUD
+//    builds, a HUD row (re4dc_dbgslot_hud: status code and save count).
 //  - Ring: 15 x 32 B records in RAM (debug save, halt, fault, panic, room enter, busy), written as
 //    the file's last block by the next debug save.
 #if RE4DC_VMU_DEBUG_SLOT
@@ -34,6 +37,9 @@
 extern "C" int OSCheckHeap(int);
 #include <string.h>
 #include <stdio.h>
+#include <dc/maple.h>
+#include <dc/maple/vmu.h>
+#include <dc/vmu_fb.h>
 
 typedef s64 OSTime;
 extern "C" {
@@ -117,6 +123,43 @@ const char* busy_reason(u32 room_frames)
     return nullptr;
 }
 
+// ---- status: VMU LCD + PERF_HUD row
+enum { kStNone, kStOk, kStErr, kStBusy, kStNoMem };
+vmufb_t lcd;
+u32 lcd_tries;  // frames left to retry a queued LCD write that found the maple frame busy
+u32 status_code, status_saves;
+
+void lcd_try()
+{
+    maple_device_t* dev = maple_enum_type(0, MAPLE_FUNC_LCD);
+    if (!dev) { lcd_tries = 0; return; }
+    // vmufb_present's orientation rule, keeping the return code (EAGAIN: retry next frame).
+    maple_device_t* cont = maple_enum_dev(dev->port, 0);
+    const int rc = (cont && (cont->info.functions & MAPLE_FUNC_CONTROLLER) &&
+                    cont->info.connector_direction != dev->info.connector_direction)
+                       ? vmu_draw_lcd(dev, lcd.data)
+                       : vmu_draw_lcd_rotated(dev, lcd.data);
+    lcd_tries = rc == MAPLE_EAGAIN ? lcd_tries - 1 : 0;
+    if (!lcd_tries) re4dc_log("dbg: lcd %c%c rc=%d\n", 'A' + dev->port, '0' + dev->unit, rc);
+}
+
+void status(u32 code, int rc)
+{
+    status_code = code;
+    status_saves = saves;
+    char text[40];
+    switch (code) {
+    case kStOk: snprintf(text, sizeof(text), "DBG SAVE %u\nOK", (unsigned) saves); break;
+    case kStErr: snprintf(text, sizeof(text), "DBG SAVE %u\nERR %d", (unsigned) saves, rc); break;
+    case kStBusy: snprintf(text, sizeof(text), "DBG:\nBUSY"); break;
+    default: snprintf(text, sizeof(text), "DBG:\nNOMEM"); break;
+    }
+    vmufb_clear(&lcd);
+    vmufb_print_string(&lcd, nullptr, text);
+    lcd_tries = 30;
+    lcd_try();
+}
+
 int do_save(u32 source)
 {
     const unsigned long long t0 = re4dc_ssb_us();
@@ -135,6 +178,7 @@ int do_save(u32 source)
         r.a = bytes;
         r.seq = ++ring.next;
         r.crc = crc16((const u8*) &r, 30);
+        status(kStNoMem, 0);
         return -1;
     }
     u8* img = mem;
@@ -217,6 +261,7 @@ int do_save(u32 source)
               (unsigned) saves, rc ? "ERR" : "OK", comp, blocks, (unsigned) pG->room_id,
               (unsigned) re4dc_rnd_state(), (unsigned) pG->Frame_cnt, (unsigned) (re4dc_ssb_us() - t0), rc,
               heap4_before, heap4_after);
+    status(rc ? kStErr : kStOk, rc);
     return rc;
 }
 }  // namespace
@@ -272,6 +317,7 @@ void re4dc_dbgslot_poll(unsigned generation, unsigned room_frames)
         request = 1;
         source = 2;
     }
+    if (lcd_tries) lcd_try();
     if (!request) return;
     request = 0;
     const char* why = busy_reason(room_frames);
@@ -284,9 +330,18 @@ void re4dc_dbgslot_poll(unsigned generation, unsigned room_frames)
         r.vbl = re4dc_vi_retrace_count();
         r.seq = ++ring.next;
         r.crc = crc16((const u8*) &r, 30);
+        status(kStBusy, 0);
         return;
     }
     do_save(source);
+}
+
+// PERF_HUD row (native_ui.cpp): v[0] = status (0 none, 1 OK, 2 ERR, 3 BUSY, 4 NOMEM), v[1] = saves.
+int re4dc_dbgslot_hud(unsigned v[2])
+{
+    v[0] = status_code;
+    v[1] = status_saves;
+    return 2;
 }
 
 // Diagnostic ring entry (kind 2 halt, 3 fault, 4 panic, 5 room enter; 1 save, 6 busy, 7 nomem). IRQ-safe: BSS only.

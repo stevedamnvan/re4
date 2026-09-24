@@ -30,7 +30,8 @@ $(OBJDIR)/vmusave.h: vmusave-force
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 VMUSAVE_PLATFORM = $(OBJDIR)/platform/card.o $(OBJDIR)/platform/lz_small.o $(OBJDIR)/platform/vmu_store.o \
-  $(OBJDIR)/platform/pad.o $(OBJDIR)/platform/fault.o $(OBJDIR)/platform/mem.o $(OBJDIR)/platform/os.o
+  $(OBJDIR)/platform/pad.o $(OBJDIR)/platform/fault.o $(OBJDIR)/platform/mem.o $(OBJDIR)/platform/os.o \
+  $(OBJDIR)/platform/native_ui.o
 $(VMUSAVE_PLATFORM): $(OBJDIR)/vmusave.h
 $(VMUSAVE_PLATFORM): PLATFORM_CPPFLAGS += -include $(OBJDIR)/vmusave.h
 $(OBJDIR)/ui_bridge.o: $(OBJDIR)/vmusave.h
