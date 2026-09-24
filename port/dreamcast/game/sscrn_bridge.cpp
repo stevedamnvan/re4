@@ -22,6 +22,9 @@
 #include "emhit.h"
 #include "mes.h"
 #include "card.h"
+#if RE4DC_W11_FIXTURE
+#include "sce.h"
+#endif
 #include "re4dc_platform.h"
 #include <stdio.h>
 #include <string.h>
@@ -366,6 +369,14 @@ struct Fixture {
     unsigned save_after, save_count, saves; // "save <frames> <count> [room] [slot]": the typewriter's
     unsigned save_room, save_slot;          // CardSave(slot, 1) (sce_at.cpp type 8), every `frames`
                                             // room frames (card screen frames do not count)
+    // "mes <frames> <no> <kind> [room] [item] [num]" (hex no/room/item; up to 4 lines, in order):
+    // once `frames` room frames in, with no event, sub screen or message up, show message `no`
+    // as its game callers do. kind 0: a room message (r100_MesTruck: SceMesSet(no, 0, 1, ...),
+    // here without its wait); kind 1: the item pick-up prompt (sce_at.cpp item type 2:
+    // MesSet(no, 0x64, y, 0x211), m_item_no = item, number = num). State w11m=<i>/1 while
+    // shown (padscript gate for the button that closes it); shots mes<i>-30/90/180.
+    struct Mes { unsigned frames, no, kind, room, item, num, at; bool fired; } mes[4];
+    unsigned nmes;
 };
 Fixture fx{};
 
@@ -394,6 +405,15 @@ void load_fixture()
             fx.save_count = b;
             fx.save_room = r;
             fx.save_slot = v2;
+        } else if (fx.nmes < 4 && sscanf(line, "mes %u %x %u %x %x %u", &a, &b, &r, &v2, &fx.mes[fx.nmes].item,
+                                         &fx.mes[fx.nmes].num) >= 3) {
+            Fixture::Mes& m = fx.mes[fx.nmes++];
+            m.frames = a;
+            m.no = b;
+            m.kind = r;
+            m.room = v2;
+            re4dc_log("w11 fixture: mes %u at room frame %u no=%x kind=%u room=%03x item=%x num=%u\n", fx.nmes, m.frames,
+                      m.no, m.kind, m.room, m.item, m.num);
         } else if (sscanf(line, "done %u", &a) == 1) {
             fx.done_events = a;
         }
@@ -483,7 +503,34 @@ extern "C" int re4dc_w11_room_poll(unsigned generation)
         player_state(fx.dies ? "continue+90" : "room+90");
         if (fx.dies) shot("continue%u-%u", fx.dies, 90);
     }
+    for (unsigned i = 0; i < fx.nmes; ++i) {
+        const Fixture::Mes& m = fx.mes[i];
+        const unsigned k = fx.room_frames - m.at;
+        if (m.fired && (k == 30 || k == 90 || k == 180)) shot("mes%u-%u", i + 1, k);
+        if (m.fired && k == 1) player_state("mes");
+    }
     if (pG->Status_flg[1] & 0x10000000) return 0;  // an event holds the game
+    for (unsigned i = 0; i < fx.nmes; ++i) {
+        Fixture::Mes& m = fx.mes[i];
+        if (m.fired) continue;
+        if (fx.room_frames < m.frames || (m.room && unsigned(pG->room_id) != m.room) || SubScreenWk.type ||
+            (pG->System_flg & 0x1000) || (cMes.mes[0].be_flag & 1) || s16(pG->pl_life) <= 0)
+            break;
+        MesWork* w = cMes.getWork();
+        const int ls = w->lineSpace, fh = w->m_font_h;
+        if (m.kind == 0) {
+            SceMesSet(int(m.no), 0x10, 1, 0x64, 0x150 - ls - fh - 1);  // 0x10: no wait (room messages are flags 0)
+        } else {
+            cMes.MesSet(int(m.no), 0x64, 0x129 - fh - ls, 0x211, 0, 0, 4);
+            cMes.mes[0].m_item_no = u16(m.item);
+            cMes.mes[0].setNumber(m.num, 0);
+        }
+        m.fired = true;
+        m.at = fx.room_frames;
+        re4dc_fixture_state("w11m", int(i + 1), 1);
+        re4dc_log("w11 fixture: mes %u shown (no=%x kind=%u) at room frame %u\n", i + 1, m.no, m.kind, fx.room_frames);
+        break;
+    }
     if (fx.life_value >= 0 && !fx.life_done && fx.room_frames >= fx.life_after) {
         fx.life_done = true;
         re4dc_log("w11 fixture: life %d -> %d\n", int(s16(pG->pl_life)), fx.life_value);
