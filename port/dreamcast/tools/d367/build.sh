@@ -19,6 +19,9 @@ make NATIVE_REUSE_AUDIT=0 NATIVE_RENDER_PROFILE=0 -C port/dreamcast/game -j${JOB
   NATIVE_STATIC=${STATIC:-1} NATIVE_STATIC_OWNERS=${OWNERS:-1} NATIVE_MESH=${MESH:-0} NATIVE_STATIC_PROBE_SKIP=${PROBE_SKIP:-0} \
   ${EXTRA_MAKE:-} >"$dest/build.log" 2>&1 || { tail -40 "$dest/build.log"; exit 1; }
 cp port/dreamcast/game/re4dc-game.elf "$dest/re4dc-game.elf"
+# SUBSCREEN_OVL=1 builds: the sub screen overlay tools/link.sh wrote next to the ELF.
+rm -f "$dest/sscrn.ovl"
+if [ -f port/dreamcast/game/sscrn.ovl ]; then cp port/dreamcast/game/sscrn.ovl "$dest/sscrn.ovl"; sha256sum "$dest/sscrn.ovl"; fi
 "$KOS_CC_BASE/bin/sh-elf-size" "$dest/re4dc-game.elf" | tee "$dest/size.txt"
 sha256sum "$dest/re4dc-game.elf" | tee "$dest/elf.sha256"
 git diff --binary > "$dest/tracked.patch"

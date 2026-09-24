@@ -41,7 +41,7 @@ MODULE(em15)
 MODULE(em26)
 MODULE(em28)
 MODULE(em21)
-#if RE4DC_SUBSCREEN
+#if RE4DC_SUBSCREEN && !RE4DC_SUBSCREEN_OVL
 MODULE(Sscrn)
 #endif
 #undef MODULE
@@ -61,7 +61,13 @@ struct Re4dcModule {
 
 #define MODULE(id, name) {id, #name, name##_prolog, name##_epilog, re4dc_mod_##name##_data, \
     re4dc_mod_##name##_data_end, re4dc_mod_##name##_bss, re4dc_mod_##name##_bss_end, re4dc_mod_##name##_pristine}
+#if RE4DC_SUBSCREEN_OVL
+// SUBSCREEN_OVL=1: the Sscrn entry is filled by re4dc_module_overlay() each time sscrn_bridge.cpp
+// has read and relocated sscrn.ovl; the image holds no pointer into the overlay.
+static Re4dcModule g_modules[] = {
+#else
 static const Re4dcModule g_modules[] = {
+#endif
     MODULE(74, st1_0),
     MODULE(73, st1_1),
     MODULE(78, st1_2),
@@ -73,7 +79,9 @@ static const Re4dcModule g_modules[] = {
     MODULE(14, em26),
     MODULE(17, em28),
     MODULE(6, em21),
-#if RE4DC_SUBSCREEN
+#if RE4DC_SUBSCREEN_OVL
+    {71, "Sscrn", 0, 0, 0, 0, 0, 0, 0},  // sub screen overlay (entry points set per load)
+#elif RE4DC_SUBSCREEN
     MODULE(71, Sscrn),  // sub screen (SUBSCREEN=1; linked into the ARAM-swapped area while open)
 #endif
 };
@@ -201,6 +209,14 @@ extern "C" int re4dc_module_bind(void* header)
         *epilog = 0;
         return 0;
     }
+#if RE4DC_SUBSCREEN_OVL
+    if (m->prolog == 0) {
+        re4dc_log("module: %s is an overlay that is not loaded; link failed\n", m->name);
+        *prolog = 0;
+        *epilog = 0;
+        return 0;
+    }
+#endif
     ModuleState& s = g_state[index];
     if (s.header && s.header != header) {
         re4dc_log("module: %s linked again without unlink\n", m->name);
@@ -224,6 +240,29 @@ extern "C" int re4dc_module_bind(void* header)
     *epilog = m->epilog;
     return 1;
 }
+
+#if RE4DC_SUBSCREEN_OVL
+// sscrn_bridge.cpp, after reading and relocating an overlay: its entry points and state span.
+// The bytes came fresh from disc (pristine .data, zero .bss): the next link captures them.
+extern "C" void re4dc_module_overlay(u32 id, void (*prolog)(void), void (*epilog)(void), char* data, char* data_end,
+                                     char* bss, char* bss_end, char* pristine)
+{
+    const int index = moduleIndex(id);
+    if (index < 0) re4dc_missing("overlay module id not in the table");
+    Re4dcModule& m = g_modules[index];
+    m.prolog = prolog;
+    m.epilog = epilog;
+    m.data = data;
+    m.data_end = data_end;
+    m.bss = bss;
+    m.bss_end = bss_end;
+    m.pristine = pristine;
+    ModuleState& s = g_state[index];
+    s.header = 0;
+    s.stopped = 0;
+    s.captured = false;
+}
+#endif
 
 // OSUnlink: the module's code stays resident; mark the header so a relink of
 // this very header (restartRelData) is a restart rather than a fresh read.

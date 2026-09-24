@@ -19,18 +19,34 @@
 #                  life fixture through the source damage entry), heap/VRAM/KOS census around
 #                  every sub screen open and close and every death, frame-time windows per
 #                  phase, and "w11 shot:" markers for framebuffer captures.
+#   SUBSCREEN_OVL=1 (needs SUBSCREEN=1) takes the Sscrn module (~122 KB) out of the resident
+#                  image: it is linked as one section outside RAM (gen_modules.py <mod>:ovl),
+#                  tools/link.sh links the image twice at two overlay addresses, proves that only
+#                  the overlay's own absolute words differ (the image holds no pointer into it),
+#                  writes sscrn.ovl (bytes + relocation list) next to the ELF and strips the
+#                  section. Each open reads it into offset 0 of the sub screen area, where the
+#                  GameCube's Sscrn.rel sat, and relocates it (sscrn_bridge.cpp). Heap 4 gains the
+#                  module's size; stage.sh puts sscrn.ovl on the disc as /cd/dc/sscrn.ovl.
 SUBSCREEN ?= 0
 W11_FIXTURE ?= 0
+SUBSCREEN_OVL ?= 0
 ifeq ($(SUBSCREEN),1)
 ifneq ($(TA_DOUBLEBUF),0)
 $(error SUBSCREEN=1 keeps the sub screen backing in the idle second TA vertex bank: needs TA_DOUBLEBUF=0)
 endif
+ifeq ($(SUBSCREEN_OVL),1)
+MODULES += Sscrn:ovl
+export RE4DC_LINK_OVERLAY = .ovl_Sscrn
+else
 MODULES += Sscrn
+endif
+else ifeq ($(SUBSCREEN_OVL),1)
+$(error SUBSCREEN_OVL=1 needs SUBSCREEN=1)
 endif
 .PHONY: subscreen-force
 $(OBJDIR)/subscreen.h: subscreen-force
 	@mkdir -p $(dir $@)
-	@printf '#define RE4DC_SUBSCREEN %s\n#define RE4DC_W11_FIXTURE %s\n' '$(SUBSCREEN)' '$(W11_FIXTURE)' > $@.tmp
+	@printf '#define RE4DC_SUBSCREEN %s\n#define RE4DC_W11_FIXTURE %s\n#define RE4DC_SUBSCREEN_OVL %s\n' '$(SUBSCREEN)' '$(W11_FIXTURE)' '$(SUBSCREEN_OVL)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 # A knob change regenerates the module list.

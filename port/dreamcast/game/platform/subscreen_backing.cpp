@@ -228,5 +228,32 @@ long re4dc_ssb_file_read(const char* name, void* dst, unsigned capacity)
     return got == total ? got : -1;
 }
 
+#if RE4DC_SUBSCREEN_OVL
+// The sub screen overlay (SUBSCREEN_OVL=1): /cd/dc/sscrn.ovl, a Dreamcast-only file (no source
+// DVD name), read whole into `dst`. Returns the bytes read or -1.
+long re4dc_ssb_overlay_read(void* dst, unsigned capacity)
+{
+    Re4dcIoScope io;
+    file_t f = fs_open("/cd/dc/sscrn.ovl", O_RDONLY);
+    if (f < 0) return -1;
+    long total = (long) fs_total(f), got = 0;
+    if (total > (long) capacity) total = (long) capacity;
+    while (got < total) {
+        const ssize_t r = fs_read(f, static_cast<char*>(dst) + got, (size_t) (total - got));
+        if (r <= 0) break;
+        got += (long) r;
+    }
+    fs_close(f);
+    return got == total ? got : -1;
+}
+
+// Code just written through the operand cache: write it back and drop stale instruction lines.
+void re4dc_ssb_code_sync(void* p, unsigned bytes)
+{
+    dcache_wback_range(reinterpret_cast<uintptr_t>(p), bytes);
+    icache_flush_range(reinterpret_cast<uintptr_t>(p), bytes);
+}
+#endif
+
 }  // extern "C"
 #endif  // RE4DC_SUBSCREEN || RE4DC_W11_FIXTURE

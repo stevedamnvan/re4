@@ -53,6 +53,12 @@ void re4dc_motion_hold(int on);
 unsigned re4dc_motion_forget_dead_heaps();
 unsigned re4dc_parts_freeze(u32 lo, u32 hi);  // parts_bridge.cpp
 void re4dc_parts_thaw();
+#if RE4DC_SUBSCREEN_OVL
+long re4dc_ssb_overlay_read(void* dst, unsigned capacity);
+void re4dc_ssb_code_sync(void* p, unsigned bytes);
+void re4dc_module_overlay(u32 id, void (*prolog)(void), void (*epilog)(void), char* data, char* data_end, char* bss,
+                          char* bss_end, char* pristine);  // platform/modules.cpp
+#endif
 }
 
 namespace {
@@ -248,12 +254,74 @@ void build_spans(u32 lo, u32 hi)
 }
 }  // namespace
 
+#if RE4DC_SUBSCREEN_OVL
+// SUBSCREEN_OVL=1: the Sscrn module is not in the image. /cd/dc/sscrn.ovl (tools/gen_overlay.py)
+// is a 64-byte header, the module bytes as linked at `base`, and the offsets of the words to
+// relocate. Each open reads it to the start of the area, where the GameCube's Sscrn.rel sat: the
+// header lands on the descriptor slot and the module right after it, at kDescriptorBytes.
+namespace {
+struct OverlayHeader {
+    u32 magic, version, image_bytes, relocs, base;
+    u32 prolog, epilog, data, data_end, bss, bss_end, pristine;  // offsets from base
+    u32 image_hash, reloc_hash, pad[2];
+};
+static_assert(sizeof(OverlayHeader) == kDescriptorBytes, "overlay header fills the descriptor slot");
+constexpr u32 kOverlayMagic = 0x4F344552;  // "RE4O"
+u32 ovl_image_bytes, ovl_file_bytes;
+}
+
+// Game start: the overlay's size, for the area layout.
+static void overlay_size()
+{
+    OverlayHeader h;
+    if (re4dc_ssb_overlay_read(&h, sizeof(h)) != long(sizeof(h)) || h.magic != kOverlayMagic || h.version != 1)
+        re4dc_missing("sub screen overlay /cd/dc/sscrn.ovl missing or not version 1");
+    ovl_image_bytes = h.image_bytes;
+    ovl_file_bytes = u32(sizeof(h)) + h.image_bytes + h.relocs * 4;
+}
+
+// swap_open, on the cleared area: read, check, relocate; bind the module table entry to it.
+static void overlay_load(u32 lo, u32 limit, unsigned* reloc_us)
+{
+    if (ovl_file_bytes > limit) re4dc_missing("sub screen overlay larger than its area slot");
+    if (re4dc_ssb_overlay_read(reinterpret_cast<void*>(lo), ovl_file_bytes) != long(ovl_file_bytes))
+        re4dc_missing("sub screen overlay read failed");
+    const unsigned long long t0 = re4dc_ssb_us();
+    const OverlayHeader h = *reinterpret_cast<const OverlayHeader*>(lo);
+    u8* image = reinterpret_cast<u8*>(lo + kDescriptorBytes);
+    u32* reloc = reinterpret_cast<u32*>(image + h.image_bytes);
+    if (h.magic != kOverlayMagic || h.image_bytes != ovl_image_bytes ||
+        hash_words(image, h.image_bytes, 2166136261U) != h.image_hash ||
+        hash_words(reloc, h.relocs * 4, 2166136261U) != h.reloc_hash)
+        re4dc_missing("sub screen overlay corrupt (hash)");
+    const u32 delta = u32(image) - h.base;
+    for (u32 i = 0; i < h.relocs; ++i) {
+        const u32 at = reloc[i];
+        if (at + 4 > h.image_bytes || (at & 3)) re4dc_missing("sub screen overlay relocation out of range");
+        *reinterpret_cast<u32*>(image + at) += delta;
+    }
+    memset(reloc, 0, h.relocs * 4);  // the area is clear past the module, as before
+    re4dc_ssb_code_sync(image, h.image_bytes);
+    re4dc_module_overlay(kSscrnModuleId, reinterpret_cast<void (*)(void)>(image + h.prolog),
+                         reinterpret_cast<void (*)(void)>(image + h.epilog), reinterpret_cast<char*>(image + h.data),
+                         reinterpret_cast<char*>(image + h.data_end), reinterpret_cast<char*>(image + h.bss),
+                         reinterpret_cast<char*>(image + h.bss_end), reinterpret_cast<char*>(image + h.pristine));
+    *reloc_us = unsigned(re4dc_ssb_us() - t0);
+}
+#endif
+
 // SubScreenAramRead replacement (game start): the area layout, from the disc file sizes.
 extern "C" void re4dc_subscreen_aram_init(SubScreenWork* wk)
 {
     wk->p_module = 0;
     wk->pPreplfOffs = 0;
     wk->aramSize = kDescriptorBytes;
+#if RE4DC_SUBSCREEN_OVL
+    overlay_size();
+    wk->aramSize += align32(ovl_image_bytes);
+    OSReport("Native subscreen area: Sscrn overlay %u B (%u B file) @%x\n", ovl_image_bytes, ovl_file_bytes,
+             kDescriptorBytes);
+#endif
     sscrnDataFilename(wk, "ss_cmmn.dat");
     long size = re4dc_ssb_file_size(wk->path);
     cmmn_bytes = size > 0 ? u32(size) : 0;
@@ -301,6 +369,14 @@ extern "C" void re4dc_subscreen_swap_open(SubScreenWork* wk)
     const unsigned long long t1 = re4dc_ssb_us();
     // What the ARAM copy would bring in.
     memset(wk->pBuf, 0, kSsAramSize);
+#if RE4DC_SUBSCREEN_OVL
+    const unsigned long long to0 = re4dc_ssb_us();
+    unsigned reloc_us = 0;
+    overlay_load(lo, kSsAramSize, &reloc_us);
+    re4dc_log("subscreen backing: overlay %u B at %08x read_us=%u reloc_us=%u\n", ovl_image_bytes,
+              lo + kDescriptorBytes, unsigned(re4dc_ssb_us() - to0) - reloc_us, reloc_us);
+    for (u32 i = 0; i < kDescriptorBytes / 4; ++i) reinterpret_cast<u32*>(lo)[i] = 0;
+#endif
     u32* d = reinterpret_cast<u32*>(lo + wk->pPreplfOffs);
     d[0] = kSscrnModuleId;
     d[0x1c / 4] = kCompactDescriptor;

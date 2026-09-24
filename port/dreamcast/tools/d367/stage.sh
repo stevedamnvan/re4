@@ -62,6 +62,8 @@ mkdir -p "$fixtures/native/r100"
 for o in MAINSCENARIO FILE_00 FILE_01 FILE_02; do
   cp "${KEYED:-$base/keyed12}/$o.re4room" "$fixtures/native/r100/$o.re4room"
 done
+# SUBSCREEN_OVL=1 builds read the sub screen module from /cd/dc/sscrn.ovl (build.sh copies it).
+if [ -f "$build/sscrn.ovl" ]; then cp "$build/sscrn.ovl" "$fixtures/sscrn.ovl"; fi
 if [ -n "${MESHDIR:-}" ]; then cp "$MESHDIR"/*.re4mesh "$fixtures/native/r100/"; fi
 for spec in ${MESHROOMS:-}; do
   room=${spec%%=*}; dir=${spec#*=}
