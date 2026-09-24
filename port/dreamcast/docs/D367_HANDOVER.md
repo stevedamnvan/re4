@@ -6,7 +6,8 @@ from GD-ROM, 4980a40 + 976c93d SS_POOL_HIGH (the r101 call reset and the file-sc
 NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + converter: r101 scenery draws),
 ea1e2d3 VRAM_PAGES (default off), 9951d17 items 20+21 (TREE_IMPOSTOR/MESH_TEXTURES on W9b, default off), 010169c
 QUALITY_ASSETS (Standard selection, default off), 46b9f4f tex-vq6 (r101 textures VQ: the r101 VRAM blocker), e6f65cc
-em2a linked (r100 after-state entry), 4f530e3 warp `trg` (r101 bell reached by warp). The
+em2a linked (r100 after-state entry), 4f530e3 warp `trg` (r101 bell reached by warp), b1a342c `assets.sh discover` (room demand from source data: modules,
+archives, heap 4; run it before building a room's disc). The
 sections below are updated for those; everything else is as at the hold.
 
 The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
@@ -193,7 +194,10 @@ build or watcher of theirs is running.
    QUALITY_ASSETS and tex-vq6. Next in the serial backlog:
    - r100 after-state crows (heap 4, see blocker 3);
    - the m1 restage with em15 keys;
-   - r101 bell movie (r101s30 errors from the fight, blocker above), then r101 -> r103;
+   - r101 bell movie (r101s30 errors from the fight, blocker above; its encoding matches the movies that play), then
+     r101 -> r103;
+   - discover next steps: event actors (evd), measured r101/r103 enemy heap-4 room, Standard budgets, VRAM, then feed
+     the demand into the asset solver's limits;
    - r100 Standard proof.
 3. Resume the other streams in the order of the dependency list in the route doc; every patch still goes through
    the commit procedure in the skill (sha check, HEAD guard, empty index, `git apply --check` / `--cached --check`,
