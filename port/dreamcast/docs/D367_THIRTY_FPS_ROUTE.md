@@ -191,6 +191,12 @@ Performance work is serialized: one integrated build, one change at a time.
 | 4 | Render front end: EFFECT_LEAN, EMIT_DIRECT, FRONT_NATIVE v2 | queued |
 | 5 | Scenery: fog distance, tree cap, house from halfway, W9 worst views and per-room fog | queued. Trials done: 25 m far plane (room's own curve) is scenery 29.9 -> 18.7 hw ms, frame 158.3 -> 140.1. 20 m fails the enemy rule (a Ganado at 20 m is 100% fogged). Rule for other rooms: min(room far, 25 m). House from halfway (~21 m) needs per-object building fog: open. LOD 5 px (-2.9 at 42.7 m) and TREE_THIN are unmeasured on top. |
 
+Work order (user, 2026-09-24, play testing): the r100 post-house ambush (heap 4), then **frame pacing (never to
+be deprioritised again: sub-30 fps is slow motion until it lands)**, then low-poly Ganado meshes, then the Leon
+rebuild. Fix review the same day: r101 scope lockup (9598ce2), launcher log, pacing, QUALITY_ASSETS into the recipe,
+ambush reserve, ACTOR_FOG_GATE gates, SS_UI_ORDER. Proposed after QUALITY_ASSETS: **zero in-play disc loads per
+room** (357 texture loads in play after the last preload in one Standard session; GD-ROM seeks are 100-200 ms).
+
 Parallel tracks (off the frame path; needed for the console gate):
 - r101/r103 bring-up (frontier W4, W9 packages);
 - audio;

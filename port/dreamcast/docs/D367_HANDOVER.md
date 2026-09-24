@@ -11,6 +11,31 @@ archives, heap 4; run it before building a room's disc), 07d4a82 movie ring (r10
 b7a7e2d + edf0cc4 TA_DOUBLEBUF (canonical), 9f2f45a/4a7a560/b99e803/054bfd2/49b97b2 discover round 2. The
 sections below are updated for those; everything else is as at the hold.
 
+**User play testing (afternoon of 2026-09-24).** One-off route checks now go to the user's play discs in
+`D:\RE4DC-Play` (one `Play-*.cmd` per disc; keyboard + DualSense on port A; the game log is copied to
+`logs\game-<time>.txt`) instead of scripted walks. Work order (user): (1) the r100 post-house ambush (heap 4),
+(2) **frame pacing, never to be deprioritised again**, (3) low-poly Ganado meshes, (4) the Leon rebuild. After the
+24-hour fix review the user set: scope lockup -> launcher log -> frame pacing -> QUALITY_ASSETS into the recipe ->
+ambush reserve -> ACTOR_FOG_GATE gates -> SS_UI_ORDER. Findings:
+- **r101 scope lockup: fixed behind knobs (9598ce2).** The scope overlay (r101.arc#35, 256x224 C4, 128 KiB 16-bit)
+  was never loaded by a scripted run, so it was never VQ'd; in play it found no contiguous block (928 KB free) and
+  the retry evicted the scene every frame. Now VQ for every indexed image (`ui_indexed_coverage.py` log in
+  `ui_logs`, pin tex-vq8: 1.93 MB -> 0.33 MB, scope 18 KB), `UI_FRAG_LATCH=1` and `UI_OVERLAY_SLAB_KB=24`. User
+  test disc `warp-r101-scope` (with VRAM_PAGES=1). Recipe after the user's check and the VRAM_PAGES hwproject pair.
+- **Just-in-time loading is the stutter.** A Standard route session did 357 texture loads in play after the last
+  room preload (each a disc read inside a frame; GD-ROM seeks are 100-200 ms on hardware). Proposed next item after
+  QUALITY_ASSETS: zero in-play loads per room (preload HUD/effects/overlays/texlow too, count loads since preload).
+- **Ambush (heap 4):** em21/em23/em2a motion streaming contract landed (bcfbf2b; also fixes le_mirror's registry
+  regex, broken since e6f65cc). The runtime reserve (`MOTION_RESERVE`, cold slabs allocated at bind) and
+  `MOTION_USAGE_LOG` (first acquire per clip, to trim the em12 hot set of 952 KB) are in `warp/tree3`, not committed;
+  user disc `route-ambush-reserve` is the test.
+- **Standard gates (QUALITY_ASSETS TREE_IMPOSTOR MESH_TEXTURES):** STRICT std vs orig and orig vs base, 6191 ticks
+  each; std fight 76.4 hw ms. The Original hw arms (and std quiet) were voided: hwproject staged its evidence dir
+  without the joystick-off block and the user's DualSense drove them (fixed b951305). Reruns queued after pacing.
+- **Frame pacing:** the pace2 arms (tree4, `pacing/queue2.sh`) are running in Flycast.
+- Launcher (private, D:\RE4DC-Play): the DualSense relaunch lost the game log (stale flycast.log RAM address);
+  Play-RE4DC.ps1 now waits for the old Flycast and read_log.py re-reads the address.
+
 The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
 `re4-dreamcast-d367` skill, then the owning area's `STATE.md` under `/root/probe/d367-agents/<area>/`. Each agent was
 told to stop at a safe point, stop its own processes by PID, delete discs/stage dirs (evidence kept) and write its
