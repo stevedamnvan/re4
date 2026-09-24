@@ -197,6 +197,14 @@ rebuild. Fix review the same day: r101 scope lockup (9598ce2), launcher log, pac
 ambush reserve, ACTOR_FOG_GATE gates, SS_UI_ORDER. Proposed after QUALITY_ASSETS: **zero in-play disc loads per
 room** (357 texture loads in play after the last preload in one Standard session; GD-ROM seeks are 100-200 ms).
 
+**Persistent goal (user, 2026-09-24): the r101 square at 15 fps real time** ("at any cost, or the player can't
+play"; budget 2 x logic + render <= 67 hw ms per drawn frame, today ~136). Plan, breakdown and the ledger of
+every measured arm: [D367_SQUARE_PERF_PLAN.md](D367_SQUARE_PERF_PLAN.md). Order: logic speed-ups
+(GAME_VEC_INLINE, collision fast paths, FTRV bones) -> offline-converted Ganado v4 blobs + flat light ->
+converted Standard room archive with per-part residency (also the r100 ambush memory fix) -> single-version
+scenery with better textures, nearer fog and a backdrop -> square PVS -> queued 64 KiB reads -> selective
+-O3/LTO; Fast pacing (PACE_CAP=2) is the play default meanwhile. Other perf work yields to it.
+
 Parallel tracks (off the frame path; needed for the console gate):
 - r101/r103 bring-up (frontier W4, W9 packages);
 - audio;
