@@ -22,12 +22,20 @@ MAX_CLIP=32768
 # family, FCV/SEQ transport and source motion evaluators as em12 (frontier W1).
 GANADO=('em12.drs','em15.drs')
 SMALL=('em26.drs','em28.drs','em21.drs')
+# Small enemies whose motions also leave the body: em21 (r100 trap dog) plays every clip through
+# MotionSetCore/MotionMove (src/em21/em21.cpp; ARC() otherwise only feeds modelInit), the leased
+# evaluators in motion.cpp. Needed for heap 4 in r100's post-house ambush (em21 + em23 + em2a).
+# em23 (crows) passes its ARC motions only to MotionSetCore; em2a (traps) also reads a clip's
+# frame count from the FCV header (*(u16*)ARC(0xB)), which stays resident, and lends its subArc
+# to the player's trap motions (same leased evaluator). Their textures are not audited: motion only.
+MOTION_SMALL=('em21.drs','em23.drs','em2a.drs')
 
 def prepare(source, destination, hot_slots=(), textures=None, keep_motion_resident=False, compact_effects=False):
     source,destination=map(Path,(source,destination))
     name=source.name.lower();file='em/'+name
-    if name not in GANADO+SMALL+('pl00.drs','wep02.drs') or (name not in GANADO and not keep_motion_resident):
-        raise ValueError('supported contracts: Ganado (em12/em15) motion/textures; em26/em28/em21/pl00/wep02 textures only')
+    if name not in GANADO+SMALL+MOTION_SMALL+('pl00.drs','wep02.drs') or (name not in GANADO+MOTION_SMALL and not keep_motion_resident):
+        raise ValueError('supported contracts: Ganado (em12/em15) and em21/em23/em2a motion; em26/em28/em21/pl00/wep02 textures')
+    if textures is not None and name not in GANADO+SMALL+('pl00.drs','wep02.drs'):raise ValueError('textures not audited for '+name)
     if compact_effects and name not in GANADO+SMALL:raise ValueError('only enemy EFF slot0 effect consumers qualified')
     if keep_motion_resident and textures is None and not compact_effects:raise ValueError('no selected compaction')
     if destination.exists():raise FileExistsError(destination)
@@ -81,7 +89,7 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
         if not texture_ranges:raise ValueError('no qualified enemy textures selected')
     if rel and rel+64!=len(body):raise ValueError('expected retained 64-byte static REL descriptor')
     original_size,original_base=struct.unpack_from('>I4xI',original,slot+4)
-    codec=mirror.motion_codec();ranges=[];entries=[];files={}
+    codec=mirror.motion_codec();ranges=[];entries=[];files={};oversized=[]
     for off in ([] if keep_motion_resident else sorted(set(offsets))):
         if not off:continue
         slots=[i for i,o in enumerate(offsets) if o==off]
@@ -94,7 +102,11 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
         native=codec.serialise(parsed,'<')
         if native!=body[off:end]:raise ValueError('native FCV differs from qualified archive')
         if not parsed.joints:continue # empty motion is already 32 bytes; keep ordinary
-        if len(native)>MAX_CLIP:raise ValueError('clip exceeds validated cache slot')
+        if len(native)>MAX_CLIP:
+            # em21: a clip over the runtime's slot limit stays resident (ordinary FCV, exact bytes);
+            # the Ganado contract keeps refusing, as before.
+            if name in MOTION_SMALL:oversized.append({'source_arc_indices':[i+4 for i in slots],'bytes':len(native)});continue
+            raise ValueError('clip exceeds validated cache slot')
         prefix=codec.header_size(len(parsed.joints));resident=(prefix+31)&~31
         if resident>=len(native):continue
         crc=zlib.crc32(native)&0xffffffff
@@ -158,7 +170,7 @@ def prepare(source, destination, hot_slots=(), textures=None, keep_motion_reside
             'textures':{'selected':selected,'retained':retained,'identity_table_bytes':texture_index_bytes,
                 'removed_payload_bytes':sum(b-a for a,b,_ in texture_ranges),
                 'replacement_record_bytes':32*len(texture_ranges)},
-            'max_clip_bytes':max((e['bytes'] for e in entries),default=0),
+            'max_clip_bytes':max((e['bytes'] for e in entries),default=0),'oversized_resident':oversized,
             'hot_payload_bytes':sum(e['bytes'] for e in entries if e['hot']),
             'cold_reserve_bytes':2*max((e['bytes'] for e in entries if not e['hot']),default=0),
             'cache_policy':None if keep_motion_resident else 'retain hot set and LRU cold entries until capacity pressure; evaluation release never evicts','entries':entries,'qualification':coverage,
