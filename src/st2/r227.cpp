@@ -470,8 +470,15 @@ static void r227_operateElv()
 
     SceAtSetEnable(3, 0);
     // Two sets of one pointer variable (the r40e idiom): `addi r31,r9,cMes@l; addi r31,r31,4`.
+#if defined(__PPC__)
     MesWork* w = (MesWork*) &cMes;
     w = (MesWork*) ((u8*) w + 4);
+#else
+    // GCC 2.95 (the original) puts MessageControl's vtable pointer after its fields (mes[] at
+    // +4); this compiler puts it first (mes[] at +8), so the +4 sum lands 4 bytes before the slot
+    // (the prompt y read lineSpace / m_font_h from the wrong fields).
+    MesWork* w = cMes.getWork();
+#endif
     SceMesSet(0, 0, 1, 0x64, 0x150 - w->lineSpace - w->m_font_h - 1);
     switch (SceMesGetSelection()) {
     case 1:
