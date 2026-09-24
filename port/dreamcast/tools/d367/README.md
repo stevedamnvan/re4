@@ -343,6 +343,38 @@ Current r101/r103 recipes (the model's worst view at a 25 m fog far: r101 10.1-1
 The runtime keeps a v3 meshlet's gathered corners in a 3 KiB buffer in the package's own heap-4
 allocation (not the packet range: with MESH_DIRECT too few slots remain there after the part headers).
 
+## Room discovery (`assets.sh discover <room|route>`)
+
+The first stage of the room pipeline: what a room can load, and whether the build and the prepared
+disc provide it, from the source data alone (no emulator, seconds). Run it before building a disc for
+a room, and after changing MODULES, the module table or the prepared archives.
+
+```bash
+bash port/dreamcast/tools/d367/assets.sh discover route                 # r100 r101 r103
+bash port/dreamcast/tools/d367/assets.sh discover r100 --log <evidence>/run-output.txt   # + compare a run
+bash port/dreamcast/tools/d367/assets.sh discover r100 --repo <tree> --obj <OBJDIR>      # another tree/build
+```
+
+- **Demand:** the room's enemy list (stage.cpp checkEmListNo; stage 1 mirrored so far), each entry
+  of the room (alive bit set: spawns at entry; clear: `enabled-later`, e.g. em2a in r100 after s20),
+  the room script's `EmSetFromList2` spawns and `EmReadSearch`/`SearchEmModule` loads. Enemy id ->
+  read.cpp `EmFileTbl` -> dvd.cpp `FileTbl`: archive (`em/emXX.drs`) and REL module.
+- **Checks:** Makefile MODULES, the ENEMY_DEMAND audit list, platform/modules.cpp
+  `MODULE(<rel.json module_id>, name)`, missing-symbol stubs naming the module (`--obj`/missing.txt),
+  the prepared archive (sources.toml `prepared_mirror`), at most 4 live enemy archives
+  (EmReadModule[4]), and heap 4: the prepared header's allocation (u32 at 0x24, as "DVD: Mem Alloc")
+  summed over every archive against `[room.X.demand] enemy_heap4_bytes`, a measured value
+  (free at an enemy read + the enemy allocations live then). A room without one says so; record it
+  from a run log.
+- **`--log`:** archives the run loaded that were not predicted (a discovery gap), failed reads, the
+  first `alloc[..]:free[..]` shortfall, HALTs, and the linked modules.
+- Output: the report, `<assets_root>/discover/<room>.json`; exit 1 when anything is a problem.
+- Proof (2026-09-24): on dadfbac (before e6f65cc) it reports em2a missing from MODULES, the audit list and
+  the table (the warp-east-1 HALT main_sub.cpp(1440)); on r100 the worst case is 171,328 bytes over the
+  measured room, the exact shortfall warp-ea4-after logged at the em23 (crows) read; r101's
+  prediction equals what warp-bell1 loaded.
+- Not covered yet: event actors (evd files), other stages' list rules, Standard-mode budgets, VRAM.
+
 ## GDEMU image (W10)
 
 `GDI=1 GDI_OUT=/mnt/d/... stage.sh ...` also writes a GDI from the same tree through

@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import Config
 from .util import dumps
 
-COMMANDS = ("build", "rooms", "inventory", "plan", "review", "stage-env", "calibrate")
+COMMANDS = ("build", "rooms", "inventory", "plan", "review", "stage-env", "calibrate", "discover")
 
 
 def main(argv=None):
@@ -27,8 +27,19 @@ def main(argv=None):
     ap.add_argument("--no-review", action="store_true")
     ap.add_argument("--set", type=Path, help="calibrate: calibration set TOML")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--repo", type=Path, help="discover: checkout whose tables/build to check (default: this one)")
+    ap.add_argument("--obj", type=Path, help="discover: build OBJDIR holding missing.txt (default game/obj)")
+    ap.add_argument("--log", type=Path, help="discover: a run's run-output.txt to compare with the prediction")
     a = ap.parse_args(argv)
     cfg = Config(a.costmodel)
+    if cmd == "discover":
+        from .discover import discover, report
+        rc = 0
+        for t in _targets(cfg, a.target):
+            res = discover(cfg, t, repo=a.repo, obj=a.obj, log=a.log, out_dir=cfg.root / "discover")
+            print(dumps(res)) if a.json else report(res)
+            rc |= bool(res["problems"])
+        return rc
     if cmd == "rooms":
         from .rooms import all_rooms
         rooms = all_rooms(cfg)
