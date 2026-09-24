@@ -376,10 +376,40 @@ def convert(entries, color_scale, cell=0.0, min_fill=64):
 # level whose error projects to at most MESH_LOD_PX pixels at the cluster's
 # nearest depth; its meshlets are then culled one by one as in v1.
 VERSION_LOD = 2
+# v3 = v2 plus indexed meshlets: strip_count bit 15 set, first_vertex is the
+# part's pool base and the meshlet's strip range starts with vertex_count u16
+# pool offsets (2-byte aligned) before its strips (strip_bytes covers strips).
+VERSION_SHARE = 3
+INDEXED_MESHLET = 0x8000
 LOD_HEADER = struct.Struct("<8I")          # 32 bytes
 PART_LOD = struct.Struct("<II")            # 8 bytes
 CLUSTER = struct.Struct("<6HII")           # 20 bytes
 LEVEL = struct.Struct("<IIf")              # 12 bytes
+# Scenery classes (v2/v3, optional). LodHeader reserved word 0 (class_offset)
+# points at one u8 per mesh, in mesh order: the class a runtime distance rule
+# keys on (0 = untagged: fog far only). Reserved word 1 (rule_offset) points at
+# CLASS_RULES x {full_dm, cull_dm} (u16 decimetres; 0 = the runtime default),
+# so each room package carries its own distances for one shared runtime rule.
+MESH_CLASSES = {"default": 0, "ground": 1, "tree": 2, "landmark": 3, "clutter": 4, "structure": 5}
+CLASS_RULES = 8
+CLASS_RULE = struct.Struct("<HH")          # 4 bytes
+
+
+def auto_class(ext):
+    """Class of an untagged, non-tree BIN from its world extent (metres x, y,
+    z): ground = both horizontal sides >= 2 m and either height under a
+    quarter of the shorter one or a room-scale surround (radius >= 30 m);
+    clutter = bounding radius under 1.5 m; else structure. Landmarks are
+    never guessed: they are tagged per room (--class)."""
+    narrow = min(ext[0], ext[2])
+    radius = 0.5 * math.sqrt(sum(e * e for e in ext))
+    if narrow >= 2.0 and (ext[1] < 0.25 * narrow or radius >= 30.0):
+        return MESH_CLASSES["ground"]
+    if radius < 1.5:
+        return MESH_CLASSES["clutter"]
+    return MESH_CLASSES["structure"]
+
+
 # Pixels per unit of error at unit depth for the source's 60 degree fovy on
 # 480 lines (cam_ctrl.cpp m_behind_fovy); only used to place card-thinning
 # levels, the runtime uses the live projection.
@@ -648,9 +678,23 @@ def replace_source(src, path, angle=REPLACE_SMOOTH_ANGLE):
     return dict(src, positions=positions, parts=parts, uv=same, normal=same, color=same)
 
 
+def surface(tris, positions):
+    """Triangle area and summed normal-area vector (model units)."""
+    area, normal = 0.0, [0.0, 0.0, 0.0]
+    for t in tris:
+        a, b, c = (positions[v] for v in t[0])
+        u = [b[i] - a[i] for i in range(3)]
+        w = [c[i] - a[i] for i in range(3)]
+        n = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
+        area += math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) / 2
+        normal = [normal[i] + n[i] / 2 for i in range(3)]
+    return area, normal
+
+
 def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS, cluster_world=20000.0,
                 cluster_tris_max=768, cards=DEFAULT_CARDS, min_gain=0.5, max_levels=5, bias=None,
-                substitutes=None, export_dir=None, replacements=None, cluster_trees=None, cluster_bins=None):
+                substitutes=None, export_dir=None, replacements=None, floor=None, share=False,
+                classes=None, class_auto=False, class_rules=None, cluster_trees=None, cluster_bins=None):
     """entries as convert(); scales: {(owner, bin): world scale} (largest
     placement scale, default 1) so that errors are chosen in world units.
     bias: {(owner, bin): factor}; stored level errors are multiplied by it, so
@@ -658,7 +702,16 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
     substitutes: load_substitutes(); export_dir: write each part's levels as
     OBJ (<owner>-<bin>-p<part>-L<k>.obj) plus parts.json there.
     replacements: load_replacements(); whole-BIN render geometry swapped in
-    before level generation (see replace_source)."""
+    before level generation (see replace_source).
+    floor: {(owner, bin) or None: world error}; level 0 of those BINs (None:
+    every BIN) is the source simplified to that error before clustering, so
+    near-coplanar detail the eye cannot see at the nearest view is not drawn.
+    Substituted and card-field parts keep their source level 0.
+    share: coarse meshlets reuse the part's existing vertices through a u16
+    index table (R4IM v3, INDEXED_MESHLET; room/instanced_mesh.hpp).
+    classes: {(owner, bin): MESH_CLASSES code}; class_auto: untagged BINs get
+    tree (card field or replaced BIN) or auto_class(); class_rules: {code:
+    (full_dm, cull_dm)}. Without any of the three the package is unchanged."""
     mesh_lod = _mesh_lod()
     # cluster_trees: {(owner, bin)} grove BINs whose clusters are formed per tree (tree_groups)
     cluster_trees = set(cluster_trees or ())
@@ -667,6 +720,7 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
     # each region picks its own level)
     cluster_bins = cluster_bins or {}
     groves = 0
+    floor = floor or {}
     scales = scales or {}
     bias = bias or {}
     substitutes = substitutes or {}
@@ -676,6 +730,11 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
         raise ValueError("BINs both replaced and given per-part levels: %s" % sorted(both))
     used_substitutes = set()
     used_replacements = set()
+    floored = [0, 0, 0]  # triangles before, after; parts refused
+    shared_vertices = [0, 0]  # indexed meshlets: reused vertices, table entries
+    classes = classes or {}
+    class_rules = class_rules or {}
+    mesh_classes = []
     exported = []
     meshes, parts, meshlets, vertices, index_bytes = [], [], [], [], bytearray()
     part_lods, clusters, levels = [], [], []
@@ -738,6 +797,20 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
                         hex(owner), bin_no, part_index, int(sub["offset"]), part["offset"]))
                 used_substitutes.add((owner, bin_no, part_index))
             card = sub is None and mesh_lod.is_card_field(tris, bool(part["flags"] & 4))
+            floor_world = floor.get((owner, bin_no), floor.get(None, 0.0))
+            if floor_world > 0 and sub is None and not card and tris:
+                floor_tris = mesh_lod.simplify_levels(welded, tris, [floor_world / scale], (), 1.0)[-1][1]
+                # Kept only when it covers the same surface: area and summed
+                # normal-area within 0.2%, so a fold or a lost piece (the
+                # simplifier has no flip test on unlocked flat parts) keeps the source.
+                a0, n0 = surface(tris, welded)
+                a1, n1 = surface(floor_tris, welded)
+                if floor_tris and abs(a1 - a0) <= 0.002 * a0 and math.dist(n0, n1) <= 0.002 * a0:
+                    floored[0] += len(tris)
+                    floored[1] += len(floor_tris)
+                    tris = floor_tris
+                else:
+                    floored[2] += 1
             trees = None
             cw = cluster_bins.get((owner, bin_no), cluster_world)
             if (owner, bin_no) in cluster_trees and sub is None and tris and not card:
@@ -795,33 +868,60 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
             else:
                 ulo, uhi = [0.0, 0.0], [0.0, 0.0]
             uscale = [f32(max((uhi[a] - ulo[a]) / 65535.0, 1e-9)) for a in range(2)]
+
+            def stored_corner(v, attrs, ulo=ulo, uscale=uscale):
+                uv, normal, color = attrs
+                return (v, (min(65535, max(0, round((uv[0] - ulo[0]) / uscale[0]))),
+                            min(65535, max(0, round((uv[1] - ulo[1]) / uscale[1]))), slot_of(color, normal)))
             first_meshlet = len(meshlets)
             first_cluster = len(clusters)
             part_levels = []
+            pool, pool_base = {}, len(vertices)  # this part's stored vertices by key
             for ls in built:
                 cgrid = [grid(welded[v]) for _, lt in ls for t in lt for v in t[0]]
                 first_level = len(levels)
                 for li, (err, lt) in enumerate(ls):
-                    keyed = [tuple(zip(t[0], t[1])) for t in lt]
+                    # Corners are keyed by what is stored (grid position, 16-bit
+                    # UV, palette slot + 12-bit normal): source attributes that
+                    # quantise alike are one vertex, so strips run through them.
+                    keyed = [tuple(stored_corner(v, c) for v, c in zip(t[0], t[1])) for t in lt]
                     strips = [c for s in mesh_lod.stripify(keyed) for c in split_strip(s) if len(c) >= 3]
                     level_first = len(meshlets)
                     for chunk in mesh_lod.pack_meshlets(strips, MAX_MESHLET_VERTICES, lambda k: welded[k[0]]):
-                        local, keys = {}, []
-                        first_vertex, first_index = len(vertices), len(index_bytes)
+                        keys = list(dict.fromkeys(c for s in chunk for c in s))
+                        local = {c: i for i, c in enumerate(keys)}
+                        # --lod-share: a coarse meshlet whose vertices mostly
+                        # exist already in this part references them through a
+                        # u16 table (part pool relative) instead of storing them.
+                        fresh = [c for c in keys if c not in pool]
+                        indexed = (share and li > 0 and 12 * (len(keys) - len(fresh)) > 2 * len(keys) + 2 and
+                                   len(vertices) + len(fresh) - pool_base <= 65536)
+                        if indexed:
+                            for c in fresh:
+                                pool[c] = len(vertices)
+                                v, (qu, qv, slot) = c
+                                vertices.append((*grid(welded[v]), qu, qv, slot))
+                            if len(index_bytes) & 1:
+                                index_bytes.append(0)
+                            first_vertex, first_index = pool_base, len(index_bytes)
+                            index_bytes.extend(struct.pack("<%dH" % len(keys), *(pool[c] - pool_base for c in keys)))
+                            strip_start = len(index_bytes)
+                            shared_vertices[0] += len(keys) - len(fresh)
+                            shared_vertices[1] += len(keys)
+                        else:
+                            first_vertex, first_index = len(vertices), len(index_bytes)
+                            strip_start = first_index
+                            for c in keys:
+                                pool.setdefault(c, len(vertices))
+                                v, (qu, qv, slot) = c
+                                vertices.append((*grid(welded[v]), qu, qv, slot))
                         for s in chunk:
-                            for c in s:
-                                if c not in local:
-                                    local[c] = len(keys)
-                                    keys.append(c)
-                                    v, (uv, normal, color) = c
-                                    qu = min(65535, max(0, round((uv[0] - ulo[0]) / uscale[0])))
-                                    qv = min(65535, max(0, round((uv[1] - ulo[1]) / uscale[1])))
-                                    vertices.append((*grid(welded[v]), qu, qv, slot_of(color, normal)))
                             index_bytes.append(len(s))
                             index_bytes.extend(local[c] for c in s)
                         g = [grid(welded[c[0]]) for c in keys]
-                        meshlets.append((first_vertex, first_index, len(index_bytes) - first_index, len(keys),
-                                         len(chunk), *[min(q[a] for q in g) for a in range(3)],
+                        meshlets.append((first_vertex, first_index, len(index_bytes) - strip_start, len(keys),
+                                         len(chunk) | (INDEXED_MESHLET if indexed else 0),
+                                         *[min(q[a] for q in g) for a in range(3)],
                                          *[max(q[a] for q in g) for a in range(3)]))
                     levels.append((level_first, len(meshlets) - level_first, f32(err * factor)))
                     part_levels.append(dict(level=li, error_world=round(err * scale, 1), triangles=len(lt),
@@ -854,7 +954,13 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
             groves += bool(trees)
         meshes.append((bin_no, int(common), owner, src["nvtx"], src["nparts"], src["flags"],
                        first_part, len(parts) - first_part, *lo, *step, *lo, *hi))
-        report.append(dict(owner=owner, common=bool(common), bin=bin_no, scale=scale, bias=factor, parts=mesh_report))
+        code = classes.get((owner, bin_no))
+        if code is None and class_auto:
+            ext = [(hi[a] - lo[a]) * scale / 1000.0 for a in range(3)]
+            code = MESH_CLASSES["tree"] if replaced or any(p["card"] for p in mesh_report) else auto_class(ext)
+        mesh_classes.append(code or 0)
+        report.append(dict(owner=owner, common=bool(common), bin=bin_no, scale=scale, bias=factor, parts=mesh_report,
+                           mesh_class=code or 0))
     missing = set(k for k in substitutes if (k[0], k[1]) in {(e[0], e[2]) for e in entries}) - used_substitutes
     if missing:
         raise ValueError("substitutes for missing parts: %s" % sorted(missing))
@@ -876,16 +982,22 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
                        ("palette", b"".join(struct.pack("<I", c) for c in palette)),
                        ("part_lod", b"".join(PART_LOD.pack(*p) for p in part_lods)),
                        ("cluster", b"".join(CLUSTER.pack(*c) for c in clusters)),
-                       ("level", b"".join(LEVEL.pack(*l) for l in levels))):
+                       ("level", b"".join(LEVEL.pack(*l) for l in levels)),
+                       ("class", bytes(mesh_classes) if classes or class_auto else b""),
+                       ("rule", b"".join(CLASS_RULE.pack(*class_rules.get(c, (0, 0))) for c in range(CLASS_RULES))
+                        if class_rules else b"")):
+        if not blob and name in ("class", "rule"):
+            continue
         start = align(head + len(body)) - head
         body.extend(b"\0" * (start - len(body)))
         offsets[name] = head + len(body)
         body.extend(blob)
     body.extend(b"\0" * (align(head + len(body)) - head - len(body)))
-    lod = LOD_HEADER.pack(len(clusters), len(levels), offsets["part_lod"], offsets["cluster"], offsets["level"], 0, 0, 0)
+    lod = LOD_HEADER.pack(len(clusters), len(levels), offsets["part_lod"], offsets["cluster"], offsets["level"],
+                          offsets.get("class", 0), offsets.get("rule", 0), 0)
     body = lod + bytes(body)
     total = HEADER.size + len(body)
-    header = HEADER.pack(MAGIC, VERSION_LOD, total, zlib.crc32(body),
+    header = HEADER.pack(MAGIC, VERSION_SHARE if shared_vertices[1] else VERSION_LOD, total, zlib.crc32(body),
                          len(meshes), len(parts), len(meshlets), len(vertices), len(index_bytes), len(palette),
                          offsets["mesh"], offsets["part"], offsets["meshlet"], offsets["vertex"],
                          offsets["index"], offsets["palette"], COLOR_OCT_NORMAL, 0, 0, 0)
@@ -893,7 +1005,12 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
     summary = dict(package_bytes=total, meshes=len(meshes), parts=len(parts), meshlets=len(meshlets),
                    vertices=len(vertices), strip_bytes=len(index_bytes), palette=len(palette),
                    clusters=len(clusters), levels=len(levels), substituted_parts=len(used_substitutes),
-                   replaced_bins=len(used_replacements),
+                   replaced_bins=len(used_replacements), floor_triangles=floored, shared_vertices=shared_vertices,
+                   version=VERSION_SHARE if shared_vertices[1] else VERSION_LOD,
+                   mesh_classes={name: [r["bin"] for r in report if r["mesh_class"] == code]
+                                 for name, code in MESH_CLASSES.items()} if classes or class_auto else None,
+                   class_rules={name: class_rules[code] for name, code in MESH_CLASSES.items() if code in class_rules}
+                   if class_rules else None,
                    level0_triangles=sum(lv["triangles"] for r in report for p in r["parts"] for lv in p["levels"]
                                         if lv["level"] == 0),
                    meshes_detail=report)
@@ -1002,6 +1119,19 @@ def main():
                          "of <OWNER>_<bin>.obj replacements")
     ap.add_argument("--lod-export", type=Path, metavar="DIR",
                     help="also write every part's levels as OBJ plus parts.json (templates for --lod-substitute)")
+    ap.add_argument("--lod-share", action="store_true",
+                    help="coarse levels reuse the part's vertices through u16 tables (R4IM v3; needs a runtime "
+                         "that adopts v3)")
+    ap.add_argument("--lod-floor", action="append", default=[], metavar="[OWNER:BINS=]MM",
+                    help="level 0 is the source simplified to this world error (source units), before "
+                         "clustering; bare MM applies to every BIN, OWNER:BINS=MM overrides; repeatable")
+    ap.add_argument("--class", dest="mesh_class", action="append", default=[], metavar="OWNER:BINS=CLASS",
+                    help="scenery class tag for a runtime distance rule (%s); repeatable" % "|".join(MESH_CLASSES))
+    ap.add_argument("--class-auto", action="store_true",
+                    help="tag BINs --class leaves untagged: tree (card field / replaced BIN), ground, clutter or "
+                         "structure from world extent (auto_class)")
+    ap.add_argument("--class-rule", action="append", default=[], metavar="CLASS=FULL_M,CULL_M",
+                    help="this room's distances for a class (metres; 0 = runtime default); repeatable")
     ap.add_argument("--lod-cluster-trees", action="append", default=[], metavar="OWNER:BINS",
                     help="grove BINs (e.g. 0xff:17,38): clusters are formed per tree (connected components "
                          "joined to the nearest trunk taller than 3 m), so each tree can draw as its own "
@@ -1032,6 +1162,30 @@ def main():
                 lo_bin, _, hi_bin = r.partition("-")
                 for b in range(int(lo_bin), int(hi_bin or lo_bin) + 1):
                     bias[(int(o, 0), b)] = float(factor)
+        floor = {}
+        for spec in a.lod_floor:
+            if "=" not in spec:
+                floor[None] = float(spec)
+                continue
+            key, value = spec.split("=")
+            o, bins = key.split(":")
+            for r in bins.split(","):
+                lo_bin, _, hi_bin = r.partition("-")
+                for b in range(int(lo_bin), int(hi_bin or lo_bin) + 1):
+                    floor[(int(o, 0), b)] = float(value)
+        classes = {}
+        for spec in a.mesh_class:
+            key, name = spec.split("=")
+            o, bins = key.split(":")
+            for r in bins.split(","):
+                lo_bin, _, hi_bin = r.partition("-")
+                for b in range(int(lo_bin), int(hi_bin or lo_bin) + 1):
+                    classes[(int(o, 0), b)] = MESH_CLASSES[name]
+        class_rules = {}
+        for spec in a.class_rule:
+            name, value = spec.split("=")
+            full, cull = (float(x) for x in value.split(","))
+            class_rules[MESH_CLASSES[name]] = (round(full * 10), round(cull * 10))
         eps = tuple(float(x) for x in a.lod_eps.split(","))
         cluster_trees = set()
         for spec in a.lod_cluster_trees:
@@ -1059,8 +1213,9 @@ def main():
         blob, summary = convert_lod(entries, a.color_scale, scales, a.lod_px, eps, a.lod_cluster, a.lod_cluster_tris,
                                     min_gain=a.lod_min_gain, max_levels=a.lod_max_levels, bias=bias,
                                     substitutes=substitutes, export_dir=a.lod_export, replacements=replacements,
-                                    cluster_trees=cluster_trees, cluster_bins=cluster_bins)
-        version = VERSION_LOD
+                                    floor=floor, share=a.lod_share, classes=classes, class_auto=a.class_auto,
+                                    class_rules=class_rules, cluster_trees=cluster_trees, cluster_bins=cluster_bins)
+        version = summary["version"]
     else:
         blob, summary = convert(entries, a.color_scale, a.cell, a.min_fill)
         version = VERSION
@@ -1074,6 +1229,8 @@ def main():
     if a.lod:
         summary.update(lod_px=a.lod_px, lod_eps=a.lod_eps, lod_cluster=a.lod_cluster, lod_cluster_tris=a.lod_cluster_tris,
                        lod_min_gain=a.lod_min_gain, lod_max_levels=a.lod_max_levels, lod_bias=a.lod_bias,
+                       lod_floor=a.lod_floor, lod_share=a.lod_share, mesh_class=a.mesh_class,
+                       class_auto=a.class_auto, class_rule=a.class_rule,
                        lod_substitute=[str(p) for p in a.lod_substitute] if a.lod_substitute else None)
         if a.lod_cluster_trees:
             summary.update(lod_cluster_trees=a.lod_cluster_trees)

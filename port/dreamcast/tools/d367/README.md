@@ -257,6 +257,29 @@ a run that played up to that point. Use warps for iteration and bring-up (does t
 the event start, what does the room cost). Logic proofs, STRICT traces and route sign-off still
 use normal runs.
 
+### Cost, heap-4 and class options (W9b)
+
+| Option | Effect |
+|---|---|
+| `--lod-bias OWNER:BINS=F` | Scales the stored level errors, so coarse levels switch in closer. r101: 0.25 on the heavy terrain/building BINs; r103: 0.375 (0.25 visibly thins its trees). |
+| `--lod-floor [OWNER:BINS=]MM` | Level 0 is the source simplified to MM (world, source mm) before clustering. A part is only floored when its area and area-weighted normal stay within 0.2%. Otherwise it keeps the source. `2` removes 14-16% of level-0 triangles. |
+| `--lod-share` | R4IM v3. Coarse meshlets index their part's existing vertices through a u16 table instead of storing copies: -133 KB (r101), -176 KB (r103), -176 KB (r100, all seven packages). Level 0 is unchanged. Only a runtime with v3 support adopts it (`room/instanced_mesh.hpp`). Lighting is still one pass per part, over the part's vertex pool. |
+| `--class OWNER:BINS=CLASS`, `--class-auto`, `--class-rule CLASS=FULL_M,CULL_M` | Per-mesh scenery class (default, ground, tree, landmark, clutter, structure) and per-room distances, both optional, in the v2/v3 LOD header. A shared runtime distance rule reads them through `mesh_class()` / `class_rule()`. `--class-auto` tags card fields and replaced BINs as tree. Other BINs become ground, clutter or structure by world extent (`auto_class`). Landmarks are only tagged by hand. |
+
+Current r101/r103 recipes (the model's worst view at a 25 m fog far: r101 10.1-12.8 ms, r103 10.9-14.0 ms):
+
+```
+# r101 (after the PS2 tree step above)
+... --lod-substitute <trees> --lod-bias 0xff:13-17=0.375 --lod-bias 0xff:3,9,12,34,70,64,31,29,38=0.25 \
+    --lod-floor 2 --lod-share --class 0xff:13-17=tree --class-auto
+# r103
+... --lod-bias 0xff:38,59,60,62-67=0.375 --lod-bias 0xff:0,18,61,17,24,28=0.375 \
+    --lod-floor 2 --lod-share --class 0xff:38,59,60,62-67=tree --class-auto
+```
+
+The runtime keeps a v3 meshlet's gathered corners in a 3 KiB buffer in the package's own heap-4
+allocation (not the packet range: with MESH_DIRECT too few slots remain there after the part headers).
+
 ## GDEMU image (W10)
 
 `GDI=1 GDI_OUT=/mnt/d/... stage.sh ...` also writes a GDI from the same tree through

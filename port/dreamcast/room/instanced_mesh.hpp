@@ -1,5 +1,5 @@
 #pragma once
-// R4IM v1/v2: instanced native scenery meshes (tools/convert_room_bins.py).
+// R4IM v1/v2/v3: instanced native scenery meshes (tools/convert_room_bins.py).
 //
 // One mesh per source BIN in the BIN's own model space; every placement that
 // uses the BIN draws it with its live source modelview. A mesh part is matched
@@ -16,6 +16,14 @@
 // A part's meshlet range still covers every level, so lighting stays one pass.
 // Only a LOD-aware runtime may adopt v2 (adopt(..., true)): a v1 draw loop
 // would draw every level of a v2 part on top of each other.
+//
+// v3 (--lod --lod-share) is v2 plus indexed meshlets, so coarse levels reuse
+// their part's finer-level vertices instead of storing copies. strip_count bit
+// 15 (kIndexedMeshlet) marks one: first_vertex is then its part's vertex-pool
+// base and its strip range starts with vertex_count u16 pool offsets (2-byte
+// aligned, strip_bytes excludes them); strip indices address that table. Each
+// part's vertices form one contiguous pool [lo, hi) that no other part touches,
+// so lighting stays one pass per part over that range (part_pool()).
 #include <cstdint>
 #include <cstring>
 #include "room_package.hpp"
@@ -25,6 +33,7 @@ namespace re4dc::room {
 // 12-bit octahedral source normal until the runtime lights its part, then
 // ARGB1555. MeshPart::reserved is that part's lit flag (0 in the file).
 constexpr std::uint32_t kColorOctNormal=1;
+constexpr std::uint16_t kIndexedMeshlet=0x8000U; // v3 Meshlet::strip_count flag
 struct MeshHeader {
     char magic[4];
     std::uint32_t version, bytes, crc;
@@ -49,10 +58,23 @@ struct Meshlet {
     std::uint16_t vertex_count, strip_count;
     std::uint16_t bounds_min[3], bounds_max[3]; // mesh grid units
 };
-// v2 only, at offset 80.
+// v2/v3, at offset 80. class_offset / rule_offset are optional (0 = absent):
+// one scenery class code (MeshClass) per mesh, in mesh order, and
+// kClassRules x MeshClassRule, this room's distances for a runtime rule.
 struct MeshLodHeader {
-    std::uint32_t cluster_count, level_count, part_lod_offset, cluster_offset, level_offset, reserved[3];
+    std::uint32_t cluster_count, level_count, part_lod_offset, cluster_offset, level_offset;
+    std::uint32_t class_offset, rule_offset, reserved;
 };
+enum MeshClass : std::uint8_t {
+    kClassDefault=0,  // untagged: fog far only
+    kClassGround=1,   // terrain, floors: fog far only
+    kClassTree=2,     // full detail to full_dm, thinned to cull_dm, then culled
+    kClassLandmark=3, // distant building: only drawn inside its distance
+    kClassClutter=4,  // small props: culled past cull_dm
+    kClassStructure=5 // buildings and walls near the play space: fog far
+};
+constexpr unsigned kClassRules=8; // codes 6 and 7 reserved
+struct MeshClassRule { std::uint16_t full_dm, cull_dm; }; // decimetres; 0 = runtime default
 struct MeshPartLod { std::uint32_t first_cluster, cluster_count; };
 struct MeshCluster {
     std::uint16_t bounds_min[3], bounds_max[3]; // mesh grid units, covers every level
@@ -81,9 +103,9 @@ public:
         close();
         if(size<sizeof(MeshHeader) || (reinterpret_cast<std::uintptr_t>(data)&3U))return fail("size");
         std::memcpy(&h_,data,sizeof(h_));
-        if(std::memcmp(h_.magic,"R4IM",4) || !(h_.version==1 || (lod && h_.version==2)) || h_.bytes!=size)return fail("header");
+        if(std::memcmp(h_.magic,"R4IM",4) || !(h_.version==1 || (lod && (h_.version==2 || h_.version==3))) || h_.bytes!=size)return fail("header");
         std::uint32_t head=sizeof(MeshHeader);
-        if(h_.version==2){
+        if(h_.version>=2){
             head+=sizeof(MeshLodHeader);
             if(size<head)return fail("size");
             std::memcpy(&l_,data+sizeof(MeshHeader),sizeof(l_));
@@ -94,9 +116,13 @@ public:
            !section(h_.vertex_offset,h_.vertex_count,sizeof(CompactVertex12),size,head) ||
            !section(h_.strip_offset,h_.strip_bytes,1,size,head) ||
            !section(h_.palette_offset,h_.palette_count,4,size,head))return fail("section");
-        if(h_.version==2 && (!section(l_.part_lod_offset,h_.part_count,sizeof(MeshPartLod),size,head) ||
+        if(h_.version>=2 && (!section(l_.part_lod_offset,h_.part_count,sizeof(MeshPartLod),size,head) ||
            !section(l_.cluster_offset,l_.cluster_count,sizeof(MeshCluster),size,head) ||
            !section(l_.level_offset,l_.level_count,sizeof(MeshLevel),size,head)))return fail("lod section");
+        if(h_.version>=2 && ((l_.class_offset && !section(l_.class_offset,h_.mesh_count,1,size,head)) ||
+           (l_.rule_offset && !section(l_.rule_offset,kClassRules,sizeof(MeshClassRule),size,head))))return fail("class section");
+        if(h_.version>=2 && l_.class_offset)
+            for(unsigned m=0;m<h_.mesh_count;++m)if(data[l_.class_offset+m]>=kClassRules)return fail("class");
         if(!h_.palette_count || h_.palette_count>65536U)return fail("palette");
         data_=data;
         if(h_.reserved[0]!=kColorOctNormal)return fail("color encoding");
@@ -114,10 +140,18 @@ public:
         }
         for(unsigned i=0;i<h_.meshlet_count;++i){
             const auto& l=meshlets()[i];
+            const bool ix=indexed(l);
+            const std::uint32_t table=ix?2U*l.vertex_count:0U;
+            if(ix && h_.version!=3)return fail("meshlet");
             if(!l.vertex_count || l.vertex_count>256U || l.first_vertex>h_.vertex_count ||
-               l.vertex_count>h_.vertex_count-l.first_vertex ||
-               l.first_strip>h_.strip_bytes || l.strip_bytes>h_.strip_bytes-l.first_strip)return fail("meshlet");
-            const std::uint8_t* s=strips()+l.first_strip;const std::uint8_t* end=s+l.strip_bytes;
+               (!ix && l.vertex_count>h_.vertex_count-l.first_vertex) || (l.first_strip&(ix?1U:0U)) ||
+               l.first_strip>h_.strip_bytes || table>h_.strip_bytes-l.first_strip ||
+               l.strip_bytes>h_.strip_bytes-l.first_strip-table)return fail("meshlet");
+            if(ix){
+                const std::uint16_t* offsets=pool_offsets(l);
+                for(unsigned k=0;k<l.vertex_count;++k)if(offsets[k]>=h_.vertex_count-l.first_vertex)return fail("pool index");
+            }
+            const std::uint8_t* s=strip_begin(l);const std::uint8_t* end=s+l.strip_bytes;
             unsigned count=0;
             while(s<end){
                 const unsigned n=*s++;
@@ -125,9 +159,20 @@ public:
                 for(unsigned k=0;k<n;++k)if(s[k]>=l.vertex_count)return fail("strip index");
                 s+=n;++count;
             }
-            if(count!=l.strip_count)return fail("strip count");
+            if(count!=strip_total(l))return fail("strip count");
         }
-        if(h_.version==2){
+        if(h_.version==3){
+            // Part pools are ascending and disjoint: lighting a part's pool
+            // once can never relight a corner another part already lit.
+            std::uint32_t previous=0;
+            for(unsigned i=0;i<h_.part_count;++i){
+                std::uint32_t lo,hi;
+                if(!part_pool(parts()[i],lo,hi))continue;
+                if(lo<previous)return fail("part pool");
+                previous=hi;
+            }
+        }
+        if(h_.version>=2){
             // Every level of every cluster lies inside its own part's meshlet
             // range; errors are finite, non-negative and non-decreasing.
             for(unsigned i=0;i<h_.part_count;++i){
@@ -151,10 +196,43 @@ public:
     }
     void close(){data_=nullptr;error_=nullptr;l_={};}
     bool valid()const{return data_!=nullptr;}
-    bool lod()const{return data_ && h_.version==2;}
+    bool lod()const{return data_ && h_.version>=2;}
+    bool shared()const{return data_ && h_.version==3;}
+    static bool indexed(const Meshlet& l){return (l.strip_count&kIndexedMeshlet)!=0;}
+    static unsigned strip_total(const Meshlet& l){return l.strip_count&unsigned(kIndexedMeshlet-1U);}
+    // Indexed meshlet: vertex_count offsets from first_vertex (the part pool).
+    const std::uint16_t* pool_offsets(const Meshlet& l)const{
+        return reinterpret_cast<const std::uint16_t*>(strips()+l.first_strip);
+    }
+    const std::uint8_t* strip_begin(const Meshlet& l)const{
+        return strips()+l.first_strip+(indexed(l)?2U*l.vertex_count:0U);
+    }
+    // Vertex range [lo, hi) every meshlet of part p reads; false when empty.
+    bool part_pool(const MeshPart& p,std::uint32_t& lo,std::uint32_t& hi)const{
+        lo=h_.vertex_count;hi=0;
+        for(unsigned i=0;i<p.meshlet_count;++i){
+            const auto& l=meshlets()[p.first_meshlet+i];
+            std::uint32_t end=l.vertex_count;
+            if(indexed(l)){
+                end=0;const std::uint16_t* offsets=pool_offsets(l);
+                for(unsigned k=0;k<l.vertex_count;++k)if(offsets[k]>=end)end=offsets[k]+1U;
+            }
+            if(l.first_vertex<lo)lo=l.first_vertex;
+            if(l.first_vertex+end>hi)hi=l.first_vertex+end;
+        }
+        return lo<hi;
+    }
     const MeshPartLod* part_lods()const{return at<MeshPartLod>(l_.part_lod_offset);}
     const MeshCluster* clusters()const{return at<MeshCluster>(l_.cluster_offset);}
     const MeshLevel* levels()const{return at<MeshLevel>(l_.level_offset);}
+    // Scenery class of mesh m (kClassDefault when the package has no table).
+    unsigned mesh_class(unsigned m)const{return l_.class_offset?data_[l_.class_offset+m]:unsigned(kClassDefault);}
+    // This room's rule for class c; {0, 0} (runtime defaults) when absent.
+    MeshClassRule class_rule(unsigned c)const{
+        MeshClassRule r{0,0};
+        if(l_.rule_offset && c<kClassRules)std::memcpy(&r,data_+l_.rule_offset+c*sizeof(MeshClassRule),sizeof(r));
+        return r;
+    }
     const char* error()const{return error_;}
     const MeshHeader& header()const{return h_;}
     const MeshRecord* meshes()const{return at<MeshRecord>(h_.mesh_offset);}

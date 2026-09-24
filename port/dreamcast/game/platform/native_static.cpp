@@ -485,6 +485,7 @@ struct MeshView {
     unsigned char* storage=nullptr; unsigned bytes=0;
     MeshEntry* entries=nullptr; unsigned capacity=0; // owner views only
     const std::uint32_t* lut=nullptr; // ARGB1555 -> 8888 halves, same allocation
+    re4dc::room::CompactVertex12* gather=nullptr; // v3: one meshlet's gathered corners, same allocation
     unsigned room=0; bool attempted=false;
 };
 MeshView mesh_views[kMeshViews];
@@ -493,11 +494,13 @@ constexpr unsigned kLutBytes=512*4;
 #else
 constexpr unsigned kLutBytes=0;
 #endif
+// v3: a meshlet has at most 256 corners (R4IM meshlet bound).
+constexpr unsigned kGatherBytes=(256U*unsigned(sizeof(re4dc::room::CompactVertex12))+31U)&~31U;
 
 void retire(MeshView& v){
     v.package.close();
     if(v.storage){re4dc_static_free(v.storage);stats.package_bytes-=v.bytes;--stats.owners_open;}
-    v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.capacity=0;v.lut=nullptr;v.attempted=false;v.room=0;
+    v.storage=nullptr;v.bytes=0;v.entries=nullptr;v.capacity=0;v.lut=nullptr;v.gather=nullptr;v.attempted=false;v.room=0;
 }
 
 bool open(MeshView& v,unsigned index,unsigned room){
@@ -517,8 +520,12 @@ bool open(MeshView& v,unsigned index,unsigned room){
     const bool headed=size>=sizeof(head) && fs_read(file,&head,sizeof(head))==ssize_t(sizeof(head));
     const unsigned capacity=index==kCommonView?0U:entries_for(headed?head.mesh_count:0U);
     const unsigned table=capacity*unsigned(sizeof(MeshEntry));
+    // v3 indexed meshlets gather their corners here (kGatherBytes after the LUT): heap 4, not the
+    // packet range (with MESH_DIRECT only ~400 slots remain there after the part headers, less than
+    // the transform cache plus a gather) and not static storage (the KOS heap has a few KiB).
+    const unsigned gather=headed && head.version==3?kGatherBytes:0U;
     stats.heap_before=re4dc_static_heap_free();
-    auto* storage=headed?static_cast<unsigned char*>(re4dc_static_alloc(package_bytes+table+kLutBytes)):nullptr;
+    auto* storage=headed?static_cast<unsigned char*>(re4dc_static_alloc(package_bytes+table+kLutBytes+gather)):nullptr;
     const ssize_t rest=ssize_t(size-sizeof(head));
     if(!storage){if(headed)++stats.alloc_rejects;}
     else{
@@ -532,7 +539,8 @@ bool open(MeshView& v,unsigned index,unsigned room){
         re4dc_log("native mesh: %s rejected: %s\n",path,v.package.error());
         re4dc_static_free(storage);++stats.open_failures;return false;
     }
-    v.storage=storage;v.bytes=package_bytes+table+kLutBytes;
+    v.storage=storage;v.bytes=package_bytes+table+kLutBytes+gather;
+    if(gather)v.gather=reinterpret_cast<re4dc::room::CompactVertex12*>(storage+package_bytes+table+kLutBytes);
     if(table){v.entries=reinterpret_cast<MeshEntry*>(storage+package_bytes);v.capacity=capacity;std::memset(v.entries,0,table);}
 #if RE4DC_MESH_FASTPATH
     auto* lut=reinterpret_cast<std::uint32_t*>(storage+package_bytes+table);
@@ -615,9 +623,15 @@ void light_part(MeshView& v,const re4dc::room::MeshRecord& mesh,re4dc::room::Mes
     if(p.lighting)lights=re4dc::render::prepare_actor_lights(*p.lighting);
     const float* m=p.modelview;
     const auto* lets=v.package.meshlets()+part.first_meshlet;
-    for(unsigned i=0;i<part.meshlet_count;++i)
-        for(unsigned k=0;k<lets[i].vertex_count;++k){
-            auto& corner=vertices[lets[i].first_vertex+k];
+    // v3 indexed meshlets share their part's pool: light the pool [lo, hi)
+    // once (adopt() proved pools disjoint) instead of each meshlet's corners.
+    std::uint32_t lo=0,hi=0;
+    const bool pool=v.package.shared() && v.package.part_pool(part,lo,hi);
+    const unsigned ranges=pool?1U:part.meshlet_count;
+    for(unsigned i=0;i<ranges;++i){
+        const std::uint32_t first=pool?lo:lets[i].first_vertex,count=pool?hi-lo:lets[i].vertex_count;
+        for(unsigned k=0;k<count;++k){
+            auto& corner=vertices[first+k];
             const std::uint32_t argb=palette[corner.color>>12];
             const std::uint8_t color[4]={std::uint8_t(argb>>16),std::uint8_t(argb>>8),std::uint8_t(argb),std::uint8_t(argb>>24)};
             float rgb[3]={1.0f,1.0f,1.0f};
@@ -634,6 +648,7 @@ void light_part(MeshView& v,const re4dc::room::MeshRecord& mesh,re4dc::room::Mes
             }
             corner.color=pack1555(rgb,color[3]);
         }
+    }
     part.reserved=1;
     ++stats.parts_lit;
 }
@@ -641,6 +656,7 @@ void light_part(MeshView& v,const re4dc::room::MeshRecord& mesh,re4dc::room::Mes
 struct MeshDraw : Emitter {
     const re4dc::room::MeshPackage& package; const re4dc::room::MeshPart& part;
     const std::uint32_t* lut; // mesh view's colour LUT (nullptr: per-corner path)
+    re4dc::room::CompactVertex12* gather_pool; // mesh view's v3 gather buffer (nullptr: v1/v2)
     // Cluster/meshlet rejection distance: min(projection far, source View far)
     // with RE4DC_NATIVE_FOG, else the projection far. Vertices still clip
     // against the projection far, so a straddling strip is drawn whole (fully
@@ -649,6 +665,28 @@ struct MeshDraw : Emitter {
     unsigned part_index=0; // v2: index into the package's part LOD table
     float lod_scale=0;     // v2: level error (model units) * lod_scale <= depth
     re4dc::room::CompactBatch batch{};
+    // v3: an indexed meshlet's corners are gathered from its part pool into
+    // the view's gather buffer (kGatherBytes in the package allocation), so the
+    // transform and the clipper still read one contiguous meshlet.
+    re4dc::room::CompactVertex12* gathered=nullptr;
+    bool borrow_gather(){
+        if(gathered || !package.shared())return true;
+        gathered=gather_pool;
+        return gathered!=nullptr;
+    }
+    const re4dc::room::CompactVertex12* corners(const re4dc::room::Meshlet& l){
+        const auto* base=package.vertices()+l.first_vertex;
+        if(!package.indexed(l))return base;
+        // Three word moves per corner: R4IM vertices are 4-byte aligned.
+        typedef std::uint32_t __attribute__((may_alias)) Word;
+        const std::uint16_t* offsets=package.pool_offsets(l);
+        const Word* in=reinterpret_cast<const Word*>(base);Word* out=reinterpret_cast<Word*>(gathered);
+        for(unsigned k=0;k<l.vertex_count;++k,out+=3){
+            const Word* c=in+3U*offsets[k];
+            out[0]=c[0];out[1]=c[1];out[2]=c[2];
+        }
+        return gathered;
+    }
 #if RE4DC_MESH_FASTPATH
     // Transform-once state: the cache borrows the last kCacheSlots slots of
     // the bound packet range (never sent: strips stop at 'limit').
@@ -678,13 +716,13 @@ struct MeshDraw : Emitter {
         // RE4DC_MESH_CLASSIFY=0 (default) saves ~1.5 KiB of image, i.e. KOS heap,
         // at ~8 cycles per vertex for outcodes in every meshlet.
         const unsigned checks=RE4DC_MESH_CLASSIFY?vp::classify(bmin,bmax,mvq,p.projection,p.viewport,near,far):vp::kChecksAll;
-        const auto* base=package.vertices()+l.first_vertex;
+        const auto* base=corners(l);
         const auto* in=reinterpret_cast<const vp::Vertex12*>(base);
         if(checks==vp::kChecksNone)vp::transform<vp::kChecksNone>(in,l.vertex_count,cache,outcodes,k);
         else if(checks==vp::kChecksScreen)vp::transform<vp::kChecksScreen>(in,l.vertex_count,cache,outcodes,k);
         else vp::transform<vp::kChecksAll>(in,l.vertex_count,cache,outcodes,k);
         const unsigned screen=vp::screen_mask(checks),depth=vp::depth_mask(checks);
-        const std::uint8_t* s=package.strips()+l.first_strip;
+        const std::uint8_t* s=package.strip_begin(l);
         const std::uint8_t* const end=s+l.strip_bytes;
         while(s<end){
             const unsigned n=*s++;
@@ -721,14 +759,15 @@ struct MeshDraw : Emitter {
         ++stats.groups_visible;
         if(!bind()){++stats.bind_rejects;return submitted?-1:0;}
         ++stats.batches;
+        if(!borrow_gather()){++stats.reserve_rejects;return submitted?-1:0;}
 #if RE4DC_MESH_FASTPATH
         // A slab too small to lend the cache behaves like any other
         // capacity failure: generic fallback, or abort once published.
         if(!borrow()){++stats.reserve_rejects;return submitted?-1:0;}
         return meshlet(l,batch);
 #else
-        const auto* base=package.vertices()+l.first_vertex;
-        const std::uint8_t* s=package.strips()+l.first_strip;
+        const auto* base=corners(l);
+        const std::uint8_t* s=package.strip_begin(l);
         const std::uint8_t* const end=s+l.strip_bytes;
         while(s<end){
             const unsigned n=*s++;
@@ -1130,7 +1169,7 @@ int mesh_submit(const Re4dcModelPart& p){
 #else
     if(re4dc_model_defer_part(drawn))return 1;
 #endif
-    MeshDraw d{{*drawn,{},near,far},v.package,*part,v.lut};
+    MeshDraw d{{*drawn,{},near,far},v.package,*part,v.lut,v.gather};
     d.alpha=(drawn->alpha_state&255U)<<24;d.vertex_alpha=vertex_alpha;
     d.cull_far=far;
 #if RE4DC_MESH_DIRECT

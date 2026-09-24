@@ -1,4 +1,4 @@
-"""Synthetic R4IM v2 contracts: levels of detail (convert_room_bins.py --lod,
+"""Synthetic R4IM v2/v3 contracts: levels of detail (convert_room_bins.py --lod,
 tools/mesh_lod.py) checked against the source triangles and the native reader."""
 import importlib.util
 import json
@@ -61,12 +61,22 @@ def decode(blob):
                 clusters=clusters, levels=levels, lod_offsets=(opl, ocl, olv))
 
 
+def meshlet_vertices(blob, d, let):
+    """(package vertex index per meshlet corner, strip bytes); v3 indexed
+    meshlets read their u16 pool table first."""
+    fv, fs, sb, vc, sc = let[:5]
+    if sc & C.INDEXED_MESHLET:
+        table = struct.unpack_from('<%dH' % vc, blob, d['os'] + fs)
+        return [fv + k for k in table], blob[d['os'] + fs + 2 * vc:d['os'] + fs + 2 * vc + sb]
+    return list(range(fv, fv + vc)), blob[d['os'] + fs:d['os'] + fs + sb]
+
+
 def level_triangles(blob, d, level):
     """Oriented triangles of one level: [((grid xyz) * 3, (quantised uv) * 3)]."""
     out = []
     first, count, _ = level
-    for fv, fs, sb, vc, sc, *_ in d['lets'][first:first + count]:
-        data = blob[d['os'] + fs:d['os'] + fs + sb]
+    for let in d['lets'][first:first + count]:
+        index, data = meshlet_vertices(blob, d, let)
         i = 0
         while i < len(data):
             n = data[i]
@@ -74,7 +84,7 @@ def level_triangles(blob, d, level):
             i += 1 + n
             for t in C.strip_triangles(strip):
                 if len(set(t)) == 3:
-                    vs = [d['verts'][fv + k] for k in t]
+                    vs = [d['verts'][index[k]] for k in t]
                     out.append((tuple(v[0:3] for v in vs), tuple(v[3:5] for v in vs)))
     return out
 
@@ -100,7 +110,7 @@ class RoomBinsLodTests(unittest.TestCase):
 #include <fstream>
 #include <iterator>
 #include <vector>
-int main(int,char** argv){
+int main(int argc,char** argv){
     std::ifstream in(argv[1],std::ios::binary);
     std::vector<unsigned char> raw((std::istreambuf_iterator<char>(in)),{});
     std::vector<std::uint32_t> words((raw.size()+3)/4);std::memcpy(words.data(),raw.data(),raw.size());
@@ -111,6 +121,13 @@ int main(int,char** argv){
     if(p.lod())for(unsigned c=0;c<p.header().part_count;++c)
         for(unsigned k=0;k<p.part_lods()[c].cluster_count;++k)levels+=p.clusters()[p.part_lods()[c].first_cluster+k].level_count;
     std::printf("ok v%u levels=%u\n",p.header().version,levels);
+    if(argc>3){ // classes: per-mesh codes, then each class's rule
+        std::printf("classes");
+        for(unsigned m=0;m<p.header().mesh_count;++m)std::printf(" %u",p.mesh_class(m));
+        std::printf("\nrules");
+        for(unsigned c=0;c<re4dc::room::kClassRules;++c)std::printf(" %u,%u",p.class_rule(c).full_dm,p.class_rule(c).cull_dm);
+        std::printf("\n");
+    }
     return 0;
 }
 ''')
@@ -127,10 +144,10 @@ int main(int,char** argv){
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    def read(self, blob, mode):
+    def read(self, blob, mode, *extra):
         p = self.root / 'x.re4mesh'
         p.write_bytes(blob)
-        return subprocess.run([str(self.exe), str(p), mode], text=True, capture_output=True).stdout.strip()
+        return subprocess.run([str(self.exe), str(p), mode, *extra], text=True, capture_output=True).stdout.strip()
 
     def test_v2_is_only_adopted_by_a_lod_reader(self):
         d = decode(self.flat)
@@ -315,6 +332,107 @@ int main(int,char** argv){
         self.assertTrue(all(area_y(t[0], step) > 0 for t in coarse))
         self.assertAlmostEqual(sum(area_y(t[0], step) for t in coarse), sum(area_y(t[0], step) for t in base), places=3)
         self.assertEqual({v[5] >> 12 for v in d['verts']}, {0})                         # source palette colour
+
+    def test_shared_levels_draw_the_same_triangles_from_fewer_vertices(self):
+        for data, kw, v2 in ((self.flat_data, dict(eps_world=(0.05, 0.5, 2.0), cluster_world=1000.0), self.flat),
+                             (self.hill_data, dict(eps_world=(0.02, 0.1, 0.5, 2.0), cluster_world=12.0,
+                                                   cluster_tris_max=400, min_gain=0.7), self.hill)):
+            v3, summary = convert([data], share=True, **kw)
+            a, b = decode(v2), decode(v3)
+            self.assertEqual(b['h'][1], C.VERSION_SHARE)
+            self.assertEqual(summary['version'], C.VERSION_SHARE)
+            self.assertGreater(summary['shared_vertices'][0], 0)
+            self.assertLess(len(b['verts']), len(a['verts']))
+            self.assertLess(len(v3), len(v2))
+            self.assertEqual(self.read(v3, 'lod'), 'ok v3 levels=%d' % len(b['levels']))
+            self.assertEqual(self.read(v3, 'v1'), 'reject header')
+            # Same levels, same triangles (grid position, quantised UV, colour slot), same winding.
+            self.assertEqual(a['levels'], b['levels'])
+            for la, lb in zip(a['levels'], b['levels']):
+                self.assertEqual(Counter(level_triangles(v2, a, la)), Counter(level_triangles(v3, b, lb)))
+            # Only coarse levels index; level 0 of every cluster stays direct.
+            indexed = {i for i, l in enumerate(b['lets']) if l[4] & C.INDEXED_MESHLET}
+            self.assertTrue(indexed)
+            for cl in b['clusters']:
+                f, n, _ = b['levels'][cl[6]]
+                self.assertFalse(indexed & set(range(f, f + n)))
+            # Lighting: each part's pool [lo, hi) holds every corner its
+            # meshlets read, and pools of different parts never overlap.
+            pools = []
+            for part in b['parts']:
+                used = {v for l in b['lets'][part[6]:part[6] + part[7]] for v in meshlet_vertices(v3, b, l)[0]}
+                pools.append((min(used), max(used) + 1))
+                self.assertEqual(used, set(range(*pools[-1])))
+            self.assertEqual(pools, sorted(pools))
+            self.assertTrue(all(p[1] <= q[0] for p, q in zip(pools, pools[1:])))
+        self.assertEqual(convert([self.flat_data], eps_world=(0.05, 0.5, 2.0), cluster_world=1000.0)[0], self.flat)
+
+    def test_reader_rejects_bad_shared_tables(self):
+        v3, _ = convert([self.hill_data], eps_world=(0.02, 0.1, 0.5, 2.0), cluster_world=12.0,
+                        cluster_tris_max=400, min_gain=0.7, share=True)
+        d = decode(v3)
+        ol = d['h'][12]
+        i = next(i for i, l in enumerate(d['lets']) if l[4] & C.INDEXED_MESHLET)
+        fv, fs, sb, vc, sc = d['lets'][i][:5]
+
+        def bad(offset, fmt, value, blob=v3):
+            b = bytearray(blob)
+            struct.pack_into(fmt, b, offset, value)
+            return self.read(bytes(b), 'lod')
+        self.assertEqual(bad(d['os'] + fs, '<H', len(d['verts']) - fv), 'reject pool index')
+        self.assertEqual(bad(ol + i * C.MESHLET.size + 4, '<I', fs + 1), 'reject meshlet')      # odd table
+        self.assertTrue(bad(ol + i * C.MESHLET.size + 14, '<H', sc & 0x7fff).startswith('reject '))  # table read as strips
+        self.assertEqual(bad(4, '<I', C.VERSION_LOD), 'reject meshlet')                           # flag in v2
+        # A second part whose pool starts inside the first part's: relit corners.
+        two, _ = convert([self.flat_data, self.flat_data], eps_world=(0.05, 0.5, 2.0), cluster_world=1000.0, share=True)
+        t = decode(two)
+        self.assertEqual(self.read(two, 'lod'), 'ok v3 levels=%d' % len(t['levels']))
+        j = t['parts'][1][6]
+        self.assertEqual(bad(t['h'][12] + j * C.MESHLET.size, '<I', t['lets'][j][0] - 1, two), 'reject part pool')
+
+    def test_floor_simplifies_flat_level_zero_and_keeps_its_surface(self):
+        kw = dict(eps_world=(0.05, 0.5, 2.0), cluster_world=1000.0)
+        blob, summary = convert([self.flat_data], floor={None: 0.5}, **kw)
+        before, after, refused = summary['floor_triangles']
+        self.assertEqual((before, refused), (2 * 11 * 11, 0))
+        self.assertLess(after, before // 4)
+        d = decode(blob)
+        step = d['meshes'][0][11:14]
+        base = level_triangles(self.flat, decode(self.flat), decode(self.flat)['levels'][0])
+        l0 = level_triangles(blob, d, d['levels'][0])
+        self.assertEqual(len(l0), after)
+        self.assertTrue(all(area_y(t[0], step) > 0 for t in l0))
+        self.assertAlmostEqual(sum(area_y(t[0], step) for t in l0), sum(area_y(t[0], step) for t in base), places=3)
+        # A BIN-specific floor leaves other BINs' level 0 alone.
+        _, other = convert([self.flat_data], floor={(1, 5): 0.5}, **kw)
+        self.assertEqual(other['floor_triangles'], [0, 0, 0])
+
+    def test_class_tags_and_rules_ride_in_the_lod_header(self):
+        # Scale 1 grid units are mm: the 11-unit flat square becomes 11 m wide
+        # at world scale 1000 (ground); the 0.2-unit one stays tiny (clutter).
+        small = grid_bin(3, spacing=0.1)
+        blob, summary = convert([self.flat_data, small, self.flat_data], eps_world=(0.05, 0.5, 2.0), cluster_world=1000.0,
+                                scales={(1, 0): 1000.0}, classes={(1, 2): C.MESH_CLASSES['landmark']}, class_auto=True,
+                                class_rules={C.MESH_CLASSES['tree']: (110, 190)}, share=True)
+        self.assertEqual(summary['mesh_classes']['ground'], [0])
+        self.assertEqual(summary['mesh_classes']['clutter'], [1])
+        self.assertEqual(summary['mesh_classes']['landmark'], [2])
+        self.assertEqual(summary['class_rules'], {'tree': (110, 190)})
+        out = self.read(blob, 'lod', 'classes').splitlines()
+        self.assertEqual(out[1:], ['classes 1 4 3', 'rules 0,0 0,0 110,190' + ' 0,0' * 5])
+        # No class option: the class and rule words stay 0 (bytes unchanged).
+        self.assertEqual(C.LOD_HEADER.unpack_from(self.flat, C.HEADER.size)[5:], (0, 0, 0))
+        self.assertEqual(self.read(self.flat, 'lod', 'classes').splitlines()[1:], ['classes 0', 'rules' + ' 0,0' * 8])
+        co, ro = C.LOD_HEADER.unpack_from(blob, C.HEADER.size)[5:7]
+        self.assertTrue(co and ro)
+
+        def bad(offset, fmt, value):
+            b = bytearray(blob)
+            struct.pack_into(fmt, b, offset, value)
+            return self.read(bytes(b), 'lod')
+        self.assertEqual(bad(co + 1, '<B', C.CLASS_RULES), 'reject class')
+        self.assertEqual(bad(C.HEADER.size + 20, '<I', len(blob) - 1), 'reject class section')
+        self.assertEqual(bad(C.HEADER.size + 24, '<I', len(blob)), 'reject class section')
 
     def test_meshlets_hold_256_vertices_and_levels_shrink(self):
         d = decode(self.hill)
