@@ -182,7 +182,9 @@ def build_room(ctx, name, mode="original", plan="recipe", only=None, review=True
             same = all((pinned / f).exists() and ctx.cache.file_hash(pinned / f) == h
                        for f, h in vq.outputs.items() if f.endswith(".re4tex"))
             checks["vq_overlay_vs_pinned"] = "ok" if same else "differs"
-        texdirs.append(("00-vq", vq, lambda rel: rel.endswith(".re4tex") and "/" not in rel))
+        # the report marks the dir as a VQ overlay for ui_overrides.py (title art encoded as VQ)
+        texdirs.append(("00-vq", vq, lambda rel: (rel.endswith(".re4tex") and "/" not in rel)
+                        or rel == "vq-native-ui-report.json"))
     pairs = cfg.rooms_cfg.get("material_pairs", {}).get("pairs", [])
     if (logs or pairs) and cfg.path("gc_iso") and cfg.path("gc_iso").exists():
         mp = gen.material_pairs(logs, pairs)
@@ -241,7 +243,7 @@ def build_room(ctx, name, mode="original", plan="recipe", only=None, review=True
                                outputs={o["name"] + ".re4mesh": built[o["name"]].outputs[o["name"] + ".re4mesh"]}))
     for label, obj, sel in texdirs:
         for rel, sha in sorted(obj.outputs.items()):
-            if not sel(rel):
+            if not sel(rel) or not rel.endswith(".re4tex"):
                 continue
             t = read_re4tex(obj.path(rel))
             key = Path(rel).stem
