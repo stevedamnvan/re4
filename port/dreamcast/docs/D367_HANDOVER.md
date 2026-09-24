@@ -3,7 +3,9 @@
 **Serial mode (later on 2026-09-24):** the user asked for the backlog to be worked through serially in one session,
 without sub-agents. Landed so far in that mode: 23074db warp rig v2 (DBG_WARP), 9bba3c8 ARAM block units re-read
 from GD-ROM, 4980a40 + 976c93d SS_POOL_HIGH (the r101 call reset and the file-screen reset after it), a0c3079
-NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + converter: r101 scenery draws). The
+NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + converter: r101 scenery draws),
+ea1e2d3 VRAM_PAGES (default off), 9951d17 items 20+21 (TREE_IMPOSTOR/MESH_TEXTURES on W9b, default off), 010169c
+QUALITY_ASSETS (Standard selection, default off), 46b9f4f tex-vq6 (r101 textures VQ: the r101 VRAM blocker). The
 sections below are updated for those; everything else is as at the hold.
 
 The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
@@ -23,7 +25,7 @@ STATE.md as a handover.
 |---|---|
 | m1: r100 disc | **Done and verified** (84fc8ff): title (2026 art) -> picker (text visible) -> intro -> s40 -> radio call (subtitles) -> r100 play (~15 fps Flycast) -> inventory -> typewriter save to VMU. Player copy: `D:\RE4DC-Play\m1-final\{gdi,cue}` (lacks 16 em15 motion keys, so it halts if r101 is ever entered; restage before an r101-capable disc). |
 | r100 -> r101 door | ARAM block-swap fix landed (9bba3c8); swaps in both directions pass in Flycast. |
-| r101 | Loads by direct entry and by warp. The first-visit Hunnigan call and the "Playing Manual 2" file screen after it now work (SS_POOL_HIGH=1, in the M1 recipe; 4980a40, 976c93d). With W9b (8332a22) the scenery draws, but r101's Original textures overflow VRAM, so uploads thrash and play is slow. Next: Standard r101 textures (std-runtime per-mode selection) and/or the VRAM page fix. |
+| r101 | Loads by direct entry and by warp. The first-visit Hunnigan call and the "Playing Manual 2" file screen after it now work (SS_POOL_HIGH=1, in the M1 recipe; 4980a40, 976c93d). With W9b (8332a22) the scenery draws. With tex-vq6 (46b9f4f; r101 textures VQ) the square fight runs: warp r101-bell-fight 10.1 fps Standard / 9.4 Original in Flycast (test build), 15 failed uploads (was 4,613). Not yet played through to the bell. |
 | r103 | Plan only (user: "work on this plan but don't implement"). |
 | Performance | r100 8-Ganado fight ~125 hw ms/frame after this session's cuts; target 50 ms (20 fps). |
 
@@ -51,9 +53,13 @@ STATE.md as a handover.
    - `d354v7-fixtures` lacks the 16 r101 em15 motion keys and `m1stage.sh` uses it, so m1 route discs halt at
      r101 (same gap as the Play disc).
    - r101 scenery grey: fixed by W9b (8332a22). The staged r101/r103 packages are R4IM v3, which HEAD's runtime
-     rejected. Now blocked on VRAM: the Original r101 set needs ~250 KB more than the 2.54 MB budget. Either the
-     Standard r101 textures must be selected in Standard mode (std-runtime item 20/21 + per-mode selection, parked),
-     or VRAM_PAGES fix A (~158 KB, parked) must land, or both.
+     rejected.
+   - r101 VRAM: fixed by 46b9f4f. The cause was not the page pad or Standard vs Original. The VQ overlay was built
+     from r100 logs only, so r101 streamed 126 textures as 16-bit (4.04 MB against a 2.47-2.55 MB budget).
+     - tex-vq6 = the same rule plus two r101 logs (61 new images, 4.52 -> 0.69 MB, PSNR >= 27.6 dB). The pipeline's
+       `tex/00-vq` is now this set for every room.
+     - Later rooms: add a log of the room to `ui_logs` and rebuild.
+     - VRAM_PAGES alone (ea1e2d3) did not help r101: 4,613 vs 5,177 failed uploads, same progress.
    - r100 westward walk: FILE_01 failed to reload (heap-4 fragmentation); fixed by NATIVE_PKG_HIGH (a0c3079, M1).
      Without it, area 1 ran at ~4 fps in Flycast (source fallback); with it, 15 fps.
    - The bell is counted at run time (kills or fight timer), not by flags; a bell preset needs a design decision.
@@ -67,12 +73,11 @@ Paths are under `/root/probe/d367-agents/`. Rebase anything whose base is older 
 |---|---|---|---|
 | `hwcal/hwcal-disc-v3.patch` | `77ec6409…cc76` | applies at 8ac9f2d | finished disc run on current build; PREDICTIONS.md; HOW-TO-RUN in `hwcal/scripts/` |
 | `subscreen2/wip-uiorder.patch` (SS_UI_ORDER) | `f75a4439…df53` | 471fd72 | codec screenshot, sub-screen hw ms, rebase (inventory fixed, STRICT over 6,290 samples) |
-| `std-runtime/patches/item20-tree-impostor-84fc8ff.patch` | `e12cfb12…8125` | 84fc8ff (applies at 8ac9f2d) | hwproject fight window (quiet 96.1 -> 90.5 hw ms; STRICT 5,853 ticks) |
-| `std-runtime/patches/item21-house-shells-84fc8ff.patch` | `3af4c52b…f51bf` | after item 20 | run with textured packages |
-| `std-runtime/patches/std-assets-wip-84fc8ff.patch` | `229f2710…8362` | 84fc8ff | WIP; low/FILE_01/02 were rejected ("level error"); asset side fixed in 45138ce, restage and rerun; rejection fallback to Original untested |
+| items 20+21 | LANDED 9951d17 (default off; rebased on W9b: runtime-table head at LOD word 7) | | item 20 hwproject fight window; item 21 run with textured packages |
+| Standard selection (QUALITY_ASSETS) | LANDED 010169c (default off; impt tokenizer fix) | | r100 Standard run + STRICT + hw ms (quiet/fight, std/orig/base); then the M1 recipe decision (with the 77 KB PT list) |
 | `vmu/kit-autoload-wip2.diff` (DBG_AUTOLOAD narrow starts) | `f8df61ad…67a1b2` | tree7 on 5f32de5 | rebase; gates A/B/C; its staging halts at r100 entry (213 texture opens fail, watchdog main.cpp:548) |
 | `actors30/actor-fog-gate.patch` (ACTOR_FOG_GATE) | `9b3e1b3d…d0b` | 8ac9f2d | STRICT only over 629 ticks; n8 fb-diff; hw ms quiet + n8; user call on the 1-pixel diff (below). Knob-off identity passes |
-| `vram/vram-pages-a-v1.patch` (VRAM_PAGES fix A) | `ad364080…f324` | ed24efa (applies at 8ac9f2d) | STRICT pair + hwproject. Flycast: alloc overhead 209,216 -> 0 B; preload 2.13 -> 2.40 MB resident; frame times unchanged |
+| VRAM_PAGES fix A | LANDED ea1e2d3 (default off) | | hwproject pair, then the canonical recipe. STRICT: r100 identical to the call close, then a 1-tick close-wait shift (door-frame category) |
 | `pacing/pace-v1v2-0825810.patch` | `a8370cde…1ba0` | 0825810 (applies at 8ac9f2d) | route v2 reruns, game vs wall time at 20 fps, hw ms per skipped tick, Flycast p50/p99 with enemies, picker backdrop on screen |
 | `w10/w10-door-u0/u1/u2/u6.patch` | stale | 5f32de5 | regenerate with `w10/tools/mkpatch_door.sh`; equalised STRICT via dvdhold (h0 baseline first) |
 | frontier `FIX_R101_CALL_DONE` (test only) | commit 2f97c09 on tree4 `m1-fx` | pre-8ac9f2d | Makefile tail conflict; rebase, then run r101e |
@@ -96,10 +101,10 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 | Door loading | `w10/` | U1+U2+U6: r100 door 10.22 -> 6.29-6.75 s (Flycast emulated), source blocked 1.03 -> 0.07 s; wall-time pad failed as an equaliser; frame-based hold (IO_PROBE test hook in cDvdQueue::Read) built, h0 baseline running | h1/h2/h6 held STRICT vs h0, in-room p99/max, deliver U0/U1/U2/U6 |
 | Logic | `design-logic/` | P1-P4, P3 (GAME_CONCAT_COL), P6 (GAME_SINCOS) and, after the hold, P3b (GAME_MULTVEC_SCHED, 45fd3d9 + README 43c0e75; r6 -0.28, r8 -0.13 hw ms) landed and in LH; FTRV **rejected** (~1.1 hw ms/tick but RNG diverges at tick 634, 3rd kill 3074 vs 3071; parked on branch `dl3-ftrv`); P10, GAME_SCHED rejected. CPU share at 30 fps: 70% at 6, 80% at 8 engaged Ganados | P5 r6 number and land; P8 check; confirm P7 reject; scripts in `tools/dl-scripts/` hard-code an old scratchpad path; DESIGN.md is v1 |
 | Enemies | `actors30/` | actor tiers in PERF (-19.9 hw ms at 8 Ganados); ACT_CAP code landed off; ACTOR_FOG_GATE built (18 cObjScr parts beyond 25 m fog cost 7.8 hw ms quiet r100); worktrees wt8/wt9/wtc kept; build dirs need a candidate.txt or the TEX_RESIDENT fan-out breaks | finish fog-gate gates, then PERF; item 4 Leon <=5 ms |
-| W9b | `warp/` (main session) | landed 8332a22 (v3 runtime + converter + heap-4 gather buffer) | r101 VRAM (see blocker 3) |
+| W9b | `warp/` (main session) | landed 8332a22 (v3 runtime + converter + heap-4 gather buffer); r101 VRAM fixed by 46b9f4f | play r101 through to the bell |
 | Rendering | `builder/` | R1 (FRONT_TEXOBJ) landed, not in recipe (-0.45); TA_HASH (2fe6fba) and group-8 PVR header compare (0aa5cc9, 0 bad of 210,800 parts) landed after the hold; canonical-recipe fight fixture does not reach gameplay (VMU_SAVE/VMU_DEBUG_SLOT card screens, NATIVE_MES/SUBSCREEN_OVL title stall), gates ran on `scripts/bmk2.sh` | R2 (8 KiB records 128/160/448, ~-9.5 hw ms expected); W9b plus two parked add-ons |
 | Standard assets, pipeline | `assets/` | Standard r100/r101/r103, disc staging, grove split (8 views), user VRAM trims landed; after the hold 45138ce landed BIN 59 split (r103 max 11.85 -> 9.85 ms, views within 5 ms 157 -> 162/270), BIN 1 shell skip (all-alpha BIN), Blender failures now fatal, and vanish-guard NEVER 1.0e30 (fixes std-runtime's "level error"); `out/standard/{r100,r101,r103}` rebuilt with it; --verify cache (586 MB) kept | tell std-runtime to restage and rerun its r100 fight; W9b add-ons in order: `patches/w9b-lod-cluster-trees.patch` (`635f20a6…`) then `patches/w9b-lod-cluster-bins.patch` (`83c20762…a6ad6`) |
-| Standard assets, runtime | `std-runtime/` | contract s16 implemented in part (impt); item 20 rebase; low/ rejection fallback fixed | item 20 -> item 21 -> per-mode selection -> r100 proof; note ~77 KB PT-list VRAM at init |
+| Standard assets, runtime | `std-runtime/` -> `warp/tree3` | items 20+21 (9951d17) and QUALITY_ASSETS (010169c) landed default off; r101 Standard index accepted, std vs orig STRICT 1830 ticks | r100 proof (fight + STRICT + hw ms); note ~77 KB PT-list VRAM at init |
 | Frame pacing | `pacing/` | v1/v2 built; opt-in LOGIC_TRACE_MASK_RENDER for the render-only be_flag bit; picker question + RE4DCCFG bits 16-17 | rebase on 2ba789c picker; remaining gates |
 | VMU | `vmu/` | S0-S9, S5, LCD status, pacing bits landed | DBG_AUTOLOAD start points (gate A+B, C at room entries); console checklist |
 | hwcal disc | `hwcal/` | versions c1-c7 run in Flycast | finish disc + HOW-TO-RUN for the one approved console run |
@@ -167,8 +172,12 @@ build or watcher of theirs is running.
 ## How to resume
 
 1. Read this file, the skill, and the area STATE.md files above.
-2. Warp rig, ARAM fix and r101 call reset have landed (serial mode). Next in the serial backlog: FILE_01
-   westward mesh reload (heap-4 fragmentation), r101 grey scenery, the em2a module, the m1 restage with em15 keys.
+2. Serial mode has landed the warp rig, ARAM fix, r101 call reset, FILE_01 reload, W9b, VRAM_PAGES, items 20+21,
+   QUALITY_ASSETS and tex-vq6. Next in the serial backlog:
+   - the em2a module;
+   - the m1 restage with em15 keys;
+   - r101 play-through to the bell;
+   - r100 Standard proof.
 3. Resume the other streams in the order of the dependency list in the route doc; every patch still goes through
    the commit procedure in the skill (sha check, HEAD guard, empty index, `git apply --check` / `--cached --check`,
    commit with the Co-Authored-By line, push, dirty count stays 75).
