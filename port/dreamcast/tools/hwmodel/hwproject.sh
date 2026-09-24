@@ -90,6 +90,12 @@ else
   [ "$FREE" -gt "$NEED" ] || { echo "only ${FREE} MB free on $HWM_EVROOT; need ~$((NFR * 70 + 100)) MB and to keep ${HWM_MINFREE_MB} MB free" >&2; exit 1; }
   mkdir -p "$E/disc-output" "$HWM_DISCS"
   cp -r "$HWM_BIN"/. "$E"/
+  # A real pad must never drive a traced run: this Flycast reads pads while unfocused, and a user's
+  # DualSense press sent a fixture into the VMU menu (stdrt g-shw orig arms). Same block as the harness.
+  if ! grep -q '^maple_sdl_joystick_0 = -1' "$E/emu.cfg"; then
+    printf '\n[input]\n' >> "$E/emu.cfg"
+    for i in 0 1 2 3 4 5 6 7; do printf 'maple_sdl_joystick_%d = -1\n' $i >> "$E/emu.cfg"; done
+  fi
   for f in syms.txt elf.sha256 head.txt candidate.txt size.txt; do
     [ -f "$SRC/$f" ] && cp "$SRC/$f" "$E/"
   done
