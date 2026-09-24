@@ -71,6 +71,14 @@ extern "C" void re4dc_model_packet_abort();
 // caller keeps its packet path.
 struct Re4dcModelDirect { std::uint32_t* sq; void* scratch; unsigned scratch_capacity; float u_scale,v_scale; };
 extern "C" int re4dc_model_direct_enabled();
+// D367 TA_HASH=1 (test builds, tahash.mk): every 32-byte TA store-queue burst of the game
+// frame is folded into a per-list hash, logged once per scene ("ta_hash:"). 0 = compiled out.
+#ifndef RE4DC_TA_HASH
+#define RE4DC_TA_HASH 0
+#endif
+#if RE4DC_TA_HASH
+extern "C" void re4dc_ta_hash(const void* data,unsigned bytes);
+#endif
 extern "C" int re4dc_model_direct_begin(const Re4dcModelPart*,Re4dcModelDirect*);
 extern "C" void re4dc_model_direct_end(unsigned vertices);
 

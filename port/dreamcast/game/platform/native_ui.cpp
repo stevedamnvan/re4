@@ -633,6 +633,14 @@ pvr_list_t stream_list=PVR_LIST_TR_POLY;
 #if RE4DC_D349_RENDERER_STACK
 pvr_list_t desired_list=PVR_LIST_OP_POLY;
 #endif
+#if RE4DC_TA_HASH
+// TA_HASH: FNV-1a over 32-bit words per list (OP, OP mod, TR, TR mod, PT) of one scene; a list
+// switch folds a marker into the list being opened, so order and list membership both count.
+std::uint32_t ta_hash_h[5];
+unsigned ta_hash_words[5];
+void ta_hash_reset(){for(unsigned i=0;i<5;++i){ta_hash_h[i]=2166136261u;ta_hash_words[i]=0;}}
+void ta_hash_marker(pvr_list_t list){const std::uint32_t w=0xF00D0000u|(unsigned)list;re4dc_ta_hash(&w,4);}
+#endif
 void stream_open() {
 #if RE4DC_PVR_PIPELINE
     present_fence(); // previous scene flipped/discarded: TA bank and back buffer free
@@ -650,6 +658,9 @@ void stream_open() {
     stream_list=PVR_LIST_TR_POLY;
 #endif
     if(pvr_list_begin(stream_list)<0)re4dc_missing("native stream list begin failed");
+#if RE4DC_TA_HASH
+    ta_hash_reset();ta_hash_marker(stream_list);
+#endif
     // Do not retain the main thread's SQ mutex across source task dispatch or
     // file/audio services. Each synchronous packet transfer reacquires it.
     sq_unlock();stream_scene=true;
@@ -663,6 +674,9 @@ void stream_select(pvr_list_t list){
     sq_lock((void*)PVR_TA_INPUT);
     if(pvr_list_finish()<0 || pvr_list_begin(list)<0)re4dc_missing("native pass transition failed");
     sq_unlock();stream_list=list;
+#if RE4DC_TA_HASH
+    ta_hash_marker(list);
+#endif
 }
 #endif
 void stream_send(const void* data,unsigned bytes) {
@@ -671,6 +685,9 @@ void stream_send(const void* data,unsigned bytes) {
     ++frame_pvr_calls;frame_pvr_bytes+=bytes;
     if(!stream_scene)stream_open();
     sq_lock((void*)PVR_TA_INPUT);
+#if RE4DC_TA_HASH
+    re4dc_ta_hash(data,bytes);
+#endif
     re4dc::render::submit_pvr(data,bytes);
     sq_unlock();
 #if RE4DC_TA_GUARD
@@ -686,6 +703,11 @@ void stream_close(bool present) {
     const unsigned ta_faults=0;
 #endif
     (void)ta_faults;
+#if RE4DC_TA_HASH
+    re4dc_log("ta_hash: frame=%u present=%u op=%08x/%u tr=%08x/%u pt=%08x/%u mod=%08x/%u,%08x/%u\n",frame,present?1u:0u,
+              ta_hash_h[0],ta_hash_words[0],ta_hash_h[2],ta_hash_words[2],ta_hash_h[4],ta_hash_words[4],
+              ta_hash_h[1],ta_hash_words[1],ta_hash_h[3],ta_hash_words[3]);
+#endif
     sq_lock((void*)PVR_TA_INPUT);
     if(pvr_list_finish()<0 || pvr_scene_finish()<0)re4dc_missing("native stream finish failed");
     stream_scene=false;
@@ -2176,6 +2198,15 @@ extern "C" void re4dc_model_packet_abort(){
 }
 
 extern "C" int re4dc_model_direct_enabled(){return RE4DC_TA_DIRECT;}
+#if RE4DC_TA_HASH
+extern "C" void re4dc_ta_hash(const void* data,unsigned bytes){
+    const unsigned l=(unsigned)stream_list<5?(unsigned)stream_list:2;
+    const auto* w=static_cast<const std::uint32_t*>(data);
+    std::uint32_t h=ta_hash_h[l];
+    for(unsigned i=0;i<bytes/4;++i)h=(h^w[i])*16777619u;
+    ta_hash_h[l]=h;ta_hash_words[l]+=bytes/4;
+}
+#endif
 extern "C" int re4dc_model_direct_begin(const Re4dcModelPart* p,Re4dcModelDirect* out){
 #if RE4DC_TA_DIRECT
     if(direct_open){re4dc_missing("native direct part nested");return 0;}
@@ -2187,6 +2218,9 @@ extern "C" int re4dc_model_direct_begin(const Re4dcModelPart* p,Re4dcModelDirect
     auto* sq=static_cast<std::uint32_t*>(static_cast<void*>(sq_lock((void*)PVR_TA_INPUT)));
     const auto* header=reinterpret_cast<const std::uint32_t*>(model_packets+model_used);
     for(unsigned i=0;i<8;++i)sq[i]=header[i];
+#if RE4DC_TA_HASH
+    re4dc_ta_hash(header,32);
+#endif
     sq_flush(sq);
     direct_open=true;
     model_handle->frame=frame; // the header is in the TA: pinned for this scene
