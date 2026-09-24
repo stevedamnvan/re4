@@ -253,6 +253,10 @@ extern "C" void re4dc_quality_freeze(const char* where);
 extern "C" void re4dc_dbgslot_room_enter();
 extern "C" void re4dc_dbgslot_poll(unsigned generation, unsigned room_frames);
 #endif
+#if RE4DC_DBG_WARP
+extern "C" void re4dc_warp_room_enter(void);
+extern "C" void re4dc_warp_poll(void);
+#endif
 extern "C" void re4dc_room_enter(){
 #if RE4DC_QUALITY
     re4dc_quality_freeze("room");
@@ -262,6 +266,9 @@ extern "C" void re4dc_room_enter(){
 #endif
 #if RE4DC_VMU_DEBUG_SLOT
     re4dc_dbgslot_room_enter();                         // ring entry; FILE 20 start (dbgslot_bridge.cpp)
+#endif
+#if RE4DC_DBG_WARP
+    re4dc_warp_room_enter();                            // test warp rig: flags at the first entry
 #endif
     re4dc_room4_open();
     room_frames=0;steady_logged=false;
@@ -307,6 +314,9 @@ extern "C" int re4dc_room_cycle_poll(){
     re4dc_w11_room_poll(generation);                    // death / life fixture (sscrn_bridge.cpp)
 #endif
     ++room_frames;
+#if RE4DC_DBG_WARP
+    re4dc_warp_poll();                                  // test warp rig: placement log, area dump
+#endif
 #if RE4DC_VMU_DEBUG_SLOT
     re4dc_dbgslot_poll(generation, room_frames);        // L+START debug save (dbgslot_bridge.cpp)
 #endif

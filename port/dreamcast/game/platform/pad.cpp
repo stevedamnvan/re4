@@ -11,6 +11,9 @@
 #if RE4DC_VMU_DEBUG_SLOT
 extern "C" unsigned re4dc_dbgslot_pad(unsigned buttons);  // dbgslot_bridge.cpp
 #endif
+#if RE4DC_DBG_WARP
+extern "C" void re4dc_warp_pad(unsigned short* buttons, signed char* stickY);  // dbgwarp_bridge.cpp
+#endif
 
 typedef signed char s8;
 typedef unsigned char u8;
@@ -371,6 +374,9 @@ u32 PADRead(PADStatus* status)
         p->substickY = mapped.substickY;
         p->triggerLeft = mapped.triggerLeft;
         p->triggerRight = mapped.triggerRight;
+#if RE4DC_DBG_WARP
+        if (i == 0) re4dc_warp_pad(&p->button, &p->stickY);  // test warp rig: boot card screen, door test
+#endif
         p->err = PAD_ERR_NONE;
     }
     return connected;

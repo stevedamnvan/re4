@@ -95,6 +95,11 @@ union FadeColor {
         OSReport("HALT %s(%d)\n", __FILE__, __LINE__);            \
     }
 
+#if !defined(__PPC__) && RE4DC_DBG_WARP
+extern "C" int re4dc_warp_title(void);
+extern "C" int re4dc_warp_title_exit(void);
+extern "C" void re4dc_warp_next_pos(void);
+#endif
 void titleInit(TitleWork* w);
 void titleWait(TitleWork* w);
 void titleNintendo(TitleWork* w);
@@ -136,6 +141,13 @@ void Title_task()
 #line 114 "D:/Bio4/Prog/title.cpp"
     w = (TitleWork*) MEM_CALLOC(sizeof(TitleWork), 1, 13);
     for (;;) {
+#if !defined(__PPC__) && RE4DC_DBG_WARP
+        // Test warp rig (dbgwarp_bridge.cpp): once the title data is loaded, straight to titleExit.
+        if (w->Rno0 >= 2 && w->Rno0 <= 6 && re4dc_warp_title()) {
+            w->Rno0 = 7;
+            w->Rno1 = 0;
+        }
+#endif
         titleFuncTbl[w->Rno0](w);
         TaskSleep(1);
     }
@@ -1415,6 +1427,11 @@ void titleExit(TitleWork* w)
     }
     if (!(pG->System_flg & 0x100) && (s32) pG->System_flg >= 0 && !(pG->System_flg & 0x40000000)) {
         pRj = new cRoomJmp(roomInfoAddr);
+#if !defined(__PPC__) && RE4DC_DBG_WARP
+        const int warp = re4dc_warp_title_exit();  // the warp room replaces config.txt's
+#else
+        const int warp = 0;
+#endif
         w->Stage = pG->stage_no;
         w->Room[w->Stage] = pRj->getRoomIdx(pG->stage_no, pG->room_no);
         w->JumpPoint = pG->JumpPoint;
@@ -1423,7 +1440,7 @@ void titleExit(TitleWork* w)
         w->menu_x = 340;
         w->menu_y = 60;
         w->se_id = 0;
-        while (!(Joy[0].trg & 0x1100)) {
+        while (!warp && !(Joy[0].trg & 0x1100)) {
             titleDebugMenu(w);
             TaskSleep(1);
         }
@@ -1492,6 +1509,11 @@ void titleExit(TitleWork* w)
             break;
         }
         pRj->getRoomInfo(pG->stage_no, pG->JumpPoint + pRj->getRoomIdx(pG->stage_no, pG->room_no))->setNextPos();
+#if !defined(__PPC__) && RE4DC_DBG_WARP
+        if (warp) {
+            re4dc_warp_next_pos();
+        }
+#endif
         delete pRj;
         if (pG->pl_type == 6) {
             pG->pl_type = 0;

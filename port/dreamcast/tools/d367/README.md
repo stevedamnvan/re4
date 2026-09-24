@@ -215,6 +215,48 @@ and `NATIVE_MESH=1`: a released part never falls back to GX. The prepared room's
 texture index is rebased. `tests/test_room_smd.py` covers this, plus r101/r103 when
 `RE4DC_ROUTE_DAS_DIR` holds the route .das files.
 
+## Warp rig (`DBG_WARP=1`, test builds only)
+
+Starts a test build next to an event trigger or a door, with the scenario state that event needs,
+seconds after boot, instead of a whole title -> intro -> r100 walk.
+
+- **Build:** add `DBG_WARP=1` to the build flags (dbgwarp.mk, dbgwarp_bridge.cpp). With the default
+  `DBG_WARP=0` the hooks compile out and the image is byte-identical. Never on a user disc: stage
+  `warp.txt` only on test discs.
+- **Config:** `/cd/dc/warp.txt` in the staged fixtures (FIXTURES_SRC). Write it from a preset:
+  `python3 port/dreamcast/tools/d367/warp.py <preset> [--door] [--dump] -o <fixtures>/warp.txt`
+  (`warp.py list` lists them). Lines: `room 0x100`, `pos x y z`, `ang <rad>` or `dir 0x8000`,
+  `rsf <room> <bit>...` (room save flags), `scenario <0|1> <hex>`, `find <hex>` (Item_find_flg),
+  `unlock <0|1> <hex>`, `inv default`, `act <room frame> <a|b|x|y|start|fwd|back> <hold>`, `dump`.
+- **What it does:** once the title data is loaded, the title, picker and menus are skipped and
+  titleExit takes the debug-start path (config.txt [STAGE]/[ROOM] + START) with the warp room, so
+  the room loads through the game's own new-game and room-load code. Quality comes from RE4DCCFG /
+  quality.txt. `pos`/`ang` replace the jump point's NextPos/NextY. The flags are set once at the
+  first room entry (after gameInit, before the room init reads them). `act` lines press a button or
+  push the stick in the first room (door test mode); an event cuts the running action. `dump` logs
+  every AEV area of the room (number, type, trigger, centre, door destination).
+- **Log:** `warp:` lines give vblank and guest time for the title skip, each room entry, the
+  placement and each action.
+- **Boot fixture:** a blank harness VMU asks to create RE4DCSYS; stage a padscript with
+  `0 0008 3 card=8/1 3000` and `+20 0100 3 card=8/1 300` (clock source).
+- **Base fixtures:** r101 needs 16 motion keys that `/root/probe/d354v7-fixtures` lacks
+  (`RE4DC MISSING: motion key read` at r101 entry); `frontier/fixtures` has them.
+
+| Preset | Room | Flags | Event it reaches |
+|---|---|---|---|
+| r100-spawn | 0x100 | none | s40 movie and the radio call (r100_StartEvent) |
+| r100-post-radio | 0x100 | rsf 13, Scenario[0] 0x10 | play at the gate |
+| r100-house-door | 0x100 | rsf 13, Scenario[0] 0x10 | s03 (area 0xA, r100_Sce_look) |
+| r100-bridge | 0x100 | rsf 13, Scenario[0] 0x10 | s44 (area 0x1B, r100_EventBrige) |
+| r100-east-door | 0x100 | rsf 13, Scenario[0] 0x10 | r101 door (AEV area 0, no lock) |
+| r101-entry | 0x101 | none | r101 first visit |
+
+**A warp start is not STRICT against continued play.** The room is entered fresh with synthesized
+flags; the RNG, timers, enemy list state, inventory and play time are those of a new game, not of
+a run that played up to that point. Use warps for iteration and bring-up (does the door open, does
+the event start, what does the room cost). Logic proofs, STRICT traces and route sign-off still
+use normal runs.
+
 ## GDEMU image (W10)
 
 `GDI=1 GDI_OUT=/mnt/d/... stage.sh ...` also writes a GDI from the same tree through
