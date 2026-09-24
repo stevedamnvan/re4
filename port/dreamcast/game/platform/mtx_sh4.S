@@ -435,7 +435,52 @@ _re4dc_sh4_MTXConcat:           /* r4 = a, r5 = b, r6 = ab */
         .global _re4dc_sh4_MTXMultVec
         .type   _re4dc_sh4_MTXMultVec, @function
 _re4dc_sh4_MTXMultVec:          /* r4 = m, r5 = src, r6 = dst */
-#if RE4DC_FP_CONTRACT_OFF
+#if RE4DC_FP_CONTRACT_OFF && RE4DC_MULTVEC_SCHED
+        /* design-logic P3b body: contract-off MTXMultVec with the three rows interleaved. Same
+         * operations and operand roles as the serial body above (fpsym2 --strict), fr0-fr11 only,
+         * every load before the first store (src == dst and m overlapping dst work as before). */
+        fmov.s  @r5+,fr0        /* x */
+        fmov.s  @r4+,fr6        /* m00 */
+        fmov.s  @r5+,fr1        /* y */
+        fmov    fr0,fr3
+        fmov.s  @r4+,fr7        /* m01 */
+        fmov    fr1,fr4
+        fmov.s  @r5,fr2         /* z */
+        fmul    fr6,fr3         /* mul(n x, m m00) */
+        fmov.s  @r4+,fr6        /* m02 */
+        fmul    fr7,fr4         /* mul(n y, m m01) */
+        fmov    fr2,fr5
+        fmov.s  @r4+,fr7        /* m03 */
+        fmul    fr6,fr5         /* mul(n z, m m02) */
+        fmov.s  @r4+,fr6        /* m10 */
+        fadd    fr4,fr3         /* add(n x*m00, m y*m01) */
+        fmov.s  @r4+,fr8        /* m11 */
+        fmul    fr0,fr6         /* mul(n m10, m x) */
+        fmov.s  @r4+,fr9        /* m12 */
+        fmul    fr1,fr8         /* mul(n m11, m y) */
+        fmov.s  @r4+,fr10       /* m13 */
+        fmul    fr2,fr9         /* mul(n m12, m z) */
+        fmov.s  @r4+,fr4        /* m20 */
+        fadd    fr5,fr3         /* + z*m02 */
+        fmov.s  @r4+,fr11       /* m21 */
+        fmul    fr0,fr4         /* mul(n m20, m x) */
+        fmov.s  @r4+,fr0        /* m22 */
+        fmul    fr1,fr11        /* mul(n m21, m y) */
+        fmov.s  @r4,fr5         /* m23 */
+        fadd    fr8,fr6         /* add(n m10*x, m m11*y) */
+        fmul    fr2,fr0         /* mul(n m22, m z) */
+        fadd    fr7,fr3         /* dst.x = + m03 */
+        fadd    fr11,fr4        /* add(n m20*x, m m21*y) */
+        fadd    fr9,fr6         /* + m12*z */
+        add     #12,r6
+        fadd    fr0,fr4         /* + m22*z */
+        fadd    fr10,fr6        /* dst.y = + m13 */
+        fadd    fr5,fr4         /* dst.z = + m23 */
+        fmov.s  fr4,@-r6
+        fmov.s  fr6,@-r6
+        rts
+        fmov.s  fr3,@-r6
+#elif RE4DC_FP_CONTRACT_OFF
         /* unfused: dst.k = add(add(add(mul(x, m_k0), mul(y, m_k1)), mul(z, m_k2)), m_k3) with
          * row 0 as mul(n x|y|z, m m0j) and rows 1, 2 as mul(n m_kj, m x|y|z) (GCC's operand roles) */
         fmov.s  @r5+,fr0        /* x */

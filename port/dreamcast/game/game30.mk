@@ -436,6 +436,16 @@ ifneq ($(GAME_FP_CONTRACT),off)
 $(error GAME_CONCAT_COL=1 replaces the contract-off MTXConcat body: needs GAME_FP_CONTRACT=off)
 endif
 endif
+# GAME_MULTVEC_SCHED=1 (design-logic P3b, needs GAME_FP_CONTRACT=off): the contract-off MTXMultVec body
+# with its three rows interleaved for SH-4 dual issue: the same fmul/fadd on the same operands in the
+# same roles, all loads before the stores (tools/game30/prove_multvec_sched.sh: fpsym2 --strict vs the
+# build's own C_MTXMultVec). hwsim: 56 -> 34 cycles per call.
+GAME_MULTVEC_SCHED ?= 0
+ifeq ($(GAME_MULTVEC_SCHED),1)
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_MULTVEC_SCHED=1 replaces the contract-off MTXMultVec body: needs GAME_FP_CONTRACT=off)
+endif
+endif
 GAME30_DECOMP_SAFE = -fwrapv -fno-strict-aliasing -fno-delete-null-pointer-checks \
 	-fno-isolate-erroneous-paths-dereference
 GAME30_O2_FLAGS = -O2 $(GAME30_DECOMP_SAFE)
@@ -445,6 +455,9 @@ GAME30_FP_FLAGS = -ffp-contract=off
 $(OBJDIR)/platform/mtx_sh4.o: KOS_CFLAGS += -DRE4DC_FP_CONTRACT_OFF=1
 ifeq ($(GAME_CONCAT_COL),1)
 $(OBJDIR)/platform/mtx_sh4.o: KOS_CFLAGS += -DRE4DC_CONCAT_COL=1
+endif
+ifeq ($(GAME_MULTVEC_SCHED),1)
+$(OBJDIR)/platform/mtx_sh4.o: KOS_CFLAGS += -DRE4DC_MULTVEC_SCHED=1
 endif
 # Render-only exemption (coordinator decision 2): these native renderer objects keep the default
 # contraction (fmac) because nothing they compute flows back into gameplay state: their FP results
