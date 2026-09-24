@@ -40,7 +40,14 @@ public:
 // a reference argument built from it is computed in place into the parameter register, so cse
 // loses the `slot * sizeof` product and gcse PRE re-copies it for the next store (the `mr` +
 // duplicated `add` chain of dispFileList / mes.cpp setLayout).
+#if defined(__PPC__)
 #define SS_MES(pm, no) ((Message*) ((no) * sizeof(Message) + (u32) (pm) + sizeof(u32)))
+#else
+// GCC 2.95 (the original) puts MessageControl's vtable pointer after its fields (mes[] at
+// +4); this compiler puts it first (mes[] at +8), so the +4 sum lands 4 bytes before the slot
+// (charSpace / m_line_gap of the file-name slots went to m_number_width / m_lines).
+#define SS_MES(pm, no) (&(pm)->mes[no])
+#endif
 
 #define DVD_READ_N(name, dst, a, b, c, mode) DvdReadN(name, dst, a, b, c, mode, __FILE__, __LINE__)
 
