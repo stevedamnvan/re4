@@ -16,6 +16,9 @@ Checks: the REL is linked (Makefile MODULES, platform/modules.cpp MODULE(id, nam
 rel.json module_id, the ENEMY_DEMAND audit list), no missing-symbol stub names it, the prepared
 archive exists, at most 4 enemy archives are live (read.cpp EmReadModule[4]), and the enemy
 archives fit the room's measured heap-4 room for them (rooms.toml [room.X.demand]).
+Round 2 (wiring.py): the porting-trap lint over each needed module and the room's stage module, and
+`--wire`, which writes the module wiring (MODULES, modules.cpp, and the ENEMY_DEMAND audit list when
+the lint is clean) into the checked tree.
 """
 import json
 import re
@@ -23,6 +26,7 @@ import struct
 from pathlib import Path
 
 from .util import write_json
+from .wiring import lint_module, wire as wire_module
 
 ESL_REC = struct.Struct(">BBBBIHBB3h3hHh4x")   # include/em_set.h EmListData (big-endian source)
 EM_SLOTS = 4                                     # read.cpp EmReadModule[4]
@@ -120,7 +124,21 @@ def heap4_bytes(prepared_dir, archive):
     return struct.unpack_from("<I", h, 0x24)[0] if len(h) >= 0x28 else None
 
 
-def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None):
+def stage_module(repo, room):
+    """The stage REL whose units hold the room script (st1_0 for r100 ...)."""
+    for d in sorted((Path(repo) / "config/G4BE08/modules").glob("st*")):
+        sp = d / "splits.txt"
+        if sp.exists() and re.search(r"^st\w*/r%03x\.cpp:" % room, sp.read_text(), re.M):
+            return d.name
+    return None
+
+
+def lint_problems(mod, findings):
+    return ["%s %s: lint %s %s:%d  %s" % ("error" if f["severity"] == "error" else "warning", mod, f["rule"],
+                                         f["file"], f["line"], f["text"][:90]) for f in findings]
+
+
+def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=False):
     repo = Path(repo or cfg.path("checkout") or Path(__file__).resolve().parents[4])
     room = int(room_name.lstrip("r"), 16)
     game = cfg.path("game_data")
@@ -150,7 +168,11 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None):
         add(eid, "script-load")
     bs = build_state(repo, obj)
     rcfg = cfg.room(room_name).get("demand", {})
-    rows, problems = [], []
+    rows, problems, warnings = [], [], []
+    smod = stage_module(repo, room)
+    stage_lint = lint_module(repo, smod) if smod else []
+    problems.extend(lint_problems(smod, [f for f in stage_lint if f["severity"] == "error"]))
+    warnings.extend(lint_problems(smod, [f for f in stage_lint if f["severity"] != "error"]))
     for eid in sorted(need):
         info = tab.enemy(eid) or {}
         r = {"id": "0x%02x" % eid, "reasons": sorted(need[eid]),
@@ -163,13 +185,23 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None):
         if mod:
             rid = rel_id(repo, mod)
             r["module_id"] = rid
+            r["lint"] = lint_module(repo, mod)
+            errors = [f for f in r["lint"] if f["severity"] == "error"]
+            if wire and rid is not None:
+                r["wired"] = wire_module(repo, mod, rid, "%s: %s" % (room_name, ",".join(sorted(need[eid]))), audit=not errors)
+                bs = build_state(repo, obj)
             chk = {"makefile": mod in bs["modules"], "audit": mod in bs["audited"],
                    "table": bs["table"].get(mod) == rid and rid is not None}
             if bs["missing"] is not None:
                 key = mod.lower()
                 chk["stubs"] = [s for s in bs["missing"] if key in s.lower()]
             r["build"] = chk
+            warnings.extend(lint_problems(mod, [f for f in r["lint"] if f["severity"] != "error"]))
+            problems.extend(lint_problems(mod, errors))
             for k in ("makefile", "audit", "table"):
+                if k == "audit" and not chk[k] and errors:
+                    problems.append("%s %s: not in the ENEMY_DEMAND audit list (fix the lint errors first)" % (r["id"], mod))
+                    continue
                 if not chk[k]:
                     problems.append("%s %s: not in %s%s" % (r["id"], mod, {"makefile": "Makefile MODULES",
                                     "audit": "the ENEMY_DEMAND audit list", "table": "platform/modules.cpp MODULE(%s, %s)" % (rid, mod)}[k],
@@ -192,7 +224,8 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None):
     else:
         heap["verdict"] = "fits (%d spare)" % (budget - total)
     res = {"room": room_name, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
-           "script": sc, "entries": entries, "demand": rows, "heap4": heap, "problems": problems,
+           "script": sc, "entries": entries, "demand": rows, "heap4": heap, "problems": problems, "warnings": warnings,
+           "stage_module": smod,
            "inputs": {"repo": str(repo), "game_data": str(game), "prepared": str(prepared), "missing": bs["missing_file"]}}
     if log:
         res["run"] = compare_log(log, rows)
@@ -244,6 +277,11 @@ def report(res):
         print("  run: loaded %s; failed %s; linked %s%s" % (", ".join(run["loaded"]) or "-", ", ".join(run["failed"]) or "-",
                                                          ", ".join(run["linked"]),
                                                          ("; shortfall %s" % run["shortfall"]) if "shortfall" in run else ""))
+    for r in res["demand"]:
+        for w in r.get("wired") or []:
+            print("  WIRED " + w)
+    for w in res.get("warnings", []):
+        print("  WARNING " + w)
     for p in res["problems"]:
         print("  PROBLEM " + p)
     if not res["problems"]:

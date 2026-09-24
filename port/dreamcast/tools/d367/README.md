@@ -377,6 +377,19 @@ bash port/dreamcast/tools/d367/assets.sh discover r100 --repo <tree> --obj <OBJD
   the table (the warp-east-1 HALT main_sub.cpp(1440)); on r100 the worst case is 171,328 bytes over the
   measured room, the exact shortfall warp-ea4-after logged at the em23 (crows) read; r101's
   prediction equals what warp-bell1 loaded.
+- **Lint** (tools/assetpipe/wiring.py): the known porting traps in each needed module and the room's
+  stage module, in the code the Dreamcast build compiles (`#if` evaluated with `__PPC__` undefined):
+  `value-init` (`new (em) cEmXX()` zeroes what cEmMgr::construct set), `asm-alias` (an asm-label
+  alias of a file-static binds to a missing-symbol stub), `slot-math` (`EmMgr.pArray` / `EmMgr.size *`
+  instead of `EmMgr.workAt` + null check), `vptr-offset` (`(u8*)this + 4 + ...`, warning). Errors
+  are problems.
+- **`--wire`:** writes the missing wiring into `--repo` (default this tree): Makefile MODULES,
+  `MODULE(name)` and `MODULE(<rel.json id>, name)` with a room/reason comment, and the ENEMY_DEMAND
+  audit list only when the module's lint has no errors. It links the original module's code; game
+  logic is never generated. Review the diff and prove the room as usual.
+- Proof (round 2): on dadfbac, `discover r100 --wire` writes e6f65cc's Makefile/modules.cpp lines and
+  the lint reports the four traps that commit fixed by hand (em2a value-init, slot-math, asm-alias;
+  em21 asm-alias); the audit entry waits for them.
 - Not covered yet: event actors (evd files), other stages' list rules, Standard-mode budgets, VRAM.
 
 ## GDEMU image (W10)

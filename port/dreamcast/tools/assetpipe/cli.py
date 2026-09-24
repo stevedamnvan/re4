@@ -30,13 +30,15 @@ def main(argv=None):
     ap.add_argument("--repo", type=Path, help="discover: checkout whose tables/build to check (default: this one)")
     ap.add_argument("--obj", type=Path, help="discover: build OBJDIR holding missing.txt (default game/obj)")
     ap.add_argument("--log", type=Path, help="discover: a run's run-output.txt to compare with the prediction")
+    ap.add_argument("--wire", action="store_true", help="discover: write the missing module wiring into --repo "
+                    "(Makefile MODULES, modules.cpp; the ENEMY_DEMAND audit list only when the lint is clean)")
     a = ap.parse_args(argv)
     cfg = Config(a.costmodel)
     if cmd == "discover":
         from .discover import discover, report
         rc = 0
         for t in _targets(cfg, a.target):
-            res = discover(cfg, t, repo=a.repo, obj=a.obj, log=a.log, out_dir=cfg.root / "discover")
+            res = discover(cfg, t, repo=a.repo, obj=a.obj, log=a.log, out_dir=cfg.root / "discover", wire=a.wire)
             print(dumps(res)) if a.json else report(res)
             rc |= bool(res["problems"])
         return rc
