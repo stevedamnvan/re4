@@ -407,7 +407,18 @@ bash port/dreamcast/tools/d367/assets.sh discover r100 --repo <tree> --obj <OBJD
   prepared evd with its qualified `.evq` (native_event_file.cpp refuses one without). Names not on
   the disc (r100s01/s02/s42) are listed only. Route (2026-09-24): every r100/r101 event has a movie,
   r101's evds are also qualified, r103 names none.
-- Not covered yet: other stages' list rules, Standard-mode budgets, VRAM.
+- **Standard + VRAM** (tools/assetpipe/standard.py): from the room's Standard set index
+  (`<assets_root>/out/standard/<room>/low/index.txt`): package bytes vs Original (the native static
+  package is heap 4, so the Standard enemy heap-4 room = the measured one minus that delta) and the
+  VRAM Standard adds (`tex` records; `drop` textures are not subtracted: an upper bound) against
+  `[room.X.standard.budget_context] vram`. Standard assets load only with QUALITY_ASSETS=1, so
+  measured budgets so far are Original packages. With `--log`: lowest texture-pool free, peak used,
+  rejects, and texture packages the room loads that are not on the disc (`open failed`).
+  Route (2026-09-24): Standard r100 -282,560 B of packages, so the crows fit with QUALITY_ASSETS=1
+  (111,232 spare; Original stays 171,328 short); r101 -423,328; r103 -406,496. VRAM upper bounds
+  leave r101 >= 32,000 and r103 >= 145,536 free. warp-dbp0-fight-orig: lowest free 10,280 and 16
+  texture packages missing on that warp disc (a staging gap to trace).
+- Not covered yet: other stages' list rules.
 
 ## GDEMU image (W10)
 

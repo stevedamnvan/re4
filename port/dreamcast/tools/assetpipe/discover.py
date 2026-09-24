@@ -20,7 +20,7 @@ Round 2 (wiring.py): the porting-trap lint over each needed module and the room'
 `--wire`, which writes the module wiring (MODULES, modules.cpp, and the ENEMY_DEMAND audit list when
 the lint is clean) into the checked tree; and the heap-4 options per enemy archive (enemy_heap.py)
 with a plan that covers a shortfall; and the room's events (events.py: evd actors, route movie or
-prepared + qualified evd).
+prepared + qualified evd); and Standard budgets + VRAM (standard.py).
 """
 import json
 import re
@@ -29,7 +29,7 @@ from pathlib import Path
 
 from .util import write_json
 from .wiring import lint_module, wire as wire_module
-from . import enemy_heap, events as event_files
+from . import enemy_heap, events as event_files, standard
 from .rooms import GcIso
 
 ESL_REC = struct.Struct(">BBBBIHBB3h3hHh4x")   # include/em_set.h EmListData (big-endian source)
@@ -247,12 +247,17 @@ def discover(cfg, room_name, repo=None, obj=None, log=None, out_dir=None, wire=F
     iso = GcIso(cfg.path("gc_iso")) if cfg.path("gc_iso") and Path(cfg.path("gc_iso")).exists() else None
     evs, ev_problems = event_files.events(repo, room, iso, prepared, cfg.path("route_movies"))
     problems.extend(ev_problems)
-    res = {"room": room_name, "events": evs, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
+    std, std_problems = standard.budgets(standard.std_set(cfg.root, room_name), budget,
+                                         cfg.room(room_name).get("standard", {}).get("budget_context", {}))
+    problems.extend(std_problems)
+    res = {"room": room_name, "events": evs, "standard": std, "lists": [{"list": ESL_FILES[n] if n is not None else None, "condition": c} for n, c in lists],
            "script": sc, "entries": entries, "demand": rows, "heap4": heap, "problems": problems, "warnings": warnings,
            "stage_module": smod,
            "inputs": {"repo": str(repo), "game_data": str(game), "prepared": str(prepared), "missing": bs["missing_file"]}}
     if log:
         res["run"] = compare_log(log, rows)
+        res["run"]["vram"], vp = standard.vram_log(Path(log).read_text(errors="replace"))
+        res["run"]["problems"] += vp
         problems.extend(res["run"]["problems"])
     if out_dir:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -312,6 +317,25 @@ def report(res):
         print("    plan for %d short: %s -> covers %d, remaining %d" % (
             pl["short"], " + ".join("%s %s (%s)" % (o["archive"].split("/")[-1][:-4], o["option"], o["status"]) for o in pl["chosen"]) or "-",
             pl["covered"], pl["remaining"]))
+    h = res["heap4"]
+    st = res.get("standard") or {}
+    if "heap_delta" in st:
+        print("  standard: packages %d vs Original %d (heap %+d)%s; adds %d textures %d B VRAM, drops %d" % (
+            st["mesh_bytes"], st["orig_bytes"], st["heap_delta"],
+            ("; enemy heap-4 room %d: %s" % (st["enemy_heap4_bytes"], ("fits (%d spare)" % (st["enemy_heap4_bytes"] - h["worst_case_bytes"]))
+             if st["enemy_heap4_bytes"] >= h["worst_case_bytes"] else "SHORT by %d" % (h["worst_case_bytes"] - st["enemy_heap4_bytes"])))
+            if "enemy_heap4_bytes" in st else "",
+            st["tex"], st["tex_vram"], st["drops"]))
+        if "vram" in st:
+            v = st["vram"]
+            print("  standard VRAM: pool %d, Original used %d + %d = %d at most (free >= %d; %s)" % (
+                v["pool"], v["original_used"], st["tex_vram"], v["standard_used_max"], v["standard_free_min"], v["source"]))
+    elif st:
+        print("  standard: " + st.get("verdict", ""))
+    if "run" in res and res["run"].get("vram"):
+        v = res["run"]["vram"]
+        print("  run VRAM: lowest free %s, peak used %s, rejects %d, missing texture packages %d" % (
+            v["min_free"], v["max_used"], v["rejects"], len(v["missing_textures"])))
     if "run" in res:
         run = res["run"]
         print("  run: loaded %s; failed %s; linked %s%s" % (", ".join(run["loaded"]) or "-", ", ".join(run["failed"]) or "-",
