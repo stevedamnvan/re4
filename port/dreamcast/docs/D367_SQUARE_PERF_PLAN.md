@@ -15,6 +15,10 @@ better solution appears; then record the switch and why in the ledger.** Every s
   The one-Ganado house fight "felt heavy" too; quiet areas feel fine.
 - The game runs one logic tick per 33.3 ms. With frame pacing (render skip), one drawn image per two ticks
   is 15 fps at real speed. So the budget per drawn frame is **2 x logic + render <= 67 ms** (hardware model).
+  Exact form: **W + tau <= 66.7 ms**, W = a drawn tick, tau = a skipped tick (PACE_CATCHUP=2 still runs all
+  logic, Trans, effects and iTask; it skips ModelRender, ModelTrans for the dropped image, TA and present).
+  Measured directly by a square arm built with `PACE_CATCHUP=2 PACE_FORCE=2` (every second image dropped):
+  the hwproject figure is then the mean of W and tau per tick, so W + tau = 2 x that figure.
 - Never changed: collision, event sequencing, game state, AI decisions. Render-only changes keep the logic
   trace STRICT. FTRV/FIPR maths in logic is allowed as a measured option (deterministic, last-bit FP
   policy, collision checked separately). Parking far, unseen Ganados (ACT_CAP) is approved.
@@ -27,6 +31,25 @@ better solution appears; then record the switch and why in the ledger.** Every s
 | sq1 ACT_CAP=6 | 115.8 | 28.1 | 28.3 | 23.1 | 20.0 | 9.0 | ~139 |
 | sq2 ACT_CAP=6 + ACTOR_FOG_GATE | 114.2 | 27.3 | 29.9 | 21.4 | 19.9 | 8.4 | ~136 |
 | sq3 ACT_CAP=4 + fog gate | 113.8 | | | | | | |
+
+**Measured budget (2026-09-24, PACE_CATCHUP=2 PACE_FORCE=2, traced parities split):**
+
+| arm | tau: skipped tick | W: drawn tick | W + tau (budget 66.7) |
+|---|---|---|---|
+| sq12: sq5 stack (VEC_INLINE, ACT_CAP=6, fog gate) | 45.3 | 106.2 | **151.5** |
+| sq13: + CROWD_FLAT, COL_PREFETCH v1, FOG_FAR=18000, CROWD_NEAR=2/5 m/12 m | 45.8 | 99.3 | **145.1** |
+
+What this means:
+- Per-tick game work G (game-logic + game-render-side: logic, collision, EmAtCheck, effects,
+  Trans/ModelTrans) is ~41 hw ms on **every** tick, drawn or skipped (skipped tick: 20.1 + 21.6; drawn:
+  17.2 + 21.8). The drawn-only render R (actors, scenery, ui, copies) is ~60-65.
+- **G alone is above 33.3**: even with nothing drawn, the square cannot run at game speed.
+- 15 fps at real speed needs 2G + R <= 66.7, e.g. G ~22 and R ~22 (today 2 x 41 + 62).
+- So a ms of G is worth two of R: logic items move ahead of render items (FTRV bones, collision,
+  EmAtCheck/atchkCollect, effects, trig), and the render items still have to cut R by two thirds.
+- Skipped-tick functions (sq12): partsWorldCalc 2.9, PSMTXConcat 2.1, atchkCollect 1.9, At_poly_line_ck
+  1.6, MakeWeightPalette 1.2, sincos 1.1, PSMTXMultVec 1.1, EspDelete 0.8, Hermite 0.7. By file:
+  EmAtCheck + scenery collision 7.4, skeleton maths 7, effects 3.5, Trans 2.9, motion 1.9.
 
 Square census (ACT_CAP_LOG): 14 live Ganados, 6 active (all six must stay active: in view, in range,
 engaged), 8 parked. Tighter caps gain nothing; the remaining logic is Leon, collision, effects and the six.
@@ -63,6 +86,12 @@ Logic split: animation/skeleton ~10-11, vector helpers ~4.1, collision ~5.7, eff
 9. **Knob sweeps first (free):** CROWD_NEAR/CROWD_NEAR_M/CROWD_MID_M/CROWD_MID_PX, MESH_LOD_PX,
    NATIVE_ACTOR_LOD_PX, FOG_FAR (Standard), measured in the square.
 
+PS2 comparison (2026-09-24, emleon00.esl from BIO4DAT.AFS vs the GC list; probe enemy-census/ps2/):
+the PS2 r101 roster is the GC roster (43 em15, 1 em26, 2 em28, same waves and positions). Differences:
+entries 26 and 27 (two Ganados at x ~38.8 m by the far house) and em28 entry 78 start inactive (be 0) on
+PS2, and entries 34-36 carry flag bit 0x80 with ch 0. So the PS2 did not thin the square's crowd; its
+outdoor savings were draw distance, single-version scenery and effects (see memory notes).
+
 Checked and dropped (2026-09-24):
 - r101 draw-plan cache: 0 misses in the harness square. The play session's rejects built up over longer
   play; revisit only with a play log, since KOS has ~3 KB free there.
@@ -86,6 +115,16 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 |---|---|---|---|---|---|---|
 | 09-24 | sq0 | base: tree5 play stack | 120.9 | ~147 | - | baseline |
 | 09-24 | sq1 | ACT_CAP=6 | 115.8 | ~139 | approved change | keep |
-| 09-24 | sq2 | + ACTOR_FOG_GATE | 114.2 | ~136 | STRICT (r100 fight, 6667 ticks) | keep |
+| 09-24 | sq2 | + ACTOR_FOG_GATE | 114.2 | ~136 | STRICT (r100 fight, 6667 ticks) | committed 16f8356 |
 | 09-24 | sq3 | ACT_CAP=4 + fog gate | 113.8 | - | - | no gain over 6 |
-| 09-24 | tr1 | GAME_VEC_INLINE (SDK C_VEC* bodies inline, contraction off) | hw pending (sq5) | - | STRICT vs sq-tr0, 3018 ticks | keep |
+| 09-24 | tr1 | GAME_VEC_INLINE (SDK C_VEC* bodies inline, contraction off) | see sq5 | - | STRICT vs sq-tr0, 3018 ticks | keep |
+| 09-24 | sq5 | sq2 + GAME_VEC_INLINE | 113.5 (-0.7) | - | STRICT (tr1) | committed d6282f5, in LH |
+| 09-24 | sq6 | sq5 + CROWD_NEAR=2 CROWD_NEAR_M=5 CROWD_MID_M=12 | 112.6 (-0.9, actors) | - | render only | candidate (visual: more mid-tier Ganados) |
+| 09-24 | sq7 | sq5 + MESH_LOD_PX=6 | 113.5 (0.0) | - | render only | drop: the Standard square scenery has no mesh levels to pick |
+| 09-24 | sq10 | sq5 + CROWD_FLAT=1 (near-tier Ganados one light colour per part) | 111.6 (-1.9) | - | render only | committed 9547dc8 (user decision: flat Ganado lighting default in Standard) |
+| 09-24 | sq11 | sq5 + GAME_COL_PREFETCH v1 (next block; poly record +2, vertex/normal +1) | 113.1 (-0.4; line tests -0.3, blkPolyLineCkCore +0.47 from the dependent record load) | - | gate queued | superseded by v2 (sq14) |
+| 09-24 | sq12 | sq5 + PACE_CATCHUP=2 PACE_FORCE=2 (budget arm) | tau 45.3 / W 106.2 | W+tau 151.5 | - | the measured budget baseline |
+| 09-24 | sq13 | sq12 + CROWD_FLAT + COL_PREFETCH v1 + FOG_FAR=18000 + CROWD_NEAR=2/5/12 | tau 45.8 / W 99.3 | W+tau 145.1 | - | render cuts barely move the budget: G dominates |
+| 09-24 | sq14 | sq5 + GAME_COL_PREFETCH v2 (record +4, vertex/normal +2) | 113.0 (-0.5) | - | STRICT tr1 vs tr2, 3073 ticks | committed 4723dff, in LH |
+| 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
+| 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
