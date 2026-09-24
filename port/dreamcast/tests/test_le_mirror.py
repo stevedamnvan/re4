@@ -320,6 +320,42 @@ class ArchiveSlotsTest(unittest.TestCase):
                              ['player.dat#1: no handler (tag XYZ)'])
 
 
+def make_container(entries, parts_at=0x400):
+    """A GC DVD container: magic block, 32-byte entries, END, padded to the 0x400 header table."""
+    head = LE.CONTAINER_MAGIC + b"".join(be32(*e) for e in entries) + be32(*([LE.END_OF_TABLE] + [0] * 7))
+    return head + bytes(parts_at - len(head))
+
+
+class MultiContainerTest(unittest.TestCase):
+    """bgm/doorse.dat: containers back to back, each read at its own offset (warp-r101-pbdoor3)."""
+
+    def build(self):
+        a0 = make_container([(2, 32, 0, 0x400, 7, 0, 0, 0)]) + bytes(range(32))
+        nested_at = 0x420 * 2
+        a1 = make_container([(2, 32, 0, 0x400, 7, 0, 1, 0), (LE.NESTED, 0, 0, nested_at, 0, 0, 0, 0)]) + bytes(32)
+        nested = make_container([(2, 32, 0, 0x400, 7, 0, 2, 0)]) + bytes(32)
+        raw = a0 + a1 + nested
+        self.assertEqual(len(a0) + len(a1), nested_at)
+        return raw, [0, 0x420, nested_at]
+
+    def test_every_container_converted_once(self):
+        raw, bases = self.build()
+        out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file("bgm/doorse.dat", out)
+        for base, no in zip(bases, (0, 1, 2)):
+            e = struct.unpack_from("<8I", out, base + 0x20)
+            self.assertEqual((e[0], e[6]), (2, no), hex(base))   # swapped exactly once
+        self.assertEqual(out[0x400:0x420], raw[0x400:0x420])   # sample bytes stay raw
+        self.assertEqual(sorted(e["part"] for e in LE.REPORT if "part" in e), ["0", "@420/0", "@420/1/0"])
+
+    def test_other_files_keep_the_first_container_only(self):
+        raw, bases = self.build()
+        out = bytearray(raw); LE.REPORT.clear()
+        LE.convert_file("etc/other.dat", out)
+        self.assertEqual(struct.unpack_from("<I", out, 0x20)[0], 2)
+        self.assertEqual(out[0x420:], raw[0x420:])
+
+
 class DrsBoundaryTest(unittest.TestCase):
     @staticmethod
     def fixture():

@@ -1870,10 +1870,19 @@ def convert_part(sw, rel, key, part_off, size, entry, drs_body=False):
         entry["safe_raw"] = "sample bytes"
 
 
+# Files that hold several independent containers back to back, each read on its own at the offset
+# a .hed table gives (snd.cpp SndDoorSeLoad: doorse.hed file_ofs[no]; SndBgmLoad: bio4midi.hed).
+# Only the first used to be converted, so every door sound but entry 0 (the r100 -> r101 door)
+# reached the game with GameCube DvdHeaders and its read never completed (warp-r101-pbdoor3).
+MULTI_CONTAINER = ("bgm/doorse.dat", "bgm/bio4midi.dat")
+
+
 def convert_container(sw, rel, drs_body=False):
     data = sw.data
+    walked = set()
 
     def walk(base, key_prefix, depth):
+        walked.add(base)
         off = base + ENTRY_SIZE  # entry 0 is the magic block
         i = 0
         while off + ENTRY_SIZE <= base + HEADER_TABLE:
@@ -1900,6 +1909,11 @@ def convert_container(sw, rel, drs_body=False):
             i += 1
 
     walk(0, "", 0)
+    if rel in MULTI_CONTAINER:
+        # The next containers, in file order; a nested table (also magic-led) was walked already.
+        for base in range(ENTRY_SIZE, len(data) - ENTRY_SIZE + 1, ENTRY_SIZE):
+            if base not in walked and data[base:base + ENTRY_SIZE] == CONTAINER_MAGIC:
+                walk(base, "@%x/" % base, 0)
 
 
 def convert_file(rel, data):
