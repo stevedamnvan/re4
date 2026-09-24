@@ -354,5 +354,77 @@ class StandardDiscTests(unittest.TestCase):
                 stage_std.stage_room(fx, "r101", out, tex_resident=False)
 
 
+class GroveSplitTests(unittest.TestCase):
+    """s16.5: split groves priced per tree (camera.py) and written as impt records (stdindex.py)."""
+
+    def setUp(self):
+        self.trunk = LT.C.TREE_TRUNK_MM
+        LT.C.TREE_TRUNK_MM = 3.0      # the synthetic trees are 5 units tall
+        blob, self.summary = LT.convert([LT.grove_bin([0.0, 10.0, 20.0])], cluster_trees={(1, 0)})
+        self.blob = blob
+        self.pk = r4im.Package(blob)
+        self.cfg = Config()
+        self.w = dict(owner="X", code=1, bin=0, common=False, pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0),
+                      scale=(1000.0, 1000.0, 1000.0))
+        # tree centres (model units) placed at increasing depth from the camera below
+        self.table = {("X", 0, False): [dict(part=0, first=k, count=1, centre=(10.0 * k + 0.5, 2.5, 10.0 * k),
+                                             radius=3.0) for k in range(3)]}
+
+    def tearDown(self):
+        LT.C.TREE_TRUNK_MM = self.trunk
+
+    def test_converter_rows(self):
+        rows = self.summary["meshes_detail"][0]["parts"][0]["trees"]
+        self.assertEqual([(r["first"], r["clusters"]) for r in rows], [(0, 1), (1, 1), (2, 1)])
+
+    def test_per_tree_pricing(self):
+        inst = build_instances({"X": self.pk}, [self.w], lambda w: "g", trees=self.table)
+        view = [dict(eye=(10000.0, 1600.0, -15000.0), yaw=0.0, pitch=0.0)]
+        opts = {"g": [dict(id="mesh", bias=1.0), dict(id="t20", bias=1.0, imp_mm=20000.0, split=True, views=8)]}
+        pr = price(inst, view, opts, self.cfg.cost, far=100000.0, jobs=1)
+        c = pr.counts["g"]
+        self.assertEqual(c[0]["imps"], 0)
+        self.assertEqual(c[1]["imps"], 2)                 # the two trees beyond 20 m are quads
+        self.assertLess(c[1]["meshlets"], c[0]["meshlets"])
+        self.assertGreater(c[0]["meshlets"], 0)
+        self.assertEqual(c[0].get("extra_clusters"), 2)  # 3 clusters drawn in one part: 2 extra, priced
+        self.assertNotIn("extra_clusters", c[1])
+        self.assertGreater(pr.quality["g"][1], 0.0)
+        # the same package without the tree table: no per-tree decisions, no extra-cluster charge
+        plain = build_instances({"X": self.pk}, [self.w], lambda w: "g")
+        pr0 = price(plain, view, {"g": [dict(id="mesh", bias=1.0)]}, self.cfg.cost, far=100000.0, jobs=1)
+        self.assertNotIn("extra_clusters", pr0.counts["g"][0])
+        self.assertLess(pr0.ms["g"][0][0], pr.ms["g"][0][0])
+
+    def test_impt_records(self):
+        from assetpipe import stdindex
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            (tmp / "std.re4mesh").write_bytes(self.blob)
+            orig, _ = LT.convert([LT.grove_bin([0.0, 10.0, 20.0])])
+            (tmp / "orig.re4mesh").write_bytes(orig)
+            recs = []
+            for k in range(3):
+                f = tmp / ("0000000%d-0000000%d.re4tex" % (k, k))
+                f.write_bytes(texture.HEADER.pack(b"RE4DCTX\0", 2, 48, 96, 1, 48, 144, 32, 0, 1, 0) +
+                              texture.TEXTURE.pack(b"t", 512, 128, 3, 144, 32, 3, 2, 0) + bytes(32))
+                recs.append(dict(common=False, part=0, first=k, count=1, tex_file=str(f),
+                                 key=["0000000%d" % k, "0000000%d" % k], views=8, cols=8, cell=[64, 128],
+                                 atlas=[512, 128], centre=[10.0 * k, 2.5, 0.0], half_w=1.5, half_h=3.0))
+            lines, low, texlow, _ = stdindex.build(
+                "r101", 5, [("MAINSCENARIO", 0xff, False)], {"MAINSCENARIO": self.pk},
+                {"MAINSCENARIO": tmp / "std.re4mesh"}, {"MAINSCENARIO": tmp / "orig.re4mesh"},
+                {"MAINSCENARIO/0xff:0": {"imp_mm": 20000.0, "split": True}}, {}, [], [r["tex_file"] for r in recs],
+                [], tree_recs={(0xff, 0): recs})
+            impt = [x.split() for x in lines if x.startswith("impt ")]
+            self.assertEqual([r[5:9] for r in impt], [["0", "0", "1", "20000"], ["0", "1", "1", "20000"],
+                                                     ["0", "2", "1", "20000"]])
+            self.assertEqual(impt[1][9:16], ["00000001-00000001", "8", "8", "64", "128", "512", "128"])
+            self.assertEqual(impt[1][16:], ["10.000", "2.500", "0.000", "1.500", "3.000"])
+            self.assertFalse([x for x in lines if x.startswith("imp ")])
+            text = stdindex.finish(lines, [])
+            self.assertEqual(len(stdindex.parse(text)["impt"]), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

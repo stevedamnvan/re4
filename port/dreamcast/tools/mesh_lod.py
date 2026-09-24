@@ -316,6 +316,29 @@ def components(tris):
     return list(comps.values())
 
 
+def tree_groups(tris, positions, trunk_height):
+    """Split a grove BIN into its trees: connected components (shared welded
+    vertices), each joined to the trunk nearest in x/z, a trunk being a
+    component taller than trunk_height (model units). -> [[triangle index]]
+    per tree, ordered by first triangle, or None with fewer than two trunks
+    (a single tree or not a tree: the caller clusters it as before)."""
+    comps = components(tris)
+    info = []
+    for c in comps:
+        vs = sorted({v for i in c for v in tris[i][0]})
+        ys = [positions[v][1] for v in vs]
+        info.append((max(ys) - min(ys), sum(positions[v][0] for v in vs) / len(vs),
+                     sum(positions[v][2] for v in vs) / len(vs)))
+    trunks = [k for k, (h, _, _) in enumerate(info) if h > trunk_height]
+    if len(trunks) < 2:
+        return None
+    groups = {t: [] for t in trunks}
+    for k, (_, x, z) in enumerate(info):
+        t = min(trunks, key=lambda t: ((x - info[t][1]) ** 2 + (z - info[t][2]) ** 2, t))
+        groups[t].extend(comps[k])
+    return sorted((sorted(g) for g in groups.values()), key=lambda g: g[0])
+
+
 def is_card_field(tris, alpha):
     """Alpha parts made of many tiny components (grass, leaf and litter cards)."""
     if not alpha:

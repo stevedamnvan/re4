@@ -30,6 +30,9 @@ c_meshlet = 460.0          # prior: scenery_model.py (Flycast cycles)
 c_test = 120.0             # prior: scenery_model.py
 c_part = 1500.0            # prior: scenery_model.py; the arms fit gives ~5.2k cycles per cluster in all
 c_obj = 0.0                # object sphere test + ModelTrans share: in base_ms until fitted
+c_cluster = 5200.0         # each drawn cluster beyond the first of a part, split groves only (the fitted
+                           # c_part covers unsplit packages' clusters); arms fit ~5.2k cycles per cluster
+                           # in all, so this is the conservative end (prior per-part setup: 1.5k)
 base_ms_default = 12.2     # r100 arms-fit intercept at 25 m; per-room values below override
 hw_cycles_per_record = [30.0, 45.0]   # HW-BUDGET.md band, reported next to the fit
 

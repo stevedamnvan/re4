@@ -337,8 +337,8 @@ within 0.3 ms of W9's model rows, so no re-fit was needed):
 | Room | Standard named views | Standard grid p95 / max | views within 5 ms | Original grid p95 / max | heap 4 Std - Orig | VRAM Std - Orig |
 |---|---|---|---|---|---|---|
 | r100 | 5.7-10.7 | 7.37 / 10.7 | 155 / 215 | 17.6 / 24.9 | -294 KB | +50 KB (2 shells at 128: 12, atlases 82, dropped room textures -43) |
-| r101 | 6.2-12.4 | 10.8 / 14.5 | 117 / 263 | 25.2 / 27.5 | -411 KB | +102 KB (9 shells at 128: 54, atlases 82) |
-| r103 | 4.9-10.5 | 8.48 / 13.3 | 151 / 270 | 25.8 / 38.5 | -428 KB | +114 KB (3 shells at 256: 54, atlases 82) |
+| r101 | 4.0-11.5 | 10.27 / 12.6 | 127 / 263 | 25.2 / 27.5 | -413 KB | +128 KB (9 shells at 128: 54, atlases 46, 9 tree atlases 62) |
+| r103 | 4.5-10.2 | 8.50 / 11.9 | 157 / 270 | 25.8 / 38.5 | -402 KB | +160 KB (3 shells at 256: 54, atlases 46, 13 tree atlases 82) |
 
 r100's numbers include the vanish guard (before it: 7.34 / 10.6, 158 views). User decisions
 (2026-09-23), applied: r100's two shells use 128 x 128 textures like r101 (was 512 VQ: +170 KB VRAM;
@@ -349,21 +349,29 @@ no larger than Original's. The second set on disc is every Original package (1.5
 while biases are baked; section 15 weighs a runtime per-BIN table. Remaining cost: tree groves
 (one BIN, one centre: r101 17, r103 38/59, 2-3 ms when standing in them; splitting groves into single
 trees is the next lever), single large ground meshes (~1 ms at every view), the shells.
+Grove split (user option B, 2026-09-23; section 16.5), applied to r101/r103: the converter found
+r101 BINs 13 (2 trees) and 17 (7), r103 BINs 38 (6) and 63 (7 small trees, ~3 m); the solver
+chose per-tree impostors at 3 m for all four. Against the rows before it (extra clusters priced
+at 5.2k cycles each): r101 grid p95 10.80 -> 10.27, max 14.45 -> 12.58, named max 12.41 -> 11.49,
+spawn 3.97, views within 5 ms 117 -> 127, heap 4 -2 KB more saved, VRAM +26 KB; r103 grid p95
+8.48 -> 8.50, max 13.31 -> 11.85, named max 10.46 -> 10.19, views within 5 ms 151 -> 157, heap 4
++26 KB (the split package is larger), VRAM +46 KB. r103 BIN 59 (camera inside one tree's canopy,
+2.0-2.25 ms) is a separate lever (16.6).
 
 Against the route budgets (review sheets, "Against the route memory budgets"):
 - r101 heap 4: ~1.46 MB free at entry in Original (design-r103 estimate) -> ~1.87 MB in Standard.
 - r103 heap 4: with W8b compaction 1.10-1.55 MB -> 1.53-1.98 MB; without W8b -0.35..-0.20 MB ->
   +0.08..+0.23 MB. Standard fits without W8b, but below the 155 KB margin at the low end and below
   W8d's 330 KB gate, so W8b is still needed.
-- VRAM (pool 2,518 KB): r101 Original 2,371 KB measured -> Standard ~2,473 KB (~45 KB free); with 256
-  shells it would be ~82 KB over.
+- VRAM (pool 2,518 KB): r101 Original 2,371 KB measured -> Standard ~2,499 KB (~19 KB free) with
+  the grove split (~2,473 KB, ~45 KB free, before it); with 256 shells it would be ~82 KB over.
 - r100 VRAM: Original on m1 preloads 170 packages to 2,264,576 B (`full=1`) and then holds 2,328,064 B
   with 135,848 B free (w11-ss17). Standard adds ~51 KB (net +2 texture entries: 2 shells + 5 atlases -
   5 room textures no longer drawn), so ~84 KB (84,488 B) stays free. It fits the pool, but, as in
   Original, that is below the preload's own first-sight reserve (TEX_RESIDENT_RESERVE_KB 256; the slot
   reserve of 32 entries is unaffected). The next VRAM lever is the impostor atlases (82 KB: 8 views
   or 64-texel cells). r103 is an estimate (r101's non-room use + r103 room textures):
-  ~2,193 KB -> ~2,307 KB, ~211 KB free.
+  ~2,193 KB -> ~2,354 KB, ~164 KB free (with the grove split; ~211 KB free before it).
 
 ## 5. Camera model and view set
 
@@ -860,8 +868,8 @@ order is:
 3. `mesh` lines;
 4. `orig` lines;
 5. `tex` lines;
-6. per owner, sorted by name: its `cull` lines, then its `imp` lines, then its `ptex` lines,
-   each ascending by mesh or part index;
+6. per owner, sorted by name: its `cull` lines, then its `imp` lines, then its `impt` lines,
+   then its `ptex` lines, each ascending by mesh or part index (`impt`: then by first cluster);
 7. `drop` lines;
 8. the `end` line.
 
@@ -875,6 +883,7 @@ order is:
 | `drop <crc>-<fnv>` | a room texture no Standard package draws | skip it in the room-identity preload pass |
 | `cull <OWNER> <mesh> <bin> <common> <mm>` | distance cull | see below |
 | `imp <OWNER> <mesh> <bin> <common> <mm> <crc>-<fnv> <views> <cols> <cell_w> <cell_h> <atlas_w> <atlas_h> <cx> <cy> <cz> <half_w> <half_h>` | tree impostor (one line) | see below |
+| `impt <OWNER> <mesh> <bin> <common> <part> <first> <count> <mm> <crc>-<fnv> <views> <cols> <cell_w> <cell_h> <atlas_w> <atlas_h> <cx> <cy> <cz> <half_w> <half_h>` | one tree of a split grove (one line per tree) | 16.5 |
 | `ptex <OWNER> <part> <bin> <common> <crc>-<fnv> <w> <h>` | part texture (baked house shell) | see below |
 | `end <n>` | n = the number of lines before this one | guards against truncation |
 
@@ -885,7 +894,8 @@ order is:
   `meshes()[mesh].bin == bin && meshes()[mesh].common == common`, and for `ptex` that `part`
   lies in `[first_part, first_part + part_count)` of such a mesh. A mismatch rejects the
   index.
-- There is at most one `cull`, one `imp` and one `ptex` record per mesh or part.
+- There is at most one `cull`, one `imp` and one `ptex` record per mesh or part. A mesh has either
+  one `imp` or its `impt` records, never both.
 
 **`cull` (clutter distance cull).**
 - Let zc be the view depth of the mesh's bounds centre,
@@ -942,14 +952,71 @@ every package byte as the converter wrote it, and cannot collide with W9b.
 | Room | `mesh` owners (low/ bytes) | texlow (files / bytes / VRAM) | `drop` | `cull` / `imp` / `ptex` | index.txt |
 |---|---|---|---|---|---|
 | r100 | 7 of 7 (1,208,448) | 7 / 97,424 / 96,416 | 5 | 16 / 11 / 2 | 2,642 B, 58 lines |
-| r101 | 1 of 1 (592,416) | 14 / 141,440 / 139,424 | 6 | 12 / 5 / 9 | 2,259 B, 51 lines |
-| r103 | 1 of 1 (695,904) | 8 / 140,576 / 139,424 | 3 | 25 / 9 / 3 | 2,500 B, 53 lines |
+| r101 | 1 of 1 (590,112) | 21 / 169,296 / 166,272 | 6 | 12 / 3 + 9 `impt` / 9 | 3,401 B, 65 lines |
+| r103 | 1 of 1 (722,560) | 19 / 189,616 / 186,880 | 3 | 25 / 7 + 13 `impt` / 3 | 4,280 B, 75 lines |
 
 - The texlow VRAM column is the sum of every added texture's payload: the `tex` records'
   `<vram>` field, which is what `texture_package.cpp` counts (`vram_bytes_ += data_size`).
 - The r101/r103 Standard sets have one owner, MAINSCENARIO; the other owners open the Original
   file. r100's Standard set has all 7 owners.
 - Parsed-table bounds per room, rounded up with headroom: 16 `mesh`, 32 `tex`, 16 `drop`,
-  64 `cull` x 8 B, 32 `imp` x 48 B, 32 `ptex` x 16 B. That is about 3 KB of static tables for
-  the current room, rebuilt at each room entry.
+  64 `cull` x 8 B, 32 `imp` x 48 B, 32 `impt` x 60 B, 32 `ptex` x 16 B. That is about 5 KB of
+  static tables for the current room, rebuilt at each room entry.
 - A room that exceeds a bound is rejected (logged), and Original is used for that room.
+
+### 16.5 Split groves (`impt`)
+
+A grove is several trees in one BIN (r101 BIN 17: 7 trees, 24 placements; r103 BIN 38: 6 trees).
+With one impostor per mesh, a grove whose centre is nearer than the switch distance draws every
+tree as mesh, the far ones too. User decision (2026-09-23, option B): split groves into trees,
+each with its own 8-view atlas.
+
+**Package side (converter, no runtime work).** `convert_room_bins.py --lod-cluster-trees
+OWNER:BINS` groups a BIN's triangles into trees: connected components (welded vertices), each
+joined to the nearest trunk in x/z, a trunk being a component taller than 3 m
+(`TREE_TRUNK_MM`). Clusters are then formed per tree (`kd_clusters` on each tree), so no cluster
+spans two trees and each tree's clusters are contiguous in its part. Geometry, vertex colours
+and LOD levels are unchanged; only cluster boundaries move. A BIN with fewer than two trunks,
+and every package built without the option, is byte-identical to before (tested; the r100,
+r101 and r103 Original packages rebuilt with the new converters are unchanged). The converter
+summary lists each tree (`meshes_detail[].parts[].trees`: first cluster, cluster count,
+triangles). Rooms opt in with `grove_split` in `[room.X.standard.plan]` (r101, r103); every
+tree-class BIN is passed and the converter decides. The W9b converter needs the same change:
+`w9b-lod-cluster-trees.patch` (on top of W9b; `mesh_lod.tree_groups` comes with the HEAD patch).
+
+**Record.** `impt <OWNER> <mesh> <bin> <common> <part> <first> <count> <mm> <atlas> <views>
+<cols> <cell_w> <cell_h> <atlas_w> <atlas_h> <cx> <cy> <cz> <half_w> <half_h>`, one per tree:
+- `<part>`: the `MeshPart` index (package-wide, as `ptex`), inside the mesh's part range;
+- `<first>`, `<count>`: the tree's clusters, relative to that part's cluster list
+  (`part_lods()[part].first_cluster + first`, `count` clusters); check
+  `first + count <= part_lods()[part].cluster_count` and `first + count <= 64` (the runtime
+  keeps a 64-bit cluster skip mask per part; stdindex.py refuses a larger index);
+- `<mm>` and the atlas fields: as `imp` (item 20 `MeshImpostor` semantics), with the tree's
+  own centre and half sizes (model units) and its own atlas.
+
+**Runtime rule.** Per instance of a mesh with `impt` records, per tree: zc = view depth of
+`modelview x centre` (the tree's centre, not the mesh bounds). When `zc >= mm`, queue the tree's
+quad (item 20's queue, cell from the camera azimuth, `views` cells) and skip its clusters; else
+draw its clusters as usual. The mesh's other clusters (none today) draw as usual. Cost: one
+centre transform per tree per instance (~15 cycles); heap: the records.
+
+**Atlases (option B).** One atlas per tree, 8 views. A tall tree (frame at most half as wide as
+tall) has 64 x 128 cells: a 512 x 128 kPal4 VQ package of 6,176 bytes (2048 + 512 x 128 / 16 +
+32); a wide one has 128 x 128 cells: 1024 x 128, 10,272 bytes (r101 BIN 13's two trees, one of
+r103 BIN 63's). The groves' former whole-BIN atlases are not staged. Split groves now: r101 BIN
+13 (2 trees) and 17 (7); r103 BIN 38 (6) and 63 (7 small trees, 140 triangles in all); VRAM r101
++26 KB, r103 +46 KB against the whole-BIN atlases they replace.
+
+**Pricing.** `camera.py` prices each tree's quad or clusters at the tree centre depth; the view
+error of 8 views is sin(22.5 deg) = 0.383 (16 views: 0.195), so the solver may pick a farther
+switch than for a 16-view atlas. A split grove's clusters beyond the first per drawn part cost
+`c_cluster` = 5,200 cycles each (costmodel.toml: the arms fit's per-cluster figure, the
+conservative end; the fitted per-part cost already covers unsplit packages).
+
+### 16.6 Levers not built
+
+- **r103 BIN 59, the camera inside a canopy.** One 3,976-triangle tree (6 placements, radius
+  7.7 m) costs 2.0-2.25 ms at cow_pen and house_20m, where the camera stands inside its canopy
+  (centre depth -3.2 m: never an impostor). Candidates: a Blender coarse variant for tree
+  canopies, a canopy-split (trunk vs crown clusters with the crown's own impostor), or a
+  near-cull of crown clusters behind the camera. Not part of the grove split.

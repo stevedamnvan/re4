@@ -542,6 +542,8 @@ def substitute_levels(sub, tris, welded, factor_scale=1.0):
 # FILE_<nn>; manifest form: {"replace": [{"owner": "0xfe", "bin": 3,
 # "obj": "COMMON_3.obj"}]} (relative to the manifest).
 REPLACE_SMOOTH_ANGLE = 45.0
+# --lod-cluster-trees: a connected component taller than this (world mm) is a trunk
+TREE_TRUNK_MM = 3000.0
 OWNER_NAMES = {0xFF: "MAINSCENARIO", 0xFE: "COMMON"}
 
 
@@ -648,7 +650,7 @@ def replace_source(src, path, angle=REPLACE_SMOOTH_ANGLE):
 
 def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS, cluster_world=20000.0,
                 cluster_tris_max=768, cards=DEFAULT_CARDS, min_gain=0.5, max_levels=5, bias=None,
-                substitutes=None, export_dir=None, replacements=None):
+                substitutes=None, export_dir=None, replacements=None, cluster_trees=None):
     """entries as convert(); scales: {(owner, bin): world scale} (largest
     placement scale, default 1) so that errors are chosen in world units.
     bias: {(owner, bin): factor}; stored level errors are multiplied by it, so
@@ -658,6 +660,9 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
     replacements: load_replacements(); whole-BIN render geometry swapped in
     before level generation (see replace_source)."""
     mesh_lod = _mesh_lod()
+    # cluster_trees: {(owner, bin)} grove BINs whose clusters are formed per tree (tree_groups)
+    cluster_trees = set(cluster_trees or ())
+    groves = 0
     scales = scales or {}
     bias = bias or {}
     substitutes = substitutes or {}
@@ -729,6 +734,9 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
                         hex(owner), bin_no, part_index, int(sub["offset"]), part["offset"]))
                 used_substitutes.add((owner, bin_no, part_index))
             card = sub is None and mesh_lod.is_card_field(tris, bool(part["flags"] & 4))
+            trees = None
+            if (owner, bin_no) in cluster_trees and sub is None and tris and not card:
+                trees = mesh_lod.tree_groups(tris, welded, TREE_TRUNK_MM / scale)
             if sub is not None:
                 cluster_tris = [tris]
             elif not tris:
@@ -736,6 +744,15 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
             elif card:
                 cluster_tris = mesh_lod.kd_clusters(tris, welded, 256, 0.4 * cluster_world / scale,
                                                     0.2 * cluster_world / scale)
+            elif trees:
+                # --lod-cluster-trees: no cluster spans two trees and each tree's clusters are
+                # contiguous, so the runtime can draw a tree as its own impostor (s16 impt records)
+                cluster_tris, tree_rows = [], []
+                for g in trees:
+                    cs = mesh_lod.kd_clusters([tris[i] for i in g], welded, cluster_tris_max, cluster_world / scale,
+                                              0.4 * cluster_world / scale)
+                    tree_rows.append(dict(first=len(cluster_tris), clusters=len(cs), triangles=len(g)))
+                    cluster_tris += cs
             else:
                 cluster_tris = mesh_lod.kd_clusters(tris, welded, cluster_tris_max, cluster_world / scale,
                                                     0.4 * cluster_world / scale)
@@ -825,7 +842,11 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
                                          texture=part["texture"], alpha=part["alpha"], flags=part["flags"],
                                          common=bool(common), level=k, error_world=round(err, 1),
                                          triangles=len(lt), obj=name))
-            mesh_report.append(dict(card=card, clusters=len(clusters) - first_cluster, levels=part_levels))
+            if trees and len(clusters) - first_cluster != len(cluster_tris):
+                raise ValueError("%s:%d part %d: a tree cluster came out empty" % (hex(owner), bin_no, part_index))
+            mesh_report.append(dict(card=card, clusters=len(clusters) - first_cluster, levels=part_levels,
+                                    **(dict(trees=tree_rows) if trees else {})))
+            groves += bool(trees)
         meshes.append((bin_no, int(common), owner, src["nvtx"], src["nparts"], src["flags"],
                        first_part, len(parts) - first_part, *lo, *step, *lo, *hi))
         report.append(dict(owner=owner, common=bool(common), bin=bin_no, scale=scale, bias=factor, parts=mesh_report))
@@ -871,6 +892,8 @@ def convert_lod(entries, color_scale, scales=None, px=2.0, eps_world=DEFAULT_EPS
                    level0_triangles=sum(lv["triangles"] for r in report for p in r["parts"] for lv in p["levels"]
                                         if lv["level"] == 0),
                    meshes_detail=report)
+    if cluster_trees:
+        summary["grove_parts"] = groves
     return blob, summary
 
 
@@ -974,6 +997,10 @@ def main():
                          "of <OWNER>_<bin>.obj replacements")
     ap.add_argument("--lod-export", type=Path, metavar="DIR",
                     help="also write every part's levels as OBJ plus parts.json (templates for --lod-substitute)")
+    ap.add_argument("--lod-cluster-trees", action="append", default=[], metavar="OWNER:BINS",
+                    help="grove BINs (e.g. 0xff:17,38): clusters are formed per tree (connected components "
+                         "joined to the nearest trunk taller than 3 m), so each tree can draw as its own "
+                         "impostor; a BIN with fewer than two trunks is unchanged; repeatable")
     ap.add_argument("--lod-bias", action="append", default=[], metavar="OWNER:BINS=FACTOR",
                     help="multiply the stored level errors of these BINs (e.g. 0xfe:0-10=0.375: the common "
                          "trees switch at 8 px when MESH_LOD_PX=3); repeatable")
@@ -997,6 +1024,12 @@ def main():
                 for b in range(int(lo_bin), int(hi_bin or lo_bin) + 1):
                     bias[(int(o, 0), b)] = float(factor)
         eps = tuple(float(x) for x in a.lod_eps.split(","))
+        cluster_trees = set()
+        for spec in a.lod_cluster_trees:
+            o, bins = spec.split(":")
+            for r in bins.split(","):
+                lo_bin, _, hi_bin = r.partition("-")
+                cluster_trees.update((int(o, 0), b) for b in range(int(lo_bin), int(hi_bin or lo_bin) + 1))
         substitutes, replacements = {}, {}
         for source in a.lod_substitute or []:
             for table, new in ((substitutes, load_substitutes(source)), (replacements, load_replacements(source))):
@@ -1008,7 +1041,8 @@ def main():
             a.lod_export.mkdir(parents=True, exist_ok=True)
         blob, summary = convert_lod(entries, a.color_scale, scales, a.lod_px, eps, a.lod_cluster, a.lod_cluster_tris,
                                     min_gain=a.lod_min_gain, max_levels=a.lod_max_levels, bias=bias,
-                                    substitutes=substitutes, export_dir=a.lod_export, replacements=replacements)
+                                    substitutes=substitutes, export_dir=a.lod_export, replacements=replacements,
+                                    cluster_trees=cluster_trees)
         version = VERSION_LOD
     else:
         blob, summary = convert(entries, a.color_scale, a.cell, a.min_fill)
@@ -1024,6 +1058,8 @@ def main():
         summary.update(lod_px=a.lod_px, lod_eps=a.lod_eps, lod_cluster=a.lod_cluster, lod_cluster_tris=a.lod_cluster_tris,
                        lod_min_gain=a.lod_min_gain, lod_max_levels=a.lod_max_levels, lod_bias=a.lod_bias,
                        lod_substitute=[str(p) for p in a.lod_substitute] if a.lod_substitute else None)
+        if a.lod_cluster_trees:
+            summary.update(lod_cluster_trees=a.lod_cluster_trees)
     Path(str(a.out) + ".json").write_text(json.dumps(summary, indent=1))
     detail = summary.pop("meshes_detail")
     print(json.dumps(summary))

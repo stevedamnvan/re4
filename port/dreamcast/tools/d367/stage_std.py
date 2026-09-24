@@ -92,14 +92,16 @@ def stage_room(fixtures, room, src, tex_resident):
     idx_bytes = index.stat().st_size
     plan = (low / "plan.json").stat().st_size if (low / "plan.json").exists() else 0
     print("stage: %s Standard set: low/ %d package(s) %d B (Original of those owners %d B), texlow %d file(s) %d B "
-          "(VRAM %d B), index %d B, plan.json %d B; disc +%d B; drop %d cull %d imp %d ptex %d%s" % (
+          "(VRAM %d B), index %d B, plan.json %d B; disc +%d B; drop %d cull %d imp %d impt %d ptex %d%s" % (
               room, len(ix["mesh"]), low_bytes, orig_bytes, len(keys), tex_bytes, vram, idx_bytes, plan,
               low_bytes + tex_bytes + idx_bytes + plan, len(ix["drop"]), len(ix["cull"]), len(ix["imp"]),
-              len(ix["ptex"]), "" if not missing_drop else "; %d drop key(s) have no staged package (nothing to skip): %s" % (
+              len(ix["impt"]), len(ix["ptex"]), "" if not missing_drop else "; %d drop key(s) have no staged package (nothing to skip): %s" % (
                   len(missing_drop), " ".join(missing_drop[:4]))), file=sys.stderr)
-    return ("STDROOM %s dir=%s index-sha256=%s low=%d/%dB texlow=%d/%dB disc+%dB drop=%d cull=%d imp=%d ptex=%d" % (
+    return ("STDROOM %s dir=%s index-sha256=%s low=%d/%dB texlow=%d/%dB disc+%dB drop=%d cull=%d imp=%d impt=%d "
+            "ptex=%d" % (
         room, src, sha(index), len(ix["mesh"]), low_bytes, len(keys), tex_bytes,
-        low_bytes + tex_bytes + idx_bytes + plan, len(ix["drop"]), len(ix["cull"]), len(ix["imp"]), len(ix["ptex"])))
+        low_bytes + tex_bytes + idx_bytes + plan, len(ix["drop"]), len(ix["cull"]), len(ix["imp"]), len(ix["impt"]),
+        len(ix["ptex"])))
 
 
 def main(argv=None):

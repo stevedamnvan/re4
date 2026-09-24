@@ -49,7 +49,7 @@ def owner_filter(spec, code):
         o = s.split(":")[0]
         return int(o, 0) == code
     out = dict(spec)
-    for k in ("bias", "classes"):
+    for k in ("bias", "classes", "cluster_trees"):
         if k in out:
             out[k] = [s for s in out[k] if mine(s)]
             if not out[k]:

@@ -88,9 +88,11 @@ class Camera:
         return True, z
 
 
-def build_instances(pkgs, placements, key_of):
+def build_instances(pkgs, placements, key_of, trees=None):
     """pkgs: {owner name: r4im.Package}. -> [instance] with world-space boxes.
-    key_of(placement) -> asset key (str)."""
+    key_of(placement) -> asset key (str). trees: {(owner name, bin, common): [dict(part, first,
+    count, centre, radius)]} for split groves (--lod-cluster-trees): part = index among the
+    mesh's parts, clusters [first, first + count) of that part, centre / radius in model units."""
     out = []
     for w in placements:
         pk = pkgs.get(w["owner"])
@@ -121,7 +123,15 @@ def build_instances(pkgs, placements, key_of):
                 rad = math.sqrt(sum(x * x for x in box[1])) if box else 0.0
                 cls.append((box, levels, rad))
             parts.append(cls)
-        out.append(dict(key=key_of(w), scale=scale, sphere=(oc, math.sqrt(sum(x * x for x in oe))), parts=parts))
+        inst = dict(key=key_of(w), scale=scale, sphere=(oc, math.sqrt(sum(x * x for x in oe))), parts=parts)
+        rows = (trees or {}).get((w["owner"], w["bin"], bool(w["common"])))
+        if rows:
+            inst["trees"] = [dict(centre=tuple(M[r][0] * t["centre"][0] + M[r][1] * t["centre"][1] +
+                                               M[r][2] * t["centre"][2] + M[r][3] for r in range(3)),
+                                  radius=t["radius"] * scale,
+                                  clusters=frozenset((t["part"], t["first"] + j) for j in range(t["count"])))
+                             for t in rows]
+        out.append(inst)
     return out
 
 
@@ -141,11 +151,13 @@ def _eval_view(args):
             continue
         acc = res.get(key)
         if acc is None:
-            acc = res[key] = [[0] * 10 for _ in opts]
+            acc = res[key] = [[0] * 11 for _ in opts]
         scale = inst["scale"]
         rad_obj = inst["sphere"][1]
         depth_obj = zc - rad_obj
         imp_done = [False] * len(opts)
+        trees = inst.get("trees")
+        skip = [()] * len(opts)    # per option: (part, cluster) pairs whose tree is drawn as its quad
         for oi, o in enumerate(opts):
             acc[oi][5] += 1
             cull = o.get("cull_mm") or 0
@@ -156,6 +168,27 @@ def _eval_view(args):
                 acc[oi][9] += (rad_obj * K / zz) * min(1.0, math.pi * (rad_obj * K / zz) ** 2 / area_div)
                 continue
             d = o.get("imp_mm") or 0
+            if trees and o.get("split"):
+                # split grove (s16 impt): each tree is its own quad beyond d (tree centre depth)
+                if d:
+                    ve = math.sin(math.pi / o.get("views", 16))
+                    sk = set()
+                    for t in trees:
+                        tvis, tz = cam.sphere(t["centre"], t["radius"])
+                        if tz < d:
+                            continue
+                        sk |= t["clusters"]
+                        if tvis:
+                            a = acc[oi]
+                            a[0] += 4
+                            a[1] += 1
+                            a[3] += 1
+                            a[8] += 1
+                            e = ve * t["radius"] * K / max(tz - t["radius"], 1.0)
+                            ar = min(1.0, math.pi * (t["radius"] * K / max(tz - t["radius"], 1.0)) ** 2 / area_div)
+                            a[9] += e * ar
+                    skip[oi] = sk
+                continue
             if d and zc >= d:          # object centre depth, as TREE_IMPOSTOR_MM (native_static.cpp)
                 a = acc[oi]
                 a[0] += 4
@@ -167,12 +200,19 @@ def _eval_view(args):
                 e = 0.195 * rad_obj * K / max(depth_obj, 1.0)
                 ar = min(1.0, math.pi * (rad_obj * K / max(depth_obj, 1.0)) ** 2 / area_div)
                 a[9] += e * ar
-        for clusters in inst["parts"]:
+        for pi, clusters in enumerate(inst["parts"]):
             drawn = [False] * len(opts)
-            for box, levels, crad in clusters:
+            ndrawn = [0] * len(opts)
+            for ci, (box, levels, crad) in enumerate(clusters):
+                if trees:
+                    off = [bool(skip[oi]) and (pi, ci) in skip[oi] for oi in range(len(opts))]
+                    if all(imp_done[oi] or off[oi] for oi in range(len(opts))):
+                        continue
+                else:
+                    off = None
                 if box is not None:
                     for oi in range(len(opts)):
-                        if not imp_done[oi]:
+                        if not imp_done[oi] and not (off and off[oi]):
                             acc[oi][3] += 1
                     vis, zmin = cam.box(*box)
                     if not vis:
@@ -192,7 +232,7 @@ def _eval_view(args):
                 e_ref = (levels[ref][0] if levels[ref][1] else max(levels[ref][0], gone)) * s_k_z
                 ar = min(1.0, math.pi * (crad * K / zmin) ** 2 / area_div) if crad else 0.0
                 for oi, o in enumerate(opts):
-                    if imp_done[oi]:
+                    if imp_done[oi] or (off and off[oi]):
                         continue
                     b = o.get("bias", 1.0)
                     vm = o.get("vanish_min") or 0.0
@@ -201,11 +241,12 @@ def _eval_view(args):
                         if (err * b if ls_ else max(err * b, vm)) * s_k_z <= px:
                             pick = li
                     a = acc[oi]
+                    hit = False
                     for wb, (c, s, v, t) in levels[pick][1]:
                         a[3] += 1
                         if not cam.box(*wb)[0]:
                             continue
-                        drawn[oi] = True
+                        drawn[oi] = hit = True
                         a[0] += c
                         a[1] += s
                         a[2] += 1
@@ -217,9 +258,14 @@ def _eval_view(args):
                             o.get("err_floor", 0.0)) * s_k_z
                     if e > e_ref:
                         a[9] += (e - e_ref) * ar
+                    ndrawn[oi] += hit
             for oi in range(len(opts)):
                 if drawn[oi]:
                     acc[oi][4] += 1
+                if trees and ndrawn[oi] > 1:
+                    # a split grove's extra clusters: priced explicitly (the fitted per-part cost
+                    # covers the cluster counts of unsplit packages)
+                    acc[oi][10] += ndrawn[oi] - 1
     return res
 
 
@@ -227,7 +273,8 @@ def cycles(cost, n):
     sc = cost["scenery"]
     imp = cost.get("impostor", {})
     return (sc["c_rec"] * n[0] + sc.get("c_strip", 0) * n[1] + sc["c_meshlet"] * n[2] + sc["c_test"] * n[3]
-            + sc["c_part"] * n[4] + sc.get("c_obj", 0) * n[5] + imp.get("quad_cycles", 150.0) * n[8])
+            + sc["c_part"] * n[4] + sc.get("c_obj", 0) * n[5] + imp.get("quad_cycles", 150.0) * n[8]
+            + (sc.get("c_cluster", 0.0) * n[10] if len(n) > 10 else 0.0))
 
 
 class Pricing:
@@ -248,7 +295,7 @@ class Pricing:
             ms = [[0.0] * nv for _ in opts]
             ta = [[0] * nv for _ in opts]
             tr = [[0] * nv for _ in opts]
-            tot = [[0] * 10 for _ in opts]
+            tot = [[0] * 11 for _ in opts]
             for vi, r in enumerate(per_view):
                 a = r.get(key)
                 if not a:
@@ -257,12 +304,13 @@ class Pricing:
                     ms[oi][vi] = cycles(cost, a[oi]) / clock
                     ta[oi][vi] = tb["bytes_per_record"] * a[oi][0] + tb["bytes_per_substrip"] * a[oi][1]
                     tr[oi][vi] = a[oi][7] + 2 * a[oi][8]
-                    for k in range(10):
+                    for k in range(11):
                         tot[oi][k] += a[oi][k]
             self.ms[key] = ms
             self.ta[key] = ta
             self.tris[key] = tr
-            self.counts[key] = [{f: round(t[i] / nv, 2) for i, f in enumerate(COUNT_FIELDS)} for t in tot]
+            self.counts[key] = [dict({f: round(t[i] / nv, 2) for i, f in enumerate(COUNT_FIELDS)},
+                                     **({"extra_clusters": round(t[10] / nv, 2)} if t[10] else {})) for t in tot]
             self.quality[key] = [round(t[9] / nv, 6) for t in tot]
 
     def mean(self, key, oi):

@@ -16,6 +16,8 @@ line; a reader ignores lines whose first token it does not know. Records (s16.3)
   cull <OWNER> <mesh> <bin> <common> <mm>
   imp <OWNER> <mesh> <bin> <common> <mm> <crc>-<fnv> <views> <cols> <cell_w> <cell_h> <atlas_w>
       <atlas_h> <cx> <cy> <cz> <half_w> <half_h>      (one line)
+  impt <OWNER> <mesh> <bin> <common> <part> <first> <count> <mm> <crc>-<fnv> <views> <cols> <cell_w>
+      <cell_h> <atlas_w> <atlas_h> <cx> <cy> <cz> <half_w> <half_h>   (one line; one per tree)
   ptex <OWNER> <part> <bin> <common> <crc>-<fnv> <w> <h>
   end <records>                           last line: the number of records above it
 """
@@ -29,6 +31,7 @@ import zlib
 from pathlib import Path
 
 SCHEMA = "re4dc-std"
+IMPT_CLUSTERS = 64      # impt: a tree's clusters must lie within the first 64 of its part
 VERSION = 1
 
 
@@ -81,12 +84,14 @@ def _f(x):
 
 
 def build(room, lod_px, owners, std_pkgs, std_files, orig_files, bins, imp_recs, shell_textures, tex_files,
-          room_keys):
+          room_keys, tree_recs=None):
     """-> (index text, low file names, texlow {name: path}).
     owners: [(name, code, common)]; std_pkgs {name: r4im.Package}; std_files / orig_files
     {name: path of the .re4mesh}; bins {"OWNER/0xNN:b": {imp_mm?, cull_mm?}} (the plan's final
     choices); imp_recs {(code, bin): record}; shell_textures: textures.json rows; tex_files: the
-    added .re4tex paths; room_keys: runtime key of every room TPL index."""
+    added .re4tex paths; room_keys: runtime key of every room TPL index; tree_recs {(code, bin):
+    [grove.py tree record]} for BINs whose option is split (s16.5: impt records)."""
+    tree_recs = tree_recs or {}
     code_of = {n: c for n, c, _ in owners}
     lines = ["%s %d %s" % (SCHEMA, VERSION, room), "lod_px %s" % ("%g" % lod_px)]
     low = []
@@ -122,7 +127,7 @@ def build(room, lod_px, owners, std_pkgs, std_files, orig_files, bins, imp_recs,
             raise ValueError("%s BIN %d has no part %d" % (name, r["bin"], r["part"]))
         ptex.setdefault(name, []).append((m[6] + r["part"], r["bin"], int(bool(r["common"])), _key(r["key"]),
                                           r["width"], r["height"]))
-    cull, imp = {}, {}
+    cull, imp, impt = {}, {}, {}
     for k, o in sorted(bins.items()):
         name, bid = k.split("/")
         code, b = (int(x, 0) for x in bid.split(":"))
@@ -134,7 +139,29 @@ def build(room, lod_px, owners, std_pkgs, std_files, orig_files, bins, imp_recs,
                 continue
             if o.get("cull_mm"):
                 cull.setdefault(name, []).append((mk, b, int(common), int(round(o["cull_mm"]))))
-            if o.get("imp_mm"):
+            if o.get("imp_mm") and o.get("split"):
+                rs = tree_recs.get((code, b))
+                if not rs:
+                    raise ValueError("%s: split impostor distance without tree records" % k)
+                m = pk.meshes[mk]
+                for r in sorted(rs, key=lambda r: (r["part"], r["first"])):
+                    if bool(r["common"]) != bool(common):
+                        continue
+                    if not 0 <= r["part"] < m[7]:
+                        raise ValueError("%s: tree record for missing part %d" % (k, r["part"]))
+                    p = m[6] + r["part"]
+                    if r["first"] + r["count"] > min(pk.part_lod[p][1], IMPT_CLUSTERS):
+                        # the runtime keeps one 64-bit skip mask per part (std-runtime, 2026-09-23)
+                        raise ValueError("%s: tree clusters %d+%d beyond the part's %d" % (
+                            k, r["first"], r["count"], pk.part_lod[p][1]))
+                    if Path(r["tex_file"]).name not in texlow:
+                        raise ValueError("%s: tree atlas %s is not in texlow" % (k, Path(r["tex_file"]).name))
+                    cw, ch = r["cell"]
+                    aw, ah = r["atlas"]
+                    impt.setdefault(name, []).append((mk, b, int(common), p, r["first"], r["count"],
+                                                      int(round(o["imp_mm"])), _key(r["key"]), r["views"], r["cols"],
+                                                      cw, ch, aw, ah, *r["centre"], r["half_w"], r["half_h"]))
+            elif o.get("imp_mm"):
                 r = imp_recs.get((code, b))
                 if r is None:
                     raise ValueError("%s: impostor distance without a record" % k)
@@ -155,6 +182,9 @@ def build(room, lod_px, owners, std_pkgs, std_files, orig_files, bins, imp_recs,
         for row in sorted(imp.get(name, [])):
             lines.append("imp %s %d %d %d %d %s %d %d %d %d %d %d %s %s %s %s %s" % (
                 (name,) + row[:11] + tuple(_f(x) for x in row[11:])))
+        for row in sorted(impt.get(name, [])):
+            lines.append("impt %s %d %d %d %d %d %d %d %s %d %d %d %d %d %d %s %s %s %s %s" % (
+                (name,) + row[:14] + tuple(_f(x) for x in row[14:])))
         rows = sorted(ptex.get(name, []))
         if len({r[0] for r in rows}) != len(rows):
             raise ValueError("%s: two ptex records for one part" % name)
@@ -169,10 +199,10 @@ def finish(lines, dropped):
 
 
 def write_low(out, room, lod_px, owners, std_pkgs, std_files, orig_files, orig_pkgs, bins, imp_recs,
-              shell_textures, tex_files, room_keys, plan_json):
+              shell_textures, tex_files, room_keys, plan_json, tree_recs=None):
     """Lay out out/low/ and out/texlow/; -> dict(report)."""
     lines, low, texlow, used_std = build(room, lod_px, owners, std_pkgs, std_files, orig_files, bins, imp_recs,
-                                         shell_textures, tex_files, room_keys)
+                                         shell_textures, tex_files, room_keys, tree_recs)
     used_orig = set()
     for pk in orig_pkgs.values():
         used_orig |= used_textures(pk)
@@ -212,7 +242,8 @@ def parse(text):
     body = [r for r in rows[:-1]]
     if last[:1] != ["end"] or int(last[1]) != len(body):
         raise ValueError("index: truncated (no matching end record)")
-    out = dict(room=rows[0].split()[2], lod_px=None, mesh=[], orig=[], tex=[], drop=[], cull=[], imp=[], ptex=[])
+    out = dict(room=rows[0].split()[2], lod_px=None, mesh=[], orig=[], tex=[], drop=[], cull=[], imp=[], impt=[],
+               ptex=[])
     for r in body[1:]:
         t = r.split(" ")
         if not t or t[0].startswith("#"):

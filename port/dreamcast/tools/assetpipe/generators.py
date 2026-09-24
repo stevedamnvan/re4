@@ -153,6 +153,12 @@ class Gen:
             raise RuntimeError("%s needs W9b converter options (%s); set RE4DC_SRC_CONVERTER to a tools dir "
                                "with w9b-scenery-share-classes.patch" % (room.name, " ".join(w9b[:2])))
         args += w9b
+        # split groves (s16.5): per-tree clusters for these BINs ("0xff:13-17"; owner_filter keeps this owner's)
+        for c in spec.get("cluster_trees", []):
+            args += ["--lod-cluster-trees", c]
+        if spec.get("cluster_trees") and not supports(conv, "--lod-cluster-trees"):
+            raise RuntimeError("%s: grove_split needs a converter with --lod-cluster-trees (HEAD, or the W9b "
+                               "converter with w9b-lod-cluster-trees.patch)" % room.name)
         subst_dirs = []
         for i, s in enumerate(substitutes):
             subst_dirs.append(Path(s.out if hasattr(s, "out") else s))
@@ -464,6 +470,34 @@ class Gen:
         return self.cache.step("tree.impostor", dict(room=room.name, owner=owner, bins=bins, views=views, cell=cell,
                                                      ss=ss), dict(pkg=pkg_obj.path(name), tpl=tpl), fp, fn,
                                label="%s impostors %d BINs" % (room.name, len(bins)))
+
+    # ---- per-tree impostors for split groves (grove.py)
+    def grove_impostors(self, room, owner, pkg_obj, groves, views=8, cell=128, ss=4, jobs=1):
+        """One atlas + record per tree of the split grove BINs of owner `owner` (a package step
+        built with --lod-cluster-trees). groves: [(code, bin, common, part, [[first, count], ...])]."""
+        here = Path(__file__).resolve().parent
+        tpl = self.room_tpl(room)
+        fp = fingerprint([here / n for n in ("grove.py", "impostor.py", "render.py", "scene.py", "raster.py",
+                                             "r4im.py", "texture.py")] +
+                         [item_tool("tree_impostors.py"), tool("convert_tpl.py"), self.pvrtex],
+                         dict(python=sys.version.split()[0]))
+        name = owner + ".re4mesh"
+        groves = [[int(c), int(b), bool(cm), int(p), [[int(f), int(n)] for f, n in trees]]
+                  for c, b, cm, p, trees in sorted(groves)]
+        cfg, pvrtex = self.cfg, self.pvrtex
+
+        def fn(out, work):
+            from . import grove, r4im, texture
+            from .scene import Textures
+            pk = r4im.load(pkg_obj.path(name))
+            tex = Textures(texture.tpl_images(tpl, TOOLS))
+            js = [(pk, owner, c, b, cm, p, k, f, n, tex, cfg.cost)
+                  for c, b, cm, p, trees in groves for k, (f, n) in enumerate(trees)]
+            return grove.write_trees(out, js, pvrtex, views, cell, ss, workers=jobs)
+        return self.cache.step("tree.grove_impostor", dict(room=room.name, owner=owner, groves=groves, views=views,
+                                                           cell=cell, ss=ss), dict(pkg=pkg_obj.path(name), tpl=tpl),
+                               fp, fn, label="%s grove impostors %d trees" % (
+                                   room.name, sum(len(g[4]) for g in groves)))
 
     # ---- audio (aica_banks.py; the same cache stage.sh uses)
     def audio(self, route="title,r100,r101,r103"):

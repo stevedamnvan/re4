@@ -326,5 +326,68 @@ int main(int,char** argv){
             self.assertEqual(sizes, sorted(sizes, reverse=True))
 
 
+def grove_bin(xs):
+    """A grove: per x in xs one tree = a 5-unit tall trunk quad plus a separate leaf quad
+    beside it (two components, not sharing vertices)."""
+    positions, corners = [], []
+
+    def quad(a, b, c, d):
+        k = len(positions)
+        positions.extend((a, b, c, d))
+        for t in ((k, k + 1, k + 2), (k, k + 2, k + 3)):
+            corners.extend((i, 0, 0, i) for i in t)
+    for x in xs:
+        quad((x, 0.0, 0.0), (x, 5.0, 0.0), (x + 0.25, 5.0, 0.0), (x + 0.25, 0.0, 0.0))
+        quad((x + 0.5, 3.0, 0.5), (x + 0.5, 4.0, 0.5), (x + 1.5, 4.0, 0.5), (x + 1.5, 3.0, 0.5))
+    uvs = [(p[0] * 0.1, p[1] * 0.1) for p in positions]
+    return T.synth_bin([(1, [(0x90, corners)])], positions, [(0, 0, 1)], [(255, 255, 255, 255)], uvs, shift=5)
+
+
+class GroveClusterTests(unittest.TestCase):
+    """--lod-cluster-trees: per-tree clusters for grove BINs, and no change anywhere else."""
+
+    def setUp(self):
+        self.trunk = C.TREE_TRUNK_MM
+        C.TREE_TRUNK_MM = 3.0      # the synthetic trees are 5 units tall
+
+    def tearDown(self):
+        C.TREE_TRUNK_MM = self.trunk
+
+    def test_trees_get_their_own_contiguous_clusters(self):
+        data = grove_bin([0.0, 10.0, 20.0])
+        blob, summary = convert([data], cluster_trees={(1, 0)})
+        rows = summary['meshes_detail'][0]['parts'][0]['trees']
+        self.assertEqual([r['triangles'] for r in rows], [4, 4, 4])
+        self.assertEqual([r['first'] for r in rows], [0, 1, 2])
+        self.assertEqual(summary['grove_parts'], 1)
+        d = decode(blob)
+        first, count = d['part_lods'][0]
+        self.assertEqual(count, sum(r['clusters'] for r in rows))
+        step, lo = d['meshes'][0][11], d['meshes'][0][8]
+        spans = []
+        for c in d['clusters'][first:first + count]:
+            spans.append((lo + c[0] * step, lo + c[3] * step))
+        for (a0, a1), (b0, b1) in zip(spans, spans[1:]):
+            self.assertLess(a1, b0)   # no cluster reaches into the next tree
+        # unsplit, the same BIN is one cluster
+        plain, s0 = convert([data])
+        self.assertEqual(decode(plain)['part_lods'][0][1], 1)
+        self.assertNotIn('trees', s0['meshes_detail'][0]['parts'][0])
+        self.assertNotIn('grove_parts', s0)
+
+    def test_off_and_single_trees_are_byte_identical(self):
+        grove, single = grove_bin([0.0, 10.0]), grove_bin([0.0])
+        flat = grid_bin(9, spacing=1.0, bump=0.5)
+        base, s0 = convert([grove, single, flat])
+        other, s1 = convert([grove, single, flat], cluster_trees={(1, 7)})     # a BIN not in the package
+        self.assertEqual(base, other)
+        # the option on BINs with fewer than two trunks (a single tree, a flat grid) changes nothing
+        same, s2 = convert([grove, single, flat], cluster_trees={(1, 1), (1, 2)})
+        self.assertEqual(base, same)
+        self.assertEqual(s2['grove_parts'], 0)
+        split, _ = convert([grove, single, flat], cluster_trees={(1, 0)})
+        self.assertNotEqual(base, split)
+
+
 if __name__ == '__main__':
     unittest.main()

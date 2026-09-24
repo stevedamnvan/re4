@@ -437,6 +437,18 @@ def build_standard(ctx, name, only=None, review=True):
             out.append(s)
         return out
     subs = subs_minus(shelled)
+    # split groves (plan grove_split, s16.5): every tree-class BIN is converted with per-tree clusters;
+    # the converter leaves a BIN with fewer than two trunks unchanged
+    gs = plan.get("grove_split")
+    if gs:
+        tb = {}
+        for k, c in sorted(classes.items()):
+            if c == "tree":
+                code, b = _imp_key(k)
+                tb.setdefault(code, []).append(b)
+        if tb:
+            specs = dict(specs, cluster_trees=["%s:%s" % ("0x%02x" % c if c >= 0xF0 else str(c), ranges(sorted(bs)))
+                                               for c, bs in sorted(tb.items())])
     # base Standard packages: recipe + shells (biases come from the solver below)
     base_objs = build_packages(ctx, room, specs, list(subs) + shell_dirs, scales)
     # coarse geometry variant (Blender reduction of ground/structure BINs), priced as extra options
@@ -479,9 +491,18 @@ def build_standard(ctx, name, only=None, review=True):
     pr_o = price(inst_o, views, {k: [dict(id="orig", bias=1.0)] for k in keys_o}, cost, px=cost["lod"]["px"], far=far,
                  jobs=ctx.jobs)
     imp_recs = _impostor_records(ctx, room, plan, classes, orig_objs)
-    inst_s = build_instances(pk_base, room.placements(), keyfn)
+    grove_recs, tree_table = _grove_trees(ctx, room, base_objs, gs) if gs else ({}, {})
+    for kk in grove_recs:
+        imp_recs.pop(kk, None)      # a split grove offers per-tree impostors, not the whole-BIN one
+    inst_s = build_instances(pk_base, room.placements(), keyfn, trees=tree_table)
     keys_s = sorted({i["key"] for i in inst_s})
-    options = {k: class_options(classes.get(k, "structure"), plan, _imp_key(k) in imp_recs) for k in keys_s}
+    options = {k: class_options(classes.get(k, "structure"), plan, _imp_key(k) in imp_recs or
+                                _imp_key(k) in grove_recs) for k in keys_s}
+    for k in keys_s:
+        if _imp_key(k) in grove_recs:
+            for o in options[k]:
+                if o.get("imp_mm"):
+                    o.update(split=True, views=int(gs.get("views", 8)), id=o["id"] + "-trees")
     # empty LOD levels: no nearer vanishing than Original (priced here, patched into the packages)
     vmin = _vanish_min(room, pk_orig, plan["px"], cost["lod"]["px"])
     for k in keys_s:
@@ -491,7 +512,7 @@ def build_standard(ctx, name, only=None, review=True):
     pr_s = price(inst_s, views, options, cost, px=plan["px"], far=far, jobs=ctx.jobs)
     if coarse_obj is not None:
         pk_c = load_pkgs(coarse_objs)
-        inst_c = build_instances(pk_c, room.placements(), keyfn)
+        inst_c = build_instances(pk_c, room.placements(), keyfn, trees=tree_table)
         opt_c = {k: [dict(o, id="%s-%s" % (coarse["variant"], o["id"]), geom=coarse["variant"],
                           err_floor=coarse_err[k]) for o in options[k]] for k in sorted(coarse_err) if k in options}
         ctx.log("  pricing %d %s variants" % (sum(len(v) for v in opt_c.values()), coarse["variant"]))
@@ -531,9 +552,12 @@ def build_standard(ctx, name, only=None, review=True):
         for n in grew:
             final_objs[n] = redo[n]
     pk_final = load_pkgs(final_objs)
+    if gs and _tree_rows(final_objs) != _tree_rows(base_objs):
+        raise RuntimeError("%s: the final packages' grove clusters differ from the base packages'" % name)
     # what the staged packages cost (biases baked, runtime options only): the numbers reported
-    inst_f = build_instances(pk_final, room.placements(), keyfn)
-    opt_f = {k: [dict(id="final", bias=1.0, **{x: chosen[k][x] for x in ("imp_mm", "cull_mm") if chosen[k].get(x)})]
+    inst_f = build_instances(pk_final, room.placements(), keyfn, trees=tree_table)
+    opt_f = {k: [dict(id="final", bias=1.0, **{x: chosen[k][x] for x in ("imp_mm", "cull_mm", "split", "views")
+                                               if chosen[k].get(x)})]
              for k in sorted({i["key"] for i in inst_f})}
     pr_f = price(inst_f, views, opt_f, cost, px=plan["px"], far=far, jobs=ctx.jobs)
     S_solver = S
@@ -573,9 +597,15 @@ def build_standard(ctx, name, only=None, review=True):
     for b in sorted(shells):
         o = shells[b][0]
         shell_tex += [o.path(r) for r in sorted(o.outputs) if r.startswith("tex/")]
-    used_imp = {_imp_key(k) for k in keys_s if chosen[k].get("imp_mm")}
-    atlas_files = sorted({Path(imp_recs[k]["tex_file"]) for k in used_imp})
+    used_imp = {_imp_key(k) for k in keys_s if chosen[k].get("imp_mm") and not chosen[k].get("split")}
+    used_groves = {_imp_key(k) for k in keys_s if chosen[k].get("imp_mm") and chosen[k].get("split")}
+    tree_files = sorted({Path(r["tex_file"]) for k in used_groves for r in grove_recs[k]})
+    atlas_files = sorted({Path(imp_recs[k]["tex_file"]) for k in used_imp}) + tree_files
     sizes = _sizes(cfg, gen.room_tpl(room), orig_objs, final_objs, pk_orig, pk_final, shell_tex, atlas_files, imp_recs, used_imp)
+    if used_groves:
+        gv = sum({r["package"]: r["vram_bytes"] for k in used_groves for r in grove_recs[k]}.values())
+        v = sizes["vram"]
+        v.update(tree_atlases=gv, standard=v["standard"] + gv, delta=v["delta"] + gv)
     # assets list
     inv_by = {"%s/%s" % (r["owner"], bin_id(r["code"], r["bin"])): r for r in inv}
     assets = []
@@ -590,7 +620,8 @@ def build_standard(ctx, name, only=None, review=True):
             why = "house shell %d faces (ladder %s, first with p90 error <= %g cm; got %.0f cm); %s" % (
                 faces, plan["house_faces"], plan["house_err_cm"], err, why)
         assets.append(dict(id="%s/scenery/%s" % (name, k.split("/")[1]), key=k, **{"class": cls}, option=o["id"],
-                           params={x: o[x] for x in ("geom", "bias", "imp_mm", "cull_mm", "err_floor") if x in o},
+                           params={x: o[x] for x in ("geom", "bias", "imp_mm", "cull_mm", "err_floor", "split", "views")
+                                   if x in o},
                            decided_by=why,
                            quality_loss=round(pr_s.quality[k][i0] * weights[k], 5),
                            predicted=dict(hw_ms_mean=round(sum(pr_s.ms[k][i0]) / nv, 4),
@@ -631,7 +662,8 @@ def build_standard(ctx, name, only=None, review=True):
         tex_stage.append(str(d2))
     tex_stage.append(str(d))
     plan_json = dict(schema="re4dc-standard-plan/1", room=name, lod_px=plan["px"],
-                     bins={k: dict(**{"class": classes.get(k)}, **{x: chosen[k][x] for x in ("geom", "imp_mm", "cull_mm")
+                     bins={k: dict(**{"class": classes.get(k)}, **{x: chosen[k][x] for x in ("geom", "imp_mm", "cull_mm",
+                                                                                               "split")
                                                                     if chosen[k].get(x)})
                            for k in keys_s if chosen[k].get("imp_mm") or chosen[k].get("cull_mm") or chosen[k].get("geom")})
     write_json(out / "plan.json", plan_json)
@@ -646,7 +678,8 @@ def build_standard(ctx, name, only=None, review=True):
         out, name, plan["px"], owners, pk_final, {n: final_objs[n].path(n + ".re4mesh") for n, _, _ in owners},
         {n: orig_objs[n].path(n + ".re4mesh") for n, _, _ in owners}, pk_orig, plan_json["bins"],
         {k: imp_recs[k] for k in used_imp}, shell_rows, list(shell_tex) + list(atlas_files),
-        stdindex.tpl_keys(gen.room_tpl(room), TOOLS), out / "plan.json")
+        stdindex.tpl_keys(gen.room_tpl(room), TOOLS), out / "plan.json",
+        tree_recs={k: grove_recs[k] for k in used_groves})
     stage = {"STDROOMS": "%s=%s" % (name, out)}
     if room.recipe.get("stage", "MESHROOMS") == "MESHDIR":
         stage["MESHDIR"] = str(mesh)
@@ -698,6 +731,39 @@ def build_standard(ctx, name, only=None, review=True):
             variants.append((faces, load_pkgs(vobjs), vsh))
         _review(ctx, room, manifest, named, pk_final, pk_orig, chosen, imp_recs, shells, out, variants)
     return manifest
+
+
+def _tree_rows(objs):
+    """{(owner, bin, common, part): [[first, count], ...]} from the packages' converter summaries."""
+    out = {}
+    for name, obj in sorted(objs.items()):
+        summ = json.loads(obj.path(name + ".re4mesh.json").read_text())
+        for m in summ.get("meshes_detail", []):
+            for pi, p in enumerate(m["parts"]):
+                if p.get("trees"):
+                    out[(name, m["bin"], bool(m["common"]), pi)] = [[t["first"], t["clusters"]] for t in p["trees"]]
+    return out
+
+
+def _grove_trees(ctx, room, objs, gs):
+    """Split groves of the base packages -> ({(code, bin): [tree record]}, tree table for
+    build_instances). Records come from gen.grove_impostors (one atlas per tree)."""
+    recs, table = {}, {}
+    rows = _tree_rows(objs)
+    codes = {o["name"]: o["code"] for o in room.owners()}
+    for name in sorted({k[0] for k in rows}):
+        groves = [(codes[name], b, cm, pi, trees) for (n, b, cm, pi), trees in sorted(rows.items()) if n == name]
+        obj = ctx.gen.grove_impostors(room, name, objs[name], groves, int(gs.get("views", 8)), int(gs.get("cell", 128)),
+                                      int(gs.get("ss", 4)), jobs=ctx.jobs or 1)
+        man = json.loads(obj.path("impostors.json").read_text())
+        for r in man["records"]:
+            at = man["atlases"][r["atlas_name"]]
+            recs.setdefault((r["code"], r["bin"]), []).append(dict(
+                r, package=at["package"], vram_bytes=at["vram_bytes"], tex_file=str(obj.path("tex/" + at["package"]))))
+            table.setdefault((name, r["bin"], bool(r["common"])), []).append(dict(
+                part=r["part"], first=r["first"], count=r["count"], centre=r["centre"],
+                radius=max(r["half_w"], r["half_h"])))
+    return recs, table
 
 
 def _imp_key(k):
