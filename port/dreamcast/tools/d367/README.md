@@ -87,6 +87,25 @@ Why each part of LFV is needed (Flycast r100, frames 2401-2520, all 116.8 ms/fra
   1.59 MB of 2.58 MB; 0 upload failures, 0 evictions. Worst model PSNR is 26.3 dB (leaf
   litter), which was not visibly different in 2x gameplay crops against LF.
 
+### VQ overlay tex-vq6 (tex-vq5 + r101; the asset pipeline's 00-vq)
+
+r101's room textures were never VQ: tex-vq5 is built from r100 logs only, so r101 streamed 126
+textures as 16-bit (4.04 MB against the 2.47-2.55 MB budget). Uploads thrashed and the square
+barely moved (warp-vp0-r101: 4,613 failed uploads, 245 ticks in 200 s). tex-vq6 is the same
+rule (`--model-min-bytes 16384`) with two r101 square logs added to `ui_logs`
+(`warp-vp0-r101`, `warp-sa1-r101`). The source is the route fixtures (`frontier/fixtures/tex`,
+a superset of `d354v7-fixtures/tex`).
+- 198 images, 18,546,688 -> 2,723,840 bytes.
+- The 137 tex-vq5 packages are byte-identical.
+- The 61 new r101 images go 4,521,984 -> 690,176 bytes, lowest PSNR 27.6 dB.
+
+The asset pipeline regenerates it as each room's `tex/00-vq` (`sources.toml`: `fixtures`,
+`ui_logs`, pinned `vq_overlay`).
+
+r101 bell fight with it: 15 failed uploads, 1,955 ticks in 200 s, Flycast steady 10.1 fps
+Standard / 9.4 Original (warp-sa2p-r101, warp-sa2o-r101). Standard vs Original logic trace is
+STRICT. Add the logs of later rooms to `ui_logs` the same way when they are brought up.
+
 ### Generating the VQ overlay (tex-vq5; tex-vq3 below is the same rule on fewer logs)
 
 tex-vq5 applies the tex-vq3 rule to three more logs (the camera tour and the 4/10-Ganado

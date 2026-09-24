@@ -11,7 +11,7 @@ gc_rooms = "/root/work/re4-dreamcast/orig/G4BE08/rooms"  # per-room extraction (
 r100_export = "${gc_rooms}/r100/stream/r100_full_export"
 mirror = "/root/probe/d367-mirror"                       # route disc mirror (stage.sh MIRROR)
 route_src = "/root/probe/d367-agents/frontier/iso-src"   # route files extracted from the debug ISO (W1)
-fixtures = "/root/probe/d354v7-fixtures"                 # stage.sh FIXTURES_SRC (tex/, mot/)
+fixtures = "/root/probe/d367-agents/frontier/fixtures"  # route FIXTURES_SRC (tex/ incl. r101/r103, mot/); VQ overlay source
 keyed = "/root/probe/d367-native-static/keyed12"         # r100 keyed .re4room (stage.sh KEYED)
 reclaim = "/root/probe/d367-agents/backing-lod/backing-reclaim.json"   # r100 placements
 ps2_rooms = "/root/probe/ps2-asset-experiment"          # PS2 TPL PNG extraction per room
@@ -31,5 +31,5 @@ converter = ""                                           # tools dir whose conve
 # A generator that can rebuild one records it; `assets.sh --verify` compares.
 r100_planar2 = "/root/probe/d367-agents/ps2-blender/subst/planar2"          # bl_decimate.py r100-planar2.json (Blender 5.2)
 r100_bark_png = "/root/probe/d367-agents/ps2-blender/texture/ps2/r100_004/0023.PNG"   # RE4_PS2_TPL_EXTRACT B.1.1.1
-vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq5"                      # README: tex-vq5 (vq_native_ui.py)
+vq_overlay = "/root/probe/d367-agents/ui-vram/tex-vq6"                      # README: tex-vq6 (vq_native_ui.py; tex-vq5 + r101)
 r100_impostors = "/root/probe/d367-agents/ps2-blender/impostor/rt/out"   # item 20 tree_impostors.py output (16 views, h128, PAL4 VQ)
