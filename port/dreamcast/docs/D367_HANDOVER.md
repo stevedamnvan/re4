@@ -2,8 +2,9 @@
 
 **Serial mode (later on 2026-09-24):** the user asked for the backlog to be worked through serially in one session,
 without sub-agents. Landed so far in that mode: 23074db warp rig v2 (DBG_WARP), 9bba3c8 ARAM block units re-read
-from GD-ROM, 4980a40 + 976c93d SS_POOL_HIGH (the r101 call reset and the file-screen reset after it). The sections
-below are updated for those; everything else is as at the hold.
+from GD-ROM, 4980a40 + 976c93d SS_POOL_HIGH (the r101 call reset and the file-screen reset after it), a0c3079
+NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + converter: r101 scenery draws). The
+sections below are updated for those; everything else is as at the hold.
 
 The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
 `re4-dreamcast-d367` skill, then the owning area's `STATE.md` under `/root/probe/d367-agents/<area>/`. Each agent was
@@ -22,7 +23,7 @@ STATE.md as a handover.
 |---|---|
 | m1: r100 disc | **Done and verified** (84fc8ff): title (2026 art) -> picker (text visible) -> intro -> s40 -> radio call (subtitles) -> r100 play (~15 fps Flycast) -> inventory -> typewriter save to VMU. Player copy: `D:\RE4DC-Play\m1-final\{gdi,cue}` (lacks 16 em15 motion keys, so it halts if r101 is ever entered; restage before an r101-capable disc). |
 | r100 -> r101 door | ARAM block-swap fix landed (9bba3c8); swaps in both directions pass in Flycast. |
-| r101 | Loads by direct entry and by warp. The first-visit Hunnigan call and the "Playing Manual 2" file screen after it now work (SS_POOL_HIGH=1, in the M1 recipe; 4980a40, 976c93d). The rest of r101 play is not yet verified. |
+| r101 | Loads by direct entry and by warp. The first-visit Hunnigan call and the "Playing Manual 2" file screen after it now work (SS_POOL_HIGH=1, in the M1 recipe; 4980a40, 976c93d). With W9b (8332a22) the scenery draws, but r101's Original textures overflow VRAM, so uploads thrash and play is slow. Next: Standard r101 textures (std-runtime per-mode selection) and/or the VRAM page fix. |
 | r103 | Plan only (user: "work on this plan but don't implement"). |
 | Performance | r100 8-Ganado fight ~125 hw ms/frame after this session's cuts; target 50 ms (20 fps). |
 
@@ -49,7 +50,12 @@ STATE.md as a handover.
    - r100 entered after s20 halts: em2a's module (id 28) is not in the image.
    - `d354v7-fixtures` lacks the 16 r101 em15 motion keys and `m1stage.sh` uses it, so m1 route discs halt at
      r101 (same gap as the Play disc).
-   - r101 scenery is grey without the STDROOMS asset set.
+   - r101 scenery grey: fixed by W9b (8332a22). The staged r101/r103 packages are R4IM v3, which HEAD's runtime
+     rejected. Now blocked on VRAM: the Original r101 set needs ~250 KB more than the 2.54 MB budget. Either the
+     Standard r101 textures must be selected in Standard mode (std-runtime item 20/21 + per-mode selection, parked),
+     or VRAM_PAGES fix A (~158 KB, parked) must land, or both.
+   - r100 westward walk: FILE_01 failed to reload (heap-4 fragmentation); fixed by NATIVE_PKG_HIGH (a0c3079, M1).
+     Without it, area 1 ran at ~4 fps in Flycast (source fallback); with it, 15 fps.
    - The bell is counted at run time (kills or fight timer), not by flags; a bell preset needs a design decision.
 4. After these: frontier east walk to the r101 door on the canonical recipe, r101 census, then r101 to the bell.
 
@@ -90,6 +96,7 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
 | Door loading | `w10/` | U1+U2+U6: r100 door 10.22 -> 6.29-6.75 s (Flycast emulated), source blocked 1.03 -> 0.07 s; wall-time pad failed as an equaliser; frame-based hold (IO_PROBE test hook in cDvdQueue::Read) built, h0 baseline running | h1/h2/h6 held STRICT vs h0, in-room p99/max, deliver U0/U1/U2/U6 |
 | Logic | `design-logic/` | P1-P4, P3 (GAME_CONCAT_COL), P6 (GAME_SINCOS) and, after the hold, P3b (GAME_MULTVEC_SCHED, 45fd3d9 + README 43c0e75; r6 -0.28, r8 -0.13 hw ms) landed and in LH; FTRV **rejected** (~1.1 hw ms/tick but RNG diverges at tick 634, 3rd kill 3074 vs 3071; parked on branch `dl3-ftrv`); P10, GAME_SCHED rejected. CPU share at 30 fps: 70% at 6, 80% at 8 engaged Ganados | P5 r6 number and land; P8 check; confirm P7 reject; scripts in `tools/dl-scripts/` hard-code an old scratchpad path; DESIGN.md is v1 |
 | Enemies | `actors30/` | actor tiers in PERF (-19.9 hw ms at 8 Ganados); ACT_CAP code landed off; ACTOR_FOG_GATE built (18 cObjScr parts beyond 25 m fog cost 7.8 hw ms quiet r100); worktrees wt8/wt9/wtc kept; build dirs need a candidate.txt or the TEX_RESIDENT fan-out breaks | finish fog-gate gates, then PERF; item 4 Leon <=5 ms |
+| W9b | `warp/` (main session) | landed 8332a22 (v3 runtime + converter + heap-4 gather buffer) | r101 VRAM (see blocker 3) |
 | Rendering | `builder/` | R1 (FRONT_TEXOBJ) landed, not in recipe (-0.45); TA_HASH (2fe6fba) and group-8 PVR header compare (0aa5cc9, 0 bad of 210,800 parts) landed after the hold; canonical-recipe fight fixture does not reach gameplay (VMU_SAVE/VMU_DEBUG_SLOT card screens, NATIVE_MES/SUBSCREEN_OVL title stall), gates ran on `scripts/bmk2.sh` | R2 (8 KiB records 128/160/448, ~-9.5 hw ms expected); W9b plus two parked add-ons |
 | Standard assets, pipeline | `assets/` | Standard r100/r101/r103, disc staging, grove split (8 views), user VRAM trims landed; after the hold 45138ce landed BIN 59 split (r103 max 11.85 -> 9.85 ms, views within 5 ms 157 -> 162/270), BIN 1 shell skip (all-alpha BIN), Blender failures now fatal, and vanish-guard NEVER 1.0e30 (fixes std-runtime's "level error"); `out/standard/{r100,r101,r103}` rebuilt with it; --verify cache (586 MB) kept | tell std-runtime to restage and rerun its r100 fight; W9b add-ons in order: `patches/w9b-lod-cluster-trees.patch` (`635f20a6…`) then `patches/w9b-lod-cluster-bins.patch` (`83c20762…a6ad6`) |
 | Standard assets, runtime | `std-runtime/` | contract s16 implemented in part (impt); item 20 rebase; low/ rejection fallback fixed | item 20 -> item 21 -> per-mode selection -> r100 proof; note ~77 KB PT-list VRAM at init |
@@ -144,6 +151,11 @@ quality mode is known, costing ~77 KB VRAM in Original mode too.
   `0x80000000` at HEAD). Build the index patch from `git show HEAD:<file>` and apply the same edit to the worktree
   file; check the worktree result equals the tested private tree.
 - Sub screen window: see blocker 2; any new allocation that the sub screen loop touches needs SS_POOL_HIGH placement.
+- TA_HASH is sensitive to emulated timing: HEAD plus a dummy per-meshlet loop changes every frame's hash (the
+  async pipeline defers or skips parts by timing), while an unused added function does not. It only compares
+  builds whose hot paths are unchanged; use STRICT + word counts + draw counters otherwise.
+- Heredocs through the Bash tool turn `\n` in C strings into real newlines: write edit scripts with the Write
+  tool and run them from a file.
 - GCC 2.95 vs modern class layout (vptr position) breaks `this+offset` arithmetic; see the skill.
 
 ## Landed during the hold
