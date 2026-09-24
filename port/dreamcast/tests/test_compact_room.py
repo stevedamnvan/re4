@@ -231,6 +231,52 @@ class CompactR101Room(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'reviewed r100/r101'):
                 ui.compact_room(other,textures,root/'r102')
 
+class CompactR103Room(unittest.TestCase):
+    """W8b: r103 has r101's 37-slot owner layout with one EFF (#7) and no model TPL slots;
+    FCV#27-36 (the corpse motions) and every other slot stay byte-identical."""
+    def build(self, extra_eff=False):
+        room,container,image=fixture()
+        ofs=struct.unpack_from('>51I',room,16)
+        r100=[room[a:b] for a,b in zip(ofs,ofs[1:]+(len(room),))]
+        upload=bytearray(r100[8]);struct.pack_into('>H',upload,52,7)
+        bodies=[bytes(32) for _ in range(37)];tags=[b'CNS\0']*37
+        for slot,tag,body in [(4,b'SMD\0',r100[5]),(7,b'EFF\0',bytes(upload)),(9,b'ITM\0',r100[10])]+(
+                [(35,b'EFF\0',r100[8])] if extra_eff else []):
+            bodies[slot]=body;tags[slot]=tag
+        archive=bytearray(320);struct.pack_into('>I',archive,0,37)
+        for i,(tag,body) in enumerate(zip(tags,bodies)):
+            struct.pack_into('>I',archive,16+4*i,len(archive));archive[164+4*i:168+4*i]=tag;archive+=body
+        return archive,container,image
+    def test_r103_contract_keeps_every_other_slot(self):
+        archive,container,image=self.build()
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'r103.das';source.write_bytes(container);textures=root/'tex';textures.mkdir()
+            key,_=ui.image_identity(image)
+            package,_=tpl.build_package([image],[tpl.MaterialBinding('source',0,None)],twiddle=True,pad_to_power_of_two=True,source_intensity_alpha=True)
+            (textures/(key+'.re4tex')).write_bytes(package)
+            with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:bytes(archive))}):
+                report=ui.compact_room(source,textures,root/'out')
+            self.assertEqual(report['contract'],'r103-upload-only-v1')
+            owners={e['context'].split('/tpl')[0] for e in report['selected']}
+            self.assertEqual(owners,{'st1/r103.arc#'+s for s in ('4/TPL0','7','9/item')})
+            small=(root/'out/r103.arc').read_bytes();before=bytearray(archive)
+            ui.mirror.convert_file('st1/r103.arc',before)
+            def body(data,i):
+                count,=struct.unpack_from('<I',data);offsets=struct.unpack_from('<%dI'%count,data,16)
+                end=min([x for x in offsets if x>offsets[i]]+[len(data)])
+                return data[offsets[i]:end]
+            for i in set(range(37))-{4,7,9}: # the corpse FCVs 27-36 included
+                self.assertEqual(body(small,i),body(before,i),i)
+            self.assertEqual(source.read_bytes(),container)
+    def test_r103_rejects_another_layout(self):
+        archive,container,_=self.build(extra_eff=True)
+        archive[164+4*9:168+4*9]=b'CNS\0'   # no ITM in slot 9
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'r103.das';source.write_bytes(container);(root/'tex').mkdir()
+            with mock.patch.dict(sys.modules,{'decode_yz2':types.SimpleNamespace(decode=lambda _:bytes(archive))}):
+                with self.assertRaisesRegex(ValueError,'r103 archive layout differs'):
+                    ui.compact_room(source,root/'tex',root/'out')
+
 class CompactCore(unittest.TestCase):
     def test_selected_family_compacts_without_qualifying_or_mutating_other_families(self):
         room,_,image=fixture()
