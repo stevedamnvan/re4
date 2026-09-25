@@ -1323,13 +1323,70 @@ Frame* prepare_frame(const Re4dcModelPart& p, float near_distance, float far_dis
 }
 
 // Combined matrix of palette entry i (skinned): screen x [R_i*q | t_i].
+// ACTOR_SKIN_FTRV (render only): the four columns go through FTRV with the screen matrix in
+// XMTRX instead of the scalar mul4. The only consumer loads the result into XMTRX right after
+// (pass_positions), so XMTRX is free here.
+#ifndef RE4DC_ACTOR_SKIN_FTRV
+#define RE4DC_ACTOR_SKIN_FTRV 0
+#endif
+#if RE4DC_ACTOR_SKIN_FTRV == 2
+// Check build: the scalar matrix is computed too and the FTRV one compared with it.
+extern "C" void re4dc_log(const char* fmt, ...);
+float skin_chk_px = 0.0f;
+unsigned skin_chk_n = 0, skin_chk_pts = 0, skin_chk_q = 0, skin_chk_1 = 0;
+#endif
 void skin_position_matrix(const Frame& f, unsigned i, float out[16]) {
     const float* P = f.palette + i * 12;  // reordered ROMtx: columns R0,R1,R2,t
+#if RE4DC_ACTOR_SKIN_FTRV && defined(__sh__) && !defined(ACTOR_TEST_XMTRX)
+    const float q = f.q;
+    load_xmtrx(f.screen);
+    for (unsigned c = 0; c < 3; ++c) {
+        float x = P[c * 3] * q, y = P[c * 3 + 1] * q, z = P[c * 3 + 2] * q, w = 0.0f;
+        mat_trans_nodiv(x, y, z, w);
+        out[c * 4] = x; out[c * 4 + 1] = y; out[c * 4 + 2] = z; out[c * 4 + 3] = w;
+    }
+    float x = P[9], y = P[10], z = P[11], w = 1.0f;
+    mat_trans_nodiv(x, y, z, w);
+    out[12] = x; out[13] = y; out[14] = z; out[15] = w;
+#if RE4DC_ACTOR_SKIN_FTRV == 2
+    {
+        // Eight corners 50 units around the bone origin (raw = model / q for columns 0-2), projected
+        // through both matrices; only points past the near plane and on screen count.
+        float ref[16];
+        for (unsigned c = 0; c < 4; ++c) {
+            const float v[4] = {P[c * 3] * (c < 3 ? f.q : 1.0f), P[c * 3 + 1] * (c < 3 ? f.q : 1.0f),
+                                P[c * 3 + 2] * (c < 3 ? f.q : 1.0f), c < 3 ? 0.0f : 1.0f};
+            mul4(f.screen, v, ref + c * 4);
+        }
+        const float h = 50.0f / f.q;
+        for (unsigned k = 0; k < 8; ++k) {
+            const float v[4] = {(k & 1) ? h : -h, (k & 2) ? h : -h, (k & 4) ? h : -h, 1.0f};
+            float a4[4], b4[4];
+            mul4(out, v, a4);
+            mul4(ref, v, b4);
+            if (b4[3] <= f.near_distance || a4[3] <= f.near_distance) continue;
+            const float bx = b4[0] / b4[3], by = b4[1] / b4[3];
+            if (__builtin_fabsf(bx) > 1400.0f || __builtin_fabsf(by) > 1100.0f) continue;
+            float d = __builtin_fabsf(a4[0] / a4[3] - bx);
+            const float dy = __builtin_fabsf(a4[1] / a4[3] - by);
+            if (dy > d) d = dy;
+            ++skin_chk_pts;
+            if (d > skin_chk_px) skin_chk_px = d;
+            if (d > 0.25f) ++skin_chk_q;
+            if (d > 1.0f) ++skin_chk_1;
+        }
+        if ((++skin_chk_n & 0xFFFF) == 0)
+            re4dc_log("SKINFTRV builds=%u points=%u max_px=%.4f over_0.25px=%u over_1px=%u\n", skin_chk_n,
+                      skin_chk_pts, double(skin_chk_px), skin_chk_q, skin_chk_1);
+    }
+#endif
+#else
     for (unsigned c = 0; c < 4; ++c) {
         const float v[4] = {P[c * 3] * (c < 3 ? f.q : 1.0f), P[c * 3 + 1] * (c < 3 ? f.q : 1.0f),
                             P[c * 3 + 2] * (c < 3 ? f.q : 1.0f), c < 3 ? 0.0f : 1.0f};
         mul4(f.screen, v, out + c * 4);
     }
+#endif
 }
 const float* position_matrix(Frame& f, unsigned i, float* fallback) {
     if (i >= f.palette_entries) i = 0;
