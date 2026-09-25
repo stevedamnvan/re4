@@ -37,6 +37,9 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   check build (every reuse compared with a fresh collection, "ATC" lines).
 - The workAt inline (3eaa868; exact, room-independent; not in LH yet): the coarse-square arms add
   `GAME_WORKAT_INLINE=1` (needs OBJECT_DEMAND=1 ENEMY_DEMAND=1).
+- The line queries' leaf kernel (cf46edc; exact, room-independent; not in LH yet): the coarse-square arms add
+  `GAME_LINE_LEAF=1`; the square's order file (link-order/r101-square-c3-8k.ld) places the kernel
+  (platform/lnk_sh4.S) after At_poly_line_ck.
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 

@@ -298,7 +298,7 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
-### Current order and status (updated 2026-09-25, after the workAt inline)
+### Current order and status (updated 2026-09-25, after the line queries' leaf kernel)
 
 **The order we follow now (user, 2026-09-25):**
 1. **Land the coarse renderer with frame pacing.** Done: **f4da5fd** (patch land2-pacing-coarse.patch,
@@ -327,9 +327,10 @@ The part-world pass takes two paths:
    with item 2: code placement (LINK_ORDER, 801d72d; exact): **G_q 33.39** (sq72; the same code unplaced
    34.64), gap 8.42 to 24.97 (section "Code placement" below). Collision traversal, first step: the em-em
    candidate cache (GAME_ATCHK_CACHE, aeefd26; exact): G_q 32.23 (sq85), gap 7.26 to 24.97 (section
-   "Collision traversal" below). Then the workAt inline (GAME_WORKAT_INLINE, 3eaa868; exact): **G_q 31.75**
-   (sq91), gap **6.78**. Next: the scenery line queries (4.35 ms: a leaf kernel is in test, then the block
-   walk), then visual simulation.
+   "Collision traversal" below). Then the workAt inline (GAME_WORKAT_INLINE, 3eaa868; exact): G_q 31.75
+   (sq91), gap 6.78. Then the line queries' leaf kernel (GAME_LINE_LEAF, cf46edc; exact): **G_q 31.31** (sq94),
+   gap **6.34**. Next: the line queries' block walk (a kernel in test), the sphere queries, then visual
+   simulation.
 
 **Where each step of the rethink stands:**
 
@@ -337,7 +338,7 @@ The part-world pass takes two paths:
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16) and the workAt inline (3eaa868, -0.48), all exact: G_q 31.75; gap 6.78 to 24.97; the line queries next |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48) and the line queries' leaf kernel (cf46edc, -0.44), all exact: G_q 31.31; gap 6.34 to 24.97; the block walk next |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); nothing else started |
 
@@ -548,8 +549,33 @@ count as sq72):
   demand-backed cObj / cEm managers' workAt reads the slot table inline (include/cManager.h) when no pool
   is frozen for the sub screen (a count parts_bridge.cpp keeps as it freezes and thaws), the array is the
   room's own and the index is in range; every other case takes the bridge as before.
-- Next in collision traversal: the scenery line queries' leaf loop (a kernel for At_poly_line_ck's first
-  four tests is in test), then the block walk (blkPolyLineCk and lineOverlap, 1.36 ms).
+- Arms after the workAt inline (never draw, paired with sq91 unless noted):
+
+  | arm | change | work | vs control | gameplay |
+  |---|---|---:|---:|---|
+  | sq92 | GAME_LINE_LEAF=1 with a lookahead prefetch, before the workAt inline | 32.07 | -0.16 vs sq85 | tr75 (=2) 0 disagreements over 14.9M verdicts; tr76 STRICT vs tr56 and tr42, identical |
+  | sq93 | sq92's kernel + GAME_WORKAT_INLINE=1 | 31.71 | -0.04 | - |
+  | **sq94** | **GAME_LINE_LEAF=1, no lookahead** | **31.31** | **-0.44** | tr78 (=2) 0 disagreements over 15.2M verdicts; tr77 STRICT vs tr56 and tr42, every decision identical |
+  | sq95 | sq94 + GAME_LINE_WALK=1 (the block walk in a kernel, rev 1) | 31.20 | -0.11 vs sq94 | tr79 (=2) 0 mismatches over 5.33M walks; tr80 STRICT vs tr56 and tr42, every decision identical |
+
+- **GAME_LINE_LEAF (landed cf46edc, default off).** The scenery line queries' leaf loop (blkPolyLineCkCore) ran
+  At_poly_line_ck on each untested polygon of an overlapped leaf: 1918 tests a tick at 184 instructions
+  each, plus ~75 per index in the loop (2.52 ms). platform/lnk_sh4.S runs the loop's polyBit dedup and
+  At_poly_line_ck's first four tests (the plane crossing, the three edge sides) with the same float
+  operations on the same operands; the 4.2% that pass all four take At_poly_line_ck and the hit compare in
+  index order, so every result, distance compare and normal is the loop's. The leaf rows go from 2.51 to
+  2.01 ms (kernel 1.57), 227k fewer instructions a tick. The square's order file places the kernel after
+  At_poly_line_ck.
+- A lookahead prefetch of the next polygons' vertex and normal lines lost: +42k instructions for -0.08
+  D-miss (sq93).
+- The original's tests can't be tightened exactly: coplanar segments "hit" through rounding (a horizontal
+  segment at floor height gives dp0 = dp1 = 0 and a NaN t, which passes), so only the per-test cost can go.
+- The block walk in a kernel (GAME_LINE_WALK rev 1, sq95: -0.11) missed on each next block without
+  blkPolyLineCk's prefetch (D-miss 0.13 -> 0.38 ms). Rev 3 prefetches the next block, and hitCheck2 walks
+  each piece first, so a piece without an overlapped leaf (~70%) skips its polyBit clear and hit transform:
+  in test (sq96; tr81 =2, tr82 decisions).
+- Next in collision traversal: the block walk (rev 3), then the sphere queries (~1.0 ms, the same walk
+  technique), then visual simulation.
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
@@ -1128,3 +1154,8 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq90 | sq89 + GAME_WORKAT_INLINE=1 | 31.58 (-0.65) | - | - | measured without OH1 next |
 | 09-25 | sq91 | sq85 + GAME_WORKAT_INLINE=1 | 31.75 (-0.48) | - | tr74 STRICT vs tr56 and tr42, every decision identical | landed 3eaa868: **G_q 31.75** |
 | 09-25 | land5 | GAME_WORKAT_INLINE landed (3eaa868) | - | - | knob-off identity (default, canonical); tr74 carry-over 444 / 453 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | sq92 | sq85 + GAME_LINE_LEAF=1, lookahead prefetch | 32.07 (-0.16) | - | tr75 (=2) 0 disagreements over 14.9M verdicts; tr76 STRICT vs tr56 and tr42, identical | measured on the workAt inline next |
+| 09-25 | sq93 | sq91 + GAME_LINE_LEAF=1, lookahead prefetch | 31.71 (-0.04) | - | - | the lookahead lost: +42k instructions for -0.08 D-miss |
+| 09-25 | sq94 | sq91 + GAME_LINE_LEAF=1, no lookahead | 31.31 (-0.44) | - | tr78 (=2) 0 disagreements over 15.2M verdicts; tr77 STRICT vs tr56 and tr42, every decision identical | landed cf46edc: **G_q 31.31** |
+| 09-25 | land6 | GAME_LINE_LEAF landed (cf46edc) | - | - | knob-off identity (default, canonical); tr77 carry-over 445 / 454 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | sq95 | sq94 + GAME_LINE_WALK=1 (block walk kernel, rev 1) | 31.20 (-0.11) | - | tr79 (=2) 0 mismatches over 5.33M walks; tr80 STRICT vs tr56 and tr42, every decision identical | rev 3 (next-block prefetch, piece-first walk) in test |
