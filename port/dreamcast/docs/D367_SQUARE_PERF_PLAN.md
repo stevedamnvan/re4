@@ -23,6 +23,177 @@ better solution appears; then record the switch and why in the ledger.** Every s
   trace STRICT. FTRV/FIPR maths in logic is allowed as a measured option (deterministic, last-bit FP
   policy, collision checked separately). Parking far, unseen Ganados (ACT_CAP) is approved.
 
+## 30 fps rethink (user, 2026-09-25): the coarse complete square first
+
+Source: `C:\Game Dev\Emulators\re4-research\RE4_DC_30FPS_RETHINK_2026-09-25.md`. The SH4ZAM review
+(`re4-research\sh4zam-audit-20260925\AUDIT.md`) gives techniques for step 2 and math candidates for step 3.
+
+The aim is to preserve RE4 gameplay; visuals and engine may change a lot. The per-tick budget is:
+- gameplay G <= 24 ms;
+- render R <= 6 ms;
+- margin 3.33 ms.
+
+The G/R split may move between 22/8 and 28/2.
+
+Order:
+1. Qualify the deeper no-draw boundary with a side-effect audit, and pair it with drawing on the same
+   stack. Prepare the authorized calibration disc.
+2. The coarse complete square, R <= 6:
+   - the real game, with every enemy, event, the HUD and audio;
+   - crude articulated actors on the gameplay transforms;
+   - scenery aligned to the unchanged collision;
+   - baked light, blob shadows, and simple effects that keep combat feedback;
+   - the renderer reads compact gameplay records.
+3. Close G <= 24: pose evaluator, collision index, effect behaviour and RNG separated from display.
+4. 30 fps on stock hardware.
+5. Restore appearance.
+
+**Accounting.** Work = model total minus the replayed waits. Three kinds are subtracted:
+- re4dc_pace_end;
+- re4dc_vi_retrace_count;
+- `main`'s self time. That is the game's own vsync spin (`while vsync_cnt < system_vcnt`), inlined in
+  main. The model replays it at Flycast's pace. main's real self time is 0.01 ms in every arm; the rest
+  is the spin: 0.12 in sq47, 1.10 in sq48.
+
+`scripts/gwork.py` does this subtraction.
+
+### Step 1: the qualified no-draw boundary, PACE_TRANS_SKIP=4063 (2026-09-25)
+
+Side-effect audit of the presentation stages that a dropped image skips, i.e. what they write that
+gameplay reads:
+- **FilterTrans.** Filter08Trans calls fRand1_1 (three Rnd() each) twice per frame while
+  Status_flg[3] 0x08000000 is set (scope / slow mode). That touches the shared RNG, so FilterTrans
+  always runs (bit 32 is left out of the mask).
+- **Effects.** Every est-spawned effect takes `Rand_seed = Rnd() | Rnd() << 8 | Rnd() << 16`
+  (est.cpp). Espgen01's trans runs a HideCheck; Espgen45's trans clears Status_flg[1] 0x20.
+  - With bit 2048, a dropped image's EspTrans / EspgenTrans run logic-only: esp ids 09 / 0E / 45 / 47
+    still queue their draws, Espgen01's trans runs, and the Espgen45 clear happens.
+  - Render() still runs that image's OTs when anything was queued.
+- **GXPeekZ** is a stub (0xFFFFFF) on the DC, so HideChecks are pure camera / geometry functions here.
+- **Presentation only:** CtrlMgr.trans, ShadowTrans, ClothDraw, TransTexRenderMgr, IdSys.move/trans,
+  DrawOTag(MainOt[4]), cMes.Move/Trans and Render().
+
+Traces (r101 bell fight warp, 420 s):
+- **tr26** (mask 2047) failed on the render-only Status_flg bits. These are now masked in the trace
+  with LOGIC_TRACE_MASK_RENDER.
+- **tr28/tr29 and tr30/tr31** were STRICT, with one extra line query per frame in about 480 frames:
+  the sound system's own sndWallCheck / sndVolCtrlAtCheck, tagged "sq" since. The first tag hit the
+  stub trap.
+- **tr32/tr33** (4063) were STRICT over 4403 frames with every decision identical: em-em 2.64M
+  results, 319k line queries, 62.9k area checks, 182k damage tests, and the effect behaviour hashes
+  ep/eg. Only the sound queries differ, as they do between two controls.
+
+Cost: sq43 32.70 hw ms/tick of work against the never-draw control sq45 at 37.15 (-4.45). The
+unqualified 2047 mask was 32.58. **G_q = 32.70** is the retained work the coarse square builds on.
+
+### Step 2: the coarse complete square, COARSE=1 (2026-09-25)
+
+The code is `port/dreamcast/game/coarse.cpp`, plus `re4dc_coarse_begin/end` in native_ui.cpp and the
+gating in trans.cpp. In in-room play (the pacing context), every tick runs its presentation stages in
+the qualified mode. A drawn coarse tick keeps TexRender (the HUD's render textures). Render() runs
+OTs 0 / TEX_RENDER1, then draws the image from gameplay records instead of the world OTs:
+- **World:** every live collision piece (SatMgr) through its XZ block tree (distance, behind, side
+  planes), each triangle once (bitset).
+  - Front faces only.
+  - Invisible walls are skipped. Collision walls are one-sided and so are the game's line tests, so
+    the camera's line (target -> lens) ignores a wall it leaves through the back. One-way barriers can
+    therefore sit in front of the lens. r101 piece 0 polygon 690 (attr 40000000, no special bit) sat
+    0.5 m in front and covered the view in v0.1..v0.3.
+  - Not drawn: back faces, walls with the player behind their plane, and camera see-through
+    attributes (the camera's scenery test: attr 0x800000 | 0x1C2810 | 0x400).
+  - Flat lit by the world normal in the village's tones, near-clipped at 40 mm, fog table with the
+    source's far (FOG_FAR).
+- **Actors:** the player, the partner and every drawn cEm in view, as camera-facing ribbons along the
+  parent -> part segments of the gameplay skeleton.
+  - Limb half-width 38-60 mm, at most 0.3 × the bone.
+  - Bones under 60 mm (face, fingers) are skipped.
+  - A blob under each actor.
+- **Effects:** a billboard per live world-space effect (record position, size, colour). Screen
+  sprites are left out, and so are faint ones (alpha < 64) and any at the lens (< 300 mm); the
+  radius is capped at 32 px.
+- **Output:** one untextured OP header, store-queue vertices (8 words), FSRRA reciprocals.
+- **OTs 9-18 stay the source's:** effects that carry state, HUD, messages, filters, letterbox.
+
+The HUD gauge is a translucent lens over the view. With v0.1's light palette its unlit LCD segments
+showed ("10" read as "88"); the village tones fix it. The port's ClearZbuf is a GX sink, so the HUD's
+depth-tested parts also meet the coarse depth.
+
+Per image (v0.4, sq48, room frames 1000-1119):
+- 5 pieces, 116 blocks, 254 polygons drawn (229 back faces, 24 invisible walls);
+- 20 actors, 263 segments, 55 effects;
+- 932 triangles, 2118 vertices (max 2191);
+- TA input 68 KB (peak 72 KB), against 632 KB (peak 831 KB) for the source;
+- texture VRAM 1.52 MB used against 1.69 MB;
+- heap 4 work backing unchanged (504 KB peak).
+
+| arm | what | work hw ms/tick | R per image |
+|---|---|---:|---:|
+| sq45 | never draw, full presentation stages | 37.15 | - |
+| sq43 | never draw, qualified mask (G_q) | 32.70 | - |
+| sq46 | every tick drawn, source renderer | 102.13 | 64.98 (vs sq45) |
+| sq44 | every tick drawn, COARSE v0 (prisms) | 41.36 | 8.66 |
+| sq47 | every tick drawn, COARSE v0.1 (ribbons, fast emit) | 38.71 | 6.01 |
+| sq48 | every tick drawn, COARSE v0.4 (front faces, invisible walls, palette) | 37.66 | **4.96** |
+
+R v0.4 breaks down into two parts.
+
+The coarse pass, about 2.66 ms:
+
+| item | ms |
+|---|---:|
+| world blocks | 1.08 |
+| actors | 0.88 |
+| setup + effects | 0.43 |
+| emit | 0.27 |
+
+Source work still invoked on a drawn tick, about 2.1 ms:
+
+| item | ms |
+|---|---:|
+| IDSystem::unitTrans | 0.48 |
+| HUD id quads (81 PSMTXConcat calls per tick from re4dc_draw_id_quad, draw_id_quad, resolve, ui_draw_quad, ui_submit) | ~0.6 |
+| model asset preparation | 0.18 |
+| ExecOt | 0.13 |
+| OSCheckHeap | 0.12 |
+| GXProject | 0.09 |
+| small rows | ~0.15 |
+
+Also on a drawn tick, partsWorldCalc costs +0.32 ms: the same 718 calls per tick as in sq43, slower
+because the image's work displaces its data in the cache.
+
+Look: the village tones, Ganados as stick figures, and the HUD readable. Leon's jacket cloth bones
+draw as a curtain of slabs; that is appearance work (step 5).
+
+Gameplay (tr40, v0.4 with every tick drawn, GAME_DECISION_TRACE=1) against the control tr32: STRICT
+over 4403 frames, every decision identical:
+- em-em 2,638,643;
+- line queries 319,083;
+- area checks 62,885;
+- damage tests 182,091;
+- ep / eg effect behaviour.
+
+Position drift is 0. Only the sound system's own queries differ (415 frames), as between two controls.
+
+**Paced timing** (hw model, 30 ticks/s: 30·G + F·R <= 1000):
+- every tick drawn: 37.66 ms per tick, i.e. 26.6 fps at 88.5% speed;
+- Smooth (15 fps floor): 2 × 32.70 + 4.96 = 70.4 ms per image, i.e. 14.2 fps at 94.7% speed;
+- real speed: 981 of 1000 ms/s go to logic, leaving F <= 3.8 images/s.
+
+**Fit / gap:** R fits (4.96 <= 6). 30 fps needs G + R <= 33.33 - 3.33, i.e. **G <= 25.0 against
+32.70: a gap of 7.7 ms.** Step 3 (G) is now the critical path.
+
+**Code (parked).** coarse.cpp, PACE_TRANS_SKIP and the trace hashes stack on the unlanded frame-pacing
+stack (pace.cpp / pace.mk, the main.cpp loop), so they land with pacing: the user's standing priority
+"rebase, gates, land". The snapshot of the whole private tree against 4594c51 is
+`/root/probe/d367-agents/warp/patches/square-rethink-snapshot-4594c51.patch`:
+- sha256 95cd58a5589ac39c76ef2b414ebf7059c36ecb5bbba45849c0fbed8581c09a6e;
+- 31 files;
+- `git apply --cached --check` passes at 4594c51;
+- tree5 private commit b7a1382.
+
+It also carries tree5's other private knobs (GAME_SKEL_AUDIT, GAME_IK_PASS, POOL_PEAK_LOG). The
+pacing landing extracts from it.
+
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
 | arm | hw ms | render-side | actors | logic/tick | scenery | ui | 2L+R |
@@ -550,3 +721,13 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq39 | sq35 + yaw-only memo, 256 one-line entries | 37.16 (-0.21; memo rows -0.54) | - | tr24 (=2): 3.21M calls, 80.5% hits, 0 mismatches, STRICT vs tr19 4381 frames | committed 7d0401d, in LH. RotVector+low_RotMatrix+trig 1.62 -> 1.08 |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
+| 09-25 | sq40 | never-draw control rebuilt (sq35 stack + trace fixes) | 37.16 | - | - | control for PACE_TRANS_SKIP |
+| 09-25 | tr26 | PACE_TRANS_SKIP=2047 trace | - | - | failed on the render-only Status_flg bits | masked in the trace (LOGIC_TRACE_MASK_RENDER) |
+| 09-25 | sq41 | sq40 + PACE_TRANS_SKIP=2047 (unaudited mask) | 32.58 | - | tr28-tr31 STRICT (one extra sound line query in ~480 frames) | superseded by the audited mask 4063 |
+| 09-25 | sq42 | sq40 + GAME_IK_PASS=1 (IK-only first part pass) | +0.27 | - | tr27 (=2) STRICT | dropped |
+| 09-25 | sq43 | never draw + PACE_TRANS_SKIP=4063 (audited: FilterTrans kept, bit 2048 logic-only effects) | 32.70 work | - | tr32/tr33 STRICT 4403 frames, every decision identical | G_q of the 30 fps rethink |
+| 09-25 | sq45 | never-draw control paired with sq43 | 37.15 work | - | - | control |
+| 09-25 | sq46 | every tick drawn, source renderer (sq43 stack) | 102.13 (R 64.98 vs sq45) | - | - | drawing baseline |
+| 09-25 | sq44 | every tick drawn, COARSE v0 (prisms) | 41.36 (R 8.66) | - | tr34 STRICT vs tr32, decisions identical | superseded |
+| 09-25 | sq47 | COARSE v0.1 (ribbons, FSRRA emit) | 38.71 (R 6.01) | - | - | superseded: an invisible wall covered the view (tr35-tr39 probes) |
+| 09-25 | sq48 | COARSE v0.4 (front faces, invisible walls skipped, village tones, source fog far) | 37.66 (R 4.96) | - | tr40 STRICT vs tr32 4403 frames, every decision identical | the coarse candidate; code parked on the pacing patch |

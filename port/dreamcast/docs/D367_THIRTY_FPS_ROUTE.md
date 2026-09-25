@@ -205,6 +205,21 @@ converted Standard room archive with per-part residency (also the r100 ambush me
 scenery with better textures, nearer fog and a backdrop -> square PVS -> queued 64 KiB reads -> selective
 -O3/LTO; Fast pacing (PACE_CAP=2) is the play default meanwhile. Other perf work yields to it.
 
+**30 fps rethink (user, 2026-09-25): the coarse complete square first**
+(`re4-research\RE4_DC_30FPS_RETHINK_2026-09-25.md`; budget G <= 24 + R <= 6 + 3.33 margin per tick).
+Status, same stack, hw ms:
+- Step 1 is qualified: PACE_TRANS_SKIP=4063, G_q = 32.70, STRICT.
+- Step 2: the coarse square COARSE=1 v0.4 (world from collision, ribbon actors, effect markers, source
+  HUD) draws in R = 4.96 per image, against 64.98 for the source renderer. It is STRICT with every
+  decision identical (tr40), at 68 KB TA per image.
+- Fit / gap: R fits. 30 fps needs G <= 25.0, against 32.70, so step 3 (gameplay G) is the critical path.
+- The calibration disc c8 is in `D:\RE4DC-HWCAL` with the model's predictions (hwcal PREDICTIONS.md).
+  It awaits the user's console run.
+- The code (coarse.cpp, PACE_TRANS_SKIP) is parked: it stacks on the unlanded pacing patch and lands
+  with it. Snapshot: warp/patches/square-rethink-snapshot-4594c51.patch (sha256 95cd58a5...).
+
+Details and the ledger are in [D367_SQUARE_PERF_PLAN.md](D367_SQUARE_PERF_PLAN.md).
+
 Parallel tracks (off the frame path; needed for the console gate):
 - r101/r103 bring-up (frontier W4, W9 packages);
 - audio;
