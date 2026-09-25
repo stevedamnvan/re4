@@ -134,6 +134,20 @@ endif
 GAME_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
 PLATFORM_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
 endif
+# GAME_WORKAT_INLINE=1 (the 30 fps rethink; port overhead, exact; needs OBJECT_DEMAND=1 ENEMY_DEMAND=1):
+#                    the demand-backed cObj / cEm managers' workAt (parts_bridge.cpp: two out-of-line
+#                    calls per lookup, ~3,700 lookups per square tick from EfmDelete, GetEmPtrFromList,
+#                    em10SomebodyDamageNowCk and the manager scans) inline for the common case: no pool
+#                    frozen for the sub screen, the room's own array, an index in range: the slot table.
+#                    Every other case takes the bridge as before. A header knob (include/cManager.h).
+GAME_WORKAT_INLINE ?= 0
+ifneq ($(GAME_WORKAT_INLINE),0)
+ifneq ($(OBJECT_DEMAND)$(ENEMY_DEMAND),11)
+$(error GAME_WORKAT_INLINE needs OBJECT_DEMAND=1 ENEMY_DEMAND=1)
+endif
+GAME_CPPFLAGS += -DRE4DC_WORKAT_INLINE=$(GAME_WORKAT_INLINE)
+PLATFORM_CPPFLAGS += -DRE4DC_WORKAT_INLINE=$(GAME_WORKAT_INLINE)
+endif
 # GAME_ESP_OWNER=1 (square plan: active effects): live esp slots counted per owner (info.Core_pEm)
 #                    bucket, so EspDelete with an owner returns at once when that owner has no live
 #                    slot (include/esp.h). A header knob (ESP_INFO_SET): every game object gets it.

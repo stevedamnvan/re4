@@ -37,6 +37,11 @@ template<class T> constexpr bool retain_slots=false;
 template<> constexpr bool retain_slots<cObj> = true;
 template<> constexpr bool retain_slots<cEm> = true;
 template<class T> bool sparse(cManager<T>* m) { return demand<T> && !m->pArrayPush; }
+#if defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+// GAME_WORKAT_INLINE: include/cManager.h reads the slot table of a sparse cObj / cEm pool itself.
+static_assert(demand<cObj> && demand<cEm>, "GAME_WORKAT_INLINE needs OBJECT_DEMAND=1 ENEMY_DEMAND=1");
+static_assert(sizeof(Pool<cObj>) == 64 && sizeof(Pool<cEm>) == 64, "cManager.h: the slot table at +64");
+#endif
 template<class T> Pool<T>* pool(cManager<T>* m) { return (Pool<T>*)m->pArray; }
 template<class T> void report(Pool<T>* p, const char* why) {
     re4dc_log("work backing: %s size=%u capacity=%u resident=%u peak=%u chunks=%u reclaimed=%u failures=%u heap=%d\n",
@@ -54,6 +59,11 @@ template<class T> void discard(Pool<T>* p, Chunk<T>** link) {
 }
 }
 
+#if defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+extern "C" {
+u32 re4dc_frozen_pools;   // pools frozen while the sub screen is open (cManager.h's inline workAt)
+}
+#endif
 #if RE4DC_SUBSCREEN
 // Sub screen swap (sscrn_bridge.cpp). While the sub screen is open its data occupies the game's
 // 3 MiB window at pG->pStFnt, where the room allocated some of these pools (the cEm pool in heap
@@ -74,6 +84,11 @@ template<class T> unsigned Registry<T>::nmgr;
 template<class T> Frozen<T> Registry<T>::fz[8];
 template<class T> unsigned Registry<T>::nfz;
 void* frozen_dummy;
+#if defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+#define RE4DC_FROZEN_ADD(n) (re4dc_frozen_pools += (n))
+#else
+#define RE4DC_FROZEN_ADD(n) ((void) 0)
+#endif
 template<class T> void register_pool(cManager<T>* m) {
     for(unsigned i=0;i<Registry<T>::nmgr;++i) if(Registry<T>::mgr[i]==m) return;
     if(Registry<T>::nmgr<8) Registry<T>::mgr[Registry<T>::nmgr++]=m;
@@ -95,6 +110,7 @@ template<class T> unsigned freeze_type(u32 lo,u32 hi) {
         if(!copy) { re4dc_missing("sub screen pool freeze allocation"); return n; }
         memcpy(copy,p->slots(),count*sizeof(T*));
         Registry<T>::fz[Registry<T>::nfz++]={m,m->pArray,count,copy,m->nArray};
+        RE4DC_FROZEN_ADD(1);
         re4dc_log("work backing: size=%u pool %p frozen while the sub screen is open (%u slots)\n",
             (unsigned)sizeof(T),(void*)m->pArray,(unsigned)count);
         ++n;
@@ -113,6 +129,7 @@ template<class T> void thaw_type() {
         }
         free(f.slots);
     }
+    RE4DC_FROZEN_ADD(0u - Registry<T>::nfz);
     Registry<T>::nfz=0;
 }
 #else
@@ -226,7 +243,11 @@ template<> cModelInfo* cManager<cModelInfo>::getPrevWork(cModelInfo* p){return p
 // Scans use workAt without committing; ObjMgrWork commits stable indexed slots.
 template<> int cManager<cObj>::arrayAlloc(u32 n){return array_alloc(this,n);}
 template<> int cManager<cObj>::arrayFree(){return array_free(this);}
+#if defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+cObj* re4dc_work_at_obj(cManager<cObj>* m, u32 n){return work_at(m,n);}
+#else
 template<> cObj* cManager<cObj>::workAt(u32 n){return work_at(this,n);}
+#endif
 template<> bool cManager<cObj>::prepareWork(u32 i,u32 n){
     if(i>=nArray || n!=1)return false;
     const u32 first=i&~7U, count=nArray-first<8?nArray-first:8;
@@ -238,7 +259,11 @@ template<> cObj* cManager<cObj>::getPrevWork(cObj* p){return previous_work(this,
 // the room owner tears down; dead slots and deferred deletion are not evictions.
 template<> int cManager<cEm>::arrayAlloc(u32 n){return array_alloc(this,n);}
 template<> int cManager<cEm>::arrayFree(){return array_free(this);}
+#if defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+cEm* re4dc_work_at_em(cManager<cEm>* m, u32 n){return work_at(m,n);}
+#else
 template<> cEm* cManager<cEm>::workAt(u32 n){return work_at(this,n);}
+#endif
 template<> bool cManager<cEm>::prepareWork(u32 i,u32 n){
     if(i>=nArray || n!=1)return false;
     const u32 first=i&~1U, count=nArray-first<2?nArray-first:2;

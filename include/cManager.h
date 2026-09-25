@@ -189,13 +189,40 @@ template<> cModelInfo* cManager<cModelInfo>::getPrevWork(cModelInfo* p);
 class cObj;
 template<> int cManager<cObj>::arrayAlloc(u32 n);
 template<> int cManager<cObj>::arrayFree();
+#if defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+// GAME_WORKAT_INLINE (game30.mk; port overhead, exact): the demand-backed managers' lookup inline
+// when no pool is frozen for the sub screen (re4dc_frozen_pools), the array is the room's own (no
+// debug push) and the index is in range: the slot table after the 64-byte pool header, as
+// parts_bridge.cpp work_at reads it. Every other case takes the bridge (re4dc_work_at_*).
+extern "C" u32 re4dc_frozen_pools;
+cObj* re4dc_work_at_obj(cManager<cObj>* m, u32 no);
+template<> inline cObj* cManager<cObj>::workAt(u32 no)
+{
+    if (__builtin_expect(!re4dc_frozen_pools && !pArrayPush && no < nArray && pArray != 0, 1)) {
+        return ((cObj**) ((u8*) pArray + 64))[no];
+    }
+    return re4dc_work_at_obj(this, no);
+}
+#else
 template<> cObj* cManager<cObj>::workAt(u32 no);
+#endif
 template<> bool cManager<cObj>::prepareWork(u32 no, u32 count);
 template<> cObj* cManager<cObj>::getPrevWork(cObj* p);
 class cEm;
 template<> int cManager<cEm>::arrayAlloc(u32 n);
 template<> int cManager<cEm>::arrayFree();
+#if defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+cEm* re4dc_work_at_em(cManager<cEm>* m, u32 no);
+template<> inline cEm* cManager<cEm>::workAt(u32 no)
+{
+    if (__builtin_expect(!re4dc_frozen_pools && !pArrayPush && no < nArray && pArray != 0, 1)) {
+        return ((cEm**) ((u8*) pArray + 64))[no];
+    }
+    return re4dc_work_at_em(this, no);
+}
+#else
 template<> cEm* cManager<cEm>::workAt(u32 no);
+#endif
 template<> bool cManager<cEm>::prepareWork(u32 no, u32 count);
 template<> cEm* cManager<cEm>::getPrevWork(cEm* p);
 #endif
