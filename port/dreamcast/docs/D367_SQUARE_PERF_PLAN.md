@@ -333,7 +333,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    matches the measured tree5 build in 445 of 453 objects (strip-debug); the other 8 are items kept out
    (below) and the debug-slot build stamp. So tree5's gates hold for the landed code: the forced-skip and
    qualified-mask STRICT arms, tr42 STRICT vs tr41, sq50 / sq52. Still private (tree5): the skeleton-step
-   kernels (GAME_PWC_KERNEL / GAME_PMC_KERNEL / GAME_HERMITE_FAST), COARSE_HOUSE, the per-part
+   kernels (GAME_PWC_KERNEL / GAME_PMC_KERNEL / GAME_HERMITE_FAST; landed later, ddea9bf), COARSE_HOUSE, the per-part
    model-diagnostic latch (unconditional, so not in a knob-off landing: its own patch), SS_UI_ORDER, MOTION_RESERVE / MOTION_USAGE_LOG,
    HEAP_CENSUS / HEAP_REPLACE_LOG / POOL_PEAK_LOG, GAME_SKEL_AUDIT, GAME_IK_PASS. PACE_CATCHUP is not in
    the canonical recipe yet (play discs pass `PACE_CATCHUP=2 PACE_MODE=fast PACE_CAP=2`); the pacing
@@ -362,10 +362,10 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    (-1.63 vs sq97; section "Collision stack" below). The two lanes' cuts are in different functions; if they
    add, G ~27.9 (gap ~2.9), not measured on one build yet.
    **Measurement base:** the lanes measure on warp/tree5, which carries the skeleton kernels (GAME_PWC_KERNEL=3,
-   GAME_PMC_KERNEL=1, GAME_HERMITE_FAST=1; step "skeleton", 37.52 -> 34.40) that were never landed. So every
-   G_q above includes them, and the landed tree can't reproduce it until they land. Next for the main
-   session: land the kernels, then one combined never-draw control on the landed stack (every landed G knob +
-   the kernels + the order file), the lanes' new reference.
+   GAME_PMC_KERNEL=1, GAME_HERMITE_FAST=1; step "skeleton", 37.52 -> 34.40), so every G_q above includes them.
+   They landed default off as ddea9bf, so the landed tree reproduces that base. Next: one combined never-draw
+   control on the landed stack (every landed G knob, the kernels, the effect pools, the collision stack and
+   the landed order file; arm sq99), the lanes' new reference.
    The rest of G runs in the lanes above: gc the em-em rows, ob enemy / object bookkeeping, sk skeleton /
    motion / cloth / maths. The reduced characters (appearance, step 5): section "Reduced characters and the
    character path" below.
@@ -534,7 +534,8 @@ Never-draw uncapped arms (PACE_FORCE=A, PACE_TRANS_SKIP=4063, ACT_CAP=0), work =
   and D-miss rise +0.35 each elsewhere: code layout. Kept as an exact knob to re-measure with
   profile-guided function ordering (never-draw arm: I-miss 4.4 ms, D-miss 3.8 ms per tick).
 - Recipe for the next steps: GAME_PWC_KERNEL=3 GAME_PMC_KERNEL=1 GAME_HERMITE_FAST=1. =3 is the last-bit
-  option (decisions identical); =1 is the exact alternative, 2.20 ms slower.
+  option (decisions identical); =1 is the exact alternative, 2.20 ms slower. Landed default off as ddea9bf
+  (without the parked GAME_IK_PASS, GAME_SKEL_AUDIT and GAME_SKEL_PF).
 - G_q **34.40** (-3.12 vs sq50). Complete every-tick-drawn coarse tick: sq61 **39.78** (sq52 42.55):
   25.1 fps at 83.8% speed. Gap: G must reach <= 24.97 (-9.43).
 
@@ -1360,3 +1361,4 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | gc11 | gc9 + GAME_SPHERE_BACKFACE=1 | 29.32 (+0.11, own rows -0.02) | - | gc12 (=2): STRICT | parked (noise) |
 | 09-25 | gc13 | gc11 + OBJHIT_LIST + OBJHIT_IDFIRST + EMHIT_LIST | 29.03 (-1.63 vs sq97) | - | gc14 (=2): tr56 / tr42 STRICT, must-match rows identical, 0 mismatches | kept |
 | 09-25 | land11 | the collision stack landed (7caa2f7; without SPHERE_BACKFACE) | - | - | knob-off identity (default, canonical); gc13 carry-over 443 / 454 objects identical (the rest tree5-only; atari.o = gc9's) | landed, default off: gc13 29.03 alone; with fx unmeasured |
+| 09-25 | land12 | the skeleton kernels landed (ddea9bf; GAME_PWC_KERNEL / GAME_PMC_KERNEL / GAME_HERMITE_FAST, measured as sq53-sq57) | - | - | knob-off identity (default, canonical); gc13 carry-over 447 / 456 objects identical, model.o the same instructions (a switch table's local name differs), the rest tree5-only | landed, default off: the landed tree carries the lanes' base |

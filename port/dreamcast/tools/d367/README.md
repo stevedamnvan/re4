@@ -52,6 +52,11 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   matrices with FTRV (coarse_skin_sh4.S; =2 runs the C path too and logs COARSE_SKIN_CHK).
   `ACTOR_SWAP=1` (benchmark, COARSE=0) draws the same meshes through the source renderer; `COARSE_FREEZE_AT=N`
   (diagnostic) stops in frame N's actor pass for matched captures.
+- The skeleton kernels (ddea9bf; room-independent; not in LH yet): the coarse-square arms add
+  `GAME_PWC_KERNEL=3 GAME_PMC_KERNEL=1 GAME_HERMITE_FAST=1`. PWC_KERNEL needs `GAME_SKEL_FTRV=1` (=1 the
+  Ganados' pass, exact; =3 every model's pass, last-bit FP policy, decisions identical); PMC_KERNEL needs
+  `GAME_ROT_CACHE=1`. The order file places platform/pwc_sh4.o, pmc_sh4.o and hermiteFast. =2 check builds
+  log "PWCK" and "HERMF" lines.
 - The effect pools' scans and moves (1d3dc4d; exact, room-independent; not in LH yet): the coarse-square arms add
   `GAME_FX_SCAN=1 GAME_FX_MOVE=1` (FX_SCAN needs `GAME_ESP_OWNER=1`; its EfmDelete list path needs
   `GAME_ATCHK_LIST=1 GAME_WORKAT_INLINE=1`). Header knobs (include/esp.h): fresh builds only. =2 check builds

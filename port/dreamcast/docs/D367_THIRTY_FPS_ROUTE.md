@@ -219,7 +219,7 @@ Status, uncapped, same stack, hw ms:
 - Fit / gap: complete 42.55 ms per tick, against 33.33 bare (-9.22) and 30.00 with the margin (**-12.55**).
   R fits; **G_q must fall to <= 24.97**. G alone exceeds real time (37.52 > 33.33).
 - Skeleton step (user's order, item 1) done: GAME_PWC_KERNEL=3 (last-bit, decisions identical) +
-  GAME_PMC_KERNEL=1 + GAME_HERMITE_FAST=1 (exact): **G_q 37.52 -> 34.40**; complete coarse tick 39.78 ms
+  GAME_PMC_KERNEL=1 + GAME_HERMITE_FAST=1 (exact): **G_q 37.52 -> 34.40** (landed default off: ddea9bf); complete coarse tick 39.78 ms
   (25.1 fps at 83.8% speed); gap 9.43.
 - One-house test (user request): BIN 38 as a 400-triangle baked shell with a 256 VQ texture costs ~0.33
   ms per image (v2; v1 0.60), 18 KB VRAM, STRICT (tr51); views and door notes in the plan doc.
@@ -230,8 +230,8 @@ Status, uncapped, same stack, hw ms:
   block walk kernels GAME_LINE_LEAF, cf46edc, and GAME_LINE_WALK, ba73027, and the pieces' transforms in the walk
   kernel GAME_LINE_PIECE, 4e394ea, all exact: G_q 30.66, gap 5.69; then the effect pools' scans and moves GAME_FX_SCAN + GAME_FX_MOVE, 1d3dc4d,
   lane fx, exact: **G_q 29.55**, gap 4.58; then the collision stack, 7caa2f7, lane gc, exact: gc13 29.03 alone, -1.63;
-  the two together not measured yet, and the lanes' G includes tree5's unlanded skeleton kernels, which the
-  main session lands next). Since the evening of 2026-09-25 the rest runs in parallel lanes
+  the two together not measured yet; the lanes' G includes the skeleton kernels, landed ddea9bf, so the next
+  reference is one combined control on the landed stack). Since the evening of 2026-09-25 the rest runs in parallel lanes
   (next bullet).
 - **Parallel lanes (user, 2026-09-25: "I don't want to spend more time benchmarking. I want to focus on the
   remaining optimization that can be parallelized").** One agent per non-overlapping lane (arm prefix,
