@@ -1333,7 +1333,12 @@ Frame* prepare_frame(const Re4dcModelPart& p, float near_distance, float far_dis
 // Check build: the scalar matrix is computed too and the FTRV one compared with it.
 extern "C" void re4dc_log(const char* fmt, ...);
 float skin_chk_px = 0.0f;
-unsigned skin_chk_n = 0, skin_chk_pts = 0, skin_chk_q = 0, skin_chk_1 = 0;
+unsigned skin_chk_n = 0, skin_chk_pts = 0, skin_chk_q = 0, skin_chk_1 = 0, skin_chk_near = 0, skin_chk_nan = 0;
+inline bool skin_finite(float v) {
+    u32 b;
+    std::memcpy(&b, &v, 4);
+    return ((b >> 23) & 255U) != 255U;
+}
 #endif
 void skin_position_matrix(const Frame& f, unsigned i, float out[16]) {
     const float* P = f.palette + i * 12;  // reordered ROMtx: columns R0,R1,R2,t
@@ -1364,6 +1369,10 @@ void skin_position_matrix(const Frame& f, unsigned i, float out[16]) {
             float a4[4], b4[4];
             mul4(out, v, a4);
             mul4(ref, v, b4);
+            // Before any filter: both results finite, and the same side of the near plane.
+            for (unsigned j = 0; j < 4; ++j)
+                if (!skin_finite(a4[j]) || !skin_finite(b4[j])) { ++skin_chk_nan; break; }
+            if ((b4[3] <= f.near_distance) != (a4[3] <= f.near_distance)) ++skin_chk_near;
             if (b4[3] <= f.near_distance || a4[3] <= f.near_distance) continue;
             const float bx = b4[0] / b4[3], by = b4[1] / b4[3];
             if (__builtin_fabsf(bx) > 1400.0f || __builtin_fabsf(by) > 1100.0f) continue;
@@ -1376,8 +1385,9 @@ void skin_position_matrix(const Frame& f, unsigned i, float out[16]) {
             if (d > 1.0f) ++skin_chk_1;
         }
         if ((++skin_chk_n & 0xFFFF) == 0)
-            re4dc_log("SKINFTRV builds=%u points=%u max_px=%.4f over_0.25px=%u over_1px=%u\n", skin_chk_n,
-                      skin_chk_pts, double(skin_chk_px), skin_chk_q, skin_chk_1);
+            re4dc_log("SKINFTRV builds=%u points=%u max_px=%.4f over_0.25px=%u over_1px=%u near_mismatch=%u "
+                      "nonfinite=%u\n", skin_chk_n, skin_chk_pts, double(skin_chk_px), skin_chk_q, skin_chk_1,
+                      skin_chk_near, skin_chk_nan);
     }
 #endif
 #else
@@ -2135,6 +2145,84 @@ struct Part {
     }
 };
 
+#if RE4DC_ACTOR_SKIN_FTRV == 2 && defined(__sh__) && !defined(ACTOR_TEST_XMTRX)
+// Check build, actual vertices: each skinned run of records is transformed again by the same kernel
+// with the scalar-built matrix in XMTRX (the pre-FTRV path), and the submitted screen x/y, 1/w and
+// every outcode bit are compared before any filtering. Near-plane clipped triangles are rebuilt from
+// world_of + project, which never read this matrix, so equal outcodes mean equal cull / copy / clip
+// decisions and equal clipped geometry.
+struct SkinVertexCheck {
+    unsigned runs, verts, len_mis, oc_mis, near_mis, screen_mis, far_mis, nan_new, nan_ref, near_verts,
+        near_band, px_q, px_1;
+    float px_front, px_screen, rel_inv;
+};
+SkinVertexCheck skin_vc;
+alignas(32) pvr_vertex_t skin_ref_v[kMaxVertices];
+u8 skin_ref_oc[kMaxVertices];
+void skin_check_vertices(Part& e, const u8* at, unsigned rs, unsigned n, int palette, const pvr_vertex_t* got,
+                         const u8* goc, unsigned done, const PosConst& k, bool s16_uv) {
+    Frame& f = e.f;
+    const unsigned pi = unsigned(palette) < f.palette_entries ? unsigned(palette) : 0U;
+    const float* P = f.palette + pi * 12;
+    alignas(8) float ref[16];
+    for (unsigned c = 0; c < 4; ++c) {
+        const float v[4] = {P[c * 3] * (c < 3 ? f.q : 1.0f), P[c * 3 + 1] * (c < 3 ? f.q : 1.0f),
+                            P[c * 3 + 2] * (c < 3 ? f.q : 1.0f), c < 3 ? 0.0f : 1.0f};
+        mul4(f.screen, v, ref + c * 4);
+    }
+    load_xmtrx(ref);
+    unsigned all = ~0U, any = 0, rdone;
+#if RE4DC_ACTOR_ASM
+    if (s16_uv && f.position_stride == 8)
+        rdone = positions_asm<kPos8Check>(at, rs, n, f.positions, palette, e.p.uv, skin_ref_v, skin_ref_oc, k, all, any);
+    else if (s16_uv && f.position_stride == 6)
+        rdone = positions_asm<kPos6>(at, rs, n, f.positions, 0, e.p.uv, skin_ref_v, skin_ref_oc, k, all, any);
+    else
+#endif
+        rdone = positions_c(at, rs, n, f.positions, f.position_stride, true, palette, e.p.uv, s16_uv, skin_ref_v,
+                            skin_ref_oc, k, all, any);
+    ++skin_vc.runs;
+    if (rdone != done) ++skin_vc.len_mis;
+    const unsigned m = rdone < done ? rdone : done;
+    const float near_band_inv = 0.5f / k.near_distance;  // 1/w above this: w within twice the near distance
+    for (unsigned j = 0; j < m; ++j) {
+        const pvr_vertex_t& a = got[j];
+        const pvr_vertex_t& b = skin_ref_v[j];
+        const unsigned oa = goc[j] & 63U, ob = skin_ref_oc[j] & 63U;
+        ++skin_vc.verts;
+        if (!skin_finite(a.x) || !skin_finite(a.y) || !skin_finite(a.z)) ++skin_vc.nan_new;
+        if (!skin_finite(b.x) || !skin_finite(b.y) || !skin_finite(b.z)) ++skin_vc.nan_ref;
+        if (oa != ob) {
+            ++skin_vc.oc_mis;
+            if ((oa ^ ob) & kOcNear) ++skin_vc.near_mis;
+            if ((oa ^ ob) & kOcScreen) ++skin_vc.screen_mis;
+            if ((oa ^ ob) & kOcFar) ++skin_vc.far_mis;
+        }
+        if ((oa | ob) & kOcNear) { ++skin_vc.near_verts; continue; }
+        if (b.z > near_band_inv) ++skin_vc.near_band;
+        float d = __builtin_fabsf(a.x - b.x);
+        const float dy = __builtin_fabsf(a.y - b.y);
+        if (dy > d) d = dy;
+        if (d > skin_vc.px_front) skin_vc.px_front = d;
+        if (!((oa | ob) & kOcCull)) {
+            if (d > skin_vc.px_screen) skin_vc.px_screen = d;
+            if (d > 0.25f) ++skin_vc.px_q;
+            if (d > 1.0f) ++skin_vc.px_1;
+        }
+        const float r = __builtin_fabsf(a.z - b.z) / b.z;
+        if (r > skin_vc.rel_inv) skin_vc.rel_inv = r;
+    }
+    if ((skin_vc.runs & 0x7FFF) == 0)
+        re4dc_log("SKINVTX runs=%u verts=%u len_mismatch=%u outcode_mismatch=%u near=%u screen=%u far=%u "
+                  "nonfinite_new=%u nonfinite_ref=%u near_plane_verts=%u near_band_verts=%u max_px_front=%.4f "
+                  "max_px_screen=%.4f over_0.25px=%u over_1px=%u max_rel_invw=%.3g clip_runs=%u\n",
+                  skin_vc.runs, skin_vc.verts, skin_vc.len_mis, skin_vc.oc_mis, skin_vc.near_mis, skin_vc.screen_mis,
+                  skin_vc.far_mis, skin_vc.nan_new, skin_vc.nan_ref, skin_vc.near_verts, skin_vc.near_band,
+                  double(skin_vc.px_front), double(skin_vc.px_screen), skin_vc.px_q, skin_vc.px_1,
+                  double(skin_vc.rel_inv), unsigned(stats.fallback_runs));
+}
+#endif
+
 // Pass 1 over a meshlet: every record's position/uv/outcode into the cache.
 void pass_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bool s16_uv, unsigned& all,
                     unsigned& any) {
@@ -2164,6 +2252,10 @@ void pass_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bo
 #endif
             done = positions_c(at, rs, n - i, f.positions, f.position_stride, f.mode == kSkin, palette, e.p.uv, s16_uv,
                                e.cache.v + i, e.cache.oc + i, k, all, any);
+#if RE4DC_ACTOR_SKIN_FTRV == 2 && defined(__sh__) && !defined(ACTOR_TEST_XMTRX)
+        if (f.mode == kSkin)
+            skin_check_vertices(e, at, rs, n - i, palette, e.cache.v + i, e.cache.oc + i, done, k, s16_uv);
+#endif
         i += done;
     }
     stats.position_transforms += n;

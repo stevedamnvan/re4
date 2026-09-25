@@ -251,12 +251,78 @@ even with no drawing the square still runs slower than real time; the rendering 
   numerical checks plus a shadow comparison of hit, grounding and collision decisions.
 
 **Checkpoint (option 3, after collision, effects and actor matrices):** G = **38.09 hw ms/tick**
-retained (sq26, reproduced by sq30); drawing every tick W = **101.69** (sq28), so R = W - G = **63.6**.
-The 15 fps real-time identity needs 2G + R <= 66.7: today it is 139.8, a gap of **73.1 ms**. The
-rendering allowance is still negative (30 x G = 1143 ms per second of game time before anything is
-drawn). Measured progress in this investigation: G 39.54 -> 38.09 (-1.45), R -1.03. The items the
-study named (collision candidates, active effects, actor matrices) are each worth about a millisecond;
-none changes the order of the gap, which remains G (needs -13 to -18 ms, to 25-20) and R (needs -37 to -47 ms, to 26.7-16.7).
+retained (sq26, reproduced by sq30); drawing every tick W = **101.69** (sq28), so R = W - G = **63.60**.
+The 15 fps real-time identity needs 2G + R = W + G <= 66.7: today it is 139.78, a gap of **73.1 ms**;
+at 30 fps W <= 33.3 per tick, a gap of **68.4 ms**. The rendering allowance is still negative (30 x G =
+1143 ms per second of game time before anything is drawn).
+
+Attribution uses paired arms with one G (review 2026-09-24, re4-research/dca3-sh4zam-20260924/
+CHECKPOINT_REVIEW.md; an earlier draft mixed the old G with the new W):
+
+| pair | W | G | R = W - G | W + G |
+|---|---:|---:|---:|---:|
+| sq27 before FTRV | 102.72 | 38.09 | 64.63 | 140.81 |
+| sq28 after FTRV | 101.69 | 38.09 | 63.60 | 139.78 |
+
+Historical stack comparison (not a paced acceptance run): sq15/sq16 W 104.46, G 39.54, W + G 144.00 ->
+139.78 now, **-4.22 ms**. The study items are each worth about a millisecond; none changes the order
+of the gap. Allocations (not predictions) that keep both targets visible:
+
+| retained G | R allowance at 15 fps | R allowance at 30 fps |
+|---:|---:|---:|
+| 20 | 26.67 | 13.33 |
+| 25 | 16.67 | 8.33 |
+
+against R = 63.60 today. The next architectural checkpoint must show a costed path for BOTH G and R,
+with the unresolved gaps stated; another successful kernel alone does not establish it.
+
+**Scope of the FTRV evidence:** tr12's 0.0007 px is the maximum over accepted synthetic probes (eight
+corners 50 units around each bone, both results past the near plane, reference on screen), not over
+rendered vertices, and it did not measure clipping agreement. Clipped triangles are rebuilt from
+world_of + project, which never read the FTRV matrix, so the matrix reaches the image only through
+each vertex's screen x/y, 1/w and outcode byte (cull / copy / clip decisions). The tr13 check build
+compares exactly those, for every submitted skinned vertex, before any filtering: each skinned run of
+records goes through the same vertex kernel a second time with the scalar-built matrix.
+
+tr13 (ACTOR_SKIN_FTRV=2, r101 square, logic trace STRICT vs tr2 over 3237 ticks):
+- Real vertices: 47.9M skinned vertices, run lengths identical, **0 nonfinite** in either path,
+  **0 near-plane and 0 far classification differences**. The near plane was exercised: 207,840
+  vertices behind it (clipped triangles) and 39,292 within twice the near distance. On-screen max
+  difference **0.0017 px** (0 above 0.25 px); max over all vertices in front of the near plane
+  (off-screen included) 0.0186 px; max relative 1/w difference 2.3e-6.
+- 3 vertices out of 47.9M differ in a screen-edge outcode bit (a vertex within ~0.002 px of an edge).
+  Screen bits only cull a whole strip when every corner is past the same edge, so the most such a
+  flip can change is whether a strip lying entirely on the edge is dropped: nothing visible (the PVR
+  scissors the rest).
+- Synthetic probes, now counted before the filter: 18.0M points, 0 near-plane disagreements,
+  0 nonfinite, max 0.0007 px.
+Clipped geometry itself is identical by construction (world_of + project, which don't read the matrix).
+
+**Bound on the next skeleton experiment:** Concat 1.53 + MultVec 1.04 + Inverse 0.63 = 3.20 hw ms/tick
+in sq26, so even a free matrix kernel cannot supply 13-18 ms. The prototype covers one complete
+representative actor update (compact hot inputs, parent-ordered batched matrix work, fewer
+intermediate stores/reloads, only dependency-proven omissions), timed with input gathering, output
+writes, the original fallback and validation separately; then the agreed hit / grounding / collision
+decision shadow checks (candidate order and accumulated state included, not only a decision hash).
+Report the whole-square change in G and the actor/type coverage before expanding it; one actor's
+kernel speedup is not extrapolated.
+
+Cost bound for the Ganado (sq26 per-call costs x call counts; skeleton audit part counts): Ganados
+account for 740 of 1390 part-world updates per tick (MotionMove's two passes around IK on all 14,
+plus cEm10::move's pass after neck / waist). A part costs ~3.1 us (partsWorldCalc self 2.1 +
+Concat / MultVec / TransMatrix share), so **~2.3 ms**; local matrices (partsMatCalc: RotMatrix,
+Trans, Scale, Copy) **~1.4**; motion keys (Hermite, MotionMoveCore, Fcc) **~1.2**; IK **~0.3**. A
+complete Ganado skeleton update is **~5.2 hw ms/tick**, so even a free one is worth ~5 and a 2x
+faster one ~2.6: the prototype cannot close the G gap alone, and the G route has to be assembled
+from several items of this size.
+
+Queued exact lead (collision, found while bounding): RotVector (Euler matrix via low_RotMatrix: up
+to three SINF/COSF pairs, then MultVec) runs 770 times per tick, 675 of them from cAtariInfo::getPos,
+which EmAtCheck repeats for every candidate body on each of its 46.5 calls although a body's offset
+and angles rarely change between them. Cost ~1.85 hw ms/tick (getPos 0.28, RotVector 0.09,
+low_RotMatrix 0.55, SINF/COSF 0.77, MultVec 0.16). RotVector is a pure function of the offset and
+angle bits, so a value-keyed memo is exact. (The skeleton audit's 12% low_RotMatrix repeat rate
+was measured per destination matrix, a stack temporary here, so it does not bound this.)
 
 ## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
 
@@ -361,5 +427,6 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-24 | sq29 | sq30 (= sq26, 38.09 reproduced) + GAME_PWC_FUSE=1 (uniform-scale parts: world from the concat's translation column, MultVec + TransMatrix dropped; reciprocal scales reused per parent r_scale bits) | 38.63 (+0.54) | - | tr11 (=2): 1.05M fused parts and 1.8M reused reciprocals bit-identical, STRICT 3277 ticks | dropped: only ~275 parts/tick take the uniform path (MultVec 4884 -> 4610); the bit-compare memo added ~500 insns per call (float-to-int moves) |
 | 09-24 | sq27 | draw every tick, sq15 flags + GAME_ATCHK_LIST (LH) + GAME_ESP_OWNER | 102.72 | - | - | drawing baseline for the actor matrix item |
 | 09-24 | sq28 | sq27 + ACTOR_SKIN_FTRV=1 (skinned palette matrices through FTRV) | 101.69 (-1.03) | - | tr9 (=1, with ESP_OWNER) STRICT tr2 vs tr9, 3277 ticks; tr12 (=2): 22.1M on-screen corner points 50 units around each bone, max 0.0007 px, none above 0.25 px | committed dd8c4aa (render knob, default off). skin_position_matrix 1.52 -> 0.71 (378 -> 119 insns per build, 734 builds/frame) |
+| 09-24 | tr13 | ACTOR_SKIN_FTRV=2 extended check: every submitted skinned vertex through the same kernel with the scalar matrix; probe near-plane / nonfinite counts before the filter | - | - | STRICT tr2 vs tr13, 3237 ticks | 47.9M vertices: 0 nonfinite, 0 near / far classification differences (207,840 behind near, 39,292 near band), 3 screen-edge bits, max 0.0017 px on screen; probes 0 near disagreements |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
