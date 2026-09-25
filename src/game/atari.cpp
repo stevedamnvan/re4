@@ -987,6 +987,69 @@ static int lineWalkPiece(cSatBlock* blk, Vec* pos0, Vec* pos1, cSatBlock** leaf)
     mid.y = 0.0f;
     return lineWalkLeaves(blk, &mid, &dir, &adir, leaf);
 }
+#if defined(RE4DC_LINE_PIECE) && RE4DC_LINE_PIECE
+// GAME_LINE_PIECE (game30.mk; G, collision traversal; exact): hitCheck2's per-piece segment transform and
+// walk setup in platform/lnw_sh4.S (re4dc_line_piece): the x and z rows of both ends with MTXMultVec's
+// contract-off dataflow and operand roles, mid / dir / |dir| as hitCheck2 compiles lineWalkPiece, then the
+// walk. Only a piece with an overlapped leaf (or a walk too deep for the kernel) transforms both ends in full,
+// as before. =2 (check build): the kernel's ends and leaves are compared with PSMTXMultVec's and
+// lineWalkPiece's ("LNP" lines).
+struct LinePieceQ {
+    f32 (*m)[4];    // 0x00  the piece's inverse matrix
+    Vec* p0;        // 0x04  the world segment
+    Vec* p1;        // 0x08
+    f32 lax;        // 0x0C  written by the kernel: the ends' x and z
+    f32 laz;        // 0x10
+    f32 lbx;        // 0x14
+    f32 lbz;        // 0x18
+};
+static_assert(__builtin_offsetof(LinePieceQ, lax) == 0x0C && __builtin_offsetof(LinePieceQ, lbz) == 0x18,
+              "platform/lnw_sh4.S writes these offsets");
+extern "C" int re4dc_line_piece(LinePieceQ* q, cSatBlock* blk, cSatBlock** out, int max);
+#if RE4DC_LINE_PIECE == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 lnpCalls, lnpMis, lnpLeafMis;
+static int lnpBits(const f32* a, const f32* b)
+{
+    u32 x;
+    u32 y;
+    __builtin_memcpy(&x, a, 4);
+    __builtin_memcpy(&y, b, 4);
+    return x != y;
+}
+#endif
+static int linePieceWalk(LinePieceQ* q, cSatBlock* blk, cSatBlock** leaf)
+{
+    const int nl = re4dc_line_piece(q, blk, leaf, LNW_MAX);
+#if RE4DC_LINE_PIECE == 2
+    {
+        Vec ra;
+        Vec rb;
+        cSatBlock* ref[LNW_MAX];
+        PSMTXMultVec(q->m, q->p0, &ra);
+        PSMTXMultVec(q->m, q->p1, &rb);
+        if (lnpBits(&q->lax, &ra.x) || lnpBits(&q->laz, &ra.z) || lnpBits(&q->lbx, &rb.x) || lnpBits(&q->lbz, &rb.z)) {
+            ++lnpMis;
+        }
+        const int nr = lineWalkPiece(blk, &ra, &rb, ref);
+        if (nr != nl) {
+            ++lnpLeafMis;
+        } else {
+            for (int i = 0; i < nl; i++) {
+                if (ref[i] != leaf[i]) {
+                    ++lnpLeafMis;
+                    break;
+                }
+            }
+        }
+        if (++lnpCalls % 8192 == 0) {
+            re4dc_log("LNP calls=%u mismatch=%u leafmis=%u\n", lnpCalls, lnpMis, lnpLeafMis);
+        }
+    }
+#endif
+    return nl;
+}
+#endif
 #endif
 
 // Segment a-b against every active piece. The nearest hit goes to hit (world) and `attr`
@@ -1018,12 +1081,32 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
     // stored through a struct view: keeps the `cur = *b` loads below the store like the original
     ((SEckView*) &SEck)->v = seCk;
     cur = *pos1;
+#if defined(RE4DC_LINE_PIECE) && RE4DC_LINE_PIECE
+    LinePieceQ pq;
+    pq.p0 = pos0;
+    pq.p1 = pos1;
+    u8* satp = (u8*) pArray;
+    const u32 satSize = size;
+    for (i = 0; i < nArray; i++, satp += satSize) {
+        cSat* sat = (cSat*) satp;
+#else
     for (i = 0; i < nArray; i++) {
         cSat* sat = (cSat*) ((u8*) pArray + size * i);
+#endif
         if (sat->isAlive()) {
             cSatBlock* blk = sat->block_p;
             int r;
 #if defined(RE4DC_LINE_WALK) && RE4DC_LINE_WALK
+#if defined(RE4DC_LINE_PIECE) && RE4DC_LINE_PIECE
+            cSatBlock* leaf[LNW_MAX];
+            pq.m = sat->imat;
+            const int nl = linePieceWalk(&pq, blk, leaf);
+            if (nl == 0) {
+                continue;
+            }
+            PSMTXMultVec(sat->imat, pos0, &la);
+            PSMTXMultVec(sat->imat, pos1, &lb);
+#else
             PSMTXMultVec(sat->imat, pos0, &la);
             PSMTXMultVec(sat->imat, pos1, &lb);
             cSatBlock* leaf[LNW_MAX];
@@ -1031,6 +1114,7 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
             if (nl == 0) {
                 continue;
             }
+#endif
             memclr_asm(polyBit, (sat->polygon_num >> 3) + 1);
             PSMTXMultVec(sat->imat, &cur, &lcur);
             if (nl > 0) {

@@ -161,6 +161,24 @@ $(OBJDIR)/platform/lnw_sh4.o: platform/lnw_sh4.S
 	kos-cc $(KOS_CFLAGS) -c $< -o $@
 $(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_WALK=$(GAME_LINE_WALK)
 endif
+# GAME_LINE_PIECE=1 (G, collision traversal; exact; needs GAME_LINE_WALK=1 and GAME_FP_CONTRACT=off):
+#                  hitCheck2's per-piece segment transform and walk setup in platform/lnw_sh4.S
+#                  (re4dc_line_piece): the x and z rows of MTXMultVec's contract-off dataflow for both ends,
+#                  mid / dir / |dir| as the C computes them, then the walk; only a piece with an overlapped
+#                  leaf transforms both ends in full, as before. The piece loop steps a pointer. =2 (check
+#                  build): the kernel's ends and leaves compared with PSMTXMultVec's and lineWalkPiece's
+#                  ("LNP" lines).
+GAME_LINE_PIECE ?= 0
+ifneq ($(GAME_LINE_PIECE),0)
+ifeq ($(GAME_LINE_WALK),0)
+$(error GAME_LINE_PIECE=$(GAME_LINE_PIECE) needs GAME_LINE_WALK=1)
+endif
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_LINE_PIECE mirrors the contract-off MTXMultVec dataflow: needs GAME_FP_CONTRACT=off)
+endif
+$(OBJDIR)/platform/lnw_sh4.o: KOS_CFLAGS += -DRE4DC_LINE_PIECE=1
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_PIECE=$(GAME_LINE_PIECE)
+endif
 # GAME_WORKAT_INLINE=1 (the 30 fps rethink; port overhead, exact; needs OBJECT_DEMAND=1 ENEMY_DEMAND=1):
 #                    the demand-backed cObj / cEm managers' workAt (parts_bridge.cpp: two out-of-line
 #                    calls per lookup, ~3,700 lookups per square tick from EfmDelete, GetEmPtrFromList,
