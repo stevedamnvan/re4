@@ -222,13 +222,15 @@ Status, uncapped, same stack, hw ms:
   (25.1 fps at 83.8% speed); gap 9.43.
 - One-house test (user request): BIN 38 as a 400-triangle baked shell with a 256 VQ texture costs ~0.33
   ms per image (v2; v1 0.60), 18 KB VRAM, STRICT (tr51); views and door notes in the plan doc.
-- **Current order (user, 2026-09-25):** (1) land the coarse renderer with frame pacing, (2) R headroom
+- **Current order (user, 2026-09-25):** (1) land the coarse renderer with frame pacing (done: f4da5fd), (2) R headroom
   (~2.1 ms of source work still runs on each drawn coarse tick), (3) back to G: collision traversal, then
   visual simulation once its gameplay readers are known; appearance (step 5) after G.
 - The calibration disc c8 is in `D:\RE4DC-HWCAL` with the model's predictions (hwcal PREDICTIONS.md).
   It awaits the user's console run.
-- The code (coarse.cpp, PACE_TRANS_SKIP) is parked: it stacks on the unlanded pacing patch and lands
-  with it. Snapshot: warp/patches/square-rethink-snapshot-4594c51.patch (sha256 95cd58a5...).
+- Landed f4da5fd (default off; knob-off identity, tr42 carry-over): frame pacing (PACE_CATCHUP), PACE_TRANS_SKIP,
+  the decision-trace tags and COARSE v0.4 (coarse.cpp). Still private (tree5): the skeleton-step kernels,
+  COARSE_HOUSE, the model-diagnostic latch, SS_UI_ORDER, MOTION_RESERVE, the heap / pool logs,
+  GAME_SKEL_AUDIT, GAME_IK_PASS.
 
 Details and the ledger are in [D367_SQUARE_PERF_PLAN.md](D367_SQUARE_PERF_PLAN.md).
 
@@ -243,7 +245,7 @@ Asset exploration (PS2/Blender) is parked after the house images.
 
 ## Frame pacing (2026-09-23, design-pacing/DESIGN.md)
 
-The game runs one logic tick per rendered frame (main.cpp waits for GetSystemVcnt()=2 vsyncs; no catch-up, no delta time), so any frame over 33.3 ms is slow motion: 20 fps = 67% speed. Chosen: render skip / catch-up (PACE_CATCHUP), with logic at 30 Hz by the vsync clock and draws skipped when behind (at most 2 ticks per drawn frame, 15 fps floor knob). ModelRender plus its deferred draws is ~90% of non-logic work and writes nothing logic reads. Trans() can't be skipped (Filter08Trans uses the shared RNG), and ShadowTrans, Espgen45, TexRender, Filter00/03 and drawLaserSight write logic-read state. Stages: v1 (ModelRender + native frame; 24.3 hw ms/tick left, Standard quiet), v2 (+ModelTrans; 20.7), v3 (+effect/HUD callbacks; 16.5; needs trace digests). Estimates: Standard quiet 43 hw ms -> v2 100% speed at 17 fps, v3 at 19 fps (today 78% at 23 fps). Fights: logic alone is 71/82/93% of the CPU at 4/6/8 engaged Ganados, so no pacing gives full speed there: 43-51% speed at 13-15 fps with the floor, 59-71% at 9-11 fps without. The corrected Standard fight frame is ~65 hw ms (the earlier ~53 used area-method logic). Building v1+v2 now.
+The game runs one logic tick per rendered frame (main.cpp waits for GetSystemVcnt()=2 vsyncs; no catch-up, no delta time), so any frame over 33.3 ms is slow motion: 20 fps = 67% speed. Chosen: render skip / catch-up (PACE_CATCHUP), with logic at 30 Hz by the vsync clock and draws skipped when behind (at most 2 ticks per drawn frame, 15 fps floor knob). ModelRender plus its deferred draws is ~90% of non-logic work and writes nothing logic reads. Trans() can't be skipped (Filter08Trans uses the shared RNG), and ShadowTrans, Espgen45, TexRender, Filter00/03 and drawLaserSight write logic-read state. Stages: v1 (ModelRender + native frame; 24.3 hw ms/tick left, Standard quiet), v2 (+ModelTrans; 20.7), v3 (+effect/HUD callbacks; 16.5; needs trace digests). Estimates: Standard quiet 43 hw ms -> v2 100% speed at 17 fps, v3 at 19 fps (today 78% at 23 fps). Fights: logic alone is 71/82/93% of the CPU at 4/6/8 engaged Ganados, so no pacing gives full speed there: 43-51% speed at 13-15 fps with the floor, 59-71% at 9-11 fps without. The corrected Standard fight frame is ~65 hw ms (the earlier ~53 used area-method logic). v1 + v2 were built in the private tree and landed on 2026-09-25 as f4da5fd, default off (play discs pass `PACE_CATCHUP=2 PACE_MODE=fast PACE_CAP=2`; the Options row is a later item).
 
 User decision 2026-09-24: TA_DOUBLEBUF (async TA double buffer, ~12.5 ms/frame of stream_open wait removed; hw projection ~16 -> 20 fps at the 50 ms target) is adopted and option C (single-bank PVR layout, bigger texture pool) is dropped. It lands after sub-screen option (b) (single-bank TA while a sub screen is open) and a matched-window hwproject pair.
 

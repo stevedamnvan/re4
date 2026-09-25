@@ -298,16 +298,22 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
-### Current order and status (updated 2026-09-25, after the skeleton step and the one-house test)
+### Current order and status (updated 2026-09-25, after landing pacing and the coarse renderer)
 
 **The order we follow now (user, 2026-09-25):**
-1. **Land the coarse renderer with frame pacing.** coarse.cpp, PACE_TRANS_SKIP and the trace hashes stack
-   on the unlanded pacing stack, so the pacing landing comes first (the user's standing priority "frame
-   pacing, never to be deprioritised again"). Source: tree5's snapshot (b7a1382; patch against 4594c51,
-   sha256 95cd58a5...), minus the private knobs (GAME_SKEL_AUDIT, GAME_IK_PASS, POOL_PEAK_LOG). The
-   pacing player setting is the title Options row "Frame pacing: Smooth / Fast / Off" (user decision
-   2026-09-24; no boot question). Gates: knob-off identity, the pacing STRICT arms, the coarse STRICT
-   arms (tr42 / tr51 class), hw numbers, then the procedure.
+1. **Land the coarse renderer with frame pacing.** Done: **f4da5fd** (patch land2-pacing-coarse.patch,
+   sha256 a0cae359...): frame pacing (PACE_CATCHUP, pace.mk), PACE_TRANS_SKIP, the decision-trace tags
+   and COARSE v0.4, all default off. Knob-off identity: default and canonical (VMU_DEBUG_SLOT=0) images
+   byte-identical to 161341b + the working diff. Carry-over: tr42's flag set rebuilt from the landed tree
+   matches the measured tree5 build in 445 of 453 objects (strip-debug); the other 8 are items kept out
+   (below) and the debug-slot build stamp. So tree5's gates hold for the landed code: the forced-skip and
+   qualified-mask STRICT arms, tr42 STRICT vs tr41, sq50 / sq52. Still private (tree5): the skeleton-step
+   kernels (GAME_PWC_KERNEL / GAME_PMC_KERNEL / GAME_HERMITE_FAST), COARSE_HOUSE, the per-part
+   model-diagnostic latch (lands with item 2), SS_UI_ORDER, MOTION_RESERVE / MOTION_USAGE_LOG,
+   HEAP_CENSUS / HEAP_REPLACE_LOG / POOL_PEAK_LOG, GAME_SKEL_AUDIT, GAME_IK_PASS. PACE_CATCHUP is not in
+   the canonical recipe yet (play discs pass `PACE_CATCHUP=2 PACE_MODE=fast PACE_CAP=2`); the pacing
+   player setting is the title Options row "Frame pacing: Smooth / Fast / Off" (user decision
+   2026-09-24; no boot question), a separate later item.
 2. **R headroom.** About 2.1 ms of source work still runs on every drawn coarse tick (list below). R is
    5.03 (v0.4, sq52) and reads ~5.4 on the skeleton stack (sq61 39.78 - sq57 34.40; code-layout effects
    included): only ~0.6 ms is left under R <= 6 for any appearance work, so this trim comes before step 5.
@@ -319,13 +325,13 @@ The part-world pass takes two paths:
 | step | state |
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
-| 2. Coarse complete square | done as a measurement tool: R 5.03, STRICT every decision; not landed (item 1); R headroom (item 2) |
+| 2. Coarse complete square | done: R 5.03, STRICT every decision; landed f4da5fd (default off); R headroom next (item 2) |
 | 3. Close G <= 24 | skeleton step done: G_q 37.52 -> 34.40 (-3.12); gap 9.43 to 24.97; collision next |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); nothing else started |
 
 **What remains on the coarse renderer** (answer to the user, 2026-09-25):
-1. Landing (order item 1).
+1. Landing (order item 1): done, f4da5fd.
 2. Source work still invoked on a drawn tick, ~2.1 ms: HUD id quads ~0.6 (81 PSMTXConcat per tick),
    IDSystem::unitTrans 0.48, model asset preparation 0.18, ExecOt 0.13, OSCheckHeap 0.12, GXProject 0.09,
    small rows ~0.15 (order item 2).
@@ -944,3 +950,4 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq61 | every tick drawn, COARSE v0.4 + skeleton recipe | 39.78 | - | - | control for the house test (sq52 42.55) |
 | 09-25 | sq62 | sq61 + COARSE_HOUSE v1 (BIN 38 shell, 400 tris, 256 VQ) | 40.24 (house row +0.60) | - | tr50 STRICT vs tr42, 8078 frames | superseded by v2 |
 | 09-25 | sq63 | sq61 + COARSE_HOUSE v2 (indexed, screen-space back faces) | 40.58 (house row +0.33) | - | tr51 STRICT vs tr42 (8111) and tr50 | the house test result; extension is step 5 |
+| 09-25 | land2 | frame pacing + PACE_TRANS_SKIP + decision-trace tags + COARSE v0.4 landed (f4da5fd) | - | - | knob-off identity (default, canonical); tr42 carry-over 445 / 453 objects identical | landed, default off |

@@ -13,6 +13,8 @@ Resume with the shared skill `re4-dreamcast-d367` (Claude and Codex): it covers 
 
 Build recipes are in [tools/d367/README.md](port/dreamcast/tools/d367/README.md). LH is the integrated base: 83 ms Flycast, 120.3 hw.
 
+2026-09-25: the r101 square (30 fps rethink) follows [D367_SQUARE_PERF_PLAN.md](port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md), section "Current order and status". Frame pacing and the coarse renderer landed default off (f4da5fd); R headroom is next, then G (collision traversal, visual simulation).
+
 State at this update (HEAD 5285bc7 or later):
 - **Perf lane:**
   - Step 0 (FRONT_NATIVE, RELEASE_FLAGS) landed.
@@ -29,7 +31,8 @@ State at this update (HEAD 5285bc7 or later):
   Also: a room re-entry takes ~15 s (motion-key per-sector reads plus an unprofiled remainder).
 - **Agent state:** each area has `/root/probe/d367-agents/<area>/STATE.md`. Read it before resuming that area.
 
-Evidence goes on D:\Flycast-Evidencee4-dreamcast (new dirs from the C: harness template). Run at most 2 Flycasts per agent, and delete disc images after each run.
+Evidence goes on D:\Flycast-Evidence
+e4-dreamcast (new dirs from the C: harness template). Run at most 2 Flycasts per agent, and delete disc images after each run.
 
 The sections below (D366 pause, the four-owner "beat D349" sequence, Sol/Max assignment) are historical context; where they conflict, D367 wins. The [D366 pause handover](port/dreamcast/docs/R4_D366_CLAUDE_HANDOFF.md) still describes the inherited dirty overlay (~75 files; never stage, reset or clean it).
 

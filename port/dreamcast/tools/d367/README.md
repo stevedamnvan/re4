@@ -22,6 +22,11 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   r101 fight unchanged because it is CPU-bound; the gain grows as CPU per frame falls).
 - Add each new lane step here when it lands. Untracked -D knobs don't trigger rebuilds: delete the
   tree ELF, use a fresh OBJDIR per flag set, and record the ELF sha256.
+- Frame pacing and the coarse square (f4da5fd; `pace.mk`, `game30.mk`) are not in PERF. Play discs add
+  `PACE_CATCHUP=2 PACE_MODE=fast PACE_CAP=2`. The coarse-square arms add `PACE_CATCHUP=2 PACE_MODE=off
+  PACE_TRANS_SKIP=4063 COARSE=1` (every tick drawn; test builds) and, for the gates, `DBG_WARP=1
+  LOGIC_TRACE=1 LOGIC_TRACE_MASK_RENDER=1 GAME_DECISION_TRACE=1 ACT_CAP=0` (the r101 square plan,
+  `docs/D367_SQUARE_PERF_PLAN.md`).
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 
