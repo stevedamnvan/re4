@@ -88,7 +88,7 @@ static inline void EmRoutineSet(cEm* p, int fc, int fd, int fe, int ff)
 }
 // `p->atari.flags &= 0xFCFF` through a pointer to the collision info; the volatile halfword store keeps the
 // following pG load below it (r207).
-static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) &a->m_flag &= mask; }
+static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) __builtin_addressof(a->m_flag) &= mask; RE4DC_ATARI_TOUCH(a); }
 static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { a->m_flag |= bit; }
 
 // COMPILER-DIFF: 1 (argument move order at a mixed int/float call): the first SubCharMoveTo of the

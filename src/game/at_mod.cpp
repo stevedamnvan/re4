@@ -140,7 +140,7 @@ static int atchkCollect(cEm* head, cEm** out)
     for (cEm* m = head; m != 0; m = (cEm*) m->pNext) {
         cEm* nx = (cEm*) m->pNext;
         if (nx) {
-            __builtin_prefetch(&nx->atari.m_flag);
+            __builtin_prefetch(__builtin_addressof(nx->atari.m_flag));
         }
         if ((m->atari.m_flag & 0x200) && m->atari.m_radius2 != 0.0f) {
             if (n == ATCHK_MAX) {
@@ -167,6 +167,10 @@ struct AtList {
     cEm* head;
     u32 gen;
     int n;   /* -1: not built (or longer than ATLIST_MAX) */
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+    u32 lo;     /* lowest body info address (GAME_ATCHK_CACHE) */
+    u32 span;   /* highest - lowest */
+#endif
     cEm* v[ATLIST_MAX];
 };
 static AtList atListEm = { 0, 0, -1 }, atListObj = { 0, 0, -1 };
@@ -180,6 +184,10 @@ static u32 atlSync, atlRebuild, atlOvf, atlMis, atlMaxN, atlVisits;
 static int atListBuild(AtList* L, cEm* head, u32 gen)
 {
     int n = 0;
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+    u32 lo = 0xFFFFFFFFu;
+    u32 hi = 0;
+#endif
     L->head = head;
     L->gen = gen;
     for (cEm* m = head; m != 0; m = (cEm*) m->pNext) {
@@ -192,8 +200,17 @@ static int atListBuild(AtList* L, cEm* head, u32 gen)
             return -1;
         }
         L->v[n++] = m;
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+        const u32 p = (u32) &m->atari;
+        lo = p < lo ? p : lo;
+        hi = p > hi ? p : hi;
+#endif
     }
     L->n = n;
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+    L->lo = n != 0 ? lo : 0;
+    L->span = n != 0 ? hi - lo : 0;
+#endif
 #if RE4DC_ATCHK_LIST == 2
     atlRebuild++;
     if ((u32) n > atlMaxN) {
@@ -236,12 +253,12 @@ static int atchkCollectList(const AtList* L, int N, cEm** out)
     int n = 0;
     int i;
     for (i = 0; i < N && i < ATLIST_PF; i++) {
-        __builtin_prefetch(&a[i]->atari.m_flag);
+        __builtin_prefetch(__builtin_addressof(a[i]->atari.m_flag));
     }
     for (i = 0; i < N; i++) {
         cEm* m = a[i];
         if (i + ATLIST_PF < N) {
-            __builtin_prefetch(&a[i + ATLIST_PF]->atari.m_flag);
+            __builtin_prefetch(__builtin_addressof(a[i + ATLIST_PF]->atari.m_flag));
         }
         if ((m->atari.m_flag & 0x200) && m->atari.m_radius2 != 0.0f) {
             if (n == ATCHK_MAX) {
@@ -252,6 +269,191 @@ static int atchkCollectList(const AtList* L, int N, cEm** out)
     }
     return n;
 }
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+// GAME_ATCHK_CACHE (game30.mk; G, collision traversal; exact): each list's collected bodies are kept and
+// reused while the list (its generation, head and length) is unchanged. Every write that changes a body's
+// test is noted (atariInfo.h); a reuse first applies each info noted since the last one: a kept body whose
+// test now fails is removed, a list body whose test now passes is inserted at its list position (the kept
+// bodies before it in list order). The list is unchanged and every other body's test is what it was, so
+// the kept bodies are the list's bodies that pass their test, in list order: what a fresh collection
+// returns. A noted info outside the list's body info addresses (atListBuild: lowest .. highest) is no
+// body of the list and is skipped, and so is a noted info of the range found absent from the list (kept
+// per list generation: while the list is unchanged it stays absent). Dead Ganados leave the enemy alive
+// list but keep running their move, and em10SlopeMove / atari.move flip their m_radius2 test twice a
+// tick: each is walked for once per list generation. More notes than the ring holds, or a kept list that
+// would overflow: collected afresh.
+// =2 (check build): every reuse is also collected afresh and compared, the fresh one used ("ATC" lines:
+// skip = notes outside the range, ins / del = bodies applied, absent / known = noted infos of the range
+// found absent by a walk / by the absent set, list / ring / full = collections afresh by reason).
+extern "C" {
+u32 re4dc_atari_seq;
+const void* re4dc_atari_dirty[64];
+}
+#define ATC_ABSENT 8
+struct AtCand {
+    u32 listGen;
+    u32 seq;
+    cEm* head;
+    int N;
+    int n;   /* -1: nothing kept */
+    int nAbsent;
+    const cAtariInfo* absent[ATC_ABSENT];   /* noted infos of the range found absent from the list */
+    cEm* v[ATCHK_MAX];
+};
+static AtCand atCandEm = { 0, 0, 0, 0, -1 }, atCandObj = { 0, 0, 0, 0, -1 };
+#if RE4DC_ATCHK_CACHE == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 atcHit, atcMiss, atcMis, atcNoted, atcSkip, atcList, atcRing, atcFull, atcIns, atcDel, atcAbsent,
+    atcKnown;
+#endif
+// Applies every info of the list's range noted since the last reuse to the kept list (1), or 0 when the
+// ring overflowed or the kept list is full.
+static int atchkNotedApply(AtCand* C, const AtList* L)
+{
+    const u32 e = re4dc_atari_seq;
+    u32 s = C->seq;
+    if (e - s > 64) {
+#if RE4DC_ATCHK_CACHE == 2
+        ++atcRing;
+#endif
+        return 0;
+    }
+    const u32 lo = L->lo;
+    const u32 span = L->span;
+    for (; s != e; s++) {
+        const cAtariInfo* a = (const cAtariInfo*) re4dc_atari_dirty[s & 63];
+        if ((u32) a - lo > span) {
+#if RE4DC_ATCHK_CACHE == 2
+            ++atcSkip;
+#endif
+            continue;
+        }
+        int k = 0;
+        while (k < C->n && &C->v[k]->atari != a) {
+            k++;
+        }
+        if (k == C->n) {
+            int x = 0;
+            while (x < C->nAbsent && C->absent[x] != a) {
+                x++;
+            }
+            if (x < C->nAbsent) {   // absent from the list
+#if RE4DC_ATCHK_CACHE == 2
+                ++atcKnown;
+#endif
+                continue;
+            }
+        }
+        const int live = (a->m_flag & 0x200) && a->m_radius2 != 0.0f;
+        if (live == (k < C->n)) {
+#if RE4DC_ATCHK_CACHE == 2
+            ++atcNoted;
+#endif
+            continue;
+        }
+        if (!live) {   // kept, its test now fails: remove it
+            C->n--;
+            for (; k < C->n; k++) {
+                C->v[k] = C->v[k + 1];
+            }
+#if RE4DC_ATCHK_CACHE == 2
+            ++atcDel;
+#endif
+            continue;
+        }
+        // not kept, its test now passes: insert it after the kept bodies that precede it in the list
+        if (C->n == ATCHK_MAX) {
+#if RE4DC_ATCHK_CACHE == 2
+            ++atcFull;
+#endif
+            return 0;
+        }
+        cEm* const* v = L->v;
+        const int N = L->n;
+        int i = 0;
+        k = 0;
+        for (; i < N && &v[i]->atari != a; i++) {
+            if (k < C->n && v[i] == C->v[k]) {
+                k++;
+            }
+        }
+        if (i == N) {   // in the range, not in the list: remembered for this list
+            if (C->nAbsent < ATC_ABSENT) {
+                C->absent[C->nAbsent++] = a;
+            }
+#if RE4DC_ATCHK_CACHE == 2
+            ++atcAbsent;
+#endif
+            continue;
+        }
+        for (int j = C->n; j > k; j--) {
+            C->v[j] = C->v[j - 1];
+        }
+        C->v[k] = v[i];
+        C->n++;
+#if RE4DC_ATCHK_CACHE == 2
+        ++atcIns;
+#endif
+    }
+    C->seq = e;
+    return 1;
+}
+static int atchkCandidates(AtCand* C, AtList* L, cEm* head, u32 gen, cEm** out)
+{
+    const int N = atListSync(L, head, gen);
+    if (N < 0) {
+        C->n = -1;
+        return atchkCollect(head, out);
+    }
+    const int same = C->n >= 0 && C->listGen == gen && C->head == head && C->N == N;
+#if RE4DC_ATCHK_CACHE == 2
+    if (!same) {
+        ++atcList;
+    }
+#endif
+    if (same && atchkNotedApply(C, L)) {
+#if RE4DC_ATCHK_CACHE == 2
+        const int f = atchkCollectList(L, N, out);
+        ++atcHit;
+        if (f != C->n || __builtin_memcmp(out, C->v, (f > 0 ? f : 0) * sizeof(cEm*)) != 0) {
+            ++atcMis;
+            C->n = -1;
+        }
+        if ((atcHit + atcMiss) % 8192 == 0) {
+            re4dc_log("ATC hit=%u miss=%u mismatch=%u noted=%u skip=%u ins=%u del=%u absent=%u known=%u list=%u "
+                      "ring=%u full=%u seq=%u\n", atcHit, atcMiss, atcMis, atcNoted, atcSkip, atcIns, atcDel,
+                      atcAbsent, atcKnown, atcList, atcRing, atcFull, re4dc_atari_seq);
+        }
+        return f;
+#else
+        __builtin_memcpy(out, C->v, C->n * sizeof(cEm*));
+        return C->n;
+#endif
+    }
+    const int n = atchkCollectList(L, N, out);
+#if RE4DC_ATCHK_CACHE == 2
+    ++atcMiss;
+#endif
+    C->n = n;
+    if (n >= 0) {
+        C->listGen = gen;
+        C->seq = re4dc_atari_seq;
+        C->head = head;
+        C->N = N;
+        C->nAbsent = 0;
+        __builtin_memcpy(C->v, out, n * sizeof(cEm*));
+    }
+    return n;
+}
+static int atchkCollectEm(cEm** out)
+{
+    return atchkCandidates(&atCandEm, &atListEm, EmMgr.pAlive, re4dc_alive_gen[1], out);
+}
+static int atchkCollectObj(cEm** out)
+{
+    return atchkCandidates(&atCandObj, &atListObj, (cEm*) ObjMgr.pAlive, re4dc_alive_gen[2], out);
+}
+#else
 static int atchkCollectEm(cEm** out)
 {
     int N = atListSync(&atListEm, EmMgr.pAlive, re4dc_alive_gen[1]);
@@ -262,6 +464,7 @@ static int atchkCollectObj(cEm** out)
     int N = atListSync(&atListObj, (cEm*) ObjMgr.pAlive, re4dc_alive_gen[2]);
     return N < 0 ? atchkCollect((cEm*) ObjMgr.pAlive, out) : atchkCollectList(&atListObj, N, out);
 }
+#endif
 #else
 #define atchkCollectEm(v) atchkCollect(EmMgr.pAlive, v)
 #define atchkCollectObj(v) atchkCollect((cEm*) ObjMgr.pAlive, v)

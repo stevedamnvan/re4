@@ -58,8 +58,8 @@ extern "C" cObj* SetObaModel(cObj* parent, int partsNo, Vec* ofs, f32 rad, u8 ty
 extern "C" cObj* SetObaModelF(cObj* parent, int partsNo, Vec* ofs, f32 rad, f32 h, u8 type) asm("SetObaModel");
 // wep_mod.h idiom: the volatile scalar access keeps the following `lwz pSUB` below the `sth` and the
 // info address in a register (`addi rX, pl, 0x2b4; lhz/sth 0x1a(rX)`), plem2bDashEscape.
-static inline void AtariFlagsOrV(cAtariInfo* at, u16 mask) { *(volatile u16*) &at->m_flag |= mask; }
-static inline void AtariFlagsAndV(cAtariInfo* at, u16 mask) { *(volatile u16*) &at->m_flag &= mask; }
+static inline void AtariFlagsOrV(cAtariInfo* at, u16 mask) { *(volatile u16*) __builtin_addressof(at->m_flag) |= mask; RE4DC_ATARI_TOUCH(at); }
+static inline void AtariFlagsAndV(cAtariInfo* at, u16 mask) { *(volatile u16*) __builtin_addressof(at->m_flag) &= mask; RE4DC_ATARI_TOUCH(at); }
 // game/obj16.cpp (obj16.h includes em10.h, which this module cannot).
 extern "C" cObj* SetObj16(void* bin, void* tpl, cModel* target, cModel* body, int partsNo, u8 type, Vec* pos, Vec* rot);
 extern "C" void MotSetObj16(cObj* obj, void* mot, int a, int b);

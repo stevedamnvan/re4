@@ -58,8 +58,8 @@ int GetEmIdFromListI(u32 no) asm("GetEmIdFromList");
 
 // Halfword read-modify-write of the collision flags through a volatile access: the pSUB load that
 // follows stays below the store (r311 idiom).
-static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) &a->m_flag &= mask; }
-static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { *(volatile u16*) &a->m_flag |= bit; }
+static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) __builtin_addressof(a->m_flag) &= mask; RE4DC_ATARI_TOUCH(a); }
+static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { *(volatile u16*) __builtin_addressof(a->m_flag) |= bit; RE4DC_ATARI_TOUCH(a); }
 // Pointer store through a reference: the loads that follow stay below it (r102 idiom).
 static inline void PSetPtr(void*& d, void* v) { d = v; }
 

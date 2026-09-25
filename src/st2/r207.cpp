@@ -86,7 +86,7 @@ static Vec r207_wallRot = {0.0f, -1.5707964f, 0.0f};
 // `pSUB->atari.flags &= 0xFDFF` through a pointer to the collision info: `addi r9,pSUB,0x2B4` is
 // kept (two uses); the volatile halfword store makes the following `work->sub = pSUB` reload pSUB
 // (EnemySet: `lwz r0,pSUB` after the `sth`, and pSUB@ha stays in a callee-saved register).
-static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) &a->m_flag &= mask; }
+static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) __builtin_addressof(a->m_flag) &= mask; RE4DC_ATARI_TOUCH(a); }
 static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { a->m_flag |= bit; }
 // pPL read as a struct member: the load stays below the preceding store into the work (R207Main).
 struct PlPtr { cPlayer* p; };

@@ -123,7 +123,7 @@ static inline void PSetSat(cSat*& d, cSat* v) { d = v; }
 static inline void PSetRobo(cObjRobo*& d, cObjRobo* v) { d = v; }
 // Collision flag bits cleared through the info's address with the following pG / pPL load kept
 // below the store (wep_mod.h AtariFlagsAndV).
-static inline void AtariFlagsAndV(cAtariInfo* at, u16 mask) { *(volatile u16*) &at->m_flag &= mask; }
+static inline void AtariFlagsAndV(cAtariInfo* at, u16 mask) { *(volatile u16*) __builtin_addressof(at->m_flag) &= mask; RE4DC_ATARI_TOUCH(at); }
 
 // Position a model from three components (inline owning the Vec).
 static inline void setPosXYZ(cModel* m, f32 x, f32 y, f32 z)

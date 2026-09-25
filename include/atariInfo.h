@@ -6,6 +6,64 @@
 
 class cModel;
 
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+// GAME_ATCHK_CACHE (game30.mk; G, collision traversal; exact): at_mod keeps each list's em-em candidates
+// and reuses them while no body's collidable test changed. That test reads m_flag bit 0x200 and
+// m_radius2 != 0, so both fields go through these wrappers (same size, alignment and values): a write
+// that flips the test's part notes the info in a ring (re4dc_atari_dirty, re4dc_atari_seq); a reuse
+// re-tests the noted infos against the kept list. Zeroing a whole info (AtariInfoConstruct) and the rooms'
+// volatile flag helpers note it through RE4DC_ATARI_TOUCH. Copies between infos are deleted (a copy into a
+// local buffer uses a byte copy: the buffer is in no list), and so is taking a field's address: a write
+// through a pointer would pass the wrapper, so every such site fails to compile until it takes the
+// address with __builtin_addressof and notes the info (the flag helpers, the at_mod prefetches).
+extern "C" u32 re4dc_atari_seq;
+extern "C" const void* re4dc_atari_dirty[64];
+static inline void re4dcAtariNote(const void* info)
+{
+    re4dc_atari_dirty[re4dc_atari_seq & 63] = info;
+    ++re4dc_atari_seq;
+}
+struct AtFlag16 {
+    u16 v;
+    operator u16() const { return v; }
+    AtFlag16& operator=(const AtFlag16&) = delete;  // between infos: assign the value (u16)
+    void operator&() const = delete;                  // a write through a pointer would not be noted
+    AtFlag16& operator=(u32 x) { put((u16) x); return *this; }
+    AtFlag16& operator|=(u32 x) { put((u16) (v | x)); return *this; }
+    AtFlag16& operator&=(u32 x) { put((u16) (v & x)); return *this; }
+    AtFlag16& operator^=(u32 x) { put((u16) (v ^ x)); return *this; }
+    void put(u16 n)
+    {
+        if ((v ^ n) & 0x200) {
+            re4dcAtariNote((const u8*) this - 0x1A);  // cAtariInfo::m_flag (asserted below)
+        }
+        v = n;
+    }
+};
+struct AtRadius {
+    f32 v;
+    operator f32() const { return v; }
+    AtRadius& operator=(const AtRadius&) = delete;  // between infos: assign the value (f32)
+    void operator&() const = delete;                  // a write through a pointer would not be noted
+    AtRadius& operator=(f32 x) { put(x); return *this; }
+    AtRadius& operator+=(f32 x) { put(v + x); return *this; }
+    void put(f32 n)
+    {
+        if ((v != 0.0f) != (n != 0.0f)) {
+            re4dcAtariNote((const u8*) this - 0x10);  // cAtariInfo::m_radius2 (asserted below)
+        }
+        v = n;
+    }
+};
+#define RE4DC_AT_FLAG16 AtFlag16
+#define RE4DC_AT_RADIUS AtRadius
+#define RE4DC_ATARI_TOUCH(info) re4dcAtariNote(info)
+#else
+#define RE4DC_AT_FLAG16 u16
+#define RE4DC_AT_RADIUS f32
+#define RE4DC_ATARI_TOUCH(info) ((void) 0)
+#endif
+
 enum PRIORITY {
     PRI_NORMAL = 0,
     PRI_LV1 = 1,
@@ -22,10 +80,10 @@ class cAtariInfo {
 public:
     Vec m_offset;         // 0x00  offset from the model (rotated by the model's rot)
     f32 m_radius;       // 0x0C  push rectangle half size along local X (pl_push) / cylinder radius
-    f32 m_radius2;       // 0x10  along local Z
+    RE4DC_AT_RADIUS m_radius2;       // 0x10  along local Z
     f32 m_height;           // 0x14  half height
     s16 m_parts_no;     // 0x18  parts index + 1 the info follows, 0 = the model (pl_dmg Pl_R0_Die sets 4)
-    u16 m_flag;       // 0x1A  bit1: rectangle (dispRect), bits 3-4: priority, bits 8-9 (0x300): collide with enemies
+    RE4DC_AT_FLAG16 m_flag;       // 0x1A  bit1: rectangle (dispRect), bits 3-4: priority, bits 8-9 (0x300): collide with enemies
     f32 m_radius_n;      // 0x1C  rect size `move` interpolates m_radius/m_radius2 towards
     f32 m_radius2_n;      // 0x20
     u16 m_hokan;         // 0x24  frames left of the interpolation
@@ -62,5 +120,9 @@ public:
     void setFlag200() { m_flag |= 0x200; }   // obj13 objLadderSatSet
     void scrOn() { m_flag &= ~0x200; m_flag |= 0x100; }  // obj00 setScrAtari
 };
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+static_assert(__builtin_offsetof(cAtariInfo, m_flag) == 0x1A && __builtin_offsetof(cAtariInfo, m_radius2) == 0x10,
+              "AtFlag16 / AtRadius note their info by these offsets");
+#endif
 
 #endif

@@ -224,8 +224,8 @@ static inline void U32Set(u32& d, u32 v) { d = v; }
 static inline void IntSet(int& d, int v) { d = v; }
 
 // Flag update through a volatile view: keeps the following global load below the sth (wep_mod.h).
-static inline void AtariFlagsOr(cAtariInfo* at, u16 mask) { *(volatile u16*) &at->m_flag |= mask; }
-static inline void AtariFlagsAndV(cAtariInfo* at, u16 mask) { *(volatile u16*) &at->m_flag &= mask; }
+static inline void AtariFlagsOr(cAtariInfo* at, u16 mask) { *(volatile u16*) __builtin_addressof(at->m_flag) |= mask; RE4DC_ATARI_TOUCH(at); }
+static inline void AtariFlagsAndV(cAtariInfo* at, u16 mask) { *(volatile u16*) __builtin_addressof(at->m_flag) &= mask; RE4DC_ATARI_TOUCH(at); }
 
 static inline int em36DeadCk(cEm* em)
 {

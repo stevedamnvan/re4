@@ -120,6 +120,20 @@ endif
 GAME_CPPFLAGS += -DRE4DC_ATCHK_LIST=$(GAME_ATCHK_LIST)
 PLATFORM_CPPFLAGS += -DRE4DC_ATCHK_LIST=$(GAME_ATCHK_LIST)
 endif
+# GAME_ATCHK_CACHE=1 (needs GAME_ATCHK_LIST=1; G, collision traversal; exact): EmAtCheck keeps each list's
+#                    collected bodies while the list is unchanged and applies to them every body whose
+#                    collidable test (cAtariInfo m_flag bit 0x200, m_radius2 != 0) changed: the two fields
+#                    become wrappers that note such writes, and taking their address does not compile
+#                    (atariInfo.h). A header knob: every object. =2 (check build): every reuse compared
+#                    with a fresh collection ("ATC" lines).
+GAME_ATCHK_CACHE ?= 0
+ifneq ($(GAME_ATCHK_CACHE),0)
+ifeq ($(GAME_ATCHK_LIST),0)
+$(error GAME_ATCHK_CACHE needs GAME_ATCHK_LIST=1)
+endif
+GAME_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
+PLATFORM_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
+endif
 # GAME_ESP_OWNER=1 (square plan: active effects): live esp slots counted per owner (info.Core_pEm)
 #                    bucket, so EspDelete with an owner returns at once when that owner has no live
 #                    slot (include/esp.h). A header knob (ESP_INFO_SET): every game object gets it.

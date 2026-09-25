@@ -49,11 +49,11 @@ void adjust_add_setV(Vec v) asm("adjust_add_set");
 u16 MotionMoveF(cModel* m, int flag) asm("MotionMove");
 // `pPL->atari.flags &= ~0x100` through a pointer to the collision info; the volatile halfword store keeps
 // the following pPL load below it (r30d).
-static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) &a->m_flag &= mask; }
+static inline void AtariFlagsAnd(cAtariInfo* a, u16 mask) { *(volatile u16*) __builtin_addressof(a->m_flag) &= mask; RE4DC_ATARI_TOUCH(a); }
 struct SubCharPtr {
     cSubChar* p;
 };
-static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { *(volatile u16*) &a->m_flag |= bit; }
+static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { *(volatile u16*) __builtin_addressof(a->m_flag) |= bit; RE4DC_ATARI_TOUCH(a); }
 
 struct R30fWork {
     cObj* lift;           // 0x000  the lift platform (room arc 0xC0/0xC4)

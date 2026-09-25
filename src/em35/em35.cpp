@@ -142,7 +142,7 @@ static inline void EmRoutineSet(cEm* em, int r0, int r1, int r2, int r3)
 static inline void U32Set(u32& d, u32 v) { d = v; }
 
 // Flag update through a volatile view: keeps the following global load (pPL) below the sth (wep_mod.h).
-static inline void AtariFlagsOr(cAtariInfo* at, u16 mask) { *(volatile u16*) &at->m_flag |= mask; }
+static inline void AtariFlagsOr(cAtariInfo* at, u16 mask) { *(volatile u16*) __builtin_addressof(at->m_flag) |= mask; RE4DC_ATARI_TOUCH(at); }
 
 // Dead flag test (cDmgInfo upper 16 bits): an inline returning 0/1 gives the `li 1; andis.; bne; li 0` chain.
 static inline int em35DeadCk(cEm* em)

@@ -66,7 +66,7 @@ static R311Work* r311_work;
 void EstSetB(int a, int b, Vec* pos, Vec* rot, int c, u8 d, int e, u8 f, u32 g, void* h) asm("EstSet");
 // `pSUB->atari.flags |= 0x300` through a pointer to the collision info; the volatile halfword store keeps
 // the following pG / work load below it (r207).
-static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { *(volatile u16*) &a->m_flag |= bit; }
+static inline void AtariFlagsOr(cAtariInfo* a, u16 bit) { *(volatile u16*) __builtin_addressof(a->m_flag) |= bit; RE4DC_ATARI_TOUCH(a); }
 // Pointer store through a reference: the work and the field are reloaded after it (r102 idiom).
 static inline void PSetObj(cObj*& d, cObj* v) { d = v; }
 static inline void PSetPrim(ScePrim*& d, ScePrim* v) { d = v; }

@@ -115,6 +115,7 @@ cAtariInfo* AtariInfoConstruct(cAtariInfo* p) asm("__10cAtariInfo");
 static inline cAtariInfo* AtariInfoConstruct(cAtariInfo* p)
 {
     __builtin_memset(p, 0, sizeof(cAtariInfo));
+    RE4DC_ATARI_TOUCH(p);
     return p;
 }
 #endif

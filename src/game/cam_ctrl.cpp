@@ -441,7 +441,11 @@ int cameraHitCheck(Vec* pos, Vec* nrm, Vec* from, Vec* to)
         cModel* parts;
         Vec w;
 
+#if defined(RE4DC_ATCHK_CACHE) && RE4DC_ATCHK_CACHE
+        __builtin_memcpy((void*) &atBuf, (const void*) &pSubEm->atari, sizeof(cAtariInfo));  // a local copy
+#else
         atBuf = pSubEm->atari;
+#endif
         if (at->m_parts_no != 0) {
             parts = pSubEm->getPartsPtr(at->m_parts_no - 1);
         } else {
