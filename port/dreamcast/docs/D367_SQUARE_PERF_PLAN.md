@@ -192,6 +192,17 @@ Steps, in order, each measured in full:
 Next checkpoint delivers: a measured retained cost G, the rendering allowance it leaves, and the
 quantified remaining gap.
 
+**Order revised (user, 2026-09-24, after the DCA3 / SH4ZAM study,
+`C:\Game Dev\Emulators\re4-research\dca3-sh4zam-20260924\FINDINGS.md`):** compact collision candidates
+(done, step 1) -> ordered active effects (live-slot index in slot order; slot reuse, iteration, RNG
+unchanged) -> actor matrix composition (skin_position_matrix, 1.54 ms/frame in sq15, scalar
+skin-to-screen preparation) -> one gameplay matrix chain (skeleton/collision, with the agreed numerical
+and collision-decision checks) -> remaining part preparation (packet reserve/begin). Each complete
+replacement is measured before stacking. Parked for the matrix-chain item: in partsWorldCalc's
+uniform-scale path the concat's translation column equals the MultVec world bit for bit (same SDK
+expression tree), so world can be read from the concat and MultVec + TransMatrix dropped; sibling
+parts can reuse the parent's reciprocal scales.
+
 ### Step 1 result: GAME_ATCHK_LIST (2026-09-24)
 
 EmAtCheck walked the EmMgr and ObjMgr alive lists 46.5 times per tick (~150 nodes each, 6975 node
@@ -220,6 +231,32 @@ Checkpoint after step 1: **G = 38.4 hw ms/tick.** 30 x G alone is 1153 ms per se
 even with no drawing the square still runs slower than real time; the rendering allowance at 15 or
 30 fps is negative. Remaining gap: G must fall another 13.4 ms (to 25, leaving R 16.7 at 15 fps) to
 18.4 ms (to 20, leaving R 26.7 at 15 fps or 13.3 at 30 fps), and R from 65 to that allowance.
+
+### Items 2-4 of the revised order (2026-09-24)
+
+- **Ordered active effects: GAME_ESP_OWNER (committed 158b4d6), -0.33 retained.** A live-slot
+  bitmap for the pool scans lost (sq25, +0.29: the ~421 live slots carry the cost, and the bit walk
+  reloads globals around every call). What won is narrower: live esp slots are counted per owner
+  bucket ((owner>>4 ^ owner>>10) & 63, maintained at PullEsp/PushEsp and every info.pEm write, and
+  recounted after array alloc/free/push/pop), so EspDelete(c != 0) returns without scanning when the
+  owner has no live effects (79% of 14336 calls). Slot order, reuse and RNG are untouched: nothing
+  else changes. EspgenDelete (0.13) and EfmDelete (0.27) are the same shape but EfmDelete visits dead
+  works by id, which cannot be tracked exactly; left as follow-ups.
+- **Actor matrix composition: ACTOR_SKIN_FTRV (committed dd8c4aa), -1.03 drawn.** Render only;
+  logic STRICT; 0.0007 px worst over 22.1M on-screen points (numeric check build, not screenshots:
+  wall-clock screenshots are not tick-matched and differ by 30-70k px between two control runs).
+- **One gameplay matrix chain, first exact attempt: GAME_PWC_FUSE dropped (sq29, +0.54).** Bit-exact
+  (1.05M fused parts, 1.8M reused reciprocals) but only ~275 parts per tick take the uniform-scale
+  path. The next candidate is an FTRV skeleton chain under the last-bit policy, with the agreed
+  numerical checks plus a shadow comparison of hit, grounding and collision decisions.
+
+**Checkpoint (option 3, after collision, effects and actor matrices):** G = **38.09 hw ms/tick**
+retained (sq26, reproduced by sq30); drawing every tick W = **101.69** (sq28), so R = W - G = **63.6**.
+The 15 fps real-time identity needs 2G + R <= 66.7: today it is 139.8, a gap of **73.1 ms**. The
+rendering allowance is still negative (30 x G = 1143 ms per second of game time before anything is
+drawn). Measured progress in this investigation: G 39.54 -> 38.09 (-1.45), R -1.03. The items the
+study named (collision candidates, active effects, actor matrices) are each worth about a millisecond;
+none changes the order of the gap, which remains G (needs -13 to -18 ms, to 25-20) and R (needs -37 to -47 ms, to 26.7-16.7).
 
 ## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
 
@@ -319,5 +356,10 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-24 | sq17 | sq16 rebuilt (paired never-draw baseline) | 39.54 retained/tick | - | - | baseline for step 1 |
 | 09-24 | sq19 | sq17 + GAME_ATCHK_LIST=1 (alive-list arrays, generation-tracked) | 38.42 (-1.12) | - | tr5 (=2 check build): STRICT tr2 vs tr5, 3277 ticks, 0 list mismatches; tr6 (=1) STRICT 3277 ticks | committed 1a3c91d, in LH |
 | 09-24 | sq20-sq23 | walk variants (radius pointers, array-line prefetch, unrolled blocks, flag-line prefetch) | 38.85 / 39.16 / 38.79 / 38.45 | - | - | dropped: none beats sq19 |
+| 09-24 | sq25 | sq19 + live-slot bitmap for the esp pool scans (EspMove/EspTrans/EspDelete/EspDeleteEvent) | 38.71 (+0.29) | - | - | dropped: EspDelete -0.15 but EspMove/EspTrans +0.27 (bit walk + global reloads around calls); the ~421 live slots, not the free ones, carry the cost |
+| 09-24 | sq26 | sq19 + GAME_ESP_OWNER=1 (live esp slots counted per owner bucket; EspDelete(c != 0) returns when empty) | 38.09 (-0.33) | - | tr7 (=2): 14336 owner deletes checked, 79% early returns, 0 mismatches, STRICT tr2 vs tr7 3277 ticks; tr8 (=1) STRICT | committed 158b4d6, in LH. EspDelete 0.79 -> 0.14; EspMove/ESP_IsActive +0.09 (slot lines no longer warmed) |
+| 09-24 | sq29 | sq30 (= sq26, 38.09 reproduced) + GAME_PWC_FUSE=1 (uniform-scale parts: world from the concat's translation column, MultVec + TransMatrix dropped; reciprocal scales reused per parent r_scale bits) | 38.63 (+0.54) | - | tr11 (=2): 1.05M fused parts and 1.8M reused reciprocals bit-identical, STRICT 3277 ticks | dropped: only ~275 parts/tick take the uniform path (MultVec 4884 -> 4610); the bit-compare memo added ~500 insns per call (float-to-int moves) |
+| 09-24 | sq27 | draw every tick, sq15 flags + GAME_ATCHK_LIST (LH) + GAME_ESP_OWNER | 102.72 | - | - | drawing baseline for the actor matrix item |
+| 09-24 | sq28 | sq27 + ACTOR_SKIN_FTRV=1 (skinned palette matrices through FTRV) | 101.69 (-1.03) | - | tr9 (=1, with ESP_OWNER) STRICT tr2 vs tr9, 3277 ticks; tr12 (=2): 22.1M on-screen corner points 50 units around each bone, max 0.0007 px, none above 0.25 px | committed dd8c4aa (render knob, default off). skin_position_matrix 1.52 -> 0.71 (378 -> 119 insns per build, 734 builds/frame) |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
