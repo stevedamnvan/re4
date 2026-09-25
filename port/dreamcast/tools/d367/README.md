@@ -27,6 +27,11 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   PACE_TRANS_SKIP=4063 COARSE=1` (every tick drawn; test builds) and, for the gates, `DBG_WARP=1
   LOGIC_TRACE=1 LOGIC_TRACE_MASK_RENDER=1 GAME_DECISION_TRACE=1 ACT_CAP=0` (the r101 square plan,
   `docs/D367_SQUARE_PERF_PLAN.md`).
+- R headroom and code placement (801d72d; exact, not in PERF yet: measured on the coarse square only). The
+  coarse-square arms add `GAME_OT_MASK=1 GAME_ID_LISTS=1 UI_HEAP_LAZY=30 UI_HEADERS=1 UI_PALETTE_SLOTS=32`
+  and `LINK_ORDER=link-order/r101-square-c3-8k.ld` (the hot code placed first in .text from hwproject
+  evidence; regenerate it with `tools/d367/ordgen_c3.py --objdir <OBJDIR> -o <file> <never-draw run>
+  <drawn run>` after code changes).
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 

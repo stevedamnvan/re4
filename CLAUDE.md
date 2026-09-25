@@ -13,7 +13,7 @@ Resume with the shared skill `re4-dreamcast-d367` (Claude and Codex): it covers 
 
 Build recipes are in [tools/d367/README.md](port/dreamcast/tools/d367/README.md). LH is the integrated base: 83 ms Flycast, 120.3 hw.
 
-2026-09-25: the r101 square (30 fps rethink) follows [D367_SQUARE_PERF_PLAN.md](port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md), section "Current order and status". Frame pacing and the coarse renderer landed default off (f4da5fd); R headroom is next, then G (collision traversal, visual simulation).
+2026-09-25: the r101 square (30 fps rethink) follows [D367_SQUARE_PERF_PLAN.md](port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md), section "Current order and status". Frame pacing and the coarse renderer landed default off (f4da5fd); R headroom and code placement (LINK_ORDER) landed default off (801d72d): G_q 33.39, R ~4. Next: G (collision traversal, then visual simulation).
 
 State at this update (HEAD 5285bc7 or later):
 - **Perf lane:**

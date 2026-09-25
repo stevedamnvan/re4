@@ -223,14 +223,19 @@ Status, uncapped, same stack, hw ms:
 - One-house test (user request): BIN 38 as a 400-triangle baked shell with a 256 VQ texture costs ~0.33
   ms per image (v2; v1 0.60), 18 KB VRAM, STRICT (tr51); views and door notes in the plan doc.
 - **Current order (user, 2026-09-25):** (1) land the coarse renderer with frame pacing (done: f4da5fd), (2) R headroom
-  (~2.1 ms of source work still runs on each drawn coarse tick), (3) back to G: collision traversal, then
-  visual simulation once its gameplay readers are known; appearance (step 5) after G.
+  (done: 801d72d; source work on a drawn coarse tick ~2.1 -> ~0.8 ms, R ~4), (3) back to G: code placement
+  done (801d72d, LINK_ORDER, exact: **G_q 33.39**, gap 8.42), then collision traversal, then visual simulation
+  once its gameplay readers are known; appearance (step 5) after G.
 - The calibration disc c8 is in `D:\RE4DC-HWCAL` with the model's predictions (hwcal PREDICTIONS.md).
   It awaits the user's console run.
 - Landed f4da5fd (default off; knob-off identity, tr42 carry-over): frame pacing (PACE_CATCHUP), PACE_TRANS_SKIP,
   the decision-trace tags and COARSE v0.4 (coarse.cpp). Still private (tree5): the skeleton-step kernels,
   COARSE_HOUSE, the model-diagnostic latch, SS_UI_ORDER, MOTION_RESERVE, the heap / pool logs,
   GAME_SKEL_AUDIT, GAME_IK_PASS.
+- Landed 801d72d (default off; knob-off identity, tr55 carry-over): the R-headroom knobs GAME_OT_MASK,
+  GAME_ID_LISTS, UI_HEAP_LAZY, UI_PALETTE_SLOTS and the coarse effect-loop hoist (all exact, STRICT), and
+  code placement: LINK_ORDER + tools/d367/ordgen_c3.py + link-order/r101-square-c3-8k.ld (never-draw G
+  -1.25, drawn -0.94; STRICT).
 
 Details and the ledger are in [D367_SQUARE_PERF_PLAN.md](D367_SQUARE_PERF_PLAN.md).
 

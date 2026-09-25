@@ -298,7 +298,7 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
-### Current order and status (updated 2026-09-25, after landing pacing and the coarse renderer)
+### Current order and status (updated 2026-09-25, after R headroom and code placement)
 
 **The order we follow now (user, 2026-09-25):**
 1. **Land the coarse renderer with frame pacing.** Done: **f4da5fd** (patch land2-pacing-coarse.patch,
@@ -309,32 +309,39 @@ The part-world pass takes two paths:
    (below) and the debug-slot build stamp. So tree5's gates hold for the landed code: the forced-skip and
    qualified-mask STRICT arms, tr42 STRICT vs tr41, sq50 / sq52. Still private (tree5): the skeleton-step
    kernels (GAME_PWC_KERNEL / GAME_PMC_KERNEL / GAME_HERMITE_FAST), COARSE_HOUSE, the per-part
-   model-diagnostic latch (lands with item 2), SS_UI_ORDER, MOTION_RESERVE / MOTION_USAGE_LOG,
+   model-diagnostic latch (unconditional, so not in a knob-off landing: its own patch), SS_UI_ORDER, MOTION_RESERVE / MOTION_USAGE_LOG,
    HEAP_CENSUS / HEAP_REPLACE_LOG / POOL_PEAK_LOG, GAME_SKEL_AUDIT, GAME_IK_PASS. PACE_CATCHUP is not in
    the canonical recipe yet (play discs pass `PACE_CATCHUP=2 PACE_MODE=fast PACE_CAP=2`); the pacing
    player setting is the title Options row "Frame pacing: Smooth / Fast / Off" (user decision
    2026-09-24; no boot question), a separate later item.
-2. **R headroom.** About 2.1 ms of source work still runs on every drawn coarse tick (list below). R is
-   5.03 (v0.4, sq52) and reads ~5.4 on the skeleton stack (sq61 39.78 - sq57 34.40; code-layout effects
-   included): only ~0.6 ms is left under R <= 6 for any appearance work, so this trim comes before step 5.
+2. **R headroom.** Done: **801d72d** (default off; knob-off identity, tr55 carry-over): GAME_OT_MASK,
+   GAME_ID_LISTS, UI_HEAP_LAZY, UI_PALETTE_SLOTS and the coarse effect-loop hoist (with the landed
+   UI_HEADERS) cut the source work on a drawn coarse tick from ~2.1 to ~0.8 ms: own rows -1.35 ms, every
+   batch STRICT with every decision identical (section "R headroom" below). R (drawn minus never draw, same
+   knobs) is now ~4: 3.69 (sq75 - sq67) to 4.37 (sq71 - sq72, both placed), against 5.46 in the batch
+   control (sq64 - sq66); code layout moves it by ~0.4. So ~1.6-2.3 ms is left under R <= 6 for
+   appearance (a house shell costs ~0.33). The coarse pass itself (~2.75:
+   draw_blocks 1.08, draw_model 0.92) is the next R lever when step 5 needs room.
 3. **Back to G** in the user's order: collision traversal, then visual simulation (their gameplay
-   readers first). Appearance (step 5), extending house shells included, follows G.
+   readers first). Appearance (step 5), extending house shells included, follows G. First G step done
+   with item 2: code placement (LINK_ORDER, 801d72d; exact): **G_q 33.39** (sq72; the same code unplaced
+   34.64), gap **8.42** to 24.97 (section "Code placement" below). Next: collision traversal.
 
 **Where each step of the rethink stands:**
 
 | step | state |
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
-| 2. Coarse complete square | done: R 5.03, STRICT every decision; landed f4da5fd (default off); R headroom next (item 2) |
-| 3. Close G <= 24 | skeleton step done: G_q 37.52 -> 34.40 (-3.12); gap 9.43 to 24.97; collision next |
+| 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40) and code placement (801d72d, -1.25 exact): G_q 33.39; gap 8.42 to 24.97; collision traversal next |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); nothing else started |
 
 **What remains on the coarse renderer** (answer to the user, 2026-09-25):
 1. Landing (order item 1): done, f4da5fd.
-2. Source work still invoked on a drawn tick, ~2.1 ms: HUD id quads ~0.6 (81 PSMTXConcat per tick),
-   IDSystem::unitTrans 0.48, model asset preparation 0.18, ExecOt 0.13, OSCheckHeap 0.12, GXProject 0.09,
-   small rows ~0.15 (order item 2).
+2. Source work still invoked on a drawn tick: ~0.8 ms after order item 2 (was ~2.1): the HUD's id quads
+   ~0.49 (27 per tick: texture lookup, PSMTXConcat, 4 GXProject, the native UI submit and resolve), the
+   IDSystem lists ~0.1, small rows. EspDelete (0.42) and audio_step (0.15) run on every tick: G, not R.
 3. Appearance (step 5): actors are ribbons (Leon's jacket cloth draws as a curtain of slabs); scenery is
    flat collision (no ground texture, trees, fences, props, the well, sky); doors draw as flat slabs from
    their own collision pieces (they move correctly); interiors are flat; effects are plain billboards and
@@ -398,6 +405,64 @@ openings; measure the complete cost and inspect it from several angles before ex
 - **Per millisecond:** v2 is ~0.33 ms per house in view with this implementation; with ~2.1 ms of R
   headroom recovered (order item 2), a handful of shells fit. Extending across the village is
   appearance work (step 5) and the user's call after these results.
+
+#### R headroom (order item 2, 2026-09-25)
+
+Every tick drawn (PACE_MODE=off, PACE_TRANS_SKIP=4063, COARSE=1, ACT_CAP=0, skeleton knobs) unless noted;
+work = total - waits. Stacked:
+
+| arm | change | work | vs previous | own rows | gameplay |
+|---|---|---:|---:|---:|---|
+| sq64 | batch control | 39.68 | - | - | - |
+| sq65 | GAME_OT_MASK=1 GAME_ID_LISTS=1 UI_HEAP_LAZY=30 | 38.89 | -0.79 | -0.96 | tr52 (=2): 289k queued units and 103k skipped OT executions, 0 mismatches; tr53 STRICT vs tr42 (8145 frames), every decision identical |
+| sq65 (rh1b) | the same build again | 38.89 | 0.00 | - | - |
+| sq68 | + UI_HEADERS=1 UI_PALETTE_SLOTS=32 | 38.70 | -0.19 | ~-0.20 | tr54 STRICT vs tr42, every decision identical |
+| sq75 | + the coarse effect-loop hoist and a word palette compare | 38.33 | -0.37 | -0.19 | tr55 STRICT vs tr42, every decision identical |
+
+Never-draw twins (PACE_FORCE=A): sq66 control 34.22, sq67 batch 1 34.64 (+0.42: code layout; its own
+rows -0.16).
+- **GAME_OT_MASK=1:** per-table bits "took an entry" / "took a model entry" since the table's clear;
+  ExecOt returns at once for an empty table, and the model-asset signature walk skips tables without
+  models. =2 runs both ways and compares ("OTM").
+- **GAME_ID_LISTS=1:** IDSystem::trans builds each unit's child lists once per call; unitTrans walks them
+  instead of rescanning the 0x80-unit pool for each of the ~38 queued units. =2 compares every queued
+  sequence ("IDL").
+- **UI_HEAP_LAZY=30:** the native frame stats refresh source_heap_free (an OSCheckHeap walk, ~0.12) every
+  30th frame; nothing in the image reads it.
+- **UI_PALETTE_SLOTS=32:** the indexed-image palette copies are 32 slots given out least recently used,
+  instead of 16 fixed to handle % 16 (the HUD's indexed images evicted each other: 6 full resolves per
+  tick); +8.4 KB BSS. Batch 3 compares the palettes in 32-bit words.
+- **The coarse effect loop** called ESP_IsActive for each live slot (446 per drawn tick); outside the event
+  pause it equals m_Be_flg & 1, so it is called only under the pause.
+- A rerun of the same build gives the same numbers to 0.01 ms; the rest of the movement between builds is
+  code and data layout (the D-cache and I-cache are direct mapped).
+- What R still holds (sq68 - sq67 by rows): the coarse pass 2.75 (draw_blocks 1.08, draw_model 0.92,
+  re4dc_coarse_draw 0.48, emit_poly 0.27), the native UI 0.41, source work ~0.4 after batch 3.
+
+#### Code placement: LINK_ORDER (G, 2026-09-25)
+
+The never-draw tick spends ~4.7 ms in I-cache misses and ~4.0 in D-cache misses (both direct mapped:
+8 KB / 16 KB). LINK_ORDER=<file> (game30.mk) passes an ld --section-ordering-file that puts the hot input
+sections first in .text; tools/d367/ordgen_c3.py writes it from hwproject evidence. Each arm relinks its
+control's objects (identical objects, identical .text size, identical instruction counts):
+
+| order | never draw (vs sq67 34.64) | drawn (vs sq68 38.70) | I-miss never draw (4.67) | gameplay |
+|---|---:|---:|---:|---|
+| v1: 614 sections hottest first (sq70 / sq69) | 34.80 (+0.17) | 38.75 (+0.05) | 5.05 | - |
+| **C3, clusters <= 8 KB** (sq72 / sq71) | **33.39 (-1.25)** | 37.76 (-0.94) | 3.74 | tr56 STRICT vs tr55 (8296 frames) and tr42 (8145), every decision identical |
+| C3, clusters <= 4 KB (sq74 / sq73) | 33.87 (-0.77) | 37.73 (-0.97) | 4.06 | - |
+
+- C3 (HFSort): exact call edges (every static call site weighted by its execution count in the run's
+  counts.bin), each function's cluster appended to its most frequent caller's while the cluster stays
+  within 8 KB, clusters placed by hotness per byte. Clusters it formed: collision (getFloor, hitCheck2,
+  blkPolyLineCk, At_poly_line_ck, lineOverlap: 2.5 KB, 9.0 ms), the part matrices (matUpdate,
+  partsMatCalc, RotMatrix: 3.7 KB), a Ganado's box move and attack checks (7.1 KB), motion
+  (MotionMoveCore, hermiteFast: 5.0 KB).
+- v1 lost because hottest-first ignores what runs together (hermiteFast and MotionMoveCore collided:
+  +0.28 and +0.24).
+- The landed order is link-order/r101-square-c3-8k.ld (from sq67 + sq68). It is tied to the code:
+  regenerate it after code changes (sections it names that no longer exist are ignored). Square arms
+  pass `LINK_ORDER=link-order/r101-square-c3-8k.ld` from here on.
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
@@ -951,3 +1016,13 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq62 | sq61 + COARSE_HOUSE v1 (BIN 38 shell, 400 tris, 256 VQ) | 40.24 (house row +0.60) | - | tr50 STRICT vs tr42, 8078 frames | superseded by v2 |
 | 09-25 | sq63 | sq61 + COARSE_HOUSE v2 (indexed, screen-space back faces) | 40.58 (house row +0.33) | - | tr51 STRICT vs tr42 (8111) and tr50 | the house test result; extension is step 5 |
 | 09-25 | land2 | frame pacing + PACE_TRANS_SKIP + decision-trace tags + COARSE v0.4 landed (f4da5fd) | - | - | knob-off identity (default, canonical); tr42 carry-over 445 / 453 objects identical | landed, default off |
+| 09-25 | sq64 / sq66 | batch controls: every tick drawn (coarse, skeleton knobs) / never draw | 39.68 / 34.22 work | - | - | R headroom controls |
+| 09-25 | sq65 | sq64 + GAME_OT_MASK=1 GAME_ID_LISTS=1 UI_HEAP_LAZY=30 | 38.89 (-0.79; own rows -0.96) | - | tr52 (=2) 0 mismatches; tr53 STRICT vs tr42 | landed 801d72d |
+| 09-25 | sq67 | sq66 + batch 1 | 34.64 (+0.42 layout; own rows -0.16) | - | - | never-draw twin |
+| 09-25 | sq65 rh1b | sq65 again | 38.89 (0.00) | - | - | reruns repeat |
+| 09-25 | sq68 | sq65 + UI_HEADERS=1 UI_PALETTE_SLOTS=32 | 38.70 (-0.19) | - | tr54 STRICT vs tr42 | landed 801d72d |
+| 09-25 | sq69 / sq70 | sq68 / sq67 + LINK_ORDER v1 (hottest first) | 38.75 / 34.80 (+0.05 / +0.17) | - | - | dropped |
+| 09-25 | sq71 / sq72 | + LINK_ORDER C3, 8 KB clusters | 37.76 / 33.39 (-0.94 / -1.25) | - | tr56 STRICT vs tr55 and tr42 | landed 801d72d: **G_q 33.39** |
+| 09-25 | sq73 / sq74 | + LINK_ORDER C3, 4 KB clusters | 37.73 / 33.87 (-0.97 / -0.77) | - | - | 8 KB kept |
+| 09-25 | sq75 | sq68 + coarse effect-loop hoist + word palette compare | 38.33 (-0.37; own rows -0.19) | - | tr55 STRICT vs tr42 | landed 801d72d |
+| 09-25 | land3 | R headroom knobs + LINK_ORDER landed (801d72d) | - | - | knob-off identity (default, canonical); tr55 carry-over 444 / 453 objects identical (the rest tree5-only) | landed, default off |
