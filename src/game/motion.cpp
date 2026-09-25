@@ -1286,6 +1286,11 @@ int MotionGetState(cModel* m)
 // starting from the per-axis history index (hist, updated unless flags bit 3), wraps for looping
 // motions (flags 4), holds the last key past the end, and Hermite-interpolates value/tangent pairs
 // decoded by Fcc_get_data_tbl[prm->type]. Returns 1 when a history index was invalid.
+#if defined(RE4DC_HERMITE_FAST) && RE4DC_HERMITE_FAST
+// GAME_HERMITE_FAST: the body below is the reference (HermiteInterpolation_ref); the public entry point
+// after it is the restructured twin.
+#define HermiteInterpolation HermiteInterpolation_ref
+#endif
 int HermiteInterpolation(HermitePrm* prm, Vec* out, u16* hist)
 {
     static FccGetData Fcc_get_data_tbl[16] = {
@@ -1408,6 +1413,215 @@ int HermiteInterpolation(HermitePrm* prm, Vec* out, u16* hist)
     }
     return ret;
 }
+#if defined(RE4DC_HERMITE_FAST) && RE4DC_HERMITE_FAST
+#undef HermiteInterpolation
+// GAME_HERMITE_FAST (game30.mk; the 30 fps rethink, step 2): HermiteInterpolation_ref restructured,
+// exact. Same search, history reads / writes, error log and return value; f0, f1, val and tan persist
+// across the three axes exactly as there (a stale pair feeds the blend when a search runs out). Only the
+// mechanics change:
+//   - the key layouts 5 (s16 / s16), 0 (f32 / f32), 6 (s16 / s8) and 10 (s8 / s8) decode inline with the
+//     Fcc_get_data_* conversions: FCC_S16 composes the little-endian s16 at d[i] (= an aligned s16 load
+//     when d[i] is even), FCC_F32 the little-endian word (two halfwords when 2-aligned), FCC_S8 the byte;
+//     each times 0.0001f where the original scales. Odd addresses and the other layouts call the table;
+//   - hermite's expression inline (the same operations in the same order, GAME_FP_CONTRACT=off);
+//   - Fcc_next_axis_addr from a stride table (-1 for the unused layouts, as there).
+namespace {
+FccGetData const hfTbl[16] = {
+    Fcc_get_data_000, Fcc_get_data_001, Fcc_get_data_002, dummy,
+    Fcc_get_data_010, Fcc_get_data_011, Fcc_get_data_012, dummy,
+    Fcc_get_data_020, Fcc_get_data_021, Fcc_get_data_022, dummy,
+    dummy,            dummy,            dummy,            Fcc_get_data_033,
+};
+const s8 hfStride[16] = {12, 8, 6, -1, 10, 6, 4, -1, 9, 5, 3, -1, -1, -1, -1, 4};
+inline f32 hfS16(const u8* d)
+{
+    return (f32) * (const s16*) d * 0.0001f;
+}
+inline f32 hfS8(const u8* d)
+{
+    return (f32) (s8) d[0] * 0.0001f;
+}
+inline f32 hfF32(const u8* d)
+{
+    const u32 w = (u32) ((const u16*) d)[0] | ((u32) ((const u16*) d)[1] << 16);
+    f32 f;
+    __builtin_memcpy(&f, &w, 4);
+    return f;
+}
+inline void hfGet(int type, u8* d, int i0, int i1, f32* v, f32* t)
+{
+    if (!((u32) d & 1)) {
+        switch (type) {
+        case 5:
+            v[0] = hfS16(d + i0 * 6);
+            v[1] = hfS16(d + i1 * 6);
+            t[0] = hfS16(d + i0 * 6 + 4);
+            t[1] = hfS16(d + i1 * 6 + 2);
+            return;
+        case 0:
+            v[0] = hfF32(d + i0 * 12);
+            v[1] = hfF32(d + i1 * 12);
+            t[0] = hfF32(d + i0 * 12 + 8);
+            t[1] = hfF32(d + i1 * 12 + 4);
+            return;
+        case 6:
+            v[0] = hfS16(d + i0 * 4);
+            v[1] = hfS16(d + i1 * 4);
+            t[0] = hfS8(d + i0 * 4 + 3);
+            t[1] = hfS8(d + i1 * 4 + 2);
+            return;
+        default:
+            break;
+        }
+    }
+    if (type == 10) {
+        v[0] = hfS8(d + i0 * 3);
+        v[1] = hfS8(d + i1 * 3);
+        t[0] = hfS8(d + i0 * 3 + 2);
+        t[1] = hfS8(d + i1 * 3 + 1);
+        return;
+    }
+    hfTbl[type](d, i0, i1, v, t);
+}
+inline f32 hfHermite(const f32* p, const f32* v, f32 t)
+{
+    f32 t2 = t * t;
+    f32 t3 = t * t2;
+    f32 h01 = -(t3 + t3) + 3.0f * t2;
+    f32 h11 = t3 - t2;
+    f32 h10 = h11 - t2 + t;
+    f32 h00 = -h01 + 1.0f;
+
+    return p[0] * h00 + p[1] * h01 + v[0] * h10 + v[1] * h11;
+}
+int hermiteFast(HermitePrm* prm, Vec* out, u16* hist)
+{
+    f32 r = 0.0f;
+    f32 frame = prm->frame;
+    const f32 maxFrame = prm->maxFrame;
+    const u32 flags = prm->flags;
+    const int type = prm->type;
+    const int stride = hfStride[type];
+    u8* p = prm->key;
+    f32* o = (f32*) out;
+    u16* hp = hist - 1;
+    f32 f0 = r;
+    f32 f1 = r;
+    int ret = 0;
+    f32 val[2];
+    f32 tan[2];
+
+    for (int axis = 0; axis <= 2; axis++) {
+        const int n = *(u16*) p;
+        u16* frames = (u16*) (p + 2);
+        u8* data = p + n * 2 + 2;
+        hp++;
+        p = data + (stride < 0 ? -1 : n * stride);
+        int cnt = n;
+        int found = 0;
+        if (maxFrame <= frame) {
+            if ((flags & 6) == 4) {
+                frame -= maxFrame;
+                if (!(flags & 8)) {
+                    *hp = 0;
+                }
+            } else {
+                hfGet(type, data, n - 1, 0, val, tan);
+                cnt = 0;
+                found = 1;
+                r = val[0];
+            }
+        }
+        int idx = !(flags & 8) ? *hp : 0;
+        const int last = n - 1;
+        if (idx > last) {
+            pLog->err(0, 0, "H.I.(): axis=%d, hist=%d nFrm=%d, Invalid key history.", axis, idx, n);
+            idx = 0;
+            ret = 1;
+        }
+        if (cnt != 0) {
+            u16* fp = frames + idx;
+            do {
+                f0 = (f32) *fp;
+                if (f0 == frame) {
+                    hfGet(type, data, idx, 0, val, tan);
+                    r = val[0];
+                    if (!(flags & 8)) {
+                        *hp = idx;
+                    }
+                    found = 1;
+                    break;
+                }
+                if (f0 < frame) {
+                    int nx = idx + 1;
+                    if (nx > last) {
+                        nx = 0;
+                    }
+                    f1 = (f32) frames[nx];
+                    if (frame < f1) {
+                        hfGet(type, data, idx, nx, val, tan);
+                        if (!(flags & 8)) {
+                            *hp = idx;
+                        }
+                        break;
+                    }
+                }
+                if ((flags & 1) || f0 > frame) {
+                    fp--;
+                    idx--;
+                    if (idx < 0) {
+                        fp = frames + last;
+                        idx = last;
+                    }
+                } else {
+                    idx++;
+                    fp++;
+                    if (idx > last) {
+                        fp = frames;
+                        idx = 0;
+                    }
+                }
+            } while (--cnt);
+        }
+        if (!found) {
+            r = hfHermite(val, tan, (frame - f0) / (f1 - f0));
+        }
+        o[axis] = r;
+    }
+    return ret;
+}
+#if RE4DC_HERMITE_FAST == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+u32 hfCalls, hfMisOut, hfMisHist, hfMisRet;
+#endif
+}   // namespace
+int HermiteInterpolation(HermitePrm* prm, Vec* out, u16* hist)
+{
+#if RE4DC_HERMITE_FAST == 2
+    const u16 h0[3] = {hist[0], hist[1], hist[2]};
+    Vec ro;
+    const int rr = HermiteInterpolation_ref(prm, &ro, hist);
+    const u16 rh[3] = {hist[0], hist[1], hist[2]};
+    hist[0] = h0[0];
+    hist[1] = h0[1];
+    hist[2] = h0[2];
+    const int fr = hermiteFast(prm, out, hist);
+    u32 a[3], b[3];
+    __builtin_memcpy(a, &ro, 12);
+    __builtin_memcpy(b, out, 12);
+    hfMisOut += (a[0] != b[0]) + (a[1] != b[1]) + (a[2] != b[2]);
+    hfMisHist += (rh[0] != hist[0]) + (rh[1] != hist[1]) + (rh[2] != hist[2]);
+    hfMisRet += rr != fr;
+    if ((++hfCalls & 0xFFF) == 0) {
+        re4dc_log("HERMF calls=%u mismatch_out=%u mismatch_hist=%u mismatch_ret=%u\n", hfCalls, hfMisOut, hfMisHist,
+                  hfMisRet);
+    }
+    return fr;
+#else
+    return hermiteFast(prm, out, hist);
+#endif
+}
+#endif
 
 // Byte-wise big-endian reads of the key data (the streams are unaligned).
 typedef union {

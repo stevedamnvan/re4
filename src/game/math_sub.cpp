@@ -351,7 +351,15 @@ struct RotCacheEntry {
     u32 valid;
     u32 m[12];
 };
+#if defined(RE4DC_PMC_KERNEL) && RE4DC_PMC_KERNEL
+// GAME_PMC_KERNEL: platform/pmc_sh4.S probes the memo (partsMatCalc's hits), so it has a C name.
+static_assert(sizeof(RotCacheEntry) == 64, "pmc_sh4.S: memo entry");
+extern "C" RotCacheEntry re4dc_rot_cache[32];
+RotCacheEntry re4dc_rot_cache[32];
+#define s_rotCache re4dc_rot_cache
+#else
 static RotCacheEntry s_rotCache[32];
+#endif
 extern "C" {
 u32 re4dc_rot_cache_hits;
 u32 re4dc_rot_cache_misses;

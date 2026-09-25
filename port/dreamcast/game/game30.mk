@@ -482,6 +482,49 @@ GAME_SKEL_FTRV ?= 0
 ifneq ($(GAME_SKEL_FTRV),0)
 GAME_CPPFLAGS += -DRE4DC_SKEL_FTRV=$(GAME_SKEL_FTRV)
 endif
+# GAME_PWC_KERNEL=1 (the 30 fps rethink, step 2; exact twin of GAME_SKEL_FTRV=1's live loop): the
+#                    Ganados' part-world pass as one streaming SH-4 loop (platform/pwc_sh4.S: @Rn+ /
+#                    @-Rn addressing, inverse scales once per distinct parent scale; the same FP operations
+#                    on the same operands). =2: check build, the kernel pass runs first, then skelPass
+#                    recomputes live and every mat / world / r_scale word is compared ("PWCK" log line).
+#                    =3: every model's part-world pass on the kernel (Leon and objects move from the library
+#                    path to FTRV: last-bit FP policy, decisions compared with GAME_DECISION_TRACE).
+GAME_PWC_KERNEL ?= 0
+ifneq ($(GAME_PWC_KERNEL),0)
+ifneq ($(GAME_SKEL_FTRV),1)
+$(error GAME_PWC_KERNEL needs GAME_SKEL_FTRV=1)
+endif
+PLATFORM_OBJS += $(OBJDIR)/platform/pwc_sh4.o
+$(OBJDIR)/platform/pwc_sh4.o: platform/pwc_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+$(OBJDIR)/src/game/model.o: GAME_CPPFLAGS += -DRE4DC_PWC_KERNEL=$(GAME_PWC_KERNEL)
+endif
+# GAME_PMC_KERNEL=1 (the 30 fps rethink, step 2; exact): cModel::partsMatCalc's parts whose rotation is in
+#                    RotMatrix's memo (GAME_ROT_CACHE) as one streaming SH-4 loop (platform/pmc_sh4.S: the
+#                    memo words, pos, the scale products and the copy to mat, stored with @-Rn); a memo miss
+#                    takes the original four calls. Needs GAME_ROT_CACHE=1.
+GAME_PMC_KERNEL ?= 0
+ifneq ($(GAME_PMC_KERNEL),0)
+ifneq ($(GAME_ROT_CACHE),1)
+$(error GAME_PMC_KERNEL needs GAME_ROT_CACHE=1)
+endif
+PLATFORM_OBJS += $(OBJDIR)/platform/pmc_sh4.o
+$(OBJDIR)/platform/pmc_sh4.o: platform/pmc_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+$(OBJDIR)/src/game/model.o $(OBJDIR)/src/game/math_sub.o: GAME_CPPFLAGS += -DRE4DC_PMC_KERNEL=$(GAME_PMC_KERNEL)
+endif
+# GAME_HERMITE_FAST=1 (the 30 fps rethink, step 2; exact): HermiteInterpolation (motion.cpp, every key
+#                    stream evaluation) as a restructured twin: the common key layouts (5, 0, 6, 10) decoded
+#                    inline with the same conversions, the hermite blend inline (same expression), the axis
+#                    stride from a table; the search, history and persistence of f0 / f1 / val / tan across
+#                    axes unchanged. =2: check build, the original runs first on a copy of the history and
+#                    every output word, history slot and return value is compared ("HERMF" log line).
+GAME_HERMITE_FAST ?= 0
+ifneq ($(GAME_HERMITE_FAST),0)
+$(OBJDIR)/src/game/motion.o: GAME_CPPFLAGS += -DRE4DC_HERMITE_FAST=$(GAME_HERMITE_FAST)
+endif
 # GAME_COL_PREFETCH=1: the scenery collision walks (block chains, block polygon lists) prefetch the next
 #                    block and the next polygon's record, vertex and normal. Loads only: same answers.
 GAME_COL_PREFETCH ?= 0

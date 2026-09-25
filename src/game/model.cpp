@@ -348,10 +348,38 @@ void cModel::setPartsParent()
 }
 
 // Rebuilds every parts' local matrix (l_mat, copied to mat) from its ang/pos/scale.
+#if defined(RE4DC_PMC_KERNEL) && RE4DC_PMC_KERNEL && defined(__sh__)
+// GAME_PMC_KERNEL (game30.mk; the 30 fps rethink, step 2): parts whose rotation is in RotMatrix's memo
+// run through platform/pmc_sh4.S (an exact twin of the four calls below: memo words, pos, the scale
+// products, the copy to mat); the kernel returns each memo miss, which takes the four calls, and resumes
+// with its pList.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+static_assert(__builtin_offsetof(cParts, pos) == 0x94 && __builtin_offsetof(cParts, ang) == 0xA0 &&
+              __builtin_offsetof(cParts, scale) == 0xAC && __builtin_offsetof(cParts, l_mat) == 0x3C &&
+              __builtin_offsetof(cParts, mat) == 0x0C && __builtin_offsetof(cParts, pList) == 0xF4,
+              "pmc_sh4.S offsets");
+#pragma GCC diagnostic pop
+extern "C" cParts* re4dc_pmc_run(cParts* p);
+#endif
 void cModel::partsMatCalc()
 {
     cParts* p;
 
+#if defined(RE4DC_PMC_KERNEL) && RE4DC_PMC_KERNEL && defined(__sh__)
+    for (p = pList; p;) {
+        p = re4dc_pmc_run(p);
+        if (!p) {
+            break;
+        }
+        MtxPtr m = p->l_mat;
+        RotMatrix(m, &p->ang);
+        TransMatrix(m, &p->pos);
+        ScaleMatrix(m, &p->scale);
+        PSMTXCopy(m, p->mat);
+        p = p->pList;
+    }
+#else
     for (p = pList; p; p = p->pList) {
         MtxPtr m = p->l_mat;
         RotMatrix(m, &p->ang);
@@ -359,6 +387,7 @@ void cModel::partsMatCalc()
         ScaleMatrix(m, &p->scale);
         PSMTXCopy(m, p->mat);
     }
+#endif
 }
 
 // Base move: nothing.
@@ -760,6 +789,154 @@ void skelCompare(cModel* self, const SkelShadow* sh, u32 n, u32 miss)
 #endif
 }   // namespace
 #endif
+#if defined(RE4DC_PWC_KERNEL) && RE4DC_PWC_KERNEL && defined(__sh__)
+#if !(defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV == 1)
+#error "GAME_PWC_KERNEL needs GAME_SKEL_FTRV=1"
+#endif
+// GAME_PWC_KERNEL (game30.mk; the 30 fps rethink, step 2): skelPass's live loop as one streaming SH-4
+// loop (platform/pwc_sh4.S), an exact twin: the same FP operations on the same operands, only the
+// addressing differs (fmov has no displacement form: the compiled loop spends three instructions per
+// field) and the inverse scales are computed once per distinct parent scale. The kernel returns each
+// part that needs the C path (an addRot request, a zero parent scale component); skelPartLive runs
+// that part as skelPass would and the kernel resumes with its pList.
+//   =1: the Ganados' update (re4dc_skel_scope), as GAME_SKEL_FTRV=1. Logic trace STRICT.
+//   =2: check build: the kernel pass runs first, its outputs are saved and the parts' flags restored,
+//       then skelPass recomputes everything live and each mat / world / r_scale word is compared
+//       ("PWCK" log line). The live state is skelPass's, so the trace stays STRICT.
+//   =3: every model's pass on the kernel: Leon and the objects move from the library path to FTRV
+//       (last-bit FP policy; decisions compared with GAME_DECISION_TRACE).
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+static_assert(__builtin_offsetof(cParts, mat) == 0x0C, "pwc_sh4.S: mat");
+static_assert(__builtin_offsetof(cParts, l_mat) == 0x3C, "pwc_sh4.S: l_mat");
+static_assert(__builtin_offsetof(cParts, pParent) == 0x6C, "pwc_sh4.S: pParent");
+static_assert(__builtin_offsetof(cParts, world) == 0x70, "pwc_sh4.S: world");
+static_assert(__builtin_offsetof(cParts, scale) == 0xAC, "pwc_sh4.S: scale");
+static_assert(__builtin_offsetof(cParts, r_scale) == 0xB8, "pwc_sh4.S: r_scale");
+static_assert(__builtin_offsetof(cParts, pList) == 0xF4, "pwc_sh4.S: pList");
+static_assert(__builtin_offsetof(cParts, motParts.flags) == 0x1C0, "pwc_sh4.S: motParts.flags");
+static_assert(__builtin_offsetof(cCoord, mat) == 0x0C && __builtin_offsetof(cCoord, r_scale) == 0xB8,
+              "pwc_sh4.S: parent (cCoord) offsets");
+#pragma GCC diagnostic pop
+extern "C" cParts* re4dc_pwc_ftrv_run(cParts* p);
+namespace {
+// skelPass's live body for one part (the kernel's bail-outs).
+void skelPartLive(cParts* p)
+{
+    const u32 fl = p->motParts.flags;
+    const cCoord* parent = p->pParent;
+    const f32* P = &parent->mat[0][0];
+    Vec rs = parent->r_scale;
+    f32* M = &p->mat[0][0];
+    const f32* L = &p->l_mat[0][0];
+    if ((rs.x != rs.y || rs.y != rs.z) && (rs.x == 0.0f || rs.y == 0.0f || rs.z == 0.0f)) {
+        skelScaledOriginal(P, rs, L, M);
+    } else if (rs.x != rs.y || rs.y != rs.z) {
+        const f32 ix = (rs.x != 0.0f) ? 1.0f / rs.x : 0.0f;
+        const f32 iy = (rs.y != 0.0f) ? 1.0f / rs.y : 0.0f;
+        const f32 iz = (rs.z != 0.0f) ? 1.0f / rs.z : 0.0f;
+        f32 Ls[12];
+        Ls[0] = L[0] * rs.x; Ls[1] = L[1] * rs.y; Ls[2] = L[2] * rs.z; Ls[3] = L[3] * rs.x;
+        Ls[4] = L[4] * rs.x; Ls[5] = L[5] * rs.y; Ls[6] = L[6] * rs.z; Ls[7] = L[7] * rs.y;
+        Ls[8] = L[8] * rs.x; Ls[9] = L[9] * rs.y; Ls[10] = L[10] * rs.z; Ls[11] = L[11] * rs.z;
+        skelLoadRows(Ls);
+        skelRows(P, ix, iy, iz, M);
+    } else {
+        skelLoadRows(L);
+        skelRowsUniform(P, M);
+    }
+    Vec w = {M[3], M[7], M[11]};
+    if (fl & 0x40000000) {
+        Mtx m2;
+        f32(*Mm)[4] = (f32(*)[4]) M;
+        p->motParts.flags &= ~0x40000000;
+        PSMTXRotRad(m2, 'x', p->addRot.x);
+        PSMTXConcat(Mm, m2, Mm);
+        PSMTXRotRad(m2, 'z', p->addRot.z);
+        PSMTXConcat(Mm, m2, Mm);
+        PSMTXRotRad(m2, 'y', p->addRot.y);
+        PSMTXConcat(m2, Mm, Mm);
+        TransMatrix(Mm, &w);
+    }
+    Vec r;
+    r.x = rs.x * p->scale.x;
+    r.y = rs.y * p->scale.y;
+    r.z = rs.z * p->scale.z;
+    p->world = w;
+    p->r_scale = r;
+}
+inline void pwcKernelPass(cModel* self)
+{
+    for (cParts* q = self->pList; q;) {
+        q = re4dc_pwc_ftrv_run(q);
+        if (!q) {
+            break;
+        }
+        skelPartLive(q);
+        q = q->pList;
+    }
+}
+#if RE4DC_PWC_KERNEL == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+u32 pwckFlags[256];
+u32 pwckOut[256][18];
+u32 pwckCalls, pwckParts, pwckBails, pwckMisParts, pwckMisWords, pwckOver;
+void pwckCheck(cModel* self)
+{
+    u32 n = 0;
+    for (cParts* q = self->pList; q; q = q->pList) {
+        if (n < 256) {
+            pwckFlags[n] = q->motParts.flags;
+        }
+        n++;
+    }
+    if (n > 256) {
+        pwckOver++;
+        skelPass(self, 0, 0);
+        return;
+    }
+    for (cParts* q = self->pList; q;) {
+        q = re4dc_pwc_ftrv_run(q);
+        if (!q) {
+            break;
+        }
+        pwckBails++;
+        skelPartLive(q);
+        q = q->pList;
+    }
+    u32 i = 0;
+    for (cParts* q = self->pList; q; q = q->pList, i++) {
+        __builtin_memcpy(&pwckOut[i][0], &q->mat[0][0], 48);
+        __builtin_memcpy(&pwckOut[i][12], &q->world, 12);
+        __builtin_memcpy(&pwckOut[i][15], &q->r_scale, 12);
+        q->motParts.flags = pwckFlags[i];
+    }
+    skelPass(self, 0, 0);
+    i = 0;
+    for (cParts* q = self->pList; q; q = q->pList, i++) {
+        if (pwckFlags[i] & 2) {
+            continue;
+        }
+        u32 ref[18];
+        __builtin_memcpy(&ref[0], &q->mat[0][0], 48);
+        __builtin_memcpy(&ref[12], &q->world, 12);
+        __builtin_memcpy(&ref[15], &q->r_scale, 12);
+        u32 bad = 0;
+        for (int j = 0; j < 18; j++) {
+            bad += ref[j] != pwckOut[i][j];
+        }
+        pwckParts++;
+        pwckMisWords += bad;
+        pwckMisParts += bad != 0;
+    }
+    if ((++pwckCalls & 0x3FF) == 0) {
+        re4dc_log("PWCK calls=%u parts=%u bails=%u mismatch_parts=%u mismatch_words=%u overflow=%u\n",
+                  pwckCalls, pwckParts, pwckBails, pwckMisParts, pwckMisWords, pwckOver);
+    }
+}
+#endif
+}   // namespace
+#endif
 void cModel::partsWorldCalc()
 {
     cParts* p;
@@ -779,8 +956,18 @@ void cModel::partsWorldCalc()
         return;
     }
 #if defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV == 1 && defined(__sh__)
+#if defined(RE4DC_PWC_KERNEL) && RE4DC_PWC_KERNEL == 3
+    if (true) {   // GAME_PWC_KERNEL=3: every model
+#else
     if (re4dc_skel_scope) {
+#endif
+#if defined(RE4DC_PWC_KERNEL) && RE4DC_PWC_KERNEL == 2
+        pwckCheck(this);
+#elif defined(RE4DC_PWC_KERNEL) && RE4DC_PWC_KERNEL
+        pwcKernelPass(this);
+#else
         skelPass(this, 0, 0);
+#endif
         Motion.Pos_world = pos;
         return;
     }
