@@ -229,13 +229,15 @@ Status, uncapped, same stack, hw ms:
   GAME_ATCHK_CACHE, aeefd26, the workAt inline GAME_WORKAT_INLINE, 3eaa868, and the line queries' leaf and
   block walk kernels GAME_LINE_LEAF, cf46edc, and GAME_LINE_WALK, ba73027, and the pieces' transforms in the walk
   kernel GAME_LINE_PIECE, 4e394ea, all exact: G_q 30.66, gap 5.69; then the effect pools' scans and moves GAME_FX_SCAN + GAME_FX_MOVE, 1d3dc4d,
-  lane fx, exact: **G_q 29.55**, gap 4.58). Since the evening of 2026-09-25 the rest runs in parallel lanes
+  lane fx, exact: **G_q 29.55**, gap 4.58; then the collision stack, 7caa2f7, lane gc, exact: gc13 29.03 alone, -1.63;
+  the two together not measured yet, and the lanes' G includes tree5's unlanded skeleton kernels, which the
+  main session lands next). Since the evening of 2026-09-25 the rest runs in parallel lanes
   (next bullet).
 - **Parallel lanes (user, 2026-09-25: "I don't want to spend more time benchmarking. I want to focus on the
   remaining optimization that can be parallelized").** One agent per non-overlapping lane (arm prefix,
   tree under /root/probe/d367-agents): cl characters (coarse-actors-4k/stack-tree: meshes fitted to the
   character code losslessly, a cheaper adapter, then integrating new cast models), vl vertex loop
-  (lane-vloop/tree: ACTOR_VTX_KERNEL), gc collision (lane-gcol/tree: sphere walk, em-em rows), fx effects
+  (lane-vloop/tree: ACTOR_VTX_KERNEL), gc collision (lane-gcol/tree: sphere walk, em-em rows; stack landed 7caa2f7), fx effects
   (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
   gameplay-reader map), wd world (lane-world/tree: textured coarse world <= ~3 ms), bg route bugs
   (lane-bugs: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough; paused). Per change: one

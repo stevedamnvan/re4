@@ -310,7 +310,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 |---|---|---|
 | cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
 | vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: a hand-written SH-4 vertex loop in platform/native_actor_fast.cpp |
-| gc collision | lane-gcol/tree | the resumable sphere walk, the em-em rows |
+| gc collision | lane-gcol/tree | the resumable sphere walk, the em-em rows. Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03); next increments on the lane's 7cb13bc (batch 6: GAME_EM10_SCANPF) |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
 | ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp, dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit) |
 | sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map for deferring draw-only work |
@@ -357,8 +357,16 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    gap 6.34. Then their block walk kernel (GAME_LINE_WALK, ba73027; exact): G_q 30.94 (sq96), gap 5.97. Then
    the pieces' transforms in that kernel (GAME_LINE_PIECE, 4e394ea; exact): G_q 30.66 (sq97), gap 5.69. Then
    the effect pools' scans and moves (GAME_FX_SCAN + GAME_FX_MOVE, 1d3dc4d, lane fx; exact): **G_q 29.55** (fx9),
-   gap **4.58** (section "Effect pools" below).
-   The rest of G runs in the lanes above: gc the sphere walk and the em-em rows, fx effects, sk skeleton /
+   gap **4.58** (section "Effect pools" below). Then the collision stack (the sphere walk, the cube memo, the
+   far rect reject, the y rows, the id-first scans and the hit lists; 7caa2f7, lane gc; exact): gc13 **29.03 alone**
+   (-1.63 vs sq97; section "Collision stack" below). The two lanes' cuts are in different functions; if they
+   add, G ~27.9 (gap ~2.9), not measured on one build yet.
+   **Measurement base:** the lanes measure on warp/tree5, which carries the skeleton kernels (GAME_PWC_KERNEL=3,
+   GAME_PMC_KERNEL=1, GAME_HERMITE_FAST=1; step "skeleton", 37.52 -> 34.40) that were never landed. So every
+   G_q above includes them, and the landed tree can't reproduce it until they land. Next for the main
+   session: land the kernels, then one combined never-draw control on the landed stack (every landed G knob +
+   the kernels + the order file), the lanes' new reference.
+   The rest of G runs in the lanes above: gc the em-em rows, ob enemy / object bookkeeping, sk skeleton /
    motion / cloth / maths. The reduced characters (appearance, step 5): section "Reduced characters and the
    character path" below.
 
@@ -368,7 +376,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), all exact: G_q 29.55 (fx9); gap 4.58 to 24.97; in lanes: gc sphere walk and em-em rows, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), all exact: G_q 29.55 (fx9); gap 4.58 to 24.97; the collision stack (7caa2f7, -1.63 alone, gc13 29.03; combined with fx unmeasured); in lanes: gc em-em rows, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); in lanes: cl fitted meshes, vl vertex loop, wd textured coarse world <= ~3 ms; the external agent: the first level's cast models; the main session: the coarse HUD fix |
 
@@ -479,6 +487,34 @@ Never-draw uncapped arms against sq97 (30.66), exact, the RNG sequence kept:
   29.55 without it (the model's one fill bus: demand misses wait behind the burst).
 - Left: ~2.1 ms of effect work a tick, mostly each effect's own update and misses on its object; 439
   sinf calls (cEsp48 273, C_QUATSlerp 94, PenClothMove 66) are the sk lane's, bit-identical only.
+
+#### Collision stack (lane gc, 2026-09-25; landed 7caa2f7, default off)
+
+Never-draw uncapped arms against sq97 (30.66), order file hot-c3-8k-sw.ld (the landed
+link-order/r101-square-c3-8k.ld plus `*spw_sh4.o(.text)` after cSatBlock::hitCheckSphere, now landed). All
+exact (GAME_ATRECT_FAR decision-exact by a bound); each knob's =2 check build runs the original and compares.
+- GAME_SPHERE_WALK (needs GAME_FP_CONTRACT=off): the swept-sphere block walk in platform/spw_sh4.S,
+  resumable (a leaf hit moves the sphere's end; the walk goes on against the moved end), pieces walked first
+  on the x / z rows, wallAdjust's two calls sharing one walk. rev 1 +0.20 (gc1); rev 2 (shared-difference
+  edge tests, reordered rejects, the replay) -0.26 alone (gc3); ~-0.40 in the stack.
+- GAME_CUBE_MEMO: the camera line's box test keeps face normals and plane offsets per body (cameraHitCheck
+  tests the same bodies 5 times a tick); rev 2 moved the memo out of line (rev 1's inline copy cost +0.19
+  in ComnHitCheck). ~-0.28.
+- GAME_ATRECT_FAR: At_em_sphere_rect_ck returns 0 before the frame build when both positions lie beyond
+  the box's reach plus a rounding margin (99.97% of calls; sincos per tick 436 -> 248). ~-0.39.
+- GAME_LINE_YROW (needs GAME_LINE_PIECE=1): hitCheck2 computes only the y rows of a walked piece's ends
+  (PSMTXMultVec 587 -> 103 calls a tick). ~-0.05.
+- GAME_EM10_IDFIRST, GAME_OBJHIT_IDFIRST: the id before be_flag. -0.04 and (with the lists) ObjHitCheck -0.12.
+- GAME_EMHIT_LIST, GAME_OBJHIT_LIST (need GAME_ATCHK_LIST=1): the alive-list array with prefetch instead of
+  the pNext chase. OBJHIT_LIST was developed in tree5 and lands with the stack.
+- **gc9 (the first five): 29.21 (-1.45). gc13 (all eight, plus the parked SPHERE_BACKFACE): 29.03 (-1.63).**
+  Gates gc10 / gc14 (=2): tr56 STRICT over 8296 frames, tr42 over 8145, dtcmp must-match rows identical,
+  drift 0, 0 mismatches in every check (SPW 229k queries, CBM 459k, EID 3.28M, LYR 909k, ARF 795k, OHL 44k,
+  OID 11.0M, EHL 44k); gc12 (the fast paths live) STRICT, identical, drift 0.
+- Parked: GAME_SPHERE_BACKFACE (gc11 -0.02, noise; STRICT), GAME_ATPOS_MEMO + GAME_ATRECT_MEMO (gc5 +0.30:
+  memo table misses ate the gain; ARM superseded by ATRECT_FAR).
+- Layout noise: the effect rows (EspMove, AnmMove, sinf, ColorUpdate) swing by up to +0.4 between builds with
+  identical call and instruction counts; the lane judged each knob by its own rows.
 
 #### Skeleton operations (user's order, item 1; 2026-09-25)
 
@@ -716,10 +752,9 @@ count as sq72):
   sq96)**: PSMTXMultVec 0.73 -> 0.44, hitCheck2 0.56 -> 0.43, the walk 1.03 -> 0.88, the new entry 0.32.
   tr83 (=2) 0 mismatches in the ends and the leaves over 5.37M pieces; tr83 / tr84 STRICT vs tr56 and
   tr42, every decision identical.
-- Next in collision traversal (the gc lane, lane-gcol/tree):
-  - the sphere walk: a resumable kernel, since a hit moves the sphere, so leaves can't be collected first
-    (designed; ~0.17 ms estimated);
-  - the em-em rows.
+- Next in collision traversal (the gc lane, lane-gcol/tree): the sphere walk and the first em-em rows landed
+  as the collision stack (7caa2f7, section "Collision stack"); the lane goes on with batch 6 (GAME_EM10_SCANPF,
+  the Ganado scan's id lines prefetched from the workAt slot table) as increments on its 7cb13bc.
   Visual simulation is the sk and fx lanes' (section "Current order and status").
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
@@ -1319,3 +1354,9 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | land9 | the coarse character adapters landed (9df764b): COARSE_LEON, COARSE_GANADO, COARSE_SKIN_FTRV, ACTOR_SWAP, COARSE_FREEZE_AT | - | - | knob-off identity (default, canonical); cl42 carry-over 446 / 457 objects identical (the rest tree5-only) | landed, default off; the meshes stay private |
 | 09-25 | fx9 | sq97 + GAME_FX_SCAN=1 (r3) + GAME_FX_MOVE=1 (r2), lane fx | 29.55 (-1.11) | - | fx8 (both =2): tr56 / tr42 STRICT, must-match rows identical, 0 mismatches | kept |
 | 09-25 | land10 | GAME_FX_SCAN + GAME_FX_MOVE landed (1d3dc4d) | - | - | knob-off identity (default, canonical); fx9 carry-over 443 / 453 objects identical (the rest tree5-only) | landed, default off: **G_q 29.55** |
+| 09-25 | gc3 | sq97 + GAME_SPHERE_WALK=1 (rev 2), lane gc | 30.40 (-0.26) | - | gc4 (=2): SPW 0 mismatches, tr56 / tr42 STRICT, must-match rows identical | kept (rev 1 gc1 +0.20 dropped) |
+| 09-25 | gc5 | sq97 + GAME_ATPOS_MEMO=1 + GAME_ATRECT_MEMO=1 | 30.96 (+0.30) | - | gc6 (=2): 0 mismatches, STRICT | parked (table misses) |
+| 09-25 | gc9 | sq97 + SPHERE_WALK + CUBE_MEMO (rev 2) + EM10_IDFIRST + LINE_YROW + ATRECT_FAR | 29.21 (-1.45) | - | gc10 (=2) and gc12 (=1 live): tr56 / tr42 STRICT, must-match rows identical, 0 mismatches | kept |
+| 09-25 | gc11 | gc9 + GAME_SPHERE_BACKFACE=1 | 29.32 (+0.11, own rows -0.02) | - | gc12 (=2): STRICT | parked (noise) |
+| 09-25 | gc13 | gc11 + OBJHIT_LIST + OBJHIT_IDFIRST + EMHIT_LIST | 29.03 (-1.63 vs sq97) | - | gc14 (=2): tr56 / tr42 STRICT, must-match rows identical, 0 mismatches | kept |
+| 09-25 | land11 | the collision stack landed (7caa2f7; without SPHERE_BACKFACE) | - | - | knob-off identity (default, canonical); gc13 carry-over 443 / 454 objects identical (the rest tree5-only; atari.o = gc9's) | landed, default off: gc13 29.03 alone; with fx unmeasured |

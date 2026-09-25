@@ -56,6 +56,12 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   `GAME_FX_SCAN=1 GAME_FX_MOVE=1` (FX_SCAN needs `GAME_ESP_OWNER=1`; its EfmDelete list path needs
   `GAME_ATCHK_LIST=1 GAME_WORKAT_INLINE=1`). Header knobs (include/esp.h): fresh builds only. =2 check builds
   log "FXS", "FXM", "FX48" and "FX15" lines.
+- The collision stack (7caa2f7; exact, room-independent; not in LH yet): the coarse-square arms add
+  `GAME_SPHERE_WALK=1 GAME_CUBE_MEMO=1 GAME_EM10_IDFIRST=1 GAME_LINE_YROW=1 GAME_ATRECT_FAR=1
+  GAME_OBJHIT_LIST=1 GAME_OBJHIT_IDFIRST=1 GAME_EMHIT_LIST=1`. SPHERE_WALK needs `GAME_FP_CONTRACT=off`; the
+  order file places its kernel (platform/spw_sh4.o) after cSatBlock::hitCheckSphere. LINE_YROW needs
+  `GAME_LINE_PIECE=1`; the lists need `GAME_ATCHK_LIST=1`; OBJHIT_IDFIRST needs OBJHIT_LIST. =2 check builds
+  log "SPW", "CBM", "EID", "LYR", "ARF", "OHL", "OID" and "EHL" lines.
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 
