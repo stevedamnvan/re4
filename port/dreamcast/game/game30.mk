@@ -125,6 +125,24 @@ GAME_ESP_OWNER ?= 0
 ifneq ($(GAME_ESP_OWNER),0)
 GAME_CPPFLAGS += -DRE4DC_ESP_OWNER=$(GAME_ESP_OWNER)
 endif
+# GAME_DECISION_TRACE=1 (test builds, with LOGIC_TRACE=1): per sample, hashes of the em-em collision
+#                    results (pair order included), the scenery line tests, the area checks and the damage hit
+#                    tests, in call order ("LX"), plus every alive enemy's position bits every 4th sample
+#                    ("LP"): the decision-level comparison for last-bit FP changes.
+GAME_DECISION_TRACE ?= 0
+ifneq ($(GAME_DECISION_TRACE),0)
+GAME_CPPFLAGS += -DRE4DC_DECISION_TRACE=1
+PLATFORM_CPPFLAGS += -DRE4DC_DECISION_TRACE=1
+endif
+# GAME_SKEL_FTRV=1 (square plan: one gameplay matrix chain; last-bit FP policy, NOT exact): inside
+#                    cEm10::move (the Ganados' whole update) partsWorldCalc runs each part's concat
+#                    through FTRV from a table of this call's parent matrices (model.cpp).
+#                    =2: check build, the FTRV pass runs in shadow and is compared with the live
+#                    original ("SKELFTRV" log line; logic trace STRICT).
+GAME_SKEL_FTRV ?= 0
+ifneq ($(GAME_SKEL_FTRV),0)
+GAME_CPPFLAGS += -DRE4DC_SKEL_FTRV=$(GAME_SKEL_FTRV)
+endif
 # GAME_COL_PREFETCH=1: the scenery collision walks (block chains, block polygon lists) prefetch the next
 #                    block and the next polygon's record, vertex and normal. Loads only: same answers.
 GAME_COL_PREFETCH ?= 0

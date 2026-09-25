@@ -883,8 +883,16 @@ int cSatMgr::hitCheck(Vec* pos0, Vec* pos1, Vec* hit, Vec* nrm, int flag, int ma
 // Segment a-b against every active piece. The nearest hit goes to hit (world) and `attr`
 // receives the address of the hit polygon's normal in the piece's space; b is moved onto the
 // piece's grid (mat * inv * b). Returns the attribute word of the hit polygon or 0.
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// GAME_DECISION_TRACE (test builds): every line query's answer (attribute word and winning piece)
+// and, separately, its hit point bits (logic_trace.cpp).
+extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b);
+#endif
 int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int mask)
 {
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+    u32 dtWin = 0xFFFFFFFF;
+#endif
     Vec cur;
     Vec la;
     Vec lb;
@@ -914,6 +922,9 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
                     ret = r;
                     PSMTXMultVec(sat->mat, &lcur, &cur);
                     pBypassAt = sat;
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+                    dtWin = i;
+#endif
                 }
             }
         }
@@ -924,6 +935,15 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
     if (ret && attr) {
         *attr = pn;
     }
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+    {
+        u32 b[3];
+        __builtin_memcpy(b, &cur, 12);
+        re4dc_dt_note(4, (u32) flag ^ ((u32) mask << 1), (u32) ret);
+        re4dc_dt_note(4, dtWin, 0);
+        re4dc_dt_note(5, b[0] ^ b[2], b[1]);
+    }
+#endif
     return ret;
 }
 

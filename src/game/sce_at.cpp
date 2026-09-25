@@ -430,6 +430,11 @@ static void sceAtDataLoopInit()
     }
 }
 
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// GAME_DECISION_TRACE (test builds): every area check result, in call order (logic_trace.cpp).
+extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b);
+#endif
+
 // Once per frame (scenario move): the hide sequence, model links, item find / camera areas, then
 // tests every enabled area against the player (type 1), the partner (8) and the active enemies
 // (2, room enemies below id 0x40 plus the racks 0x45); skipped while Stop_flg 0x00400000 or in
@@ -470,7 +475,11 @@ void SceAtCheck()
             pG->Status_flg[0] &= ~0x20000000;
         }
     }
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+    re4dc_dt_note(2, 0xFFFF, (u32) sceAtCheck_main(pPL, 1));
+#else
     sceAtCheck_main(pPL, 1);
+#endif
     for (i = 0; i < EmMgr.nArray; i++) {
 #if !defined(__PPC__)
         em = (cEm*) EmMgr.workAt(i);
@@ -479,7 +488,11 @@ void SceAtCheck()
         em = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
 #endif
         if (pSUB != 0 && pSUB == em) {
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+            re4dc_dt_note(2, 0x800 | em->id, (u32) sceAtCheck_main(em, 8));
+#else
             sceAtCheck_main(em, 8);
+#endif
             continue;
         }
         switch (em->id) {
@@ -504,7 +517,11 @@ void SceAtCheck()
             break;
         }
         if (EmMoveActiveCheck(em) != 0) {
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+            re4dc_dt_note(2, 0x200 | em->id, (u32) sceAtCheck_main(em, 2));
+#else
             sceAtCheck_main(em, 2);
+#endif
         }
     }
     BitOff(pG->Status_flg[0], 0x40000000);

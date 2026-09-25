@@ -2529,8 +2529,18 @@ void em10KickHitMark(cEm10* em)
 // scenario check (checkAir while jumping, flag 0x80000), the stuck counter x634, shadow fade, work
 // effect cleanup per set, cloth, chainsaw idle SE, cart release, bowgun / parasite / water / foot SE,
 // the lit dynamite countdown (Fire_timer -> Die_Bomb), and the hit boxes of the core and shield.
+#if defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV
+extern "C" int re4dc_skel_scope;
+#endif
 void cEm10::move()
 {
+#if defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV
+    // GAME_SKEL_FTRV (model.cpp): the Ganado's whole update takes the FTRV part-world pass.
+    struct SkelScope {
+        SkelScope() { ++re4dc_skel_scope; }
+        ~SkelScope() { --re4dc_skel_scope; }
+    } skelScope;
+#endif
     Em10Work* w = EM10_WK(this);
     f32 dist;
     Mtx m;

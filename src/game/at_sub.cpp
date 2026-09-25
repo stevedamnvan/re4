@@ -265,6 +265,16 @@ void AtCubeDisp(Mtx m, f32 sx, f32 sy, f32 sz, Vec* pos, u32 color)
 // tests, then the attribute filter (flag bits 0x400..0x8000 skip polygon classes 0x40 / 0x400 /
 // 0x4000 / 0x8000 / 0x400000 / 0x800000, `mask` bits skip directly). Returns the polygon's
 // attribute word (never 0 on a hit) and the hit point in *out; 0 when missed.
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// GAME_DECISION_TRACE (test builds): every scenery line test result, in call order (logic_trace.cpp).
+extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b);
+static u32 At_poly_line_ck_dt(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* vert1, u32 flag, u32 mask);
+u32 At_poly_line_ck(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* vert1, u32 flag, u32 mask)
+{
+    return re4dc_dt_note(1, flag, At_poly_line_ck_dt(pd, out, poly, vert0, vert1, flag, mask));
+}
+#define At_poly_line_ck At_poly_line_ck_dt
+#endif
 u32 At_poly_line_ck(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* vert1, u32 flag, u32 mask)
 {
     Vec d0;
@@ -361,6 +371,9 @@ u32 At_poly_line_ck(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* ver
     }
     return attr | 0x01000000;
 }
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+#undef At_poly_line_ck
+#endif
 
 // Dead-stripped by the original linker (only its constant pool survives in .rodata).
 static f32 At_line_rate(f32 a, f32 b)

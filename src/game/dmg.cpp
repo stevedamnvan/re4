@@ -91,6 +91,13 @@ int cDmgMgr::set(int kind, int time, Vec* pt, f32 h)
 }
 
 // The kind of the first live volume containing `pos` (its centre in *out); 0 when none.
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// GAME_DECISION_TRACE (test builds): every damage hit test result, in call order (logic_trace.cpp).
+extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b);
+#define DT_DMG(r) re4dc_dt_note(3, i, (u32) (r))
+#else
+#define DT_DMG(r) (r)
+#endif
 int cDmgMgr::hitCheck(Vec* pos, Vec* out)
 {
     u32 i;
@@ -99,11 +106,11 @@ int cDmgMgr::hitCheck(Vec* pos, Vec* out)
         cDmg* p = (cDmg*) ((u8*) pArray + size * i);
         if ((p->be_flag & 0x201) == 1) {
             if (p->hitCheck(pos, out)) {
-                return p->kind;
+                return DT_DMG(p->kind);
             }
         }
     }
-    return 0;
+    return DT_DMG(0);
 }
 
 // Point in cylinder (height band +-m_Height, XZ radius); *out = centre. Debug_flg[2] 0x10000000

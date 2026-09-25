@@ -59,6 +59,21 @@ struct Fnv {
         word(w);
     }
 };
+
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// GAME_DECISION_TRACE (test builds): decision results hashed per sample, in call order: 0 em-em
+// collision (at_mod.cpp), 1 scenery line tests (at_sub.cpp), 2 area checks (sce_at.cpp), 3 damage hit
+// tests (dmg.cpp), 4 line query answers and 5 their hit points (atari.cpp). Logged as "LX", with every alive enemy's position bits every 4th sample ("LP").
+static Fnv g_dt[8];
+static unsigned g_dtn[8];
+extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b)
+{
+    g_dt[kind & 7].word(a);
+    g_dt[kind & 7].word(b);
+    ++g_dtn[kind & 7];
+    return b;
+}
+#endif
 inline unsigned bits(float f) { unsigned u; memcpy(&u, &f, 4); return u; }
 
 // cCoord 0x0C..0x6C (mat, l_mat) and 0x70..0xF4 (world .. prevMat): skips the vptr and pParent.
@@ -162,6 +177,38 @@ extern "C" __attribute__((section(".text.re4dc_logic_trace"))) void re4dc_logic_
               rf.h, sc.h, room, p[0], p[1], p[2], a[0], a[1], a[2], mf, ms, ps.h, pf.h, pm.h);
     re4dc_log("LU t=%u n=%u e=%u es=%08x ef=%08x em=%08x o=%u os=%08x of=%08x om=%08x c=%08x\n",
               (unsigned) pG->Frame_cnt, samples, ne, es.h, ef.h, em.h, no, os.h, of.h, om.h, cam.h);
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+    re4dc_log("LX t=%u n=%u ec=%08x/%u sl=%08x/%u sa=%08x/%u dm=%08x/%u lq=%08x/%u lp=%08x\n",
+              (unsigned) pG->Frame_cnt, samples, g_dt[0].h, g_dtn[0], g_dt[1].h, g_dtn[1], g_dt[2].h, g_dtn[2],
+              g_dt[3].h, g_dtn[3], g_dt[4].h, g_dtn[4], g_dt[5].h);
+    for (int k = 0; k < 8; ++k) {
+        g_dt[k] = Fnv();
+        g_dtn[k] = 0;
+    }
+    if ((samples & 3) == 0) {
+        unsigned k = 0;
+        for (cUnit* u = (cUnit*) EmMgr.pAlive; u && k < 40; u = u->pNext) {
+            const cEm* e = (const cEm*) u;
+            unsigned q[3][4];
+            unsigned m = 0;
+            for (; u && m < 3; ++m) {
+                const cEm* f = (const cEm*) u;
+                q[m][0] = f->id;
+                q[m][1] = bits(f->pos.x);
+                q[m][2] = bits(f->pos.y);
+                q[m][3] = bits(f->pos.z);
+                if (m < 2) u = u->pNext;
+            }
+            (void) e;
+            re4dc_log("LP t=%u k=%u %02x:%08x,%08x,%08x %02x:%08x,%08x,%08x %02x:%08x,%08x,%08x\n",
+                      (unsigned) pG->Frame_cnt, k, q[0][0], q[0][1], q[0][2], q[0][3], m > 1 ? q[1][0] : 0xFFU,
+                      m > 1 ? q[1][1] : 0U, m > 1 ? q[1][2] : 0U, m > 1 ? q[1][3] : 0U, m > 2 ? q[2][0] : 0xFFU,
+                      m > 2 ? q[2][1] : 0U, m > 2 ? q[2][2] : 0U, m > 2 ? q[2][3] : 0U);
+            k += m;
+            if (!u) break;
+        }
+    }
+#endif
 
     if (room != g_digRoom) {
         g_digRoom = room; g_digTicks = 0; g_digStarted = false; g_dig = Fnv();

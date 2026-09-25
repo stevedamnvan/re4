@@ -360,22 +360,30 @@ static int priorityCheck(cEm* pMod, cEm* pMod2)
 
 // Pushes pMod out of pMod2 unless priority says otherwise, choosing the box-box, sphere-box or
 // sphere-sphere test by the bodies' m_flag bit1.
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// GAME_DECISION_TRACE (test builds): every em-em collision result, in call order (logic_trace.cpp).
+extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b);
+#define DT_EM(a, b, r) re4dc_dt_note(0, ((u32) (a)->id << 8) | (b)->id, (u32) (r))
+#else
+#define DT_EM(a, b, r) (r)
+#endif
 void __em_at_core(cEm* pMod, cEm* pMod2)
 {
     if (priorityCheck(pMod, pMod2) == 1) {
+        DT_EM(pMod, pMod2, 0x10000);
         return;
     }
     if (pMod->atari.m_flag & 2) {
         if (pMod2->atari.m_flag & 2) {
-            At_em_rect_rect_ck(pMod, pMod2);
+            DT_EM(pMod, pMod2, At_em_rect_rect_ck(pMod, pMod2));
         } else {
-            At_em_sphere_rect_ck(pMod2, pMod);
+            DT_EM(pMod2, pMod, At_em_sphere_rect_ck(pMod2, pMod));
         }
     } else {
         if (pMod2->atari.m_flag & 2) {
-            At_em_sphere_rect_ck(pMod, pMod2);
+            DT_EM(pMod, pMod2, At_em_sphere_rect_ck(pMod, pMod2));
         } else {
-            At_em_sphere_sphere_ck(pMod, pMod2);
+            DT_EM(pMod, pMod2, At_em_sphere_sphere_ck(pMod, pMod2));
         }
     }
 }

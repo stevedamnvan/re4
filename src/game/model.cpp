@@ -515,6 +515,250 @@ void cModel::zeroPartsPosInit(Vec* pos, Vec* rot)
 // Computes every parts' world matrix from its parent (parent mat * l_mat, with non-uniform parent
 // scale removed and re-applied), applies pending addRot corrections (flag 0x40000000), stores the
 // world position and the accumulated r_scale; parts with motParts flag 2 (IK-fixed) are skipped.
+#if defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV && defined(__sh__)
+// GAME_SKEL_FTRV (game30.mk; square plan, one gameplay matrix chain; last-bit FP policy, NOT exact):
+// inside a Ganado's update (re4dc_skel_scope, counted up by a guard in cEm10::move) partsWorldCalc
+// computes each part with three FTRVs and no temporaries. Row i of mat = P l_mat is l_mat^T applied
+// to row i of P, so the part's own l_mat rows go into XMTRX (plus the constant row 0 0 0 1) and the
+// parent's three rows, read in place, come out as mat's rows; their fourth element is world (the
+// original's MultVec of l_mat's translation, which its TransMatrix writes over mat's translation).
+// A non-uniform parent scale (P S^-1 L S) folds in as P's rows times S^-1 and l_mat's columns times
+// S, with l_mat's translation column row-scaled by S so that world stays P (l_mat translation).
+// Parts with addRot pending finish on the original code.
+// =2 (check build): the FTRV pass runs first into a shadow buffer (a parent computed earlier in the
+// same pass is read from the shadow, as the live pass would), then the original runs live and the
+// two are compared ("SKELFTRV" log line); the logic trace stays STRICT.
+extern "C" int re4dc_skel_scope;
+int re4dc_skel_scope;
+namespace {
+struct SkelShadow {
+    f32 m[12];
+    Vec w;
+};
+// XMTRX = the 3x4 row-major matrix at L as columns 0-2 (row k of L = column k), column 3 = 0 0 0 1.
+inline void skelLoadRows(const f32* L)
+{
+    __asm__ __volatile__("frchg\n\t"
+                         "fmov.s  @%0+,fr0\n\t" "fmov.s  @%0+,fr1\n\t" "fmov.s  @%0+,fr2\n\t" "fmov.s  @%0+,fr3\n\t"
+                         "fmov.s  @%0+,fr4\n\t" "fmov.s  @%0+,fr5\n\t" "fmov.s  @%0+,fr6\n\t" "fmov.s  @%0+,fr7\n\t"
+                         "fmov.s  @%0+,fr8\n\t" "fmov.s  @%0+,fr9\n\t" "fmov.s  @%0+,fr10\n\t" "fmov.s  @%0+,fr11\n\t"
+                         "fldi0   fr12\n\t" "fldi0   fr13\n\t" "fldi0   fr14\n\t" "fldi1   fr15\n\t"
+                         "frchg\n"
+                         : "+r"(L)
+                         :
+                         : "memory");
+}
+// out rows 0-2 = XMTRX x (P row i, scaled by is for columns 0-2).
+inline void skelRows(const f32* P, f32 isx, f32 isy, f32 isz, f32* out)
+{
+    register f32 a0 __asm__("fr0") = P[0] * isx;
+    register f32 a1 __asm__("fr1") = P[1] * isy;
+    register f32 a2 __asm__("fr2") = P[2] * isz;
+    register f32 a3 __asm__("fr3") = P[3];
+    register f32 b0 __asm__("fr4") = P[4] * isx;
+    register f32 b1 __asm__("fr5") = P[5] * isy;
+    register f32 b2 __asm__("fr6") = P[6] * isz;
+    register f32 b3 __asm__("fr7") = P[7];
+    register f32 c0 __asm__("fr8") = P[8] * isx;
+    register f32 c1 __asm__("fr9") = P[9] * isy;
+    register f32 c2 __asm__("fr10") = P[10] * isz;
+    register f32 c3 __asm__("fr11") = P[11];
+    __asm__ __volatile__("ftrv    xmtrx,fv0\n\t"
+                         "ftrv    xmtrx,fv4\n\t"
+                         "ftrv    xmtrx,fv8\n"
+                         : "+f"(a0), "+f"(a1), "+f"(a2), "+f"(a3), "+f"(b0), "+f"(b1), "+f"(b2), "+f"(b3), "+f"(c0),
+                           "+f"(c1), "+f"(c2), "+f"(c3));
+    out[0] = a0; out[1] = a1; out[2] = a2; out[3] = a3;
+    out[4] = b0; out[5] = b1; out[6] = b2; out[7] = b3;
+    out[8] = c0; out[9] = c1; out[10] = c2; out[11] = c3;
+}
+inline void skelRowsUniform(const f32* P, f32* out)
+{
+    register f32 a0 __asm__("fr0") = P[0];
+    register f32 a1 __asm__("fr1") = P[1];
+    register f32 a2 __asm__("fr2") = P[2];
+    register f32 a3 __asm__("fr3") = P[3];
+    register f32 b0 __asm__("fr4") = P[4];
+    register f32 b1 __asm__("fr5") = P[5];
+    register f32 b2 __asm__("fr6") = P[6];
+    register f32 b3 __asm__("fr7") = P[7];
+    register f32 c0 __asm__("fr8") = P[8];
+    register f32 c1 __asm__("fr9") = P[9];
+    register f32 c2 __asm__("fr10") = P[10];
+    register f32 c3 __asm__("fr11") = P[11];
+    __asm__ __volatile__("ftrv    xmtrx,fv0\n\t"
+                         "ftrv    xmtrx,fv4\n\t"
+                         "ftrv    xmtrx,fv8\n"
+                         : "+f"(a0), "+f"(a1), "+f"(a2), "+f"(a3), "+f"(b0), "+f"(b1), "+f"(b2), "+f"(b3), "+f"(c0),
+                           "+f"(c1), "+f"(c2), "+f"(c3));
+    out[0] = a0; out[1] = a1; out[2] = a2; out[3] = a3;
+    out[4] = b0; out[5] = b1; out[6] = b2; out[7] = b3;
+    out[8] = c0; out[9] = c1; out[10] = c2; out[11] = c3;
+}
+// The original non-uniform-scale arithmetic for one part (a parent scale component of 0).
+void skelScaledOriginal(const f32* P, const Vec& rs, const f32* L, f32* M)
+{
+    Mtx Pm, Lm, m1;
+    __builtin_memcpy(Pm, P, sizeof(Mtx));
+    __builtin_memcpy(Lm, L, sizeof(Mtx));
+    MtxPtr Mm = (MtxPtr) M;
+    PSMTXScale(m1, (rs.x != 0.0f) ? 1.0f / rs.x : 0.0f, (rs.y != 0.0f) ? 1.0f / rs.y : 0.0f,
+               (rs.z != 0.0f) ? 1.0f / rs.z : 0.0f);
+    PSMTXConcat(Pm, m1, m1);
+    PSMTXConcat(m1, Lm, Mm);
+    PSMTXScale(m1, rs.x, rs.y, rs.z);
+    PSMTXConcat(Mm, m1, Mm);
+    Vec t = {L[3], L[7], L[11]};
+    Vec w;
+    PSMTXMultVec(Pm, &t, &w);
+    M[3] = w.x;
+    M[7] = w.y;
+    M[11] = w.z;
+}
+#if RE4DC_SKEL_FTRV == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+SkelShadow skelShadowBuf[256];
+const void* skelShadowKey[256];
+Vec skelShadowRs[256];
+u32 skelChkCalls, skelChkParts, skelChkMiss, skelChkNan, skelChkAll, skelChkLen, skelChkIds[64];
+f32 skelChkWorld, skelChkRot, skelChkTr;
+inline bool skelFinite(f32 v)
+{
+    u32 b;
+    __builtin_memcpy(&b, &v, 4);
+    return ((b >> 23) & 255U) != 255U;
+}
+#endif
+
+// One part-world pass on FTRV. out == 0: live, writes mat / world / r_scale as the original does;
+// else the k-th part not skipped goes to out[k] and nothing in the model is written.
+u32 skelPass(cModel* self, SkelShadow* out, u32* miss)
+{
+    u32 n = 0;
+    for (cParts* p = self->pList; p; p = p->pList) {
+        const u32 fl = p->motParts.flags;
+        if (fl & 2) {
+            continue;
+        }
+        const cCoord* parent = p->pParent;
+        const f32* P = &parent->mat[0][0];
+        Vec rs = parent->r_scale;
+#if RE4DC_SKEL_FTRV == 2
+        if (out) {
+            for (u32 j = n; j-- > 0;) {
+                if (skelShadowKey[j] == parent) {
+                    P = out[j].m;
+                    rs = skelShadowRs[j];
+                    break;
+                }
+            }
+        }
+#endif
+        f32* M = out ? (n < 256 ? out[n].m : out[255].m) : &p->mat[0][0];
+        const f32* L = &p->l_mat[0][0];
+        if ((rs.x != rs.y || rs.y != rs.z) && (rs.x == 0.0f || rs.y == 0.0f || rs.z == 0.0f)) {
+            skelScaledOriginal(P, rs, L, M);   // a zero scale cannot cancel through S^-1: original arithmetic
+        } else if (rs.x != rs.y || rs.y != rs.z) {
+            const f32 ix = (rs.x != 0.0f) ? 1.0f / rs.x : 0.0f;
+            const f32 iy = (rs.y != 0.0f) ? 1.0f / rs.y : 0.0f;
+            const f32 iz = (rs.z != 0.0f) ? 1.0f / rs.z : 0.0f;
+            f32 Ls[12];
+            Ls[0] = L[0] * rs.x; Ls[1] = L[1] * rs.y; Ls[2] = L[2] * rs.z; Ls[3] = L[3] * rs.x;
+            Ls[4] = L[4] * rs.x; Ls[5] = L[5] * rs.y; Ls[6] = L[6] * rs.z; Ls[7] = L[7] * rs.y;
+            Ls[8] = L[8] * rs.x; Ls[9] = L[9] * rs.y; Ls[10] = L[10] * rs.z; Ls[11] = L[11] * rs.z;
+            skelLoadRows(Ls);
+            skelRows(P, ix, iy, iz, M);
+        } else {
+            skelLoadRows(L);
+            skelRowsUniform(P, M);
+        }
+        Vec w = {M[3], M[7], M[11]};
+        if (fl & 0x40000000) {
+            Mtx m2;
+            f32(*Mm)[4] = (f32(*)[4]) M;
+            if (!out) {
+                p->motParts.flags &= ~0x40000000;
+            }
+            PSMTXRotRad(m2, 'x', p->addRot.x);
+            PSMTXConcat(Mm, m2, Mm);
+            PSMTXRotRad(m2, 'z', p->addRot.z);
+            PSMTXConcat(Mm, m2, Mm);
+            PSMTXRotRad(m2, 'y', p->addRot.y);
+            PSMTXConcat(m2, Mm, Mm);
+            TransMatrix(Mm, &w);
+        }
+        Vec r;
+        r.x = rs.x * p->scale.x;
+        r.y = rs.y * p->scale.y;
+        r.z = rs.z * p->scale.z;
+        if (out) {
+#if RE4DC_SKEL_FTRV == 2
+            if (n < 256) {
+                out[n].w = w;
+                skelShadowKey[n] = p;
+                skelShadowRs[n] = r;
+            } else if (miss) {
+                ++*miss;
+            }
+#endif
+        } else {
+            p->world = w;
+            p->r_scale = r;
+        }
+        n++;
+    }
+    return n;
+}
+#if RE4DC_SKEL_FTRV == 2
+void skelCompare(cModel* self, const SkelShadow* sh, u32 n, u32 miss)
+{
+    u32 i = 0;
+    skelChkCalls++;
+    skelChkMiss += miss;
+    skelChkIds[self->id & 63] += n;
+    for (cParts* p = self->pList; p; p = p->pList) {
+        if (p->motParts.flags & 2) {
+            continue;
+        }
+        if (i >= n || i >= 256) {
+            break;
+        }
+        const f32* a = &p->mat[0][0];
+        const f32* b = sh[i].m;
+        for (int j = 0; j < 12; j++) {
+            if (!skelFinite(b[j])) {
+                skelChkNan++;
+                continue;
+            }
+            const f32 d = __builtin_fabsf(a[j] - b[j]);
+            if ((j & 3) == 3) {
+                if (d > skelChkTr) skelChkTr = d;
+            } else if (d > skelChkRot) {
+                skelChkRot = d;
+            }
+        }
+        const f32 dw[3] = {p->world.x - sh[i].w.x, p->world.y - sh[i].w.y, p->world.z - sh[i].w.z};
+        for (int j = 0; j < 3; j++) {
+            const f32 d = __builtin_fabsf(dw[j]);
+            if (d > skelChkWorld) skelChkWorld = d;
+        }
+        i++;
+        skelChkParts++;
+    }
+    if (i != n) {
+        skelChkLen++;
+    }
+    if ((skelChkCalls & 0x3FF) == 0) {
+        re4dc_log("SKELFTRV calls=%u parts=%u all_parts=%u overflow=%u len_mismatch=%u nonfinite=%u "
+                  "max_world=%.6g max_rot=%.6g max_trans=%.6g ids=%u:%u,%u:%u,%u:%u,%u:%u" "\n",
+                  skelChkCalls, skelChkParts, skelChkAll, skelChkMiss, skelChkLen, skelChkNan,
+                  double(skelChkWorld), double(skelChkRot), double(skelChkTr), 0x10U, skelChkIds[0x10],
+                  0x12U, skelChkIds[0x12], 0x15U, skelChkIds[0x15], 0U, skelChkIds[0]);
+    }
+}
+#endif
+}   // namespace
+#endif
 void cModel::partsWorldCalc()
 {
     cParts* p;
@@ -533,6 +777,21 @@ void cModel::partsWorldCalc()
         pLog->err(2, 0, "partsWorldCalc() PARENT ADDR ERR %08x", p->pParent);
         return;
     }
+#if defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV == 1 && defined(__sh__)
+    if (re4dc_skel_scope) {
+        skelPass(this, 0, 0);
+        Motion.Pos_world = pos;
+        return;
+    }
+#elif defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV == 2 && defined(__sh__)
+    u32 skelN = 0, skelMiss = 0;
+    if (re4dc_skel_scope) {
+        skelN = skelPass(this, skelShadowBuf, &skelMiss);
+    }
+    for (cParts* q = p; q; q = q->pList) {
+        skelChkAll += !(q->motParts.flags & 2);
+    }
+#endif
     for (; p; p = p->pList) {
         cCoord* parent = p->pParent;
         MtxPtr m;
@@ -579,6 +838,11 @@ void cModel::partsWorldCalc()
         p->r_scale.z = parent->r_scale.z * p->scale.z;
     }
     Motion.Pos_world = pos;
+#if defined(RE4DC_SKEL_FTRV) && RE4DC_SKEL_FTRV == 2 && defined(__sh__)
+    if (re4dc_skel_scope) {
+        skelCompare(this, skelShadowBuf, skelN, skelMiss);
+    }
+#endif
 }
 
 // Attaches the root parts to another model (parent coordinate) with an offset and rotation.
