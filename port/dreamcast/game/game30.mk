@@ -134,6 +134,17 @@ endif
 GAME_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
 PLATFORM_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
 endif
+# GAME_OBJHIT_LIST=1 (needs GAME_ATCHK_LIST=1; G, collision traversal; exact): ObjHitCheck (the camera's
+#                    line against every live object) walks GAME_ATCHK_LIST's array of ObjMgr's alive list,
+#                    the objects' header and id lines prefetched ahead, instead of chasing pNext.
+#                    =2 (check build): the array compared with the live list at every call ("OHL" lines).
+GAME_OBJHIT_LIST ?= 0
+ifneq ($(GAME_OBJHIT_LIST),0)
+ifeq ($(GAME_ATCHK_LIST),0)
+$(error GAME_OBJHIT_LIST needs GAME_ATCHK_LIST=1)
+endif
+$(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_OBJHIT_LIST=$(GAME_OBJHIT_LIST)
+endif
 # GAME_LINE_LEAF=1 (G, collision traversal; exact): the scenery line queries' leaf loop (atari.cpp
 #                  blkPolyLineCkCore) runs the polyBit dedup and At_poly_line_ck's first four tests (plane
 #                  crossing, three edge sides) in platform/lnk_sh4.S with the same float operations on
@@ -178,6 +189,86 @@ $(error GAME_LINE_PIECE mirrors the contract-off MTXMultVec dataflow: needs GAME
 endif
 $(OBJDIR)/platform/lnw_sh4.o: KOS_CFLAGS += -DRE4DC_LINE_PIECE=1
 $(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_PIECE=$(GAME_LINE_PIECE)
+endif
+# GAME_SPHERE_WALK=1 (G, collision traversal; exact; needs GAME_FP_CONTRACT=off): the swept-sphere queries'
+#                   block walk (atari.cpp polySphereCk / blkPolySphereCk: hitCheckSphere on every block of a
+#                   chain, recursion into the overlapped nodes) in platform/spw_sh4.S with hitCheckSphere's
+#                   float operations on the same operands, resumable (a leaf's polygon test moves the sphere's
+#                   end; the walk goes on against the moved end). Each piece is walked first with the x and z
+#                   rows of both ends (MTXMultVec's contract-off dataflow); only a piece with an overlapped leaf
+#                   clears polyBit and transforms both ends in full, as before. wallAdjust's two calls share
+#                   one walk (the second replays the first's leaves when the first hit nothing). =2 (check
+#                   build): the original loop on copies, a C walk per kernel step, the re-walks and
+#                   PSMTXMultVec's x / z compared ("SPW" lines).
+GAME_SPHERE_WALK ?= 0
+ifneq ($(GAME_SPHERE_WALK),0)
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_SPHERE_WALK mirrors the contract-off MTXMultVec dataflow: needs GAME_FP_CONTRACT=off)
+endif
+PLATFORM_OBJS += $(OBJDIR)/platform/spw_sh4.o
+$(OBJDIR)/platform/spw_sh4.o: platform/spw_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_SPHERE_WALK=$(GAME_SPHERE_WALK)
+endif
+# GAME_CUBE_MEMO=1 (G, camera line vs box bodies; exact): ComnHitCheck's box test (emLineCubeCrossCk: corners,
+#                 six face normals normalized, per call) keeps each box's face normals and plane offsets in a
+#                 table indexed by the body, keyed on the matrix, sizes and offset bits; a call runs only the
+#                 two plane tests per face, and the original test when a face passes both (at_mod.cpp).
+#                 =2 (check build): every call compared with emLineCubeCrossCk, every hit rebuilt ("CBM").
+GAME_CUBE_MEMO ?= 0
+ifneq ($(GAME_CUBE_MEMO),0)
+$(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_CUBE_MEMO=$(GAME_CUBE_MEMO)
+endif
+# GAME_EM10_IDFIRST=1 (G, Ganado AI scan; exact): em10SomebodyDamageNowCk tests each slot's id range before
+#                    be_flag (two plain loads, either failing skips the slot): fewer cache lines touched.
+#                    =2 (check build): both orders compared ("EID" lines).
+GAME_EM10_IDFIRST ?= 0
+ifneq ($(GAME_EM10_IDFIRST),0)
+$(OBJDIR)/mod/%/em10.o: GAME_CPPFLAGS += -DRE4DC_EM10_IDFIRST=$(GAME_EM10_IDFIRST)
+endif
+# GAME_LINE_YROW=1 (G, line queries; exact; needs GAME_LINE_PIECE=1): hitCheck2 takes a walked piece's ends'
+#                 x / z rows from re4dc_line_piece and computes only the y rows (MTXMultVec's expression); the
+#                 current end's transform is lb's until a hit is taken, the hit test's re-transform the one
+#                 taken before the leaf tests (atari.cpp). =2 (check build): each compared with PSMTXMultVec
+#                 ("LYR" lines).
+GAME_LINE_YROW ?= 0
+ifneq ($(GAME_LINE_YROW),0)
+ifeq ($(GAME_LINE_PIECE),0)
+$(error GAME_LINE_YROW needs GAME_LINE_PIECE=1)
+endif
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_YROW=$(GAME_LINE_YROW)
+endif
+# GAME_ATRECT_FAR=1 (G, em-em collision; decision-exact): At_em_sphere_rect_ck returns 0 before building the
+#                  box frame (RotRad, MultVec, PSMTXInverse) when the sphere's old and new positions both lie
+#                  beyond the box's reach (offset + 2 x (sizes + radius)) plus a rounding margin on one side in
+#                  x or z (at_mod.cpp arfFar): the original returns 0 there with no write. =2 (check build):
+#                  the original always runs; rejected calls that hit are counted ("ARF" lines).
+GAME_ATRECT_FAR ?= 0
+ifneq ($(GAME_ATRECT_FAR),0)
+$(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_ATRECT_FAR=$(GAME_ATRECT_FAR)
+endif
+# GAME_OBJHIT_IDFIRST=1 (G, camera line vs objects; exact; needs GAME_OBJHIT_LIST=1): ObjHitCheck tests each
+#                      object's id before be_flag (1045 of 1240 objects/tick have id 2) and prefetches only the
+#                      id lines from the array: one line per object instead of two (at_mod.cpp objHitOne).
+#                      =2 (check build): both orders compared ("OID" lines).
+GAME_OBJHIT_IDFIRST ?= 0
+ifneq ($(GAME_OBJHIT_IDFIRST),0)
+ifeq ($(GAME_OBJHIT_LIST),0)
+$(error GAME_OBJHIT_IDFIRST needs GAME_OBJHIT_LIST=1)
+endif
+$(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_OBJHIT_IDFIRST=$(GAME_OBJHIT_IDFIRST)
+endif
+# GAME_EMHIT_LIST=1 (G, camera line vs characters; exact; needs GAME_ATCHK_LIST=1): EmHitCheck walks the
+#                  alive-list array with the bodies' collision lines prefetched, and skips ComnHitCheck for a
+#                  body without a box when the caller's flag has no bit 1 (it returns 0 there) (at_mod.cpp).
+#                  =2 (check build): array vs list compared, skipped calls made and checked ("EHL" lines).
+GAME_EMHIT_LIST ?= 0
+ifneq ($(GAME_EMHIT_LIST),0)
+ifeq ($(GAME_ATCHK_LIST),0)
+$(error GAME_EMHIT_LIST needs GAME_ATCHK_LIST=1)
+endif
+$(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_EMHIT_LIST=$(GAME_EMHIT_LIST)
 endif
 # GAME_WORKAT_INLINE=1 (the 30 fps rethink; port overhead, exact; needs OBJECT_DEMAND=1 ENEMY_DEMAND=1):
 #                    the demand-backed cObj / cEm managers' workAt (parts_bridge.cpp: two out-of-line

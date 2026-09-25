@@ -61,6 +61,9 @@ cSatFile* createSat(Vec* v, u32 attr, f32 h);
 cSatFile* createBoxSat(Vec* v, u32 attr, f32 h);
 static cSatFile* createFloorSat(Vec* v, u32 attr, f32 h);
 void at_pos_calc(cModel* m, Vec* vec);
+#if defined(RE4DC_SPHERE_WALK) && RE4DC_SPHERE_WALK
+static void spwWallPair(u8* arr, u32 n, u32 size, Vec* p0, Vec* pos, f32 r, int flag, Vec* nrm, int mask);
+#endif
 
 // Model-vs-scenario collision for a character (its cAtariInfo, m_flag 0x100 = collision on):
 // the rectangle form (m_flag bit1: 12 edge probes, checkRect) or the sphere form for the info
@@ -359,8 +362,15 @@ void cSatMgr::wallAdjust(Vec* nrm, Vec* oldPos, Vec* pos, f32 r, int flag, int m
     PSVECSubtract(pos, oldPos, &d);
     p0 = *oldPos;
     PSVECAdd(oldPos, &d, pos);
-    polySphereCk(&p0, pos, r, flag | 0xA0, nrm, mask);
-    polySphereCk(&p0, pos, r, flag | 0x80, nrm, mask);
+#if defined(RE4DC_SPHERE_WALK) && RE4DC_SPHERE_WALK
+    if (pG->debug_mode != 0x14) {
+        spwWallPair((u8*) pArray, nArray, size, &p0, pos, r, flag, nrm, mask);
+    } else
+#endif
+    {
+        polySphereCk(&p0, pos, r, flag | 0xA0, nrm, mask);
+        polySphereCk(&p0, pos, r, flag | 0x80, nrm, mask);
+    }
     if (flag & 1) {
         if (hitCheck(oldPos, pos, &hit, &n, flag, mask)) {
             PSVECScale(&n, &tmp, r);
@@ -738,6 +748,369 @@ cSat* cSatMgr::create(Vec* pos, Vec* rot, Vec* poly, int attr, int flag, f32 h)
     return sat;
 }
 
+#if defined(RE4DC_SPHERE_WALK) && RE4DC_SPHERE_WALK
+// GAME_SPHERE_WALK (game30.mk; G, collision traversal; exact): polySphereCk's block walk (blkPolySphereCk:
+// hitCheckSphere on every block of a chain, recursion into the overlapped nodes) in platform/spw_sh4.S with
+// hitCheckSphere's float operations on the same operands. A leaf's polygon test can move the sphere's end and
+// the recursive walk tests every later block against the moved end, so the kernel returns the overlapped
+// leaves one at a time (in the recursive walk's order) and resumes with the ends read again. Each piece is
+// walked first with the x and z rows of both ends (MTXMultVec's contract-off dataflow and operand roles, as
+// GAME_LINE_PIECE; the walk reads nothing else); a piece without an overlapped leaf ends there (its polyBit
+// clear and full transforms have no reader then). A node 16 chains deep walks its child chain recursively.
+// wallAdjust's two calls (same p0, pos and r; the flag only picks the polygons a leaf tests) share one walk:
+// the first records its leaves, and when it hit nothing (so pos, every lp and every piece are unchanged) the
+// second runs them without a walk; a hit there moves lp, so that piece re-walks to the hit leaf with the
+// unmoved end (the recorded walk) and goes on with the moved one, and the later pieces walk as usual.
+// =2 (check build): the original loop runs first on copies of pos and nrm and the answers are compared, every
+// kernel step is compared with a C walk from the same state that calls hitCheckSphere, a re-walk with the
+// record, and the piece entry's x / z with PSMTXMultVec's ("SPW" lines).
+struct SphereWalkQ {
+    f32 (*m)[4];         // 0x00  the piece's inverse matrix (piece entry)
+    Vec* p0;             // 0x04  the world ends (piece entry)
+    Vec* p1;             // 0x08
+    f32 r;               // 0x0C
+    Vec* lo;             // 0x10  the piece-space ends (resume)
+    Vec* lp;             // 0x14
+    cSatBlock* cur;      // 0x18  the block to test next
+    cSatBlock** sp;      // 0x1C  the continuation stack's top
+    f32 box[4];          // 0x20  kernel scratch (the swept box)
+    f32 kx[4];           // 0x30  the ends' x / z in use (lo.x, lo.z, lp.x, lp.z)
+    cSatBlock* stk[16];  // 0x40  continuations
+};
+static_assert(__builtin_offsetof(SphereWalkQ, r) == 0x0C && __builtin_offsetof(SphereWalkQ, lo) == 0x10 &&
+                  __builtin_offsetof(SphereWalkQ, cur) == 0x18 && __builtin_offsetof(SphereWalkQ, box) == 0x20 &&
+                  __builtin_offsetof(SphereWalkQ, kx) == 0x30 && __builtin_offsetof(SphereWalkQ, stk) == 0x40 &&
+                  sizeof(SphereWalkQ) == 0x80,
+              "platform/spw_sh4.S reads these offsets");
+static_assert(__builtin_offsetof(cSatBlock, min) == 0x00 && __builtin_offsetof(cSatBlock, m_Size) == 0x0C &&
+                  __builtin_offsetof(cSatBlock, m_Flag) == 0x1E && __builtin_offsetof(cSatBlock, next) == 0x20 &&
+                  __builtin_offsetof(cSatBlock, idx) == 0x24,
+              "platform/spw_sh4.S reads these offsets");
+extern "C" cSatBlock* re4dc_sphere_piece(SphereWalkQ* q, cSatBlock* blk);
+extern "C" cSatBlock* re4dc_sphere_walk(SphereWalkQ* q);
+// The entries one call met (leaves, or node | 1), with their pieces: wallAdjust's second call replays them.
+#define SPW_REC_MAX 64
+struct SpwRec {
+    int n;  // -1: more than SPW_REC_MAX
+    u32 piece[SPW_REC_MAX];
+    cSatBlock* leaf[SPW_REC_MAX];
+};
+static SpwRec spwRec;
+#if RE4DC_SPHERE_WALK == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 spwCalls, spwPieces, spwLeaves, spwDeep, spwReplays, spwDiverge, spwXzMis, spwStepMis, spwRwMis, spwEndMis;
+static int spwBits(const void* a, const void* b, int n)
+{
+    return __builtin_memcmp(a, b, n) != 0;
+}
+// A walk state: the block to test next and the continuations.
+struct SpwState {
+    cSatBlock* cur;
+    int depth;
+    cSatBlock* stk[16];
+};
+// The recursive walk's next step from state s, with hitCheckSphere: the next overlapped leaf, node | 1 at
+// 16 chains deep, 0 at the end; s moves past it.
+static cSatBlock* spwRefStep(SpwState* s, Vec* lo, Vec* lp, f32 r)
+{
+    cSatBlock* blk = s->cur;
+    for (;;) {
+        if (blk == 0) {
+            if (s->depth == 0) {
+                s->cur = 0;
+                return 0;
+            }
+            blk = s->stk[--s->depth];
+            continue;
+        }
+        cSatBlock* nx = blk->next;
+        if (blk->hitCheckSphere(lo, lp, r)) {
+            if (blk->m_Flag & 1) {
+                if (s->depth == 16) {
+                    s->cur = nx;
+                    return (cSatBlock*) ((u32) blk | 1);
+                }
+                s->stk[s->depth++] = nx;
+                blk = (cSatBlock*) blk->idx;
+                continue;
+            }
+            s->cur = nx;
+            return blk;
+        }
+        blk = nx;
+    }
+}
+static void spwSave(SpwState* s, const SphereWalkQ* q)
+{
+    s->cur = q->cur;
+    s->depth = q->sp - q->stk;
+    for (int k = 0; k < s->depth; k++) {
+        s->stk[k] = q->stk[k];
+    }
+}
+// A kernel step (its answer `got` and the state it left in q) against the reference step from `from`.
+static void spwCheckStep(const SpwState* from, cSatBlock* got, const SphereWalkQ* q, Vec* lo, Vec* lp)
+{
+    SpwState s = *from;
+    cSatBlock* want = spwRefStep(&s, lo, lp, q->r);
+    int bad = want != got;
+    if (!bad && got) {
+        const int depth = q->sp - q->stk;
+        bad = s.cur != q->cur || s.depth != depth;
+        for (int k = 0; !bad && k < depth; k++) {
+            bad = s.stk[k] != q->stk[k];
+        }
+    }
+    if (bad) {
+        ++spwStepMis;
+    }
+    if (got) {
+        if ((u32) got & 1) {
+            ++spwDeep;
+        } else {
+            ++spwLeaves;
+        }
+    }
+}
+// The original piece loop (the reference), on the caller's copies of pos and nrm.
+static int spwOrig(u8* arr, u32 n, u32 size, Vec* oldPos, Vec* pos, f32 r, int flag, Vec* nrm, int mask)
+{
+    int ret = 0;
+    for (u32 i = 0; i < n; i++) {
+        cSat* sat = (cSat*) (arr + size * i);
+        if (sat->isAlive()) {
+            Vec lo;
+            Vec lp;
+            memclr_asm(polyBit, (sat->polygon_num + 7) / 8);
+            PSMTXMultVec(sat->imat, oldPos, &lo);
+            PSMTXMultVec(sat->imat, pos, &lp);
+            if (blkPolySphereCk(sat, sat->block_p, &lo, &lp, r, flag, nrm, mask)) {
+                PSMTXMultVec(sat->mat, &lp, pos);
+                if (nrm) {
+                    PSMTXMultVecSR(sat->mat, nrm, nrm);
+                }
+                ret = 1;
+            }
+        }
+    }
+    return ret;
+}
+// The reference answer of one call (run before it) and its compare (after it).
+struct SpwEnd {
+    Vec pos;
+    Vec nrm;
+    int ret;
+};
+static void spwRefBegin(SpwEnd* e, u8* arr, u32 n, u32 size, Vec* oldPos, Vec* pos, f32 r, int flag, Vec* nrm, int mask)
+{
+    e->pos = *pos;
+    if (nrm) {
+        e->nrm = *nrm;
+    }
+    e->ret = spwOrig(arr, n, size, oldPos, &e->pos, r, flag, nrm ? &e->nrm : 0, mask);
+}
+static void spwRefEnd(const SpwEnd* e, int ret, Vec* pos, Vec* nrm)
+{
+    if (ret != e->ret || spwBits(pos, &e->pos, 12) || (nrm && spwBits(nrm, &e->nrm, 12))) {
+        ++spwEndMis;
+    }
+    if (++spwCalls % 8192 == 0) {
+        re4dc_log("SPW calls=%u pieces=%u leaves=%u deep=%u replay=%u diverge=%u xzmis=%u stepmis=%u rwmis=%u "
+                  "endmis=%u\n", spwCalls, spwPieces, spwLeaves, spwDeep, spwReplays, spwDiverge, spwXzMis,
+                  spwStepMis, spwRwMis, spwEndMis);
+    }
+}
+#endif
+// One entry of the walk: a leaf's polygons, or a deep node's child chain the recursive way. 1 on a hit.
+static inline int spwLeaf(cSat* sat, cSatBlock* lf, Vec* lo, Vec* lp, f32 r, int flag, Vec* nrm, int mask)
+{
+    if ((u32) lf & 1) {
+        cSatBlock* node = (cSatBlock*) ((u32) lf & ~1u);
+        return blkPolySphereCk(sat, (cSatBlock*) node->idx, lo, lp, r, flag, nrm, mask) != 0;
+    }
+    return blkPolySphereCkCore(sat, lf, lo, lp, r, flag, nrm, mask) != 0;
+}
+// The rest of a piece's walk after entry `lf` (state in q, lo / lp set), running each entry. 1 on a hit.
+static int spwFinish(SphereWalkQ* q, cSat* sat, Vec* lo, Vec* lp, int flag, Vec* nrm, int mask, SpwRec* rec, u32 i)
+{
+    int hit = 0;
+    for (;;) {
+#if RE4DC_SPHERE_WALK == 2
+        SpwState from;
+        spwSave(&from, q);
+#endif
+        cSatBlock* lf = re4dc_sphere_walk(q);
+#if RE4DC_SPHERE_WALK == 2
+        spwCheckStep(&from, lf, q, lo, lp);
+#endif
+        if (lf == 0) {
+            return hit;
+        }
+        if (rec) {
+            if (rec->n >= 0 && rec->n < SPW_REC_MAX) {
+                rec->piece[rec->n] = i;
+                rec->leaf[rec->n] = lf;
+                rec->n++;
+            } else {
+                rec->n = -1;
+            }
+        }
+        if (spwLeaf(sat, lf, lo, lp, q->r, flag, nrm, mask)) {
+            hit = 1;
+        }
+    }
+}
+// polySphereCk's piece loop from piece i0 with the kernel walk; rec (when given) receives the entries met.
+static int spwRun(u8* arr, u32 n, u32 size, u32 i0, Vec* oldPos, Vec* pos, f32 r, int flag, Vec* nrm, int mask,
+                  SpwRec* rec)
+{
+    int ret = 0;
+    SphereWalkQ q;
+
+    q.p0 = oldPos;
+    q.p1 = pos;
+    q.r = r;
+    if (rec) {
+        rec->n = 0;
+    }
+    for (u32 i = i0; i < n; i++) {
+        cSat* sat = (cSat*) (arr + size * i);
+        if (!sat->isAlive()) {
+            continue;
+        }
+        Vec lo;
+        Vec lp;
+        q.m = sat->imat;
+        cSatBlock* lf = re4dc_sphere_piece(&q, sat->block_p);
+#if RE4DC_SPHERE_WALK == 2
+        {
+            Vec ra;
+            Vec rb;
+            PSMTXMultVec(sat->imat, oldPos, &ra);
+            PSMTXMultVec(sat->imat, pos, &rb);
+            if (spwBits(&q.kx[0], &ra.x, 4) || spwBits(&q.kx[1], &ra.z, 4) || spwBits(&q.kx[2], &rb.x, 4) ||
+                spwBits(&q.kx[3], &rb.z, 4)) {
+                ++spwXzMis;
+            }
+            SpwState from;
+            from.cur = sat->block_p;
+            from.depth = 0;
+            spwCheckStep(&from, lf, &q, &ra, &rb);
+            ++spwPieces;
+        }
+#endif
+        if (lf == 0) {
+            continue;
+        }
+        memclr_asm(polyBit, (sat->polygon_num + 7) / 8);
+        PSMTXMultVec(sat->imat, oldPos, &lo);
+        PSMTXMultVec(sat->imat, pos, &lp);
+        q.lo = &lo;
+        q.lp = &lp;
+        if (rec) {
+            if (rec->n >= 0 && rec->n < SPW_REC_MAX) {
+                rec->piece[rec->n] = i;
+                rec->leaf[rec->n] = lf;
+                rec->n++;
+            } else {
+                rec->n = -1;
+            }
+        }
+        int hit = spwLeaf(sat, lf, &lo, &lp, r, flag, nrm, mask);
+        if (spwFinish(&q, sat, &lo, &lp, flag, nrm, mask, rec, i)) {
+            hit = 1;
+        }
+        if (hit) {
+            PSMTXMultVec(sat->mat, &lp, pos);
+            if (nrm) {
+                PSMTXMultVecSR(sat->mat, nrm, nrm);
+            }
+            ret = 1;
+        }
+    }
+    return ret;
+}
+// wallAdjust's second call after a first call that hit nothing, from that call's record (see above).
+static int spwReplay(u8* arr, u32 n, u32 size, Vec* oldPos, Vec* pos, f32 r, int flag, Vec* nrm, int mask,
+                     const SpwRec* rec)
+{
+    int k = 0;
+
+#if RE4DC_SPHERE_WALK == 2
+    ++spwReplays;
+#endif
+    while (k < rec->n) {
+        const u32 i = rec->piece[k];
+        cSat* sat = (cSat*) (arr + size * i);
+        Vec lo;
+        Vec lp;
+        memclr_asm(polyBit, (sat->polygon_num + 7) / 8);
+        PSMTXMultVec(sat->imat, oldPos, &lo);
+        PSMTXMultVec(sat->imat, pos, &lp);
+        const int k0 = k;
+        for (; k < rec->n && rec->piece[k] == i; k++) {
+            if (spwLeaf(sat, rec->leaf[k], &lo, &lp, r, flag, nrm, mask)) {
+                SphereWalkQ q;
+                Vec lp0;
+#if RE4DC_SPHERE_WALK == 2
+                ++spwDiverge;
+#endif
+                // the walk's state after entry k (the recorded walk: the unmoved end), then on with the moved one
+                PSMTXMultVec(sat->imat, pos, &lp0);
+                q.r = r;
+                q.lo = &lo;
+                q.lp = &lp0;
+                q.cur = sat->block_p;
+                q.sp = q.stk;
+                for (int j = k0; j <= k; j++) {
+                    cSatBlock* w = re4dc_sphere_walk(&q);
+#if RE4DC_SPHERE_WALK == 2
+                    if (w != rec->leaf[j]) {
+                        ++spwRwMis;
+                    }
+#else
+                    (void) w;
+#endif
+                }
+                q.lp = &lp;
+                spwFinish(&q, sat, &lo, &lp, flag, nrm, mask, 0, i);
+                PSMTXMultVec(sat->mat, &lp, pos);
+                if (nrm) {
+                    PSMTXMultVecSR(sat->mat, nrm, nrm);
+                }
+                spwRun(arr, n, size, i + 1, oldPos, pos, r, flag, nrm, mask, 0);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+// wallAdjust's two polySphereCk calls (walls and slopes with flag 0x20, then walls) with one walk.
+static void spwWallPair(u8* arr, u32 n, u32 size, Vec* p0, Vec* pos, f32 r, int flag, Vec* nrm, int mask)
+{
+#if RE4DC_SPHERE_WALK == 2
+    SpwEnd e;
+    spwRefBegin(&e, arr, n, size, p0, pos, r, flag | 0xA0, nrm, mask);
+#endif
+    const int r1 = spwRun(arr, n, size, 0, p0, pos, r, flag | 0xA0, nrm, mask, &spwRec);
+#if RE4DC_SPHERE_WALK == 2
+    spwRefEnd(&e, r1, pos, nrm);
+    spwRefBegin(&e, arr, n, size, p0, pos, r, flag | 0x80, nrm, mask);
+#endif
+    int r2;
+    if (r1 == 0 && spwRec.n >= 0) {
+        r2 = spwReplay(arr, n, size, p0, pos, r, flag | 0x80, nrm, mask, &spwRec);
+    } else {
+        r2 = spwRun(arr, n, size, 0, p0, pos, r, flag | 0x80, nrm, mask, 0);
+    }
+#if RE4DC_SPHERE_WALK == 2
+    spwRefEnd(&e, r2, pos, nrm);
+#else
+    (void) r2;
+#endif
+}
+#endif
+
 // Sphere of radius r moving from oldPos to pos against every active piece; pos is pushed out
 // of the polygons, nrm (when given) receives the last hit normal. Returns 1 on a hit.
 int cSatMgr::polySphereCk(Vec* oldPos, Vec* pos, f32 r, int flag, Vec* nrm, int mask)
@@ -763,6 +1136,19 @@ int cSatMgr::polySphereCk(Vec* oldPos, Vec* pos, f32 r, int flag, Vec* nrm, int 
         PPCMtmmcr0(0x42);
     }
     ret = 0;
+#if defined(RE4DC_SPHERE_WALK) && RE4DC_SPHERE_WALK
+    (void) i;
+    {
+#if RE4DC_SPHERE_WALK == 2
+        SpwEnd e;
+        spwRefBegin(&e, (u8*) pArray, nArray, size, oldPos, pos, r, flag, nrm, mask);
+#endif
+        ret = spwRun((u8*) pArray, nArray, size, 0, oldPos, pos, r, flag, nrm, mask, 0);
+#if RE4DC_SPHERE_WALK == 2
+        spwRefEnd(&e, ret, pos, nrm);
+#endif
+    }
+#else
     for (i = 0; i < nArray; i++) {
         cSat* sat = (cSat*) ((u8*) pArray + size * i);
         if (sat->isAlive()) {
@@ -781,6 +1167,7 @@ int cSatMgr::polySphereCk(Vec* oldPos, Vec* pos, f32 r, int flag, Vec* nrm, int 
             }
         }
     }
+#endif
     if (pG->debug_mode == 0x14) {
         PPCMtmmcr0(0);
         PPCMtmmcr1(0);
@@ -1018,6 +1405,23 @@ static int lnpBits(const f32* a, const f32* b)
     return x != y;
 }
 #endif
+#if defined(RE4DC_LINE_YROW) && RE4DC_LINE_YROW
+// GAME_LINE_YROW (game30.mk; G, line queries; exact; needs GAME_LINE_PIECE=1): a piece with an overlapped
+// leaf took three full PSMTXMultVec (both ends and the current end). re4dc_line_piece has already written
+// both ends' x and z rows (MTXMultVec's contract-off dataflow, checked by LNP), so only the y rows are
+// computed, with MTXMultVec's expression (m13 + (m12 z + (m10 x + m11 y))). The current end equals pos1
+// bit for bit until a hit is taken (cur = *pos1 at entry, both written only there), so its transform is
+// lb's; and the hit test's re-transform of cur (unchanged since) is the transform taken before the leaf
+// tests. =2 (check build): every such vector compared with PSMTXMultVec ("LYR" lines).
+static inline f32 lyrRow1(f32 (*m)[4], const Vec* p)
+{
+    return m[1][3] + ((m[1][2] * p->z) + ((m[1][0] * p->x) + (m[1][1] * p->y)));
+}
+#if RE4DC_LINE_YROW == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 lyrCalls, lyrMis, lyrCurMis, lyrTmpMis;
+#endif
+#endif
 static int linePieceWalk(LinePieceQ* q, cSatBlock* blk, cSatBlock** leaf)
 {
     const int nl = re4dc_line_piece(q, blk, leaf, LNW_MAX);
@@ -1085,6 +1489,10 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
     LinePieceQ pq;
     pq.p0 = pos0;
     pq.p1 = pos1;
+#if defined(RE4DC_LINE_YROW) && RE4DC_LINE_YROW
+    int curP1 = 1;
+    Vec lcur0;
+#endif
     u8* satp = (u8*) pArray;
     const u32 satSize = size;
     for (i = 0; i < nArray; i++, satp += satSize) {
@@ -1104,8 +1512,31 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
             if (nl == 0) {
                 continue;
             }
+#if defined(RE4DC_LINE_YROW) && RE4DC_LINE_YROW
+            la.x = pq.lax;
+            la.y = lyrRow1(sat->imat, pos0);
+            la.z = pq.laz;
+            lb.x = pq.lbx;
+            lb.y = lyrRow1(sat->imat, pos1);
+            lb.z = pq.lbz;
+#if RE4DC_LINE_YROW == 2
+            {
+                Vec ra;
+                Vec rb;
+                PSMTXMultVec(sat->imat, pos0, &ra);
+                PSMTXMultVec(sat->imat, pos1, &rb);
+                if (__builtin_memcmp(&ra, &la, 12) != 0 || __builtin_memcmp(&rb, &lb, 12) != 0) {
+                    ++lyrMis;
+                }
+                if (++lyrCalls % 8192 == 0) {
+                    re4dc_log("LYR calls=%u mismatch=%u curmis=%u tmpmis=%u\n", lyrCalls, lyrMis, lyrCurMis, lyrTmpMis);
+                }
+            }
+#endif
+#else
             PSMTXMultVec(sat->imat, pos0, &la);
             PSMTXMultVec(sat->imat, pos1, &lb);
+#endif
 #else
             PSMTXMultVec(sat->imat, pos0, &la);
             PSMTXMultVec(sat->imat, pos1, &lb);
@@ -1116,7 +1547,25 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
             }
 #endif
             memclr_asm(polyBit, (sat->polygon_num >> 3) + 1);
+#if defined(RE4DC_LINE_PIECE) && RE4DC_LINE_PIECE && defined(RE4DC_LINE_YROW) && RE4DC_LINE_YROW
+            if (curP1) {
+                lcur = lb;
+            } else {
+                PSMTXMultVec(sat->imat, &cur, &lcur);
+            }
+            lcur0 = lcur;
+#if RE4DC_LINE_YROW == 2
+            {
+                Vec rc;
+                PSMTXMultVec(sat->imat, &cur, &rc);
+                if (__builtin_memcmp(&rc, &lcur, 12) != 0) {
+                    ++lyrCurMis;
+                }
+            }
+#endif
+#else
             PSMTXMultVec(sat->imat, &cur, &lcur);
+#endif
             if (nl > 0) {
                 r = 0;
                 for (int k = 0; k < nl; k++) {
@@ -1136,11 +1585,27 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
             r = blkPolyLineCk(sat, blk, &la, &lb, flag, mask, &lcur, &pn);
 #endif
             if (r) {
+#if defined(RE4DC_LINE_PIECE) && RE4DC_LINE_PIECE && defined(RE4DC_LINE_YROW) && RE4DC_LINE_YROW
+                tmp = lcur0;
+#if RE4DC_LINE_YROW == 2
+                {
+                    Vec rt;
+                    PSMTXMultVec(sat->imat, &cur, &rt);
+                    if (__builtin_memcmp(&rt, &tmp, 12) != 0) {
+                        ++lyrTmpMis;
+                    }
+                }
+#endif
+#else
                 PSMTXMultVec(sat->imat, &cur, &tmp);
+#endif
                 if (GetDistance(&la, &lcur) < GetDistance(&la, &tmp)) {
                     PSMTXMultVec(sat->mat, &lb, pos1);
                     ret = r;
                     PSMTXMultVec(sat->mat, &lcur, &cur);
+#if defined(RE4DC_LINE_PIECE) && RE4DC_LINE_PIECE && defined(RE4DC_LINE_YROW) && RE4DC_LINE_YROW
+                    curP1 = 0;
+#endif
                     pBypassAt = sat;
 #if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
                     dtWin = i;

@@ -750,6 +750,43 @@ int em_rect2_ck_sub(cEm* pMod, cEm* pMod2)
     return ret;
 }
 
+#if defined(RE4DC_ATRECT_FAR) && RE4DC_ATRECT_FAR
+// GAME_ATRECT_FAR (game30.mk; G, em-em collision; decision-exact): __em_at_core has no distance test, so
+// At_em_sphere_rect_ck builds the box frame (RotRad, MultVec, PSMTXInverse) for every sphere / box pair
+// whose heights overlap, however far apart. A hit needs a step point p (local xz, on the segment from
+// the old to the new position, n accumulated steps) with |p.x| < rx + rad and |p.z| < rz (or the swap),
+// or within |rad| of a corner (GetDistance is squared): |p.x|, |p.z| <= |rx| + |rz| + |rad| = h. The
+// frame is a y rotation about c = R off + c0 (c0 the parts / model position), so a hit point lies within
+// |off.x| + |off.z| + 2h of c0 in x and in z (world). When both ends of the segment are further than that
+// plus a margin (64 + 1/1024 of the coordinates' magnitude: ~1000x the rotation, inverse and n-step
+// rounding, n <= 5001 as a move over 1e6 units is not rejected) on one side in x or z, the original
+// returns 0 with no write: the call returns 0 before building the frame. NaN / inf anywhere: no reject.
+// =2 (check build): the original runs every time; a rejected call that hits is counted ("ARF" lines).
+static inline int arfFar(cEm* sph, cEm* rect, const Vec* pr)
+{
+    const cAtariInfo* ir = &rect->atari;
+    const Vec* c0 = ir->m_parts_no != 0 ? pr : &rect->pos;
+    const Vec* p = &sph->atari.m_Pos;
+    const Vec* o = &sph->atari.m_oldPos;
+    const f32 h = fabsf(ir->m_radius) + fabsf(ir->m_radius2) + fabsf(sph->atari.m_radius);
+    const f32 mag = fabsf(c0->x) + fabsf(c0->z) + fabsf(p->x) + fabsf(p->z) + fabsf(o->x) + fabsf(o->z);
+    const f32 mv = fabsf(p->x - o->x) + fabsf(p->y - o->y) + fabsf(p->z - o->z);
+    const f32 b = fabsf(ir->m_offset.x) + fabsf(ir->m_offset.z) + 2.0f * h + 64.0f + mag * (1.0f / 1024.0f);
+    const f32 xl = c0->x - b;
+    const f32 xh = c0->x + b;
+    const f32 zl = c0->z - b;
+    const f32 zh = c0->z + b;
+
+    if (!(mv < 1.0e6f)) {
+        return 0;
+    }
+    return (p->x < xl && o->x < xl) || (p->x > xh && o->x > xh) || (p->z < zl && o->z < zl) || (p->z > zh && o->z > zh);
+}
+#if RE4DC_ATRECT_FAR == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 arfCalls, arfFarN, arfMis;
+#endif
+#endif
 // Sphere (character) vs box (object): with overlapping heights pushes the sphere out of the box
 // along the nearest face (sphereRectCk in the box's yaw frame); 1 on contact.
 int At_em_sphere_rect_ck(cEm* sph, cEm* rect)
@@ -776,6 +813,15 @@ int At_em_sphere_rect_ck(cEm* sph, cEm* rect)
     if (ps.y - sph->atari.m_height > pr.y + rect->atari.m_height) {
         return 0;
     }
+#if defined(RE4DC_ATRECT_FAR) && RE4DC_ATRECT_FAR
+#if RE4DC_ATRECT_FAR == 2
+    const int arfF = arfFar(sph, rect, &pr);
+#else
+    if (arfFar(sph, rect, &pr)) {
+        return 0;
+    }
+#endif
+#endif
     ir = &rect->atari;
     if (ir->m_parts_no != 0) {
         cModel* pm = rect->getPartsPtr(ir->m_parts_no - 1);
@@ -827,6 +873,17 @@ int At_em_sphere_rect_ck(cEm* sph, cEm* rect)
         PSVECAdd(&sph->pos, &q, &sph->pos);
         sph->atari.getPos(sph, &sph->atari.m_Pos);
     }
+#if defined(RE4DC_ATRECT_FAR) && RE4DC_ATRECT_FAR == 2
+    if (arfF) {
+        ++arfFarN;
+        if (hit != 0) {
+            ++arfMis;
+        }
+    }
+    if (++arfCalls % 4096 == 0) {
+        re4dc_log("ARF calls=%u far=%u mismatch=%u\n", arfCalls, arfFarN, arfMis);
+    }
+#endif
     return hit;
 }
 
@@ -985,6 +1042,18 @@ static int atModIsZero(f32 x)
 
 // Line pos0 -> pos1 against every collidable character body (the player only with flag bit2):
 // nearest hit and normal; 1 when hit. The camera uses it to keep characters in view.
+#if defined(RE4DC_EMHIT_LIST) && RE4DC_EMHIT_LIST
+// GAME_EMHIT_LIST (game30.mk; G, camera line vs characters; exact; needs GAME_ATCHK_LIST=1): EmHitCheck walks
+// GAME_ATCHK_LIST's array of EmMgr's alive list (same bodies, same order: the nearest-hit ties resolve as
+// before) with the bodies' cAtariInfo lines prefetched ahead instead of chasing pNext, and skips the
+// ComnHitCheck call for a body without a box (m_flag bit 1) when the caller's flag has no bit 1: there
+// ComnHitCheck only writes its own local hit point and returns 0. =2 (check build): the array is compared
+// with the list and every skipped call is made and must return 0 ("EHL" lines).
+#if RE4DC_EMHIT_LIST == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 ehlCalls, ehlSkip, ehlMis;
+#endif
+#endif
 int EmHitCheck(Vec* hit, Vec* nrm, Vec* pos0, Vec* pos1, int flag)
 {
     Vec h;
@@ -997,6 +1066,66 @@ int EmHitCheck(Vec* hit, Vec* nrm, Vec* pos0, Vec* pos1, int flag)
     if (hit != 0) {
         *hit = *pos1;
     }
+#if defined(RE4DC_EMHIT_LIST) && RE4DC_EMHIT_LIST
+    const int N = atListSync(&atListEm, EmMgr.pAlive, re4dc_alive_gen[1]);
+    if (N >= 0) {
+        cEm* const* a = atListEm.v;
+#if RE4DC_EMHIT_LIST == 2
+        {
+            int k = 0;
+            cEm* q = EmMgr.pAlive;
+            for (; q != 0 && k < N && q == a[k]; q = (cEm*) q->pNext) {
+                k++;
+            }
+            if (q != 0 || k != N) {
+                ++ehlMis;
+            }
+            if (++ehlCalls % 1024 == 0) {
+                re4dc_log("EHL calls=%u skip=%u mismatch=%u n=%d\n", ehlCalls, ehlSkip, ehlMis, N);
+            }
+        }
+#endif
+        for (int i = 0; i < N && i < ATLIST_PF; i++) {
+            __builtin_prefetch(__builtin_addressof(a[i]->atari.m_flag));
+        }
+        for (int i = 0; i < N; i++) {
+            if (i + ATLIST_PF < N) {
+                __builtin_prefetch(__builtin_addressof(a[i + ATLIST_PF]->atari.m_flag));
+            }
+            m = a[i];
+            if (!(m->atari.m_flag & 0x200)) {
+                continue;
+            }
+            if (!(flag & 4) && m == pPL) {
+                continue;
+            }
+            if (!(m->atari.m_flag & 2) && !(flag & 2)) {
+#if RE4DC_EMHIT_LIST == 2
+                ++ehlSkip;
+                if (ComnHitCheck(&h, &n, m, pos0, pos1, flag) != 0) {
+                    ++ehlMis;
+                }
+#endif
+                continue;
+            }
+            if (ComnHitCheck(&h, &n, m, pos0, pos1, flag) == 0) {
+                continue;
+            }
+            d = GetDistance3(pos0, &h);
+            if (d < dist) {
+                dist = d;
+                if (hit != 0) {
+                    *hit = h;
+                }
+                if (nrm != 0) {
+                    *nrm = n;
+                }
+                ret = 1;
+            }
+        }
+        return ret;
+    }
+#endif
     for (m = EmMgr.pAlive; m != 0; m = (cEm*) m->pNext) {
         if (!(m->atari.m_flag & 0x200)) {
             continue;
@@ -1023,6 +1152,136 @@ int EmHitCheck(Vec* hit, Vec* nrm, Vec* pos0, Vec* pos1, int flag)
 }
 
 // Same against every live object (except id 2): nearest hit / normal.
+#if defined(RE4DC_OBJHIT_LIST) && RE4DC_OBJHIT_LIST
+// GAME_OBJHIT_LIST (game30.mk; G, collision traversal; exact): the objects come from GAME_ATCHK_LIST's
+// array of ObjMgr's alive list (rebuilt whenever the list changes), in list order, each object's header
+// (be_flag) and id lines prefetched ahead; every test reads the object's live fields as before. Longer
+// lists than the array: the list walk. =2 (check build): the array is compared with the live list at
+// every call, and a list change during the walk is counted ("OHL" lines).
+#if RE4DC_OBJHIT_LIST == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 ohlCalls, ohlMis, ohlChanged;
+#endif
+#if defined(RE4DC_OBJHIT_IDFIRST) && RE4DC_OBJHIT_IDFIRST
+// GAME_OBJHIT_IDFIRST (game30.mk; G, camera line vs objects; exact; needs GAME_OBJHIT_LIST=1): the id test
+// before be_flag (two plain loads, either failing skips the object). From the array the object's header
+// line (be_flag, pNext) is then read only for the ~1 in 6 objects whose id is not 2, and only the id
+// lines are prefetched. =2 (check build): both orders compared ("OID" lines).
+#if RE4DC_OBJHIT_IDFIRST == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 oidCalls, oidMis;
+#endif
+#endif
+static inline int objHitOne(cObj* o, Vec* hit, Vec* nrm, Vec* pos0, Vec* pos1, int flag, f32* dist)
+{
+    Vec h;
+    Vec n;
+    f32 d;
+
+#if defined(RE4DC_OBJHIT_IDFIRST) && RE4DC_OBJHIT_IDFIRST
+#if RE4DC_OBJHIT_IDFIRST == 2
+    {
+        const int p0 = (o->be_flag & 0x201) == 1 && o->id != 2;
+        const int p1 = o->id != 2 && (o->be_flag & 0x201) == 1;
+        if (p0 != p1) {
+            ++oidMis;
+        }
+        if (++oidCalls % 65536 == 0) {
+            re4dc_log("OID calls=%u mismatch=%u\n", oidCalls, oidMis);
+        }
+    }
+#endif
+    if (o->id == 2) {
+        return 0;
+    }
+    if ((o->be_flag & 0x201) != 1) {
+        return 0;
+    }
+#else
+    if ((o->be_flag & 0x201) != 1) {
+        return 0;
+    }
+    if (o->id == 2) {
+        return 0;
+    }
+#endif
+    if (ComnHitCheck(&h, &n, (cEm*) o, pos0, pos1, flag) == 0) {
+        return 0;
+    }
+    d = (pos0->x - h.x) * (pos0->x - h.x) + (pos0->y - h.y) * (pos0->y - h.y) + (pos0->z - h.z) * (pos0->z - h.z);
+    if (d < *dist) {
+        *dist = d;
+        if (hit != 0) {
+            *hit = h;
+        }
+        if (nrm != 0) {
+            *nrm = n;
+        }
+        return 1;
+    }
+    return 0;
+}
+int ObjHitCheck(Vec* hit, Vec* nrm, Vec* pos0, Vec* pos1, int flag)
+{
+    f32 dist = 10000000000.0f;
+    int ret = 0;
+
+    if (hit != 0) {
+        *hit = *pos1;
+    }
+    const int N = atListSync(&atListObj, (cEm*) ObjMgr.pAlive, re4dc_alive_gen[2]);
+    if (N < 0) {
+        for (cObj* o = ObjMgr.pAlive; o != 0; o = (cObj*) o->pNext) {
+            ret |= objHitOne(o, hit, nrm, pos0, pos1, flag, &dist);
+        }
+        return ret;
+    }
+    cEm* const* a = atListObj.v;
+#if RE4DC_OBJHIT_LIST == 2
+    {
+        int i = 0;
+        cObj* o = ObjMgr.pAlive;
+        for (; o != 0 && i < N && (cEm*) o == a[i]; o = (cObj*) o->pNext) {
+            i++;
+        }
+        if (o != 0 || i != N) {
+            ++ohlMis;
+        }
+    }
+    const u32 gen = re4dc_alive_gen[2];
+#endif
+#if defined(RE4DC_OBJHIT_IDFIRST) && RE4DC_OBJHIT_IDFIRST
+    for (int i = 0; i < N && i < ATLIST_PF; i++) {
+        __builtin_prefetch(&a[i]->id);
+    }
+    for (int i = 0; i < N; i++) {
+        if (i + ATLIST_PF < N) {
+            __builtin_prefetch(&a[i + ATLIST_PF]->id);
+        }
+#else
+    for (int i = 0; i < N && i < ATLIST_PF; i++) {
+        __builtin_prefetch(&a[i]->be_flag);
+        __builtin_prefetch(&a[i]->id);
+    }
+    for (int i = 0; i < N; i++) {
+        if (i + ATLIST_PF < N) {
+            __builtin_prefetch(&a[i + ATLIST_PF]->be_flag);
+            __builtin_prefetch(&a[i + ATLIST_PF]->id);
+        }
+#endif
+        ret |= objHitOne((cObj*) a[i], hit, nrm, pos0, pos1, flag, &dist);
+    }
+#if RE4DC_OBJHIT_LIST == 2
+    if (re4dc_alive_gen[2] != gen) {
+        ++ohlChanged;
+    }
+    if (++ohlCalls % 1024 == 0) {
+        re4dc_log("OHL calls=%u mismatch=%u changed=%u n=%d\n", ohlCalls, ohlMis, ohlChanged, N);
+    }
+#endif
+    return ret;
+}
+#else
 int ObjHitCheck(Vec* hit, Vec* nrm, Vec* pos0, Vec* pos1, int flag)
 {
     Vec h;
@@ -1059,7 +1318,228 @@ int ObjHitCheck(Vec* hit, Vec* nrm, Vec* pos0, Vec* pos1, int flag)
     }
     return ret;
 }
+#endif
 
+#if defined(RE4DC_CUBE_MEMO) && RE4DC_CUBE_MEMO
+// GAME_CUBE_MEMO (game30.mk; G, camera line vs box bodies; exact): emLineCubeCrossCk (em_sub.cpp) builds
+// the box's eight corners (nine MTXMultVec) and each face's unit normal (cross product + VECNormalize)
+// on every call, and cameraHitCheck tests the same boxes five times a tick (static bodies: every tick).
+// Those are a pure function of the matrix (12 words), the three sizes and the offset (3 words): a
+// table indexed by the body keeps, per face, the unit normal (or "zero normal": emLinePolyCrossCk
+// returns 0) and its dot with the face's first corner, computed by the same statements. A call then
+// runs emLinePolyCrossCk's two plane tests, da = dot(n, a) - dot(n, poly[0]) <= 0 and
+// db = dot(n, b) - dot(n, poly[0]) >= 0 (each face that fails one returns 0 there), with the kept
+// values; when a face passes both, the original emLineCubeCrossCk runs (the faces before it return 0
+// in it as well). =2 (check build): every call compared with emLineCubeCrossCk (result and hit
+// point), every hit's entry compared with a fresh build ("CBM" lines).
+#ifndef RE4DC_CBM_BITS
+#define RE4DC_CBM_BITS 4
+#endif
+#define CBM_N (1 << RE4DC_CBM_BITS)
+#define CBM_PROBE 4
+typedef u32 __attribute__((may_alias)) CbmWord;
+struct CbmEntry {
+    u32 k[18];   // matrix (12 words), sx, sy, sz, offset x / y / z
+    u32 zero;    // bit f: face f's normal is the zero vector
+    u32 pad;
+    f32 f[6][4]; // face f: unit normal, dot(normal, first corner)
+};
+static CbmEntry cbm[CBM_N] __attribute__((aligned(32)));
+static Vec* cbmTag[CBM_N];
+static u32 cbmNext;
+static const u8 cbmFace[6][4] = {{0, 1, 2, 3}, {1, 5, 6, 2}, {5, 4, 7, 6}, {4, 0, 3, 7}, {3, 2, 6, 7}, {1, 0, 4, 5}};
+#if RE4DC_CUBE_MEMO == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 cbmCalls, cbmHits, cbmFull, cbmMis, cbmEntMis;
+#endif
+// emLineCubeCrossCk's corners and emLinePolyCrossCk's normal part, statement for statement.
+static __attribute__((noinline)) void cbmBuild(CbmEntry* e, Mtx m, f32 sx, f32 sy, f32 sz, Vec* ofs)
+{
+    Mtx mat;
+    Vec c;
+    Vec v[8];
+    int f;
+
+    PSMTXMultVec(m, ofs, &c);
+    PSMTXCopy(m, mat);
+    TransMatrix(mat, &c);
+    v[0].x = -sx;
+    v[0].y = 0.0f;
+    v[0].z = sz;
+    v[1].x = sx;
+    v[1].y = 0.0f;
+    v[1].z = sz;
+    v[2].x = sx;
+    v[2].y = sy;
+    v[2].z = sz;
+    v[3].x = -sx;
+    v[3].y = sy;
+    v[3].z = sz;
+    v[4].x = -sx;
+    v[4].y = 0.0f;
+    v[4].z = -sz;
+    v[5].x = sx;
+    v[5].y = 0.0f;
+    v[5].z = -sz;
+    v[6].x = sx;
+    v[6].y = sy;
+    v[6].z = -sz;
+    v[7].x = -sx;
+    v[7].y = sy;
+    v[7].z = -sz;
+    PSMTXMultVec(mat, &v[0], &v[0]);
+    PSMTXMultVec(mat, &v[1], &v[1]);
+    PSMTXMultVec(mat, &v[2], &v[2]);
+    PSMTXMultVec(mat, &v[3], &v[3]);
+    PSMTXMultVec(mat, &v[4], &v[4]);
+    PSMTXMultVec(mat, &v[5], &v[5]);
+    PSMTXMultVec(mat, &v[6], &v[6]);
+    PSMTXMultVec(mat, &v[7], &v[7]);
+    e->zero = 0;
+    for (f = 0; f < 6; f++) {
+        Vec poly[4];
+        Vec e1;
+        Vec e2;
+        Vec n;
+
+        poly[0] = v[cbmFace[f][0]];
+        poly[1] = v[cbmFace[f][1]];
+        poly[2] = v[cbmFace[f][2]];
+        poly[3] = v[cbmFace[f][3]];
+        PSVECSubtract(&poly[2], &poly[1], &e1);
+        PSVECSubtract(&poly[0], &poly[1], &e2);
+        PSVECCrossProduct(&e1, &e2, &n);
+        if (n.x == 0.0f && n.y == 0.0f && n.z == 0.0f) {
+            e->zero |= 1u << f;
+            e->f[f][0] = 0.0f;
+            e->f[f][1] = 0.0f;
+            e->f[f][2] = 0.0f;
+            e->f[f][3] = 0.0f;
+            continue;
+        }
+        VECNormalize(&n, &n);
+        e->f[f][0] = n.x;
+        e->f[f][1] = n.y;
+        e->f[f][2] = n.z;
+        e->f[f][3] = PSVECDotProduct(&n, &poly[0]);
+    }
+}
+static __attribute__((noinline)) int cubeMemoCk(Vec* a, Vec* b, Mtx m, f32 sx, f32 sy, f32 sz, cAtariInfo* info, Vec* hit)
+{
+    Vec* ofs = (Vec*) info;
+    const CbmWord* mw = (const CbmWord*) m;
+    const CbmWord* ow = (const CbmWord*) ofs;
+    const u32 ksx = *(const CbmWord*) &sx;
+    const u32 ksy = *(const CbmWord*) &sy;
+    const u32 ksz = *(const CbmWord*) &sz;
+    const u32 h = ((u32) ofs * 0x9E3779B1u) >> (32 - RE4DC_CBM_BITS);
+    CbmEntry* e = 0;
+    u32 d = 1;
+    int i;
+    int f;
+
+    for (i = 0; i < CBM_PROBE; i++) {
+        const u32 j = (h + i) & (CBM_N - 1);
+        if (cbmTag[j] == ofs) {
+            e = &cbm[j];
+            break;
+        }
+    }
+    if (e != 0) {
+        const u32* k = e->k;
+        d = (k[0] ^ mw[0]) | (k[1] ^ mw[1]) | (k[2] ^ mw[2]) | (k[3] ^ mw[3]) | (k[4] ^ mw[4]) | (k[5] ^ mw[5]) |
+            (k[6] ^ mw[6]) | (k[7] ^ mw[7]) | (k[8] ^ mw[8]) | (k[9] ^ mw[9]) | (k[10] ^ mw[10]) | (k[11] ^ mw[11]) |
+            (k[12] ^ ksx) | (k[13] ^ ksy) | (k[14] ^ ksz) | (k[15] ^ ow[0]) | (k[16] ^ ow[1]) | (k[17] ^ ow[2]);
+    } else {
+        u32 j = (h + (cbmNext++ & (CBM_PROBE - 1))) & (CBM_N - 1);
+        for (i = 0; i < CBM_PROBE; i++) {
+            if (cbmTag[(h + i) & (CBM_N - 1)] == 0) {
+                j = (h + i) & (CBM_N - 1);
+                break;
+            }
+        }
+        cbmTag[j] = ofs;
+        e = &cbm[j];
+    }
+    if (d != 0) {
+        for (i = 0; i < 12; i++) {
+            e->k[i] = mw[i];
+        }
+        e->k[12] = ksx;
+        e->k[13] = ksy;
+        e->k[14] = ksz;
+        e->k[15] = ow[0];
+        e->k[16] = ow[1];
+        e->k[17] = ow[2];
+        cbmBuild(e, m, sx, sy, sz, ofs);
+    }
+#if RE4DC_CUBE_MEMO == 2
+    else {
+        CbmEntry t;
+        ++cbmHits;
+        cbmBuild(&t, m, sx, sy, sz, ofs);
+        if (t.zero != e->zero || __builtin_memcmp(t.f, e->f, sizeof(t.f)) != 0) {
+            ++cbmEntMis;
+        }
+    }
+#endif
+    for (f = 0; f < 6; f++) {
+        Vec n;
+        f32 d0;
+        f32 da;
+        f32 db;
+
+        if (e->zero & (1u << f)) {
+            continue;
+        }
+        n.x = e->f[f][0];
+        n.y = e->f[f][1];
+        n.z = e->f[f][2];
+        d0 = e->f[f][3];
+        da = PSVECDotProduct(&n, a) - d0;
+        if (da <= 0.0f) {
+            continue;
+        }
+        db = PSVECDotProduct(&n, b) - d0;
+        if (db >= 0.0f) {
+            continue;
+        }
+#if RE4DC_CUBE_MEMO == 2
+        ++cbmFull;
+#endif
+        return emLineCubeCrossCk(a, b, m, sx, sy, sz, info, hit);
+    }
+    return 0;
+}
+static inline int cubeCk(Vec* a, Vec* b, Mtx m, f32 sx, f32 sy, f32 sz, cAtariInfo* info, Vec* hit)
+{
+#if RE4DC_CUBE_MEMO == 2
+    Vec h0 = {0.0f, 0.0f, 0.0f};
+    Vec h1 = {0.0f, 0.0f, 0.0f};
+    if (hit != 0) {
+        h0 = *hit;
+        h1 = *hit;
+    }
+    int r0 = emLineCubeCrossCk(a, b, m, sx, sy, sz, info, &h0);
+    int r1 = cubeMemoCk(a, b, m, sx, sy, sz, info, &h1);
+    if (r0 != r1 || __builtin_memcmp(&h0, &h1, sizeof(Vec)) != 0) {
+        ++cbmMis;
+    }
+    if (hit != 0) {
+        *hit = h0;
+    }
+    if (++cbmCalls % 8192 == 0) {
+        re4dc_log("CBM calls=%u hits=%u full=%u mismatch=%u entmis=%u\n", cbmCalls, cbmHits, cbmFull, cbmMis, cbmEntMis);
+    }
+    return r0;
+#else
+    return cubeMemoCk(a, b, m, sx, sy, sz, info, hit);
+#endif
+}
+#define COMN_CUBE_CK cubeCk
+#else
+#define COMN_CUBE_CK emLineCubeCrossCk
+#endif
 // Line against one body: a box body (flag bit0 required) through emLineCubeCrossCk in its
 // parts / model matrix, a cylinder body (flag bit1) through ObaLineHitChk. 1 on a hit.
 int ComnHitCheck(Vec* hit, Vec* nrm, cEm* m, Vec* pos0, Vec* pos1, int flag)
@@ -1076,7 +1556,7 @@ int ComnHitCheck(Vec* hit, Vec* nrm, cEm* m, Vec* pos0, Vec* pos1, int flag)
         } else {
             MTX_COPY(m->mat, mat);
         }
-        r = emLineCubeCrossCk(pos0, pos1, mat, m->atari.m_radius, m->atari.m_height, m->atari.m_radius2, &m->atari, hit);
+        r = COMN_CUBE_CK(pos0, pos1, mat, m->atari.m_radius, m->atari.m_height, m->atari.m_radius2, &m->atari, hit);
         if (r != 0) {
             return 1;
         }

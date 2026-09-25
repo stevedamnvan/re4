@@ -104,6 +104,7 @@
   *atari.o(.text._ZN7cSatMgr12polySphereCkEP3VecS1_fiS1_i)
   *atari.o(.text._Z15blkPolySphereCkP4cSatP9cSatBlockP3VecS4_fiS4_i)
   *atari.o(.text._ZN9cSatBlock14hitCheckSphereEP3VecS1_f)
+  *spw_sh4.o(.text)   /* GAME_SPHERE_WALK's kernel, after hitCheckSphere as measured */
   *atari.o(.text._Z19blkPolySphereCkCoreP4cSatP9cSatBlockP3VecS4_fiS4_i)
   *atari.o(.text._Z11at_pos_calcP6cModelP3Vec)
   *atariInfo.o(.text._ZN10cAtariInfo14getSpeedVectorEP6cModelP3VecS3_)

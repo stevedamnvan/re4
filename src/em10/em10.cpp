@@ -21708,6 +21708,10 @@ static int em10FindFloorCk(cEm10* em)
 
 // 1 when another active Ganado nearby (within 3000 units, or 10000 in front) is in its damage or
 // die-lost routine: the others notice the fight (em10FindCk).
+#if defined(RE4DC_EM10_IDFIRST) && RE4DC_EM10_IDFIRST == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 eidCalls, eidMis;
+#endif
 extern "C" int em10SomebodyDamageNowCk(cEm10* em)
 {
     u32 i;
@@ -21720,6 +21724,33 @@ extern "C" int em10SomebodyDamageNowCk(cEm10* em)
         cEm* e = (cEm*) ((u8*) EmMgr.pArray + EmMgr.size * i);
 #endif
         int dm;
+#if defined(RE4DC_EM10_IDFIRST) && RE4DC_EM10_IDFIRST
+        // GAME_EM10_IDFIRST (game30.mk; G; exact): the id range before be_flag. Both are plain loads
+        // (no side effect) and the slot is skipped when either fails, so the order only changes which
+        // cache lines are touched: ~3 of 4 live slots fail the id range and no longer read be_flag.
+        // =2 (check build): both orders evaluated and compared ("EID" lines).
+#if RE4DC_EM10_IDFIRST == 2
+        {
+            int p0 = (e->be_flag & 0x201) == 1 && !(e->id <= 0xF) && !(e->id > 0x20);
+            int p1 = !(e->id <= 0xF) && !(e->id > 0x20) && (e->be_flag & 0x201) == 1;
+            if (p0 != p1) {
+                ++eidMis;
+            }
+            if (++eidCalls % 8192 == 0) {
+                re4dc_log("EID calls=%u mismatch=%u\n", eidCalls, eidMis);
+            }
+        }
+#endif
+        if (e->id <= 0xF) {
+            continue;
+        }
+        if (e->id > 0x20) {
+            continue;
+        }
+        if ((e->be_flag & 0x201) != 1) {
+            continue;
+        }
+#else
         if ((e->be_flag & 0x201) != 1) {
             continue;
         }
@@ -21729,6 +21760,7 @@ extern "C" int em10SomebodyDamageNowCk(cEm10* em)
         if (e->id > 0x20) {
             continue;
         }
+#endif
         if (e == em) {
             continue;
         }
