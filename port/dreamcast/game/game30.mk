@@ -125,6 +125,14 @@ GAME_ESP_OWNER ?= 0
 ifneq ($(GAME_ESP_OWNER),0)
 GAME_CPPFLAGS += -DRE4DC_ESP_OWNER=$(GAME_ESP_OWNER)
 endif
+# GAME_ROTVEC_MEMO=1 (square plan: collision body positions; exact): RotVector (sub2.cpp) keeps yaw-only
+#                    results in 256 one-line entries keyed by the input bits (RVM_BITS=n: 2^n entries);
+#                    cAtariInfo::getPos repeats it for every candidate body on each EmAtCheck call.
+#                    =2: every hit recomputed and compared ("RVM" log line).
+GAME_ROTVEC_MEMO ?= 0
+ifneq ($(GAME_ROTVEC_MEMO),0)
+$(OBJDIR)/src/game/sub2.o: GAME_CPPFLAGS += -DRE4DC_ROTVEC_MEMO=$(GAME_ROTVEC_MEMO) $(if $(RVM_BITS),-DRE4DC_RVM_BITS=$(RVM_BITS))
+endif
 # GAME_DECISION_TRACE=1 (test builds, with LOGIC_TRACE=1): per sample, hashes of the em-em collision
 #                    results (pair order included), the scenery line tests, the area checks and the damage hit
 #                    tests, in call order ("LX"), plus every alive enemy's position bits every 4th sample

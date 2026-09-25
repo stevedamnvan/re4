@@ -230,6 +230,86 @@ f32 GetDistance3(Vec* v0, Vec* v1)
 }
 
 // Rotates `src` by the Euler angles `rot` (RotMatrix order).
+#if defined(RE4DC_ROTVEC_MEMO) && RE4DC_ROTVEC_MEMO
+// GAME_ROTVEC_MEMO (game30.mk, square plan; exact): RotVector is a pure function of its input bits
+// (low_RotMatrix reads the angles, PSMTXMultVec the src components, neither has a side effect), so a
+// hit returns exactly the bits a call computes. cAtariInfo::getPos calls it for every candidate body
+// on each of EmAtCheck's ~46 calls per tick, with offsets and angles that rarely change in between.
+// Only yaw-only angles are memoised: low_RotMatrix treats rot.x == 0.0f and rot.z == 0.0f (either
+// sign) as sin 0 / cos 1, so the matrix then depends on the rot.y bits alone and the key is four
+// words. An entry (key, result, valid) is one 32-byte cache line; other angles compute as before.
+// =2 (check build): every hit is computed again and compared bit for bit ("RVM" log line).
+#ifndef RE4DC_RVM_BITS
+#define RE4DC_RVM_BITS 8
+#endif
+namespace {
+typedef u32 __attribute__((may_alias)) RvmWord;
+struct RvmEntry {
+    u32 k[4];
+    u32 r[3];
+    u32 valid;
+};
+RvmEntry rvm[1 << RE4DC_RVM_BITS] __attribute__((aligned(32)));
+#if RE4DC_ROTVEC_MEMO == 2
+u32 rvmCalls, rvmHits, rvmMis, rvmGeneral;
+#endif
+}
+#if RE4DC_ROTVEC_MEMO == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+#endif
+void RotVector(Vec* src, Vec* rot, Vec* dst)
+{
+    Mtx mtx;
+#if RE4DC_ROTVEC_MEMO == 2
+    if ((++rvmCalls & 0xFFFF) == 0) {
+        re4dc_log("RVM calls=%u hits=%u mismatch=%u general=%u bits=%u\n", rvmCalls, rvmHits, rvmMis,
+                  rvmGeneral, RE4DC_RVM_BITS);
+    }
+#endif
+    if (rot->x != 0.0f || rot->z != 0.0f) {
+#if RE4DC_ROTVEC_MEMO == 2
+        rvmGeneral++;
+#endif
+        low_RotMatrix(mtx, rot);
+        PSMTXMultVec(mtx, src, dst);
+        return;
+    }
+    const RvmWord* s = (const RvmWord*) src;
+    const u32 k0 = s[0], k1 = s[1], k2 = s[2], k3 = ((const RvmWord*) rot)[1];
+    const u32 h = ((k0 ^ (k1 << 1) ^ (k2 << 2)) * 0x9E3779B1u) ^ (k3 * 0x85EBCA6Bu);
+    RvmEntry& e = rvm[h >> (32 - RE4DC_RVM_BITS)];
+    RvmWord* d = (RvmWord*) dst;
+    if (e.k[0] == k0 && e.k[1] == k1 && e.k[2] == k2 && e.k[3] == k3 && e.valid) {
+#if RE4DC_ROTVEC_MEMO == 2
+        Vec ref;
+        low_RotMatrix(mtx, rot);
+        PSMTXMultVec(mtx, src, &ref);
+        const RvmWord* q = (const RvmWord*) &ref;
+        rvmHits++;
+        if (q[0] != e.r[0] || q[1] != e.r[1] || q[2] != e.r[2]) {
+            rvmMis++;
+        }
+#endif
+        const u32 r0 = e.r[0], r1 = e.r[1], r2 = e.r[2];
+        d[0] = r0;
+        d[1] = r1;
+        d[2] = r2;
+        return;
+    }
+    Vec out;
+
+    low_RotMatrix(mtx, rot);
+    PSMTXMultVec(mtx, src, &out);
+    const RvmWord* o = (const RvmWord*) &out;
+    const u32 r0 = o[0], r1 = o[1], r2 = o[2];
+    e.k[0] = k0; e.k[1] = k1; e.k[2] = k2; e.k[3] = k3;
+    e.r[0] = r0; e.r[1] = r1; e.r[2] = r2;
+    e.valid = 1;
+    d[0] = r0;
+    d[1] = r1;
+    d[2] = r2;
+}
+#else
 void RotVector(Vec* src, Vec* rot, Vec* dst)
 {
     Mtx mtx;
@@ -237,6 +317,7 @@ void RotVector(Vec* src, Vec* rot, Vec* dst)
     low_RotMatrix(mtx, rot);
     PSMTXMultVec(mtx, src, dst);
 }
+#endif
 
 // Transforms the 8 corners of a box by rotation `rot` and translation `pos`.
 void BoxWorldCalc(Vec* src, Vec* dst, Vec* pos, Vec* rot)
