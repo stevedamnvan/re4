@@ -436,6 +436,9 @@ int EspgenMove()
     return 1;
 }
 
+#if RE4DC_PACE_TRANS_SKIP
+extern "C" int re4dc_esp_logic_only;
+#endif
 // Per-frame draw pass: runs the id's Trans entry (when any) for every active controller.
 int EspgenTrans()
 {
@@ -457,6 +460,17 @@ int EspgenTrans()
                 func = EspgenTransTblApp[w->id - ESPGEN_APP_ID];
             }
             if (func != NULL) {
+#if RE4DC_PACE_TRANS_SKIP
+                // Logic-only (trans.cpp, bit 2048): keep the flare's after-render visibility test
+                // (SetEsp spawns from it, drawing the shared RNG) and espgen45's per-frame clear of
+                // Status_flg[1] 0x20; the other entries only queue draws.
+                if (re4dc_esp_logic_only && func != Espgen01_Trans) {
+                    if (func == Espgen45_Trans) {
+                        pG->Status_flg[1] &= ~0x20;
+                    }
+                    continue;
+                }
+#endif
                 func(w);
             }
         } else {

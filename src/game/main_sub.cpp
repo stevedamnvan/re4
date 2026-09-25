@@ -209,10 +209,23 @@ void Render_init()
     ScreenReSize(512, 448);
 }
 
+#if RE4DC_PACE_CATCHUP
+// port/dreamcast/game/pace.cpp: this iteration draws nothing (render skip with catch-up).
+extern "C" int re4dc_pace_skipping;
+extern "C" void re4dc_ui_begin_skip();
+extern "C" void re4dc_ui_end_frame_skip();
+#endif
+
 // Frame start: field-rendering viewport jitter and the default (dim) copy filter.
 void Render_before()
 {
 #if !defined(__PPC__)
+#if RE4DC_PACE_CATCHUP
+    // Skipped iteration: per-tick model preparation only; no native frame (nothing is emitted).
+    if (re4dc_pace_skipping) {
+        re4dc_ui_begin_skip();
+    } else
+#endif
     re4dc_ui_begin();
 #endif
     if (Rmode.field_rendering) {
@@ -258,6 +271,14 @@ void Render_done()
 // Presents the current XFB (unless System_flg 0x400 holds the picture) and flips buffers.
 void Render_swap()
 {
+#if RE4DC_PACE_CATCHUP
+    // Skipped iteration: nothing presented, the previous picture and buffer stay.
+    if (re4dc_pace_skipping) {
+        re4dc_ui_end_frame_skip();
+        VIFlush();
+        return;
+    }
+#endif
 #if defined(RE4DC_GAME) && !defined(__PPC__)
     re4dc_ui_end_frame(!(pG->System_flg & 0x400));
 #endif

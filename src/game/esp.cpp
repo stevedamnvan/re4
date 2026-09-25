@@ -17,6 +17,22 @@
 // number of live effects per owner id (debug display)
 u16 esp_num_list[0xD3];
 EspTransFunc EspTransTbl[0xFF];
+#if RE4DC_PACE_TRANS_SKIP
+// Logic-only queueing (PACE_TRANS_SKIP bit 2048, trans.cpp: an image that draws no source visuals).
+// Most trans functions only draw. These also carry effect state and still queue: 0x09 (trail width
+// m_Size_mul and the after-render hidden test), 0x0E and 0x45 (after-render visibility tests that
+// drive alpha, and 0x0E's child spawns, which draw the shared RNG through est.cpp), 0x47 (m_Pos
+// screen wrap).
+extern "C" {
+int re4dc_esp_logic_only;    // trans.cpp sets it around EspTrans / EspgenTrans
+int re4dc_esp_logic_maybe;   // such an effect may be live: set on pull, cleared by a scan finding none
+int re4dc_esp_logic_queued;  // the last logic-only EspTrans queued at least one trans
+}
+static inline int espLogicId(u32 id)
+{
+    return id == 0x09 || id == 0x0E || id == 0x45 || id == 0x47;
+}
+#endif
 EspCreateFunc EspCreateTbl[0xFF];
 
 extern "C" {
@@ -135,6 +151,11 @@ int PullEsp(cEsp** out, int id)
         ret = 1;
         sys->ActiveEspNum++;
         (*out)->m_Id = id;
+#if RE4DC_PACE_TRANS_SKIP
+        if (espLogicId(id)) {
+            re4dc_esp_logic_maybe = 1;
+        }
+#endif
     } else {
         pLog->warn(6, 0, "ESP : ESP work full!!");
     }
@@ -359,6 +380,16 @@ int EspTrans()
     if (sys == NULL) {
         return 0;
     }
+#if RE4DC_PACE_TRANS_SKIP
+    const int logicOnly = re4dc_esp_logic_only;
+    u32 logicLive = 0;
+    if (logicOnly) {
+        re4dc_esp_logic_queued = 0;
+        if (!re4dc_esp_logic_maybe) {
+            return 1;
+        }
+    }
+#endif
     LightMgr.setEsp(&sys->lightList, 8);
     cam = &pG->Cam;
     dir.x = cam->param.at.x - cam->param.pos.x;
@@ -381,6 +412,14 @@ int EspTrans()
     }
     for (i = 0; i < sys->nEsp; i++) {
         esp = (cEsp*) (sys->pEspBuf + i * 0x150);
+#if RE4DC_PACE_TRANS_SKIP
+        if (logicOnly) {
+            if (!(esp->m_Be_flg & 1) || !espLogicId(esp->m_Id)) {
+                continue;
+            }
+            logicLive++;
+        }
+#endif
         if (!ESP_IsActive(esp)) {
             continue;
         }
@@ -405,6 +444,11 @@ int EspTrans()
                 continue;
             }
         }
+#if RE4DC_PACE_TRANS_SKIP
+        if (logicOnly) {
+            re4dc_esp_logic_queued = 1;
+        }
+#endif
         prio = 0x10;
         if (trans == EspCommonTrans && esp->pad_EC[0] == 0 && !(esp->m_Tool_flg & 0x6000)) {
             prio = 8;
@@ -537,6 +581,11 @@ int EspTrans()
             AddOtWorldPosRadius(esp, (void (*)(void*)) trans, wp, esp->m_Radius, prio, zlimit);
         }
     }
+#if RE4DC_PACE_TRANS_SKIP
+    if (logicOnly && logicLive == 0) {
+        re4dc_esp_logic_maybe = 0;
+    }
+#endif
     return 1;
 }
 

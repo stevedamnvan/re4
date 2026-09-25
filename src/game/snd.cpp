@@ -436,6 +436,17 @@ static int sndExistCheck(int blk, u32 no)
 }
 
 static int sndWallCheckSub(Vec* pos);
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// GAME_DECISION_TRACE (test builds): the queries below are hashed apart (logic_trace.cpp, "sq").
+extern "C" unsigned re4dc_dt_snd;
+struct DtSnd {
+    DtSnd() { re4dc_dt_snd = 1; }
+    ~DtSnd() { re4dc_dt_snd = 0; }
+};
+#define RE4DC_DT_SND DtSnd dtSnd
+#else
+#define RE4DC_DT_SND
+#endif
 
 // Muffles the SE (sit->wall_vol percent, 1..99) when a wall (effect collision 0x404000) lies
 // between the source and the player's head.
@@ -467,6 +478,7 @@ static void sndWallCheck(SND_SIT* sit, u8* vol, u8* svol, Vec* pos)
 // 1 when the effect collision blocks the line from `pos` to the player + 1500.
 static int sndWallCheckSub(Vec* pos)
 {
+    RE4DC_DT_SND;
     Vec a;
     Vec b;
     int ret = 0;
@@ -487,6 +499,7 @@ static int sndWallCheckSub(Vec* pos)
 // (FlrAt kind 1) that does not contain the source.
 static void sndVolCtrlAtCheck(SND_SIT* sit, u8* vol, u8* svol, Vec* pos)
 {
+    RE4DC_DT_SND;
     FlrAt* at;
 
     if (pos == NULL) {

@@ -87,6 +87,22 @@ void Render();
 #if defined(RE4DC_LOGIC_TRACE) && RE4DC_LOGIC_TRACE
 extern "C" void re4dc_logic_trace_tick(void);  // port/dreamcast/game/logic_trace.cpp
 #endif
+#if RE4DC_PACE_CATCHUP
+// port/dreamcast/game/pace.cpp (PACE_CATCHUP, pace.mk): frame pacing with render skip.
+extern "C" int re4dc_pace_skipping;
+extern "C" int re4dc_pace_drop_models;
+#ifndef RE4DC_PACE_TRANS_SKIP
+#define RE4DC_PACE_TRANS_SKIP 0
+#endif
+#define PTS(b) ((RE4DC_PACE_CATCHUP >= 2) && (RE4DC_PACE_TRANS_SKIP & (b)) && re4dc_pace_drop_models)
+extern "C" void re4dc_pace_reset(void);
+extern "C" void re4dc_pace_begin(void);
+extern "C" void re4dc_pace_decide_image(void);
+extern "C" int re4dc_pace_itask(void);
+extern "C" int re4dc_pace_end(void);
+extern "C" void re4dc_pace_test_draw(void);
+extern "C" void re4dc_pace_test_tick(void);
+#endif
 void SetPrimBuffPtr();
 void Trans();
 // game/eprintf.cpp
@@ -181,6 +197,9 @@ int main()
 RESTART:
     {
         systemRestartInit();
+#if RE4DC_PACE_CATCHUP
+        re4dc_pace_reset();
+#endif
         if (pRK->valid) {
             U32Set(pSys->flags, pRK->sys_flags);
             U8Set(pSys->language, pRK->language);
@@ -216,6 +235,11 @@ RESTART:
             // iteration's complete logic + render pass, independent of how long rendering took.
             re4dc_logic_trace_tick();
 #endif
+#if RE4DC_PACE_CATCHUP
+            // Draw or skip this iteration (re4dc_pace_skipping: Render_before, ModelRender,
+            // Render_swap); the logic tick below runs in full either way.
+            re4dc_pace_begin();
+#endif
             StopwatchInit();
             ProcessTickInit();
             Render_before();
@@ -223,16 +247,26 @@ RESTART:
             PadRead();
             DebugControl();
             Render();
+#if RE4DC_PACE_CATCHUP
+            re4dc_pace_test_draw();
+#endif
             ProcessTickGet(4, "RENDER SETUP");
             SetPrimBuffPtr();
             ClearOt();
             pG->Frame_cnt++;
             TaskScheduler();
+#if RE4DC_PACE_CATCHUP
+            re4dc_pace_test_tick();
+            re4dc_pace_decide_image();  // v2: whether this tick's image (models) is dropped
+#endif
             ProcessTickGet(5, "TaskScheduler");
             if (!(pG->System_flg & 0x100000) || (pG->Status_flg[0] & 0x40000)) {
                 IdSys.move();
             }
             if (!(pG->System_flg & 0x100000) || (pG->Status_flg[0] & 0x40000)) {
+#if RE4DC_PACE_CATCHUP
+                if (!PTS(128))
+#endif
                 IdSys.trans();
             }
             if (!(pG->System_flg & 0x100000)) {
@@ -243,27 +277,43 @@ RESTART:
             ProcessTickGet(5, "SndWatcher");
             FadeControl(0);
             cMes.Move();
+#if RE4DC_PACE_CATCHUP
+            if (!PTS(512))
+#endif
             cMes.Trans();
             CinescoMove();
             if (!(pG->Debug_flg[0] & 0x8000)) {
                 Draw_cinesco();
             }
             FadeControl(1);
+#if RE4DC_PACE_CATCHUP
+            if (!PTS(256))
+#endif
             DrawOTag(&MainOt[4]);
             if (pG->debug_mode != 7) {
                 pLog->disp();
             }
             EprintfFlush();
             ProcessTickGet(2, "PROCESS CPU");
+#if RE4DC_PACE_CATCHUP
+            if (re4dc_pace_itask())
+#endif
             iTaskScheduler();
             Render_done();
             Block.checkCommand();
             DC.check();
             Block.checkCondition();
             ProcessTickGet(3, "DRAW REMAIN");
+#if RE4DC_PACE_CATCHUP
+            if (!re4dc_pace_skipping)
+#endif
             while (vsync_cnt < GetSystemVcnt() - 1) {}
             Render_swap();
             PPCSync();
+#if RE4DC_PACE_CATCHUP
+            // The anchor clock (29.97 ticks/s) replaces the per-iteration wait while pacing.
+            if (!re4dc_pace_end())
+#endif
             while (vsync_cnt < GetSystemVcnt()) {}
             vsync_cnt = 0;
             systemVSyncPost();
@@ -278,6 +328,7 @@ RESTART:
             }
         }
     }
+#line 181 "D:/Bio4/Prog/main.cpp"
     OSPanic(__FILE__, __LINE__, "End of biohazard4");
     return 0;
 }

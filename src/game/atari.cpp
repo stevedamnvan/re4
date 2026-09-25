@@ -868,11 +868,20 @@ int blkPolySphereCkCore(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, f32 r, 
 // Line pos0 -> pos1 against every live piece: the nearest hit in *hit, its world normal in
 // *nrm; returns the hit polygon's attribute word (0 = no hit). flag selects floors / walls,
 // `mask` attribute bits to ignore.
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE == 2
+extern "C" int re4dc_dt_window(void);
+extern "C" void re4dc_log(const char* fmt, ...);
+#endif
 int cSatMgr::hitCheck(Vec* pos0, Vec* pos1, Vec* hit, Vec* nrm, int flag, int mask)
 {
     u32 pn;
     int ret;
 
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE == 2
+    if (re4dc_dt_window() >= 0) {
+        re4dc_log("LQH ra=%08x\n", (u32) __builtin_return_address(0));
+    }
+#endif
     ret = hitCheck2(pos0, pos1, hit, &pn, flag, mask);
     if (nrm && ret) {
         PSMTXMultVecSR(pBypassAt->mat, (Vec*) pn, nrm);
@@ -887,6 +896,10 @@ int cSatMgr::hitCheck(Vec* pos0, Vec* pos1, Vec* hit, Vec* nrm, int flag, int ma
 // GAME_DECISION_TRACE (test builds): every line query's answer (attribute word and winning piece)
 // and, separately, its hit point bits (logic_trace.cpp).
 extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b);
+#if RE4DC_DECISION_TRACE == 2
+extern "C" int re4dc_dt_window(void);
+extern "C" void re4dc_log(const char* fmt, ...);
+#endif
 #endif
 int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int mask)
 {
@@ -942,6 +955,16 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
         re4dc_dt_note(4, (u32) flag ^ ((u32) mask << 1), (u32) ret);
         re4dc_dt_note(4, dtWin, 0);
         re4dc_dt_note(5, b[0] ^ b[2], b[1]);
+#if RE4DC_DECISION_TRACE == 2
+        const int fw = re4dc_dt_window();
+        if (fw >= 0) {
+            u32 a0[3], a1[3];
+            __builtin_memcpy(a0, pos0, 12);
+            __builtin_memcpy(a1, pos1, 12);
+            re4dc_log("LQ f=%d ra=%08x fl=%x m=%x r=%x w=%x p0=%08x,%08x,%08x p1=%08x,%08x,%08x\n", fw,
+                      (u32) __builtin_return_address(0), flag, mask, ret, dtWin, a0[0], a0[1], a0[2], a1[0], a1[1], a1[2]);
+        }
+#endif
     }
 #endif
     return ret;

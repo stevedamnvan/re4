@@ -377,6 +377,9 @@ pvr_list_t select_model_pass(const Re4dcModelPart* p){
 }
 #endif
 unsigned dropped,unsupported,missing,drawn,culled,loads,reclaimed; bool ready,frame_ready;
+#if RE4DC_PACE_CATCHUP
+bool pace_skip_frame;   // re4dc_ui_begin_skip .. next re4dc_ui_begin: nothing may reach the TA
+#endif
 extern "C" int re4dc_vi_black();
 #if RE4DC_ROUTE_MOVIES
 // Route cutscenes (native_movie.cpp): one 512x256 UYVY texture owned here, so
@@ -671,6 +674,14 @@ void ta_hash_marker(pvr_list_t list){const std::uint32_t w=0xF00D0000u|(unsigned
 bool ta_double=true,ta_double_wanted=false;
 #endif
 void stream_open() {
+#if RE4DC_PACE_CATCHUP
+    // A movie presents its own picture (re4dc_ui_movie_present_now) even inside a skipped tick.
+#if RE4DC_ROUTE_MOVIES
+    if(pace_skip_frame && !movie_texture)re4dc_missing("pace: emission on a skipped tick");
+#else
+    if(pace_skip_frame)re4dc_missing("pace: emission on a skipped tick");
+#endif
+#endif
 #if RE4DC_PVR_PIPELINE
 #if RE4DC_TA_DOUBLEBUF
     if(!ta_double){
@@ -835,6 +846,12 @@ extern "C" int re4dc_quality_hud(unsigned v[2]);   // platform/quality.cpp
 #if RE4DC_VMU_DEBUG_SLOT
 extern "C" int re4dc_dbgslot_hud(unsigned v[2]);   // dbgslot_bridge.cpp
 #endif
+#if RE4DC_PACE_CATCHUP
+extern "C" int re4dc_pace_hud(unsigned v[2]);      // pace.cpp: game speed %, drawn fps x10
+#define RE4DC_PACE_HUD_ROW 1
+#else
+#define RE4DC_PACE_HUD_ROW 0
+#endif
 void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_bytes,unsigned ta_capacity,bool ta_fault){
     HudBatch& b=hud_batch;b.n=1;
     pvr_poly_cxt_t c;pvr_poly_cxt_col(&c,PVR_LIST_TR_POLY);
@@ -846,7 +863,7 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     constexpr float X=40,BX=100,Y=324,R=18,PX=4.0f/1000.0f,MAXW=480;
     const unsigned us[5]={flip_us,period,busy,render_us,wait_us};
     const std::uint32_t colors[6]={0xe0ffffffU,0xe040ff40U,0xe0ffff40U,0xe040ffffU,0xe0ff40ffU,ta_fault?0xf0ff2020U:0xe0ffa040U};
-    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,(6+RE4DC_IO_PROBE+RE4DC_QUALITY+RE4DC_VMU_DEBUG_SLOT)*R+6,0x90000000U);   // backdrop
+    hud_rect(b,X-4,Y-4,BX-X+MAXW+8,(6+RE4DC_IO_PROBE+RE4DC_QUALITY+RE4DC_VMU_DEBUG_SLOT+RE4DC_PACE_HUD_ROW)*R+6,0x90000000U);   // backdrop
     for(unsigned r=0;r<5;++r){
         hud_number(b,X,Y+r*R,(us[r]+50)/100,true,colors[r]);
         hud_rect(b,BX,Y+r*R+2,std::min(MAXW,float(us[r])*PX),8,colors[r]);
@@ -875,6 +892,13 @@ void hud_draw(unsigned flip_us,unsigned render_us,unsigned wait_us,unsigned ta_b
     re4dc_dbgslot_hud(dv);
     hud_number(b,X,Y+(6+RE4DC_IO_PROBE+RE4DC_QUALITY)*R,dv[0],false,0xe0ffb060U);
     hud_number(b,X+60,Y+(6+RE4DC_IO_PROBE+RE4DC_QUALITY)*R,dv[1],false,0xe0ffb060U);
+#endif
+#if RE4DC_PACE_CATCHUP
+    // Pacing row (orange-white): game speed % and drawn fps of the last PACE window.
+    unsigned pv[2];
+    re4dc_pace_hud(pv);
+    hud_number(b,X,Y+(6+RE4DC_IO_PROBE+RE4DC_QUALITY+RE4DC_VMU_DEBUG_SLOT)*R,pv[0],false,0xe0ffd0a0U);
+    hud_number(b,X+60,Y+(6+RE4DC_IO_PROBE+RE4DC_QUALITY+RE4DC_VMU_DEBUG_SLOT)*R,pv[1],true,0xe0ffd0a0U);
 #endif
     hud_flush(b);
 }
@@ -1912,7 +1936,33 @@ extern "C" void re4dc_ui_init(){
 #endif
     }
 }
+#if RE4DC_PACE_CATCHUP
+unsigned pace_skipped_frames;   // skipped iterations: frame + this = iterations (PC sampler marks)
+// Skipped iteration (pace.cpp): the per-tick model preparation and asset registration run as in
+// re4dc_ui_begin; the frame is not begun (frame_ready=false: every emission entry returns before
+// any work, no texture is resolved or uploaded, no preload, no fog), `frame` does not advance.
+extern "C" void re4dc_ui_begin_skip(){
+    re4dc_model_preparation_frame();
+#if RE4DC_D349_RENDERER_STACK
+    if(deferred_first)re4dc_missing("source pose queue crossed frame reset");
+    reset_deferred();source_draws_finished=false;desired_list=PVR_LIST_OP_POLY;
+#endif
+#if RE4DC_PVR_STREAM
+    if(stream_scene || stream_retire)re4dc_missing("native previous frame unresolved");
+    stream_aborted=false;stream_model_bytes=0;
+#endif
+    nquad=0;model_used=0;frame_ready=false;pace_skip_frame=true;++pace_skipped_frames;
+    re4dc_prepare_model_assets();
+}
+// Skipped iteration: nothing to present; the previous picture stays. Frame boundary only.
+extern "C" void re4dc_ui_end_frame_skip(){
+    re4dc_pcs_frame(frame+pace_skipped_frames);
+}
+#endif
 extern "C" void re4dc_ui_begin(){
+#if RE4DC_PACE_CATCHUP
+    pace_skip_frame=false;
+#endif
 #if RE4DC_PERF_HUD
     hud_begin_prev=hud_begin;hud_begin=timer_us_gettime64();
 #endif
@@ -1982,6 +2032,25 @@ extern "C" void re4dc_ui_submit(const Re4dcUiQuad* q){
     RE4DC_PROFILE_COUNT(UiQuads,1);RE4DC_PROFILE_COUNT(UiBytes,sizeof(Re4dcUiQuad));
     RE4DC_PROFILE_HIGH(UiCapacity,sizeof(frame_storage));
 }
+#if RE4DC_PACE_CATCHUP && RE4DC_PACE_DEBUG && RE4DC_PVR_STREAM
+extern "C" int re4dc_pace_note(int* mode);   // pace.cpp
+// Test builds: the 2 s note after the pacing chord (text needs a native message renderer):
+// three boxes at the top left, the current mode's filled (Smooth green, Fast yellow, Off red).
+void pace_note_draw(int mode){
+    alignas(32) pvr_vertex_t v[1+3*4];
+    pvr_poly_cxt_t c;pvr_poly_cxt_col(&c,PVR_LIST_TR_POLY);
+    c.gen.culling=PVR_CULLING_NONE;c.depth.comparison=PVR_DEPTHCMP_ALWAYS;c.depth.write=PVR_DEPTHWRITE_DISABLE;
+    pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);std::memcpy(&v[0],&header,sizeof(header));
+    static const std::uint32_t on[3]={0xf040ff40U,0xf0ffff40U,0xf0ff4040U};
+    unsigned n=1;
+    for(int k=0;k<3;++k){
+        const float x=40.0f+k*36,y=40.0f,w=28.0f,h=16.0f;const std::uint32_t argb=k==mode?on[k]:0x60ffffffU;
+        const float xs[4]={x,x,x+w,x+w},ys[4]={y+h,y,y+h,y};
+        for(unsigned j=0;j<4;++j){auto& q=v[n++];q.flags=j==3?PVR_CMD_VERTEX_EOL:PVR_CMD_VERTEX;q.x=xs[j];q.y=ys[j];q.z=1.0f;q.u=q.v=0;q.argb=argb;q.oargb=0;}
+    }
+    stream_send(v,n*32);
+}
+#endif
 extern "C" void re4dc_ui_present(){
     RE4DC_PROFILE_SCOPE(UiDrain);
     if(!frame_ready)return;
@@ -2044,6 +2113,9 @@ extern "C" void re4dc_ui_present(){
 #endif
         ++drawn;
     }
+#if RE4DC_PACE_CATCHUP && RE4DC_PACE_DEBUG && RE4DC_PVR_STREAM
+    {int pace_mode;if(re4dc_pace_note(&pace_mode) && !re4dc_vi_black())pace_note_draw(pace_mode);}
+#endif
 #if RE4DC_PERF_HUD
     if(!re4dc_vi_black()){
         pvr_stats_t hud_stats;pvr_get_stats(&hud_stats);
@@ -2155,7 +2227,11 @@ extern "C" void re4dc_ui_end_frame(int present){
     for(const auto& e:entries)if(e.valid){RE4DC_PROFILE_COUNT(TextureResidentCount,1);
         if(e.frame==frame){RE4DC_PROFILE_COUNT(TexturePinnedCount,1);RE4DC_PROFILE_COUNT(TexturePinnedBytes,e.package.vram_bytes());}}
     re4dc::profile::finish(completed_render_profile,frame,render_source_begin);
+#if RE4DC_PACE_CATCHUP
+    re4dc_pcs_frame(frame+pace_skipped_frames); // one mark per iteration, skipped ones included
+#else
     re4dc_pcs_frame(frame); // PC_SAMPLER=1 only: frame boundary in the sample ring
+#endif
     completed_frame.sequence=completed_frame.sequence+1;
     asm volatile("" ::: "memory");
     completed_frame.frame=frame;
@@ -2550,6 +2626,55 @@ extern "C" void re4dc_model_direct_end(unsigned vertices){
     (void)vertices;
 #endif
 }
+#if RE4DC_COARSE
+#if !RE4DC_TA_DIRECT || !RE4DC_PVR_STREAM || !RE4DC_D349_RENDERER_STACK
+#error COARSE extends the TA_DIRECT PVR_STREAM=1 D349 frame owner
+#endif
+// COARSE (coarse.cpp): the coarse square's opaque view. One untextured Gouraud header (depth
+// GEQUAL with write, no culling, the fog table when asked) goes out by store queue; the caller
+// writes its vertices from the returned address (8 words each, EOL ends a strip) and closes with
+// their count. nullptr: no frame to draw into.
+extern "C" std::uint32_t* re4dc_coarse_begin(int fog){
+#if RE4DC_COARSE >= 2
+    static unsigned dbg;
+    if(dbg<4 || dbg%600==0)re4dc_log("COARSE2 begin n=%u frame=%u ready=%d scene=%d list=%d desired=%d aborted=%d direct=%d finished=%d\n",
+        dbg,frame,(int)frame_ready,(int)stream_scene,(int)stream_list,(int)desired_list,(int)stream_aborted,(int)direct_open,(int)source_draws_finished);
+    ++dbg;
+#endif
+    if(!frame_ready || stream_aborted || direct_open)return nullptr;
+    static pvr_poly_hdr_t header[2];static bool built[2];
+    const unsigned f=fog?1:0;
+    if(!built[f]){
+        pvr_poly_cxt_t c;pvr_poly_cxt_col(&c,PVR_LIST_OP_POLY);
+        c.gen.culling=PVR_CULLING_NONE;c.depth.comparison=PVR_DEPTHCMP_GEQUAL;c.depth.write=PVR_DEPTHWRITE_ENABLE;
+#if RE4DC_NATIVE_FOG
+        c.gen.fog_type=f?PVR_FOG_TABLE:PVR_FOG_DISABLE;
+#endif
+        pvr_poly_compile(&header[f],&c);built[f]=true;
+    }
+    stream_select(PVR_LIST_OP_POLY);
+    auto* sq=static_cast<std::uint32_t*>(static_cast<void*>(sq_lock((void*)PVR_TA_INPUT)));
+    const auto* h=reinterpret_cast<const std::uint32_t*>(&header[f]);
+    for(unsigned i=0;i<8;++i)sq[i]=h[i];
+#if RE4DC_TA_HASH
+    re4dc_ta_hash(h,32);
+#endif
+    sq_flush(sq);
+    direct_open=true;
+    ++frame_pvr_calls;frame_pvr_bytes+=32;stream_model_bytes+=32;
+    return sq+8;
+}
+extern "C" void re4dc_coarse_end(unsigned vertices){
+    if(!direct_open)return;
+    sq_unlock();direct_open=false;
+    if(vertices>32767)re4dc_missing("coarse view exceeded the store-queue window");
+#if RE4DC_TA_GUARD
+    guard_account(1,vertices);
+#endif
+    frame_pvr_bytes+=vertices*32;stream_model_bytes+=vertices*32;
+    if(stream_model_bytes>stream_peak_bytes)stream_peak_bytes=stream_model_bytes;
+}
+#endif
 #if RE4DC_TREE_IMPOSTOR
 #if !RE4DC_PVR_STREAM || !RE4DC_D349_RENDERER_STACK
 #error TREE_IMPOSTOR extends the PVR_STREAM=1 D349 frame owner

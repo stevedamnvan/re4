@@ -471,15 +471,102 @@ void org_LoadTexObj(u32 id, int map)
 // Per frame, the "transform" pass: effects, effect generators and the ctrl manager, shadows,
 // cloth, filters and render textures register their draw callbacks, then every object and enemy
 // (objTrans / emTrans -> ModelTrans); the primitive buffer written is flushed to memory.
+#if RE4DC_PACE_CATCHUP
+// port/dreamcast/game/pace.cpp (PACE_CATCHUP): render skip with catch-up.
+extern "C" int re4dc_pace_skipping;     // ModelRender: this iteration draws nothing
+extern "C" int re4dc_pace_drop_models;  // v2: this tick's image is dropped (no ModelTrans)
+#ifndef RE4DC_PACE_TRANS_SKIP
+#define RE4DC_PACE_TRANS_SKIP 0
+#endif
+// PACE_TRANS_SKIP (test knob, bitmask): presentation stages a dropped image does not need.
+#if RE4DC_COARSE
+#if RE4DC_PACE_CATCHUP < 2 || !(RE4DC_PACE_TRANS_SKIP & 2048)
+#error COARSE needs PACE_CATCHUP=2 and the qualified PACE_TRANS_SKIP mask (bit 2048)
+#endif
+// port/dreamcast/game/coarse.cpp (COARSE): in-room play images drawn from gameplay records. Such a
+// tick's presentation stages run as for a dropped image; Render() of the image draws the coarse view.
+extern "C" int re4dc_coarse_tick(int dropped);
+extern "C" int re4dc_coarse_image;
+extern "C" void re4dc_coarse_draw(void);
+static int coarseTick;
+// A drawn coarse image keeps TransTexRenderMgr (bit 64): the HUD's render textures.
+#define PTS(b) ((RE4DC_PACE_TRANS_SKIP & (b)) && (re4dc_pace_drop_models || (coarseTick && !((b) & 64))))
+#else
+#define PTS(b) ((RE4DC_PACE_TRANS_SKIP & (b)) && re4dc_pace_drop_models)
+#endif
+#define PTSK(b) ((RE4DC_PACE_TRANS_SKIP & (b)) && re4dc_pace_skipping)
+#if RE4DC_PACE_TRANS_SKIP
+extern "C" int re4dc_esp_logic_only, re4dc_esp_logic_queued;
+#endif
+#if RE4DC_PACE_CHECK
+extern "C" void re4dc_pace_check(int phase);
+#endif
+#endif
 void Trans()
 {
     u8* primStart = (u8*) pG->prim_base;
     void (*func)(cModel*);
     cUnit* u;
 
+#if RE4DC_COARSE
+    coarseTick = re4dc_coarse_tick(re4dc_pace_drop_models);
+#endif
 #if RE4DC_FRONT_LEAN && defined(__sh__)
     g_leanSkippedNum = 0;
 #endif
+#if RE4DC_PACE_CATCHUP >= 2
+#if RE4DC_PACE_TRANS_SKIP
+    // Bit 2048 (qualified): a dropped image still queues the effect draws that carry state
+    // (esp.cpp / espgen.cpp logic-only mode); bits 1 / 2 alone skip the stages outright.
+    re4dc_esp_logic_queued = 0;
+    if (!(pG->Disp_flg & 0x04000000)) {
+        if (!PTS(1)) {
+            EspTrans();
+        } else if (RE4DC_PACE_TRANS_SKIP & 2048) {
+            re4dc_esp_logic_only = 1;
+            EspTrans();
+            re4dc_esp_logic_only = 0;
+        }
+    }
+    if (!(pG->Disp_flg & 0x01000000)) {
+        if (!PTS(2)) {
+            EspgenTrans();
+        } else if (RE4DC_PACE_TRANS_SKIP & 2048) {
+            re4dc_esp_logic_only = 1;
+            EspgenTrans();
+            re4dc_esp_logic_only = 0;
+        }
+    }
+#else
+    if (!(pG->Disp_flg & 0x04000000) && !PTS(1)) {
+        EspTrans();
+    }
+    if (!(pG->Disp_flg & 0x01000000) && !PTS(2)) {
+        EspgenTrans();
+    }
+#endif
+    if (!(pG->Disp_flg & 0x00400000) && !PTS(4)) {
+        CtrlMgr.trans();
+    }
+    ProcessTickGet(5, "EspTrans");
+    if (!PTS(8)) {
+        ShadowTrans();
+    }
+    ProcessTickGet(5, "ShadowTrans");
+    ProcessTickGet(5, "MirrorTrans");
+    if (!(pG->Disp_flg & 0x00020000) && !PTS(16)) {
+        ClothDraw();
+    }
+    ProcessTickGet(5, "ClothTrans");
+    if (!(pG->Disp_flg & 0x00100000) && !PTS(32)) {
+        FilterTrans();
+    }
+    if (!(pG->Disp_flg & 0x04000000) && !PTS(64)) {
+        if (!(pG->Disp_flg & 0x400)) {
+            TransTexRenderMgr();
+        }
+    }
+#else
     if (!(pG->Disp_flg & 0x04000000)) {
         EspTrans();
     }
@@ -505,6 +592,23 @@ void Trans()
             TransTexRenderMgr();
         }
     }
+#endif
+#if RE4DC_PACE_CATCHUP >= 2
+    // v2: a dropped image needs no model OT (iteration k+1 draws nothing); every other Trans
+    // stage above (effects, shadows, cloth, filters, render textures) ran as usual.
+    // PACE_CHECK: run it anyway and prove it leaves every logic-trace field unchanged.
+#if RE4DC_COARSE
+    const int paceDrop = re4dc_pace_drop_models || coarseTick;
+#else
+    const int paceDrop = re4dc_pace_drop_models;
+#endif
+#if RE4DC_PACE_CHECK
+    if (paceDrop) {
+        re4dc_pace_check(0);
+    }
+#endif
+    if (!paceDrop || RE4DC_PACE_CHECK) {
+#endif
     func = objTrans;
     for (u = ObjMgr.pAlive; u != 0;) {
         cUnit* cur = u;
@@ -517,6 +621,14 @@ void Trans()
         u = u->pNext;
         func((cModel*) cur);
     }
+#if RE4DC_PACE_CATCHUP >= 2
+    }
+#if RE4DC_PACE_CHECK
+    if (paceDrop) {
+        re4dc_pace_check(1);
+    }
+#endif
+#endif
     ProcessTickGet(5, "objTrans");
     DCStoreRangeNoSync(primStart, (u8*) pG->prim_base - primStart);
 }
@@ -1191,6 +1303,24 @@ void Render()
     g_prev_tpl_addr = (void*) -1;
     g_prev_add_tpl_addr = (void*) -1;
     GXSetCurrentGXThread();
+#if RE4DC_COARSE
+    const int coarse = re4dc_coarse_image;
+    re4dc_coarse_image = 0;
+#endif
+#if RE4DC_PACE_CATCHUP >= 2
+    // Skipped whole: the letterbox bit below is set here and cleared at the end of Render().
+#if RE4DC_PACE_TRANS_SKIP
+    // Bit 2048: an image whose logic-only effect pass queued draws still runs its OTs (only those
+    // entries and the ones of stages that were not skipped are in them).
+    if (PTSK(1024) && !((RE4DC_PACE_TRANS_SKIP & 2048) && re4dc_esp_logic_queued)) {
+        return;
+    }
+#else
+    if (PTSK(1024)) {
+        return;
+    }
+#endif
+#endif
     if (pG->System_flg & 0x800) {
         pG->Status_flg[3] |= 0x10000000;
         SetScissorState();
@@ -1200,6 +1330,12 @@ void Render()
     SetDrawTmpBufType(0);
     ExecOt(OT_TYPE_TEX_RENDER1);
     SetDrawTmpBufType(0);
+#if RE4DC_COARSE
+    // A coarse image (coarse.cpp): its opaque view replaces the world OTs after the render textures.
+    if (coarse) {
+        re4dc_coarse_draw();
+    } else {
+#endif
     ExecOt(OT_TYPE_SHADOW_SETUP);
     SetDrawTmpBufType(0);
     ExecOt(OT_TYPE_SUBSCRN_FAR);
@@ -1217,6 +1353,9 @@ void Render()
         drawGround(0);
     }
     ExecOt(OT_TYPE_SUBSCRN_NEAR);
+#if RE4DC_COARSE
+    }
+#endif
     ClearZbuf();
     ExecOt(OT_TYPE_EFFECT);
     ExecOt(OT_TYPE_WORLD);
@@ -1254,6 +1393,12 @@ void ModelRender(cModel* m)
 {
     static int modeltransalphaupdate = 1;
 
+#if RE4DC_PACE_CATCHUP
+    // Skipped iteration (pace.cpp): the draw writes nothing logic reads; the frame is not shown.
+    if (re4dc_pace_skipping) {
+        return;
+    }
+#endif
     if (m->invisible_factor * m->invisible_factor2 == 0.0f) {
         return;
     }

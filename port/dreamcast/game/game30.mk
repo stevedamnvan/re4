@@ -39,6 +39,9 @@ GAME_ROT_CACHE ?= 0
 LOGIC_TRACE ?= 0
 GAME_TICK_LOG ?= 0
 LOGIC_TRACE_DELAY_US ?= 0
+# LOGIC_TRACE_MASK_RENDER=1 (trace builds only, opt-in): leave the render-only be_flag 0x08000000
+# out of the hash (logic_trace.cpp; the frame pacing gates). Default 0: hashes unchanged.
+LOGIC_TRACE_MASK_RENDER ?= 0
 
 GAME30_LINK_INPUTS =
 ifeq ($(GAME_SH4_MATH),1)
@@ -130,6 +133,31 @@ endif
 #                    cAtariInfo::getPos repeats it for every candidate body on each EmAtCheck call.
 #                    =2: every hit recomputed and compared ("RVM" log line).
 GAME_ROTVEC_MEMO ?= 0
+# PACE_TRANS_SKIP=mask (private test knob): presentation stages skipped for a dropped image
+# (1 EspTrans 2 EspgenTrans 4 CtrlMgr.trans 8 ShadowTrans 16 ClothDraw 32 FilterTrans 64 TexRender
+#  128 IdSys.trans 256 DrawOTag(MainOt[4]) 512 cMes.Trans 1024 Render() on a skipped iteration).
+PACE_TRANS_SKIP ?= 0
+ifneq ($(PACE_TRANS_SKIP),0)
+$(OBJDIR)/src/game/trans.o $(OBJDIR)/src/game/main.o $(OBJDIR)/src/game/esp.o $(OBJDIR)/src/game/espgen.o: GAME_CPPFLAGS += -DRE4DC_PACE_TRANS_SKIP=$(PACE_TRANS_SKIP)
+endif
+# COARSE=1 (30 fps rethink step 2; needs PACE_CATCHUP=2 and the qualified PACE_TRANS_SKIP=4063): in-room
+#          play images are drawn by coarse.cpp from gameplay records (camera-opaque collision pieces,
+#          part skeletons, live effects). Trans() runs such a tick's presentation stages as for a
+#          dropped image, but a drawn one keeps TexRender (the HUD's render textures); Render() runs
+#          OTs 0 / TEX_RENDER1, then the coarse view in place of the world OTs ("COARSE" log line every
+#          120 images). =2: + camera / stream state and a screen-point probe (what covers the view).
+COARSE ?= 0
+ifneq ($(COARSE),0)
+ifeq ($(PACE_TRANS_SKIP),0)
+$(error COARSE needs PACE_CATCHUP=2 and PACE_TRANS_SKIP (the qualified mask 4063))
+endif
+PLATFORM_OBJS += $(OBJDIR)/coarse.o
+$(OBJDIR)/src/game/trans.o: GAME_CPPFLAGS += -DRE4DC_COARSE=$(COARSE)
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -DRE4DC_COARSE=$(COARSE)
+$(OBJDIR)/coarse.o: coarse.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -DRE4DC_COARSE=$(COARSE) -MMD -MP -c $< -o $@
+endif
 ifneq ($(GAME_ROTVEC_MEMO),0)
 $(OBJDIR)/src/game/sub2.o: GAME_CPPFLAGS += -DRE4DC_ROTVEC_MEMO=$(GAME_ROTVEC_MEMO) $(if $(RVM_BITS),-DRE4DC_RVM_BITS=$(RVM_BITS))
 endif
@@ -139,8 +167,8 @@ endif
 #                    ("LP"): the decision-level comparison for last-bit FP changes.
 GAME_DECISION_TRACE ?= 0
 ifneq ($(GAME_DECISION_TRACE),0)
-GAME_CPPFLAGS += -DRE4DC_DECISION_TRACE=1
-PLATFORM_CPPFLAGS += -DRE4DC_DECISION_TRACE=1
+GAME_CPPFLAGS += -DRE4DC_DECISION_TRACE=$(GAME_DECISION_TRACE)
+PLATFORM_CPPFLAGS += -DRE4DC_DECISION_TRACE=$(GAME_DECISION_TRACE)
 endif
 # GAME_SKEL_FTRV=1 (square plan: one gameplay matrix chain; last-bit FP policy, NOT exact): inside
 #                    cEm10::move (the Ganados' whole update) partsWorldCalc runs each part's concat
@@ -163,7 +191,7 @@ PLATFORM_OBJS += $(OBJDIR)/logic_trace.o
 $(OBJDIR)/src/game/main.o $(OBJDIR)/src/game/rnd.o: GAME_CPPFLAGS += -DRE4DC_LOGIC_TRACE=1
 $(OBJDIR)/logic_trace.o: logic_trace.cpp
 	@mkdir -p $(dir $@)
-	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -DRE4DC_LOGIC_TRACE=1 -DRE4DC_LOGIC_TRACE_DELAY_US=$(LOGIC_TRACE_DELAY_US) -MMD -MP -c $< -o $@
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -DRE4DC_LOGIC_TRACE=1 -DRE4DC_LOGIC_TRACE_DELAY_US=$(LOGIC_TRACE_DELAY_US) -DRE4DC_LOGIC_TRACE_MASK_RENDER=$(LOGIC_TRACE_MASK_RENDER) -MMD -MP -c $< -o $@
 endif
 
 ifneq ($(GAME_TICK_LOG),0)

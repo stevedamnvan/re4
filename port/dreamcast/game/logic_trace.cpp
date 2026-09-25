@@ -30,15 +30,37 @@
 #include "em.h"
 #include "obj.h"
 #include "re4dc_platform.h"
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+#include "esp.h"
+#include "espgen.h"
+extern EspgenWork* EspgenArray;   // espgen.cpp
+extern u32 nEspgen;
+#endif
 #include <string.h>
 
 #ifndef RE4DC_LOGIC_TRACE_DELAY_US
 #define RE4DC_LOGIC_TRACE_DELAY_US 0
 #endif
+// LOGIC_TRACE_MASK_RENDER=1 (opt-in; frame pacing gates): be_flag 0x08000000 is left out of the
+// discrete hash. It is the ot_type-7 first-pass draw marker, set at the end of the model draw
+// (trans.cpp commonModelTrans / frontNativeRender), cleared by ModelTrans and read only by the
+// draw walk; a skipped draw changes it and nothing else. tools/d367/be_flag_render_bit.py fails
+// when any other reader appears. 0 (default): every hash is exactly as before.
+#ifndef RE4DC_LOGIC_TRACE_MASK_RENDER
+#define RE4DC_LOGIC_TRACE_MASK_RENDER 0
+#endif
 
 extern "C" unsigned short re4dc_rnd_state(void);   // src/game/rnd.cpp (trace builds only)
 #if RE4DC_LOGIC_TRACE_DELAY_US
 #include <kos/timer.h>   // timer_us_gettime64 (static inline)
+#endif
+
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+// Set by snd.cpp around the sound system's own line / area queries: how many run per tick follows
+// audio playback time (end_check_tbl), so they go to bucket 6 ("sq") instead of the gameplay buckets.
+// Global scope: an extern "C" name defined inside the unnamed namespace links to a silent stub.
+extern "C" unsigned re4dc_dt_snd;
+unsigned re4dc_dt_snd;
 #endif
 
 namespace {
@@ -66,8 +88,20 @@ struct Fnv {
 // tests (dmg.cpp), 4 line query answers and 5 their hit points (atari.cpp). Logged as "LX", with every alive enemy's position bits every 4th sample ("LP").
 static Fnv g_dt[8];
 static unsigned g_dtn[8];
+#if RE4DC_DECISION_TRACE == 2
+// Private diagnostic: frames around the tr18/tr19 line-query differences.
+extern "C" int re4dc_dt_window(void)
+{
+    static const unsigned f[] = {644, 1087, 1287, 1729, 2417, 2814, 3183, 3530};
+    const unsigned c = (unsigned) pG->Frame_cnt;
+    for (unsigned k = 0; k < sizeof(f) / sizeof(f[0]); ++k)
+        if (c + 2 >= f[k] && c <= f[k] + 1) return (int) c;
+    return -1;
+}
+#endif
 extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b)
 {
+    if (re4dc_dt_snd) kind = 6;
     g_dt[kind & 7].word(a);
     g_dt[kind & 7].word(b);
     ++g_dtn[kind & 7];
@@ -86,7 +120,11 @@ void coord_block(Fnv& f, const void* unit)
 
 void model_state(Fnv& discrete, Fnv& coords, Fnv& parts, cModel* m)
 {
+#if RE4DC_LOGIC_TRACE_MASK_RENDER
+    discrete.add(m->be_flag & ~0x08000000u);
+#else
     discrete.add(m->be_flag);
+#endif
     discrete.add(m->stat);
     discrete.add(m->id);
     discrete.add(m->type);
@@ -141,7 +179,22 @@ extern "C" __attribute__((section(".text.re4dc_logic_trace"))) void re4dc_logic_
     if (!pG) return;
     ++samples;
     Fnv st, rf, sc, cam, ps, pf, pm, es, ef, em, os, of, om;
+#if RE4DC_LOGIC_TRACE_MASK_RENDER
+    {
+        // Render-only bits (set / cleared by draw stages a dropped image skips; read only by draw
+        // code): [1] 0x08000000 texture-render effects queued (EspTrans, CopyTexRenderMgr),
+        // [1] 0x4000 shadow texture made (make_shadow_texture, ShadowTrans), [2] 0x00100000 shadow
+        // lights exist (ShadowTrans), [3] 0x10000000 letterbox scissor (inside Render).
+        u32 sf[sizeof(pG->Status_flg) / 4];
+        memcpy(sf, pG->Status_flg, sizeof(sf));
+        sf[1] &= ~0x08004000u;
+        sf[2] &= ~0x00100000u;
+        sf[3] &= ~0x10000000u;
+        st.words(sf, sizeof(sf));
+    }
+#else
     st.words(pG->Status_flg, sizeof(pG->Status_flg));
+#endif
     rf.words(pG->Room_flg, sizeof(pG->Room_flg));
     sc.words(pG->Scenario_flg, sizeof(pG->Scenario_flg));
     sc.add(pG->Item_find_flg);
@@ -178,9 +231,39 @@ extern "C" __attribute__((section(".text.re4dc_logic_trace"))) void re4dc_logic_
     re4dc_log("LU t=%u n=%u e=%u es=%08x ef=%08x em=%08x o=%u os=%08x of=%08x om=%08x c=%08x\n",
               (unsigned) pG->Frame_cnt, samples, ne, es.h, ef.h, em.h, no, os.h, of.h, om.h, cam.h);
 #if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
-    re4dc_log("LX t=%u n=%u ec=%08x/%u sl=%08x/%u sa=%08x/%u dm=%08x/%u lq=%08x/%u lp=%08x\n",
+    // Effect behaviour (every live esp slot and effect generator): the scalar fields, without the
+    // owner / model / parent pointers, the vptr, the derived work and m_Mat (built by the draw).
+    Fnv ep, eg;
+    unsigned nep = 0, neg = 0;
+    if (g_pEspSys && g_pEspSys->pEspBuf) {
+        for (u32 i = 0; i < g_pEspSys->nEsp; i++) {
+            const unsigned char* b = g_pEspSys->pEspBuf + i * 0x150;
+            if (!(b[0x0C] & 1)) {
+                continue;
+            }
+            ep.word(i);
+            ep.words(b + 0x00, 8);             // Core_flg, kind, owner, Call_no
+            ep.words(b + 0x0C, 0x10);          // Be_flg .. Tool_flg
+            ep.words(b + 0x20, 4);             // Guid of the attached model
+            ep.words(b + 0x28, 0xBC - 0x28);   // Parts_no .. Radius
+            ep.words(b + 0xEC, 8);             // shimmer / mask animation
+            nep++;
+        }
+    }
+    for (u32 i = 0; EspgenArray && i < nEspgen; i++) {
+        const unsigned char* b = (const unsigned char*) &EspgenArray[i];
+        if (!(b[0x0C] & 1)) {
+            continue;
+        }
+        eg.word(i);
+        eg.words(b + 0x00, 8);
+        eg.words(b + 0x0C, 8);
+        neg++;
+    }
+    re4dc_log("LX t=%u n=%u ec=%08x/%u sl=%08x/%u sa=%08x/%u dm=%08x/%u lq=%08x/%u lp=%08x sq=%08x/%u "
+              "ep=%08x/%u eg=%08x/%u\n",
               (unsigned) pG->Frame_cnt, samples, g_dt[0].h, g_dtn[0], g_dt[1].h, g_dtn[1], g_dt[2].h, g_dtn[2],
-              g_dt[3].h, g_dtn[3], g_dt[4].h, g_dtn[4], g_dt[5].h);
+              g_dt[3].h, g_dtn[3], g_dt[4].h, g_dtn[4], g_dt[5].h, g_dt[6].h, g_dtn[6], ep.h, nep, eg.h, neg);
     for (int k = 0; k < 8; ++k) {
         g_dt[k] = Fnv();
         g_dtn[k] = 0;
@@ -225,3 +308,51 @@ extern "C" __attribute__((section(".text.re4dc_logic_trace"))) void re4dc_logic_
         }
     }
 }
+
+#if defined(RE4DC_PACE_CHECK) && RE4DC_PACE_CHECK
+// PACE_CHECK=2 (pace.cpp): one FNV over every field of an LT/LU record, without logging. Used
+// around the ModelTrans of a dropped image to prove it leaves the logic state untouched.
+extern "C" unsigned re4dc_logic_trace_hash(void)
+{
+    if (!pG) return 0;
+    Fnv all, st, rf, sc, cam, ps, pf, pm, es, ef, em, os, of, om;
+#if RE4DC_LOGIC_TRACE_MASK_RENDER
+    {
+        // Render-only bits (set / cleared by draw stages a dropped image skips; read only by draw
+        // code): [1] 0x08000000 texture-render effects queued (EspTrans, CopyTexRenderMgr),
+        // [1] 0x4000 shadow texture made (make_shadow_texture, ShadowTrans), [2] 0x00100000 shadow
+        // lights exist (ShadowTrans), [3] 0x10000000 letterbox scissor (inside Render).
+        u32 sf[sizeof(pG->Status_flg) / 4];
+        memcpy(sf, pG->Status_flg, sizeof(sf));
+        sf[1] &= ~0x08004000u;
+        sf[2] &= ~0x00100000u;
+        sf[3] &= ~0x10000000u;
+        st.words(sf, sizeof(sf));
+    }
+#else
+    st.words(pG->Status_flg, sizeof(pG->Status_flg));
+#endif
+    rf.words(pG->Room_flg, sizeof(pG->Room_flg));
+    sc.words(pG->Scenario_flg, sizeof(pG->Scenario_flg));
+    sc.add(pG->Item_find_flg);
+    cam.words(&pG->Cam.param, 32);
+    if (pPL) {
+        model_state(ps, pf, pm, pPL);
+        all.words(&pPL->pos, sizeof(pPL->pos)); all.words(&pPL->ang, sizeof(pPL->ang));
+        all.add(pPL->Motion.Mot_frame); all.add(pPL->Motion.Mot_state);
+    }
+    unsigned ne = 0, no = 0;
+    for (cUnit* u = (cUnit*) EmMgr.pAlive; u && ne < 1024; u = u->pNext, ++ne) {
+        cEm* e = (cEm*) u;
+        model_state(es, ef, em, e);
+        es.add(e->hp);
+    }
+    for (cUnit* u = (cUnit*) ObjMgr.pAlive; u && no < 1024; u = u->pNext, ++no)
+        model_state(os, of, om, (cModel*) u);
+    const unsigned v[] = {re4dc_rnd_state(), (unsigned) pG->System_flg, (unsigned) pG->Stop_flg, st.h, rf.h, sc.h,
+                          (unsigned(pG->stage_no) << 8) | pG->room_no, ps.h, pf.h, pm.h, ne, es.h, ef.h, em.h, no,
+                          os.h, of.h, om.h, cam.h};
+    for (unsigned w : v) all.word(w);
+    return all.h;
+}
+#endif
