@@ -147,6 +147,20 @@ $(OBJDIR)/platform/lnk_sh4.o: platform/lnk_sh4.S
 	kos-cc $(KOS_CFLAGS) -c $< -o $@
 $(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_LEAF=$(GAME_LINE_LEAF)
 endif
+# GAME_LINE_WALK=1 (G, collision traversal; exact): the scenery line queries' block walk (atari.cpp
+#                  blkPolyLineCk: lineOverlap on every block of a chain, recursion into the overlapped
+#                  nodes) in platform/lnw_sh4.S with lineOverlap's float operations on the same operands;
+#                  the overlapped leaves then run blkPolyLineCkCore in the walk's order; hitCheck2 walks
+#                  each piece first and ends a piece without an overlapped leaf there (no polyBit clear, no
+#                  hit transform). =2 (check build): the recursive walk's leaves compared ("LNW" lines).
+GAME_LINE_WALK ?= 0
+ifneq ($(GAME_LINE_WALK),0)
+PLATFORM_OBJS += $(OBJDIR)/platform/lnw_sh4.o
+$(OBJDIR)/platform/lnw_sh4.o: platform/lnw_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_WALK=$(GAME_LINE_WALK)
+endif
 # GAME_WORKAT_INLINE=1 (the 30 fps rethink; port overhead, exact; needs OBJECT_DEMAND=1 ENEMY_DEMAND=1):
 #                    the demand-backed cObj / cEm managers' workAt (parts_bridge.cpp: two out-of-line
 #                    calls per lookup, ~3,700 lookups per square tick from EfmDelete, GetEmPtrFromList,

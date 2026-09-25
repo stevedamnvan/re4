@@ -11,6 +11,7 @@
   *atari.o(.text._Z17blkPolyLineCkCoreP4cSatP9cSatBlockP3VecS4_iiS4_Pm)
   *at_sub.o(.text.At_poly_line_ck)
   *lnk_sh4.o(.text)   /* GAME_LINE_LEAF's kernel, next to the loop it replaces */
+  *lnw_sh4.o(.text)   /* GAME_LINE_WALK's kernel, after the leaf kernel as measured */
   *atari.o(.text._ZN9cSatBlock11lineOverlapEP3VecS1_S1_)
   *misc.o(.text.memclr_asm)
   *est.o(.text.EffectEfmDelete)

@@ -889,6 +889,106 @@ int cSatMgr::hitCheck(Vec* pos0, Vec* pos1, Vec* hit, Vec* nrm, int flag, int ma
     return ret;
 }
 
+#if defined(RE4DC_LINE_WALK) && RE4DC_LINE_WALK
+// GAME_LINE_WALK (game30.mk; G, collision traversal; exact): blkPolyLineCk's block walk (lineOverlap on
+// every block of a chain, recursion into the overlapped nodes) in platform/lnw_sh4.S: an explicit stack and
+// lineOverlap's float operations on the same operands. The overlapped leaves come out in the recursive
+// walk's order and run blkPolyLineCkCore in that order (the walk reads no state the leaves write).
+// hitCheck2 walks each piece first, and a piece without an overlapped leaf ends there (its polyBit clear
+// and hit transform have no reader then). A walk more than 16 chains deep or with more than 64 leaves
+// takes the recursive walk. =2 (check build): the recursive walk also collects its leaves and the lists
+// are compared ("LNW" lines).
+struct LineWalkQ {
+    f32 mx;         // 0x00  mid.x
+    f32 mz;         // 0x04  mid.z
+    f32 dx;         // 0x08  dir.x
+    f32 dz;         // 0x0C  dir.z
+    f32 ax;         // 0x10  |dir.x|
+    f32 az;         // 0x14  |dir.z|
+};
+static_assert(__builtin_offsetof(cSatBlock, m_Flag) == 0x1E && __builtin_offsetof(cSatBlock, next) == 0x20 &&
+                  __builtin_offsetof(cSatBlock, idx) == 0x24,
+              "platform/lnw_sh4.S reads these offsets");
+extern "C" int re4dc_line_walk(const LineWalkQ* q, cSatBlock* blk, cSatBlock** out, int max);
+#define LNW_MAX 64
+#if RE4DC_LINE_WALK == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 lnwCalls, lnwLeaves, lnwMis, lnwFull;
+// The recursive walk's leaves in its order (leaves past `max` are counted, not stored).
+static int lnwRef(cSatBlock* blk, Vec* mid, Vec* dir, Vec* adir, cSatBlock** out, int n, int max)
+{
+    for (; blk; blk = blk->next) {
+        if (blk->lineOverlap(mid, dir, adir)) {
+            if (blk->m_Flag & 1) {
+                n = lnwRef((cSatBlock*) blk->idx, mid, dir, adir, out, n, max);
+            } else {
+                if (n < max) {
+                    out[n] = blk;
+                }
+                n++;
+            }
+        }
+    }
+    return n;
+}
+#endif
+// The overlapped leaves of the chain at blk for the segment (mid, dir, |dir|) as blkPolyLineCk computes
+// them; -1: take the recursive walk.
+static int lineWalkLeaves(cSatBlock* blk, Vec* mid, Vec* dir, Vec* adir, cSatBlock** leaf)
+{
+    LineWalkQ q;
+
+    q.mx = mid->x;
+    q.mz = mid->z;
+    q.dx = dir->x;
+    q.dz = dir->z;
+    q.ax = adir->x;
+    q.az = adir->z;
+    const int nl = re4dc_line_walk(&q, blk, leaf, LNW_MAX);
+#if RE4DC_LINE_WALK == 2
+    {
+        cSatBlock* ref[LNW_MAX];
+        const int nr = lnwRef(blk, mid, dir, adir, ref, 0, LNW_MAX);
+        if (nl < 0) {
+            ++lnwFull;
+        } else if (nr != nl) {
+            ++lnwMis;
+        } else {
+            for (int i = 0; i < nl; i++) {
+                if (ref[i] != leaf[i]) {
+                    ++lnwMis;
+                    break;
+                }
+            }
+            lnwLeaves += nl;
+        }
+        if (++lnwCalls % 8192 == 0) {
+            re4dc_log("LNW calls=%u leaves=%u mismatch=%u full=%u\n", lnwCalls, lnwLeaves, lnwMis, lnwFull);
+        }
+    }
+#endif
+    return nl;
+}
+// hitCheck2's walk of one piece: mid, dir and |dir| as blkPolyLineCk computes them (its y components are
+// zeroed there and lineOverlap reads x and z only; its new_line_check is a constant 1).
+static int lineWalkPiece(cSatBlock* blk, Vec* pos0, Vec* pos1, cSatBlock** leaf)
+{
+    Vec mid;
+    Vec dir;
+    Vec adir;
+
+    PSVECAdd(pos0, pos1, &mid);
+    PSVECScale(&mid, &mid, 0.5f);
+    PSVECSubtract(pos0, &mid, &dir);
+    adir.x = fabsf(dir.x);
+    adir.y = 0.0f;
+    adir.z = fabsf(dir.z);
+    dir.y = 0.0f;
+    mid.y = 0.0f;
+    return lineWalkLeaves(blk, &mid, &dir, &adir, leaf);
+}
+#endif
+
 // Segment a-b against every active piece. The nearest hit goes to hit (world) and `attr`
 // receives the address of the hit polygon's normal in the piece's space; b is moved onto the
 // piece's grid (mat * inv * b). Returns the attribute word of the hit polygon or 0.
@@ -923,11 +1023,34 @@ int cSatMgr::hitCheck2(Vec* pos0, Vec* pos1, Vec* hit, u32* attr, int flag, int 
         if (sat->isAlive()) {
             cSatBlock* blk = sat->block_p;
             int r;
+#if defined(RE4DC_LINE_WALK) && RE4DC_LINE_WALK
+            PSMTXMultVec(sat->imat, pos0, &la);
+            PSMTXMultVec(sat->imat, pos1, &lb);
+            cSatBlock* leaf[LNW_MAX];
+            const int nl = lineWalkPiece(blk, &la, &lb, leaf);
+            if (nl == 0) {
+                continue;
+            }
+            memclr_asm(polyBit, (sat->polygon_num >> 3) + 1);
+            PSMTXMultVec(sat->imat, &cur, &lcur);
+            if (nl > 0) {
+                r = 0;
+                for (int k = 0; k < nl; k++) {
+                    const int rk = blkPolyLineCkCore(sat, leaf[k], &la, &lb, flag, mask, &lcur, &pn);
+                    if (rk) {
+                        r = rk;
+                    }
+                }
+            } else {
+                r = blkPolyLineCk(sat, blk, &la, &lb, flag, mask, &lcur, &pn);
+            }
+#else
             memclr_asm(polyBit, (sat->polygon_num >> 3) + 1);
             PSMTXMultVec(sat->imat, pos0, &la);
             PSMTXMultVec(sat->imat, pos1, &lb);
             PSMTXMultVec(sat->imat, &cur, &lcur);
             r = blkPolyLineCk(sat, blk, &la, &lb, flag, mask, &lcur, &pn);
+#endif
             if (r) {
                 PSMTXMultVec(sat->imat, &cur, &tmp);
                 if (GetDistance(&la, &lcur) < GetDistance(&la, &tmp)) {
@@ -990,6 +1113,21 @@ int blkPolyLineCk(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag, int
     adir.y = 0.0f;
     dir.y = 0.0f;
     mid.y = 0.0f;
+#if defined(RE4DC_LINE_WALK) && RE4DC_LINE_WALK
+    if (new_line_check != 0) {
+        cSatBlock* leaf[LNW_MAX];
+        const int nl = lineWalkLeaves(blk, &mid, &dir, &adir, leaf);
+        if (nl >= 0) {
+            for (int i = 0; i < nl; i++) {
+                r = blkPolyLineCkCore(sat, leaf[i], pos0, pos1, flag, mask, hit, pn);
+                if (r) {
+                    ret = r;
+                }
+            }
+            return ret;
+        }
+    }
+#endif
     while (blk) {
         COL_PREFETCH(blk->next);
         if (new_line_check == 0) {
