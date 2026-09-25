@@ -121,6 +121,7 @@ template<class T> struct Frozen { u32 n; T** slots; };
 template<class T> Frozen<T>* frozen(cManager<T>*) { return 0; }
 #endif
 template<class T> int array_free(cManager<T>* m) {
+    RE4DC_ALIVE_BUMP();
     if(!m->pArray) return 0;
     if(frozen(m)) { re4dc_log("work backing: size=%u frozen pool kept (freed while the sub screen is open)\n",(unsigned)sizeof(T));return 0; }
     if(!sparse(m)) { m->memFree(m->pArray);m->pArray=0;return 1; }
@@ -132,6 +133,7 @@ template<class T> int array_free(cManager<T>* m) {
     OSFreeToHeap(p->handle,p);m->pArray=0;return 1;
 }
 template<class T> int array_alloc(cManager<T>* m,u32 n) {
+    RE4DC_ALIVE_BUMP();
     array_free(m);m->nArray=n;
     if(!demand<T> || m->pArrayPush) {
         m->pArray=(T*)m->memAlloc(m->size*n);

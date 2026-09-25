@@ -103,6 +103,20 @@ endif
 ifeq ($(GAME_ATCHK),1)
 $(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_ATCHK=1
 endif
+# GAME_ATCHK_LIST=1 (needs GAME_ATCHK=1; square plan step 1): EmAtCheck keeps the EmMgr / ObjMgr alive
+#                    lists in list order in an array, rebuilt when the list changed (cManager.h bumps a
+#                    per-type generation on every list or work-array change), and tests each body's live
+#                    collision flags from it with a deep prefetch. Same candidates, same order.
+#                    =2: every cached use is checked against a list walk ("ATL" log line, mismatch count).
+#                    A header knob: every object gets the define, so each inline list mutation bumps.
+GAME_ATCHK_LIST ?= 0
+ifneq ($(GAME_ATCHK_LIST),0)
+ifneq ($(GAME_ATCHK),1)
+$(error GAME_ATCHK_LIST needs GAME_ATCHK=1)
+endif
+GAME_CPPFLAGS += -DRE4DC_ATCHK_LIST=$(GAME_ATCHK_LIST)
+PLATFORM_CPPFLAGS += -DRE4DC_ATCHK_LIST=$(GAME_ATCHK_LIST)
+endif
 # GAME_COL_PREFETCH=1: the scenery collision walks (block chains, block polygon lists) prefetch the next
 #                    block and the next polygon's record, vertex and normal. Loads only: same answers.
 GAME_COL_PREFETCH ?= 0

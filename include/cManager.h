@@ -36,6 +36,23 @@ public:
     int isAlive() { return (be_flag & 0x201) == 1; }
 };
 
+// GAME_ATCHK_LIST (game30.mk): every change of an alive list (and of the work array under it)
+// bumps a generation, so EmAtCheck can keep the list's order in an array and trust it until the
+// next change. One global array defined in at_mod.cpp (slot 1 cEm, 2 cObj, 0 every other type): a
+// template static member would not do, since the room modules link their own private copy of a
+// weak template static. The manager's layout is unchanged.
+#if defined(RE4DC_ATCHK_LIST) && RE4DC_ATCHK_LIST
+extern "C" u32 re4dc_alive_gen[4];
+class cEm;
+class cObj;
+template <class T> struct re4dcAliveSlot { enum { v = 0 }; };
+template <> struct re4dcAliveSlot<cEm> { enum { v = 1 }; };
+template <> struct re4dcAliveSlot<cObj> { enum { v = 2 }; };
+#define RE4DC_ALIVE_BUMP() (++re4dc_alive_gen[re4dcAliveSlot<T>::v])
+#else
+#define RE4DC_ALIVE_BUMP() ((void) 0)
+#endif
+
 // Fixed array work manager. Element stride is the runtime field `size`
 // (derived work classes share the manager of their base type).
 template <class T>
@@ -101,6 +118,7 @@ public:
 
     int deleteList(T* p) {
         T* q;
+        RE4DC_ALIVE_BUMP();
         if (!p->isAlive()) {
             log("%s::deleteList() WORK IS ALREADY DEAD 0x%08X", name, p);
             return 0;
@@ -123,6 +141,7 @@ public:
     }
     void addListFront(T* p) {
         T* q;
+        RE4DC_ALIVE_BUMP();
         for (q = pAlive; q; q = (T*)q->pNext) {
             if (q == p) {
                 log("%s::addListFront() ERROR SET x2 0x%08X", name, p);
@@ -134,6 +153,7 @@ public:
     }
     void addListBack(T* p) {
         T* q;
+        RE4DC_ALIVE_BUMP();
         for (q = pAlive; q; q = (T*)q->pNext) {
             if (q == p) {
                 log("%s::addListBack() ERROR 0x%08X", name, p);
@@ -202,6 +222,7 @@ void cManager<T>::setName(const char* n)
 template <class T>
 int cManager<T>::roomInit()
 {
+    RE4DC_ALIVE_BUMP();
     pArray = 0;
     nArray = 0;
     pAlive = 0;
@@ -223,6 +244,7 @@ template <class T>
 int cManager<T>::arrayFree()
 {
     int ret;
+    RE4DC_ALIVE_BUMP();
 
     if (pArray) {
         memFree(pArray);
@@ -237,6 +259,7 @@ int cManager<T>::arrayFree()
 template <class T>
 int cManager<T>::arrayAlloc(u32 n)
 {
+    RE4DC_ALIVE_BUMP();
     arrayFree();
     pArray = (T*) memAlloc(size * n);
     nArray = n;
@@ -367,6 +390,7 @@ int cManager<T>::arrayPush(int n)
     if (pArrayPush != 0) {
         return 0;
     }
+    RE4DC_ALIVE_BUMP();
     pArrayPush = (u32) pArray;
     pArray = (T*) Debug_alloc(size * n, 1);
     nArrayPush = nArray;
@@ -382,6 +406,7 @@ int cManager<T>::arrayPop()
     if (pArrayPush == 0) {
         return 0;
     }
+    RE4DC_ALIVE_BUMP();
     Debug_free(pArray);
     // statement order found by brute force (zero stores last in the schedule, pAlive restored last)
     pArray = (T*) pArrayPush;

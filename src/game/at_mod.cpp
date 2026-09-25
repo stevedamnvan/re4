@@ -151,6 +151,121 @@ static int atchkCollect(cEm* head, cEm** out)
     }
     return n;
 }
+#if defined(RE4DC_ATCHK_LIST) && RE4DC_ATCHK_LIST
+// GAME_ATCHK_LIST (game30.mk, square plan step 1): the alive lists of EmMgr and ObjMgr are kept
+// in list order in an array, rebuilt only when the list changed since the last call (the
+// generation cManager.h bumps on every list and work-array change, plus the head
+// pointer). The collidable test still reads each body's live m_flag / m_radius2, in the same
+// order, so the candidates are the ones the list walk finds. What changes: the walk no longer
+// chases pNext (a load that waits for the previous one); the array lets the bodies' cAtariInfo
+// lines be prefetched ATLIST_PF ahead. More works than ATLIST_MAX: the list walk runs.
+// =2 (diagnostic): every cached use is also checked against a list walk (a mismatch is counted
+// and rebuilt), with an "ATL" summary line every 8192 syncs.
+#define ATLIST_MAX 320
+#define ATLIST_PF 6
+struct AtList {
+    cEm* head;
+    u32 gen;
+    int n;   /* -1: not built (or longer than ATLIST_MAX) */
+    cEm* v[ATLIST_MAX];
+};
+static AtList atListEm = { 0, 0, -1 }, atListObj = { 0, 0, -1 };
+extern "C" {
+u32 re4dc_alive_gen[4];   /* cManager.h RE4DC_ALIVE_BUMP */
+}
+#if RE4DC_ATCHK_LIST == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 atlSync, atlRebuild, atlOvf, atlMis, atlMaxN, atlVisits;
+#endif
+static int atListBuild(AtList* L, cEm* head, u32 gen)
+{
+    int n = 0;
+    L->head = head;
+    L->gen = gen;
+    for (cEm* m = head; m != 0; m = (cEm*) m->pNext) {
+        if (n == ATLIST_MAX) {
+            L->n = -1;
+            L->head = 0;
+#if RE4DC_ATCHK_LIST == 2
+            atlOvf++;
+#endif
+            return -1;
+        }
+        L->v[n++] = m;
+    }
+    L->n = n;
+#if RE4DC_ATCHK_LIST == 2
+    atlRebuild++;
+    if ((u32) n > atlMaxN) {
+        atlMaxN = n;
+    }
+#endif
+    return n;
+}
+static inline int atListSync(AtList* L, cEm* head, u32 gen)
+{
+#if RE4DC_ATCHK_LIST == 2
+    if (++atlSync % 8192 == 0) {
+        re4dc_log("ATL sync=%u rebuild=%u ovf=%u mismatch=%u maxn=%u visits=%u\n", atlSync, atlRebuild, atlOvf,
+                  atlMis, atlMaxN, atlVisits);
+    }
+    if (L->n >= 0 && L->gen == gen && L->head == head) {
+        int i = 0;
+        cEm* m;
+        for (m = head; m != 0 && i < L->n && L->v[i] == m; m = (cEm*) m->pNext) {
+            i++;
+        }
+        if (m != 0 || i != L->n) {
+            atlMis++;
+            return atListBuild(L, head, gen);
+        }
+        atlVisits += L->n;
+        return L->n;
+    }
+    return atListBuild(L, head, gen);
+#else
+    if (L->n >= 0 && L->gen == gen && L->head == head) {
+        return L->n;
+    }
+    return atListBuild(L, head, gen);
+#endif
+}
+static int atchkCollectList(const AtList* L, int N, cEm** out)
+{
+    cEm* const* a = L->v;
+    int n = 0;
+    int i;
+    for (i = 0; i < N && i < ATLIST_PF; i++) {
+        __builtin_prefetch(&a[i]->atari.m_flag);
+    }
+    for (i = 0; i < N; i++) {
+        cEm* m = a[i];
+        if (i + ATLIST_PF < N) {
+            __builtin_prefetch(&a[i + ATLIST_PF]->atari.m_flag);
+        }
+        if ((m->atari.m_flag & 0x200) && m->atari.m_radius2 != 0.0f) {
+            if (n == ATCHK_MAX) {
+                return -1;
+            }
+            out[n++] = m;
+        }
+    }
+    return n;
+}
+static int atchkCollectEm(cEm** out)
+{
+    int N = atListSync(&atListEm, EmMgr.pAlive, re4dc_alive_gen[1]);
+    return N < 0 ? atchkCollect(EmMgr.pAlive, out) : atchkCollectList(&atListEm, N, out);
+}
+static int atchkCollectObj(cEm** out)
+{
+    int N = atListSync(&atListObj, (cEm*) ObjMgr.pAlive, re4dc_alive_gen[2]);
+    return N < 0 ? atchkCollect((cEm*) ObjMgr.pAlive, out) : atchkCollectList(&atListObj, N, out);
+}
+#else
+#define atchkCollectEm(v) atchkCollect(EmMgr.pAlive, v)
+#define atchkCollectObj(v) atchkCollect((cEm*) ObjMgr.pAlive, v)
+#endif
 static void atchkPasses(cEm* em, cEm** v, int n)
 {
     int i;
@@ -179,10 +294,10 @@ void EmAtCheck(cEm* em)
 #if defined(RE4DC_ATCHK) && RE4DC_ATCHK
     {
         cEm* v[ATCHK_MAX];
-        int n = atchkCollect(EmMgr.pAlive, v);
+        int n = atchkCollectEm(v);
         if (n >= 0) {
             atchkPasses(em, v, n);
-            n = atchkCollect((cEm*) ObjMgr.pAlive, v);
+            n = atchkCollectObj(v);
             if (n >= 0) {
                 atchkPasses(em, v, n);
                 PartsWorldPosCalc(em);
