@@ -248,8 +248,10 @@ Status, uncapped, same stack, hw ms:
   at 58% speed, 3.0 fps paced to full speed); coarse stick figures W 34.71, R 4.05 (cl22; 28.8 fps at 96%,
   19.8 paced); the source renderer with the same reduced characters R 63.02 (cl26), with source
   characters R 68.92 (cl27). The reduced characters cost 22.42 ms over stick figures (re4dc_actor_submit
-  12.5, adapters 5.8, skin palettes 1.3); gate cl24 STRICT. The fast character path is the cl lane
-  (fitted meshes, est. 22 -> 13-15 ms) plus the vl lane (the vertex loop, est. -> ~6-8 ms). Plan doc,
+  12.5, adapters 5.8, skin palettes 1.3); gate cl24 STRICT. The fast character path, first results: the cl
+  lane's lossless mesh fitting and FTRV adapters (landed 9df764b, default off) took the characters to 15.84 ms
+  (cl42: W 50.55, R 19.89, 4.0 fps paced; STRICT); next is the vl lane's vertex loop. Further mesh gains
+  need new assets (the external agent). Plan doc,
   "Reduced characters and the character path".
 - The calibration disc c8 is in `D:\RE4DC-HWCAL` with the model's predictions (hwcal PREDICTIONS.md).
   It awaits the user's console run.

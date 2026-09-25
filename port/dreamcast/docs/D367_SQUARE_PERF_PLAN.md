@@ -308,7 +308,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 
 | lane (arm prefix) | tree (under /root/probe/d367-agents) | owns |
 |---|---|---|
-| cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building |
+| cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
 | vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: a hand-written SH-4 vertex loop in platform/native_actor_fast.cpp |
 | gc collision | lane-gcol/tree | the resumable sphere walk, the em-em rows |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept) |
@@ -367,7 +367,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
 | 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28), all exact: G_q 30.66 (sq97); gap 5.69 to 24.97; in lanes: gc sphere walk and em-em rows, fx Esp / Efm, sk skeleton / motion / cloth / maths and the gameplay-reader map |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
-| 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); in lanes: cl fitted meshes, vl vertex loop, wd textured coarse world <= ~3 ms; the external agent: the first level's cast models; the main session: the coarse HUD fix |
+| 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); in lanes: cl fitted meshes, vl vertex loop, wd textured coarse world <= ~3 ms; the external agent: the first level's cast models; the main session: the coarse HUD fix |
 
 **What remains on the coarse renderer** (answer to the user, 2026-09-25):
 1. Landing (order item 1): done, f4da5fd.
@@ -397,6 +397,7 @@ Ganados costs more.
 | A (cl27) | source renderer, source characters | 99.58 | 68.92 | 10.0 fps at 33% speed | 1.16 fps |
 | A' (cl26, benchmark only) | source renderer, the reduced characters (ACTOR_SWAP) | 93.68 | 63.02 | - | 1.27 fps |
 | C (cl21) | coarse world, reduced Leon and Ganados | 57.13 | 26.47 | 17.5 fps at 58% speed | 3.0 fps |
+| C, fast path so far (cl42) | the same image: meshes fitted losslessly + FTRV adapters | 50.55 | 19.89 | 19.8 fps at 66% speed | 4.0 fps |
 | B (cl22) | coarse world, stick figures | 34.71 | 4.05 | 28.8 fps at 96% speed | 19.8 fps |
 
 Paced to full speed = (1000 - 30 x 30.66) / R images a second.
@@ -425,6 +426,28 @@ Paced to full speed = (1000 - 30 x 30.66) / R images a second.
      render-only STRICT. Estimate with the fitted meshes: ~6-8 ms.
   At G <= 24 with ~6-8 ms of characters, C paces at ~23-28 fps to full speed (R ~10-12); 30 fps needs
   R <= 6.
+- **Fast path, first results (the cl lane; landed 9df764b, default off).** Same fixture and image as cl21,
+  G 30.66:
+  - Part 1, lossless mesh fitting (private bundle private-fast-v2; tools in the private
+    character-prototype-20260925/tools/fastpath): strip vertices a triangle Leon 3.00 -> 1.55, Ganado
+    3.00 -> 1.81; palette runs Leon 990 -> 880, Ganado 313 -> 269; triangles, winding and headers
+    unchanged (VERIFY PASS). cl28: W 56.41 (-0.72). The first cut reordered Leon's 63 coincident
+    double-sided hair triangle pairs and showed a dark sliver behind his ear; v2 keeps their order.
+  - The estimate's targets don't hold losslessly: transformed vertices a triangle stay Leon 0.91 and
+    Ganado 1.40 (the Ganado's UV seams are real gaps) and palettes stay 665 / 193 (merging identical
+    weights saves 15 and 2). Going further needs new assets: the external agent's.
+  - COARSE_SKIN_FTRV=1: the adapters build the palette matrices with FTRV (coarse_skin_sh4.S: bone
+    transforms for the bones the palettes use, entries grouped by bones, two FTRVs in flight, MOVCA
+    output lines): adapters ~6.3 ms (with their concats) -> 1.21. cl42: **W 50.55, R 19.89** (19.8 fps
+    every tick drawn at 66% speed, 4.0 fps paced); **the characters cost 15.84 ms over stick figures**
+    (was 22.42).
+  - Gates cl29 / cl31 / cl33 / cl43 STRICT vs tr56, tr42 and tr84, zero drift; the =2 check build
+    (cl43) logs max differences of 1.8e-7 in rotation and 0.0022 units in translation.
+  - Look: with the game frozen on one frame (COARSE_FREEZE_AT, diagnostic), frame 1109 differs in 18
+    pixels (1 from the meshes, one colour step; 17 FTRV edge pixels) and frame 5999 in 12. FTRV render
+    maths with logic STRICT is a standing user decision.
+  - Next: the vl lane's vertex loop (re4dc_actor_submit ~11.4 ms of the 15.84); the 6-8 ms estimate
+    assumed ~0.6-0.7 transformed vertices a triangle, which needs the external agent's meshes.
 - New models for the rest of the first level's cast come from the external agent (section "Current order
   and status"); the cl lane integrates them.
 - Coarse-path bug seen in C: the HUD shows unlit "88" ammo digits and a flat lens. The main session owns
@@ -1264,3 +1287,6 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | cl23 | never draw, the same stack | 30.66 | - | - | G control (as sq97) |
 | 09-25 | cl26 | version A' (benchmark only): the source renderer with the same reduced characters (ACTOR_SWAP) | W 93.68 (R 63.02) | - | - | 1.27 fps paced; the new renderer is -36.55 a drawn tick, whole frame |
 | 09-25 | cl27 | version A: the source renderer, source characters | W 99.58 (R 68.92) | - | - | 1.16 fps paced |
+| 09-25 | cl28 | cl21 + the losslessly fitted meshes (private-fast-v1; v2 fixes the hair order) | W 56.41 (-0.72) | - | cl29 STRICT vs tr56 / tr42 / tr84 | kept |
+| 09-25 | cl42 | cl28 (fast-v2) + COARSE_SKIN_FTRV=1 (FTRV palette matrices) | W 50.55 (R 19.89; characters 15.84 over stick figures) | - | cl31 / cl33 / cl43 (=2: max 1.8e-7 rotation, 0.0022 units) STRICT vs tr56 / tr42 / tr84, zero drift | kept: 4.0 fps paced |
+| 09-25 | land9 | the coarse character adapters landed (9df764b): COARSE_LEON, COARSE_GANADO, COARSE_SKIN_FTRV, ACTOR_SWAP, COARSE_FREEZE_AT | - | - | knob-off identity (default, canonical); cl42 carry-over 446 / 457 objects identical (the rest tree5-only) | landed, default off; the meshes stay private |

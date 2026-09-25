@@ -45,6 +45,13 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
 - The pieces' transforms in the walk kernel (4e394ea; exact, room-independent; not in LH yet): the coarse-square
   arms add `GAME_LINE_PIECE=1` (needs `GAME_LINE_WALK=1`); the entry lives in platform/lnw_sh4.S, so the
   order file is unchanged.
+- The coarse character adapters (9df764b; default off; render-only; the meshes are private and stay out of Git):
+  `COARSE_LEON=1 COARSE_GANADO=1 COARSE_ACTOR_ASSET_DIR=<private bundle dir>` draw Leon and the Ganados from
+  the reduced meshes on the coarse path (needs COARSE=1, NATIVE_ACTOR_FAST=1, NATIVE_ACTOR_SKIN_LAZY=1;
+  `COARSE_GANADO_LIMIT` caps meshes drawn, presentation only). `COARSE_SKIN_FTRV=1` builds the palette
+  matrices with FTRV (coarse_skin_sh4.S; =2 runs the C path too and logs COARSE_SKIN_CHK).
+  `ACTOR_SWAP=1` (benchmark, COARSE=0) draws the same meshes through the source renderer; `COARSE_FREEZE_AT=N`
+  (diagnostic) stops in frame N's actor pass for matched captures.
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 
