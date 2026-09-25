@@ -133,6 +133,44 @@ endif
 #                    cAtariInfo::getPos repeats it for every candidate body on each EmAtCheck call.
 #                    =2: every hit recomputed and compared ("RVM" log line).
 GAME_ROTVEC_MEMO ?= 0
+# GAME_ID_LISTS=1 (30 fps rethink, R headroom; exact): IDSystem::trans builds each unit's child lists once
+#                 and unitTrans walks them instead of rescanning the pool per queued unit (0x80 units of
+#                 0x138 bytes, ~38 queued per tick). =2: the lists run dry beside the live scans and every
+#                 queued sequence is compared ("IDL" lines).
+GAME_ID_LISTS ?= 0
+ifneq ($(GAME_ID_LISTS),0)
+$(OBJDIR)/src/game/id_sys.o: GAME_CPPFLAGS += -DRE4DC_ID_LISTS=$(GAME_ID_LISTS)
+endif
+# GAME_OT_MASK=1 (R headroom; exact): per-table bits "took an entry" / "took a model entry" since the
+#                table's clear (trans_ot.cpp); ExecOt returns at once for an empty table and the model-asset
+#                walk (model_asset_bridge.cpp) skips tables without models. =2: both ways, compared ("OTM").
+GAME_OT_MASK ?= 0
+ifneq ($(GAME_OT_MASK),0)
+GAME_CPPFLAGS += -DRE4DC_OT_MASK=$(GAME_OT_MASK)
+PLATFORM_CPPFLAGS += -DRE4DC_OT_MASK=$(GAME_OT_MASK)
+endif
+# UI_HEAP_LAZY=N (R headroom): the native frame stats' source_heap_free (OSCheckHeap, a whole-heap walk,
+#                ~0.12 hw ms) refreshes every Nth frame; nothing in the image reads it.
+UI_HEAP_LAZY ?= 0
+ifneq ($(UI_HEAP_LAZY),0)
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -DRE4DC_UI_HEAP_LAZY=$(UI_HEAP_LAZY)
+endif
+# UI_PALETTE_SLOTS=N (R headroom; exact; with UI_HANDLES=1): the indexed-image handles' palette copies are
+#                N slots given out on demand (LRU) instead of 16 fixed to handle index % 16 (the HUD's
+#                indexed images evicted each other: 6 full resolves per tick in the r101 square).
+UI_PALETTE_SLOTS ?= 0
+ifneq ($(UI_PALETTE_SLOTS),0)
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -DRE4DC_UI_PALETTE_SLOTS=$(UI_PALETTE_SLOTS)
+endif
+# LINK_ORDER=<file> (G; exact, code placement only): an ld --section-ordering-file that puts the hot
+#                    input sections first in .text (tools/d367/ordgen_c3.py from hwproject evidence: call
+#                    chains clustered to the 8 KB direct-mapped I-cache, placed by density). The r101-square
+#                    order is link-order/r101-square-c3-8k.ld: never-draw work -1.25 hw ms (I-miss 4.67 ->
+#                    3.74), every tick drawn -0.94, logic trace STRICT. Regenerate it after code changes.
+LINK_ORDER ?=
+ifneq ($(LINK_ORDER),)
+GAME_LDFLAGS += -Wl,--section-ordering-file,$(abspath $(LINK_ORDER))
+endif
 # PACE_TRANS_SKIP=mask (private test knob): presentation stages skipped for a dropped image
 # (1 EspTrans 2 EspgenTrans 4 CtrlMgr.trans 8 ShadowTrans 16 ClothDraw 32 FilterTrans 64 TexRender
 #  128 IdSys.trans 256 DrawOTag(MainOt[4]) 512 cMes.Trans 1024 Render() on a skipped iteration).
@@ -148,6 +186,9 @@ endif
 #          120 images). =2: + camera / stream state and a screen-point probe (what covers the view).
 COARSE ?= 0
 ifneq ($(COARSE),0)
+ifneq ($(PACE_CATCHUP),2)
+$(error COARSE needs PACE_CATCHUP=2 and PACE_TRANS_SKIP (the qualified mask 4063))
+endif
 ifeq ($(PACE_TRANS_SKIP),0)
 $(error COARSE needs PACE_CATCHUP=2 and PACE_TRANS_SKIP (the qualified mask 4063))
 endif

@@ -13,6 +13,29 @@
 #include "db_log.h"
 #include "main_mem.h"
 #include "trans_ot.h"
+#if defined(RE4DC_OT_MASK) && RE4DC_OT_MASK
+#include "trans.h"
+extern "C" {
+u32 g_OtUsed;
+u32 g_OtModels;
+#if RE4DC_OT_MASK == 2
+unsigned re4dc_otm_exec_skips, re4dc_otm_exec_mismatch;
+void re4dc_log(const char* fmt, ...);
+#endif
+}
+// Marks table w as holding an entry (and a model entry when func is ModelRender).
+static inline void otMark(OtWork* w, void (*func)(void*))
+{
+    const u32 bit = 1u << (u32) (w - g_OtWork);
+    g_OtUsed |= bit;
+    if (func == (void (*)(void*)) ModelRender) {
+        g_OtModels |= bit;
+    }
+}
+#define OT_MARK(w, f) otMark((w), (void (*)(void*)) (f))
+#else
+#define OT_MARK(w, f)
+#endif
 
 extern "C" {
 void* GetPrimBuff(int size);
@@ -86,6 +109,10 @@ void clearOtWork(OtWork* w)
     OtData* q;
 
     w->prev_kind = 0;
+#if defined(RE4DC_OT_MASK) && RE4DC_OT_MASK
+    g_OtUsed &= ~(1u << (u32) (w - g_OtWork));
+    g_OtModels &= ~(1u << (u32) (w - g_OtWork));
+#endif
     ISet(g_NowExecOtType, OT_MAX);
     p = &w->list[w->max - 1];
     do {
@@ -151,6 +178,7 @@ int AddOtWorldPos(void* data, void (*func)(void*), Vec* pos, u16 kind, f32 zlimi
         p->next = q->next;
         p->kind = kind;
         q->next = p;
+        OT_MARK(w, func);
     }
     return idx;
 }
@@ -203,6 +231,7 @@ int AddOtWorldPosRadius(void* data, void (*func)(void*), Vec* pos, f32 radius, u
     p->next = q->next;
     p->kind = kind;
     q->next = p;
+    OT_MARK(w, func);
     return no;
 }
 
@@ -253,6 +282,7 @@ int AddOtModelPosRadius(void* data, void (*func)(void*), Vec* pos, f32 radius, u
     p->next = q->next;
     p->kind = kind;
     q->next = p;
+    OT_MARK(w, func);
     return no;
 }
 
@@ -289,6 +319,7 @@ extern "C" int AddOtDirect(int ot, void* data, void (*func)(), u32 no, u16 flag,
     p->next = q->next;
     p->kind = flag;
     q->next = p;
+    OT_MARK(w, func);
     return no;
 }
 
@@ -302,6 +333,27 @@ int ExecOt(int type)
     int count = 0;
 
     g_NowExecOtType = type;
+#if defined(RE4DC_OT_MASK) && RE4DC_OT_MASK
+    if (!(g_OtUsed & (1u << type))) {
+        // No entry since the clear: the walk below would call nothing.
+#if RE4DC_OT_MASK == 2
+        re4dc_otm_exec_skips++;
+        for (OtData* e = &w->list[w->max - 1]; e; e = e->next) {
+            if (e->data) {
+                if (re4dc_otm_exec_mismatch++ < 4) {
+                    re4dc_log("OTM exec mismatch: table %d has an entry\n", type);
+                }
+                break;
+            }
+        }
+#else
+        w->prev_kind = 0;
+        GXSetAlphaCompare(7, 0, 1, 7, 0);
+        g_NowExecOtType = OT_MAX;
+        return 0;
+#endif
+    }
+#endif
     p = &w->list[w->max - 1];
     w->prev_kind = 0;
     if (p) {

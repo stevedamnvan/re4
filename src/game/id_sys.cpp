@@ -1040,6 +1040,108 @@ void idSysMove04(IdUnit* u)
 
 // Per-frame draw (unless Disp_flg 0x2000 hides the HUD): queues every visible root unit whose class
 // is not switched off (Disp_flg 0x10000 also skips OT type 0x13).
+#if defined(RE4DC_ID_LISTS) && RE4DC_ID_LISTS
+// GAME_ID_LISTS (game30.mk; exact): trans() builds each unit's child lists once, and the walk below
+// replaces unitTrans's rescans of the pool (0x80 units of 0x138 bytes: every scan missed the cache on
+// each unit, for each of the ~38 units queued per tick). Same visits in the same order, by pool index:
+// idKid[p] holds the units unitTrans(p) recurses into for a group (be_flag not 0xFF, bits 0x01 and 0x08,
+// pParent == unit p); idSub[c] the units a type-2 unit reaches through an active c (be_flag not 0xFF,
+// pParent == unit c); idAct the active units. During trans() only unitTrans writes the pool
+// (be_flag |= 0x10), which changes none of these tests unless a be_flag is 0xEF: trans() then keeps
+// the scans, as for a pool larger than the lists.
+// =2: the lists run dry beside the live scans and each queued sequence is compared ("IDL" lines).
+namespace {
+enum { kIdListMax = 256 };
+s16 idKid[kIdListMax], idKidNext[kIdListMax], idSub[kIdListMax], idSubNext[kIdListMax], idAct[kIdListMax];
+int idActN;
+#if RE4DC_ID_LISTS == 2
+enum { kIdSeqMax = 1024 };
+IdUnit* idSeq[2][kIdSeqMax];
+int idSeqN[2];
+bool idDry, idRecording;
+unsigned idCalls, idQueued, idMismatch, idFallback;
+inline void idRecord(int k, IdUnit* u)
+{
+    if (idSeqN[k] < kIdSeqMax) {
+        idSeq[k][idSeqN[k]] = u;
+    }
+    idSeqN[k]++;
+}
+#endif
+
+bool idListsBuild(IdUnit* pool, int n)
+{
+    if (pool == 0 || n <= 0 || n > kIdListMax) {
+        return false;
+    }
+    for (int i = 0; i < n; i++) {
+        idKid[i] = -1;
+        idSub[i] = -1;
+    }
+    const u32 span = (u32) n * sizeof(IdUnit);
+    for (int i = n - 1; i >= 0; i--) {   // pushed at the front: each list in increasing index order
+        const IdUnit* c = &pool[i];
+        const u8 f = c->be_flag;
+        if (f == 0xEF) {
+            return false;   // would turn into 0xFF (free) when queued
+        }
+        if (f == 0xFF) {
+            continue;
+        }
+        const u32 off = (u32) c->pParent - (u32) pool;   // a parent outside the pool matches no unit
+        if (off >= span || off % sizeof(IdUnit)) {
+            continue;
+        }
+        const int p = (int) (off / sizeof(IdUnit));
+        idSubNext[i] = idSub[p];
+        idSub[p] = (s16) i;
+        if ((f & 0x1) && (f & 0x8)) {
+            idKidNext[i] = idKid[p];
+            idKid[p] = (s16) i;
+        }
+    }
+    idActN = 0;
+    for (int i = 0; i < n; i++) {
+        const u8 f = pool[i].be_flag;
+        if (f != 0xFF && (f & 0x1) && (f & 0x8)) {
+            idAct[idActN++] = (s16) i;
+        }
+    }
+    return true;
+}
+
+// unitTrans on the lists.
+void idTransL(IdUnit* pool, IdUnit* u)
+{
+    switch (u->type) {
+    case 1:
+        for (int c = idKid[u - pool]; c >= 0; c = idKidNext[c]) {
+            idTransL(pool, &pool[c]);
+        }
+        break;
+    case 2:
+        for (int k = 0; k < idActN; k++) {
+            for (int g = idSub[idAct[k]]; g >= 0; g = idSubNext[g]) {
+                idTransL(pool, &pool[g]);
+            }
+        }
+        break;
+    }
+#if RE4DC_ID_LISTS == 2
+    if (idDry) {
+        idRecord(0, u);
+        return;
+    }
+#endif
+    u->be_flag |= 0x10;
+    AddOtDirect(u->otType, u, (void (*)()) IdGeneralTrans, u->otNo, 0x1000, 0, 0.0f);
+}
+}
+#if RE4DC_ID_LISTS == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+#endif
+#endif
+
 void IDSystem::trans()
 {
     int i;
@@ -1051,6 +1153,33 @@ void IDSystem::trans()
     if ((s32) pG->Debug_flg[1] < 0) {
         return;
     }
+#if defined(RE4DC_ID_LISTS) && RE4DC_ID_LISTS
+    const bool lists = idListsBuild(pUnit, m_maxId);
+#if RE4DC_ID_LISTS == 2
+    // the lists' sequence first, dry (nothing queued, no flag written), then the live scans recorded
+    idSeqN[0] = idSeqN[1] = 0;
+    if (lists) {
+        idDry = true;
+        u = pUnit;
+        for (i = 0; i < m_maxId; i++, u++) {
+            if ((pG->Disp_flg & 0x10000) && u->otType == 0x13) {
+                continue;
+            }
+            if (IdBitGet(m_disp_off, u->classNo)) {
+                continue;
+            }
+            if (u->be_flag == 0xFF || !(u->be_flag & 0x1)) {
+                continue;
+            }
+            if ((u->be_flag & 0x8) && u->pParent == 0) {
+                idTransL(pUnit, u);
+            }
+        }
+        idDry = false;
+    }
+    idRecording = true;
+#endif
+#endif
     u = pUnit;
     for (i = 0; i < m_maxId; i++, u++) {
         if ((pG->Disp_flg & 0x10000) && u->otType == 0x13) {
@@ -1063,9 +1192,35 @@ void IDSystem::trans()
             continue;
         }
         if ((u->be_flag & 0x8) && u->pParent == 0) {
+#if defined(RE4DC_ID_LISTS) && RE4DC_ID_LISTS == 1
+            if (lists) {
+                idTransL(pUnit, u);
+                continue;
+            }
+#endif
             unitTrans(u);
         }
     }
+#if defined(RE4DC_ID_LISTS) && RE4DC_ID_LISTS == 2
+    idRecording = false;
+    idCalls++;
+    if (!lists) {
+        idFallback++;
+    } else {
+        idQueued += idSeqN[1];
+        bool same = idSeqN[0] == idSeqN[1];
+        for (int k = 0; same && k < idSeqN[0] && k < kIdSeqMax; k++) {
+            same = idSeq[0][k] == idSeq[1][k];
+        }
+        if (!same && idMismatch++ < 4) {
+            re4dc_log("IDL mismatch: call %u lists %d scans %d\n", idCalls, idSeqN[0], idSeqN[1]);
+        }
+    }
+    if (idCalls % 300 == 0) {
+        re4dc_log("IDL calls=%u queued=%u mismatch=%u fallback=%u pool=%d\n", idCalls, idQueued, idMismatch,
+                  idFallback, m_maxId);
+    }
+#endif
 }
 
 // Queues a unit (and, for groups, its children first) into the OT with IdGeneralTrans.
@@ -1099,6 +1254,11 @@ void IDSystem::unitTrans(IdUnit* u)
         }
     }
     if (u != 0) {
+#if defined(RE4DC_ID_LISTS) && RE4DC_ID_LISTS == 2
+        if (idRecording) {
+            idRecord(1, u);
+        }
+#endif
         u->be_flag |= 0x10;
         AddOtDirect(u->otType, u, (void (*)()) IdGeneralTrans, u->otNo, 0x1000, 0, 0.0f);
     }

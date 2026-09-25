@@ -36,6 +36,14 @@ extern OtWork g_OtWork[OT_MAX];
 extern OtMirrorWork g_OtMirrirWk[2];
 extern f32 OT_MUL;
 extern int g_NowExecOtType;
+#if defined(RE4DC_OT_MASK) && RE4DC_OT_MASK
+// GAME_OT_MASK (game30.mk; exact): bit t of g_OtUsed is set when table t takes an entry, and of g_OtModels
+// when that entry draws a model (func ModelRender); clearOtWork clears the table's bits. Conservative:
+// DeleteOtData leaves them set. ExecOt returns at once for a table without entries, and the model-asset
+// walk (model_asset_bridge.cpp) skips tables without models.
+extern "C" u32 g_OtUsed;
+extern "C" u32 g_OtModels;
+#endif
 
 extern "C" {
 void InitOt();

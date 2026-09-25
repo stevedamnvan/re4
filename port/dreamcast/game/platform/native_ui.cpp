@@ -1271,9 +1271,34 @@ Entry* load(const Re4dcUiImage& image,bool pin=true,const Key* prepared_key=null
 struct alignas(32) Handle { const void *pixels,*palette,*mask_pixels,*mask_palette; unsigned shape,mask_shape,stamp; unsigned char entry; unsigned short palette_bytes; };
 static_assert(sizeof(void*)!=4 || sizeof(Handle)==32,"one SH-4 D-cache line per handle");
 Handle handle_table[256];
+#ifndef RE4DC_UI_PALETTE_SLOTS
+#define RE4DC_UI_PALETTE_SLOTS 0
+#endif
+#if RE4DC_UI_PALETTE_SLOTS
+static_assert(RE4DC_UI_PALETTE_SLOTS>0 && RE4DC_UI_PALETTE_SLOTS<256,"slot + 1 fits a byte");
+constexpr unsigned kPaletteCopies=RE4DC_UI_PALETTE_SLOTS;
+#else
 constexpr unsigned kPaletteCopies=16;
+#endif
+#if RE4DC_UI_PALETTE_SLOTS
+struct alignas(4) PaletteCopy { unsigned short owner,bytes; unsigned short data[256]; }; // owner: handle index+1
+#else
 struct PaletteCopy { unsigned short owner,bytes; unsigned short data[256]; }; // owner: handle index+1
+#endif
 PaletteCopy palette_copies[kPaletteCopies];
+#if RE4DC_UI_PALETTE_SLOTS
+typedef unsigned palette_word __attribute__((may_alias));
+// UI_PALETTE_SLOTS=N (game30.mk; exact): the copies are N slots given to handles on demand, the least
+// recently used replaced, instead of 16 fixed to handle index % 16: the HUD's indexed images evicted
+// each other's copies every frame (6 full resolves per tick in the r101 square). A hit still needs the
+// copy's owner and the identical live palette.
+unsigned char palette_slot[256];               // handle index -> copy slot + 1 (0: none)
+unsigned palette_used[kPaletteCopies],palette_clock;
+inline PaletteCopy* palette_copy(unsigned index){
+    const unsigned s=palette_slot[index];
+    return s && palette_copies[s-1].owner==index+1 ? &palette_copies[s-1] : nullptr;
+}
+#endif
 inline bool handle_shape(const Re4dcUiImage& i,unsigned& shape,bool allow_indexed){
     // The bridges mark "no palette" as palette_format 0xffffffff (GX TLUT formats are 0-2).
     const unsigned palette_format=i.palette_format==0xffffffffU?3U:i.palette_format;
@@ -1285,14 +1310,40 @@ inline bool handle_shape(const Re4dcUiImage& i,unsigned& shape,bool allow_indexe
     shape=i.width|i.height<<11|i.format<<22|palette_format<<26|1U<<31;return true;
 }
 inline bool palette_same(unsigned index,const Re4dcUiImage& i){
+#if RE4DC_UI_PALETTE_SLOTS
+    const PaletteCopy* cp=palette_copy(index);
+    if(!cp || cp->bytes!=i.palette_bytes)return false;
+    const PaletteCopy& c=*cp;
+#else
     const PaletteCopy& c=palette_copies[index%kPaletteCopies];
     if(c.owner!=index+1 || c.bytes!=i.palette_bytes)return false;
+#endif
     const auto* p=static_cast<const unsigned short*>(i.palette);
+#if RE4DC_UI_PALETTE_SLOTS
+    if(!((unsigned(reinterpret_cast<std::uintptr_t>(p))|i.palette_bytes)&3)){   // word compare
+        const auto* w=reinterpret_cast<const palette_word*>(p);
+        const auto* cw=reinterpret_cast<const palette_word*>(c.data);
+        for(unsigned n=0;n<i.palette_bytes/4;++n)if(cw[n]!=w[n])return false;
+    }else
+#endif
     for(unsigned n=0;n<i.palette_bytes/2;++n)if(c.data[n]!=p[n])return false;
+#if RE4DC_UI_PALETTE_SLOTS
+    palette_used[&c-palette_copies]=++palette_clock;
+#endif
     return true;
 }
 inline void palette_keep(unsigned index,const Re4dcUiImage& i){
+#if RE4DC_UI_PALETTE_SLOTS
+    PaletteCopy* cp=palette_copy(index);
+    if(!cp){
+        unsigned best=0;
+        for(unsigned k=1;k<kPaletteCopies;++k)if(palette_used[k]<palette_used[best])best=k;
+        palette_slot[index]=(unsigned char)(best+1);cp=&palette_copies[best];
+    }
+    PaletteCopy& c=*cp;palette_used[cp-palette_copies]=++palette_clock;
+#else
     PaletteCopy& c=palette_copies[index%kPaletteCopies];
+#endif
     c.owner=(unsigned short)(index+1);c.bytes=(unsigned short)i.palette_bytes;
     std::memcpy(c.data,i.palette,i.palette_bytes);
 }
@@ -2248,7 +2299,14 @@ extern "C" void re4dc_ui_end_frame(int present){
     completed_frame.queue_peak=frame_queue_peak;completed_frame.queue_drops=frame_queue_drops;
     completed_frame.texture_vram=used;completed_frame.texture_peak=peak;
     completed_frame.native_slab=model_packets?kModelSlabBytes:0;
+#if defined(RE4DC_UI_HEAP_LAZY) && RE4DC_UI_HEAP_LAZY
+    // UI_HEAP_LAZY=N: this readback field's whole-heap walk (OSCheckHeap) runs every Nth frame only.
+    {static int heap_free_last=-1;static unsigned heap_free_age;
+     if(heap_free_last<0 || ++heap_free_age>=RE4DC_UI_HEAP_LAZY){heap_free_age=0;heap_free_last=re4dc_ui_heap_free();}
+     completed_frame.source_heap_free=heap_free_last;}
+#else
     completed_frame.source_heap_free=re4dc_ui_heap_free();
+#endif
     completed_frame.render_wall_us=unsigned(render_end-frame_render_start);
     completed_frame.present_wait_us=unsigned(timer_us_gettime64()-render_end);
     completed_frame.present_requested=present;

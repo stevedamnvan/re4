@@ -612,9 +612,12 @@ void draw_effects(Out& o)
     if (!sys || !sys->pEspBuf) {
         return;
     }
+    // ESP_IsActive(e) is (m_Be_flg & 1) outside the event pause (Status_flg[1] 0x10000000): call it
+    // only under the pause (446 calls per drawn tick in the r101 square).
+    const bool pause = (pG->Status_flg[1] & 0x10000000) != 0;
     for (u32 i = 0; i < sys->nEsp; i++) {
         cEsp* e = (cEsp*) (sys->pEspBuf + i * 0x150);
-        if (!(e->m_Be_flg & 1) || !ESP_IsActive(e)) {
+        if (!(e->m_Be_flg & 1) || (pause && !ESP_IsActive(e))) {
             continue;
         }
         if ((u8) (e->m_Parts_no + 8) <= 5) {

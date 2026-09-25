@@ -12,6 +12,13 @@
 #ifndef RE4DC_FRONT_LEAN
 #define RE4DC_FRONT_LEAN 0
 #endif
+#ifndef RE4DC_OT_MASK
+#define RE4DC_OT_MASK 0
+#endif
+#if RE4DC_OT_MASK == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+extern "C" unsigned re4dc_otm_exec_skips,re4dc_otm_exec_mismatch;   // trans_ot.cpp
+#endif
 #if RE4DC_FRONT_LEAN && RE4DC_D349_RENDERER_STACK
 extern "C" int re4dc_model_asset_update_idle();
 namespace {
@@ -21,12 +28,25 @@ namespace {
 // ModelData. Equal signature + an idle plan owner = the walk installs nothing.
 struct WalkSignature { unsigned a,b,n; bool operator==(const WalkSignature& o)const{return a==o.a&&b==o.b&&n==o.n;} };
 WalkSignature last_walk{0,0,~0U};
+#if RE4DC_OT_MASK == 2
+unsigned otm_calls,otm_mismatch;
+#endif
+#if RE4DC_OT_MASK
+// GAME_OT_MASK: `tables` limits the walk to tables holding a model entry (a table without one adds
+// nothing to the signature); all tables otherwise.
+WalkSignature walk_signature(unsigned tables=~0U){
+#else
 WalkSignature walk_signature(){
+#endif
     WalkSignature s{2166136261U,0x9e3779b9U,0};
     auto mix=[&](unsigned w){s.a=(s.a^w)*16777619U;s.b=(s.b+w)*0x85ebca6bU;s.b^=s.b>>13;++s.n;};
     for(unsigned priority=0;priority<2;++priority)for(unsigned table=0;table<OT_MAX;++table){
         const auto& ot=g_OtWork[table];
+#if RE4DC_OT_MASK
+        if(!ot.list || !ot.max || !(tables>>table&1))continue;
+#else
         if(!ot.list || !ot.max)continue;
+#endif
         for(auto* node=&ot.list[ot.max-1];node;node=node->next){
             if(!node->data || node->func!=(void (*)(void*))ModelRender)continue;
             auto* model=static_cast<cModel*>(node->data);
@@ -50,7 +70,18 @@ extern "C" void re4dc_prepare_model_assets(){
     // Same registrations as the last walk and nothing pending in the plan
     // owner: every part would hit (or keep its negative admission) again.
     {
+#if RE4DC_OT_MASK == 2
         const WalkSignature now=walk_signature();
+        if(!(walk_signature(g_OtModels)==now) && otm_mismatch++<4)re4dc_log("OTM signature mismatch: models=%08x\n",(unsigned)g_OtModels);
+        if(++otm_calls%600==0){
+            re4dc_log("OTM calls=%u sig_mismatch=%u exec_skips=%u exec_mismatch=%u models=%08x used=%08x\n",
+                otm_calls,otm_mismatch,re4dc_otm_exec_skips,re4dc_otm_exec_mismatch,(unsigned)g_OtModels,(unsigned)g_OtUsed);
+        }
+#elif RE4DC_OT_MASK
+        const WalkSignature now=walk_signature(g_OtModels);
+#else
+        const WalkSignature now=walk_signature();
+#endif
         const bool idle=re4dc_model_asset_update_idle()!=0;
         const bool same=now==last_walk;
         last_walk=now;
@@ -67,6 +98,9 @@ extern "C" void re4dc_prepare_model_assets(){
     for(unsigned priority=0;priority<2;++priority)for(unsigned table=0;table<OT_MAX;++table){
         const auto& ot=g_OtWork[table];
         if(!ot.list || !ot.max)continue;
+#if RE4DC_OT_MASK == 1
+        if(!(g_OtModels>>table&1))continue;   // no model entry in this table since its clear
+#endif
         for(auto* node=&ot.list[ot.max-1];node;node=node->next){
             // Empty bucket sentinels do not initialize func. Check data first.
             if(!node->data || node->func!=(void (*)(void*))ModelRender)continue;
