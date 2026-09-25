@@ -324,6 +324,100 @@ low_RotMatrix 0.55, SINF/COSF 0.77, MultVec 0.16). RotVector is a pure function 
 angle bits, so a value-keyed memo is exact. (The skeleton audit's 12% low_RotMatrix repeat rate
 was measured per destination matrix, a stack temporary here, so it does not bound this.)
 
+### Skeleton prototype: GAME_SKEL_FTRV on the Ganado part-world pass (2026-09-24)
+
+Scope: every partsWorldCalc run inside cEm10::move (an `extern "C"` scope counter set by a guard at
+its top), i.e. the Ganado's whole update: MotionMove's two passes around IK and the pass after neck /
+waist. Observed coverage (tr14/tr15 counters): 3.03M of 5.68M part updates (53%), 99.99% id 0x15
+(the square's Ganados), 28 parts id 0x12. Last-bit FP policy, not exact.
+
+- **v1, column form (sq31, dropped, +0.69):** each part's concat as four FTRVs over l_mat's
+  columns with the parent's matrix loaded from a 64-entry column-major table of this call's
+  results. Instructions -146k per tick, but the 5.6 KB table evicted part data from the SH-4's
+  16 KB direct-mapped operand cache: partsWorldCalc dmiss 0.32 -> 0.55 and unrelated readers of the
+  same parts slower (PSMTXCopy +0.19, RotMatrix +0.15).
+- **v2, row form (sq33, 37.38 vs control sq32 38.10: -0.72 hw ms/tick):** row i of P L is l_mat^T
+  applied to row i of P, so the part's own l_mat rows are loaded into XMTRX (12 loads in the back
+  bank, constant row 0 0 0 1) and the parent's three rows, read in place, come out through three
+  FTRVs as mat's rows, with world as their fourth element. No table, no transposes, no temporaries;
+  a non-uniform parent scale folds in as P's rows times S^-1 and l_mat's columns times S (translation
+  column row-scaled so world stays P l_t); a parent scale component of 0 takes the original
+  arithmetic, addRot parts finish on the original code. Function rows: partsWorldCalc 2.92 -> 2.54,
+  Concat -0.37, TransMatrix -0.12, MultVec -0.05; instructions -241k per tick (-4.6%).
+- Numerical check (tr15, =2: FTRV pass in shadow, original live, chained through shadow parents):
+  3.03M parts, max world difference 0.0039 units (2-4 ulp at |x| ~ 8130), max rotation element
+  4.8e-7, 0 nonfinite; logic trace STRICT over 3277 ticks.
+- Timing split: input gathering (12 l_mat + 12 parent loads) and output writes (12 mat + 3 world +
+  3 r_scale stores) are inline with the three FTRVs, so the hardware model attributes them to
+  partsWorldCalc's row as a whole (2.54 ms for all models, of which Ganado parts now take the FTRV
+  path); the fallback (zero scale, addRot) and the =2 validation do not run in the cost arm.
+- Against the bound: -0.72 of the ~2.3 ms Ganado part-world cost. The local-matrix stage (~1.4),
+  motion keys (~1.2) and IK (~0.3) are untouched.
+- Gameplay check (GAME_DECISION_TRACE=1, LOGIC_TRACE arms tr18 control / tr19 FTRV live, 4339
+  frames; tr16 / tr17 before the line-query hash was added gave the same picture): identical every
+  frame: RNG, System / Stop / Status / Room / Scenario flags, room, player / enemy / object discrete
+  state (be_flag, routine numbers, id / type, HP, motion state), alive counts, 2.6M em-em collision
+  results in call order, 62k area checks, 179k damage hit tests; **0 drift** in the player and in
+  every enemy position (43.6k samples). The part matrices and object coordinates differ (the last-bit
+  change itself). Of 328k scenery line queries, 8 frames (one every 400-700) differ: in each the FTRV
+  run makes **one extra line query** (+20..36 candidate polygon tests) and nothing downstream changes.
+  The instrumentation itself is read-only (tr18 STRICT vs tr2).
+- Those extra queries are run-to-run noise of the sound system, not the FTRV change: two runs of the
+  same code differ the same way (controls tr16 / tr18: 5 frames, tr18 / tr20: 2; FTRV tr19 / tr21: 4).
+  A per-query log around the frames (private GAME_DECISION_TRACE=2 arms tr20 / tr21, caller names from
+  each build's symbols) shows the extra query is **sndWallCheck**, the sound situation's occlusion line
+  from a sound source to the listener, answering "no wall"; it follows audio timing, not logic ticks,
+  and the logic trace stays STRICT across all control runs. **Result: no hit, grounding, collision,
+  area or damage decision attributable to GAME_SKEL_FTRV, and no position drift.**
+- Accepted under the agreed last-bit rules (numerical check tr15 + decision comparison tr18 / tr19);
+  GAME_SKEL_FTRV=1 joins LH. Not extrapolated: coverage is the Ganados' part-world pass (53% of part
+  updates); the other models, the local-matrix stage and the motion keys are separate items.
+
+### Part-preparation census: where R = 63.6 goes (2026-09-24, sq28 draw arm minus sq26 never-draw arm)
+
+Per drawn tick, by function (W - G, both on the same stack; calls per tick from counts.bin):
+
+| class | hw ms | contents |
+|---|---:|---|
+| Actor geometry | ~21.7 | re4dc_actor_submit 15.0 (227 calls, 66 us each: position / light / strip passes; ~15k skinned vertices per tick), pass_lights 3.2, build_lights 1.3, skin_light_dirs 0.6, skin_position_matrix 0.7, prepare_frame 0.7 |
+| Scenery geometry | ~16.9 | MeshDraw::draw 7.8 (95 meshlets, 82 us each), mesh_submit 2.8 (374), vp::transform 2.6 (79), near clipping 1.4 (1379 triangles), effect Emitter::project 1.0 (4431), group_visible 0.4 |
+| Game-side draw preparation | ~10.0 | ModelRender 1.7 (84), MakeWeightPalette 1.2 (32 x 36 us, ~31 memclr each), render-side Concat 0.8, mat_load 0.5, ModelTrans 0.5, LightSetModel + setModel2 0.7, CalcSk1_x/_x2 0.5 (once per tick), GXGetProjectionv + copy per part 0.2, many < 0.2 |
+| Per-part packet plumbing | ~7.3 | packet_begin 1.26 (228 x 5.5 us), packet_reserve 1.13 (514 x 2.2 us), defer_part 0.93, draw_model_part 1.19, model_submit 0.58, direct_begin/end 0.60, finish_source_draws 0.44 (1834 software ctz), material 0.33 |
+| UI images | ~1.5 | resolve 0.70 (264), load 0.56 (41.6 x 13 us), image_key 0.15, decode/word copies |
+| Copies | 3.4 | memset / memcpy loops (MakeWeightPalette clears, pass_lights and draw_model_part copies, texture words) |
+| KOS / TA | 1.4 | mutexes, sq_lock |
+
+(Classes overlap slightly with the area table: the hardware model files the packet plumbing under
+"ui".) Candidates that look avoidable without a renderer rewrite, none measured yet:
+- the actor path's duplicate reservation (re4dc_actor_submit reserves, then direct_begin ->
+  packet_begin reserves again): ~12.6 us of plumbing per direct part x 164 parts, ~2.1 ms, of which
+  one reservation and a lean begin could save perhaps ~1;
+- UI images resolved / loaded each frame (41.6 loads per tick): ~1-1.5 if they are cacheable;
+- GXGetProjectionv + a copy per part draw, software ctz in finish_source_draws, MakeWeightPalette's
+  clears: ~0.5 together.
+**About 3-4 ms of R is plumbing that looks avoidable; ~38 ms scales with what is drawn (vertices,
+meshlets, lights) and ~10 is the game's own draw preparation.** R <= 26.7 (G = 20) or 16.7 (G = 25)
+therefore needs far less drawn per view (the Low-mode per-view asset budget: ~15-20k scenery
+triangles, <= 3 full Ganados, Ganado L1/L2 meshes), not preparation tuning; packet and matrix
+savings are not to be counted twice against the actor path.
+
+### Reassessment after the skeleton prototype and the census (2026-09-24)
+
+Measured: G 39.54 (sq16) -> 37.38 (sq33, paired control sq32 38.10); R 64.63 -> 63.60 (sq27/sq28 pair,
+before GAME_SKEL_FTRV). W + G with the skeleton change is not yet measured as one arm (estimate
+~138: the retained saving also lands in W). Costed path, estimates until measured, not counted twice:
+
+| work | today | identified next items (estimates) | after them | needed (15 fps / 30 fps) |
+|---|---:|---|---:|---|
+| G, retained | 37.4 | RotVector/getPos memo ~1.5 (exact); Ganado local matrices <= 1.4; motion keys <= 1.2; FSCA trig 1.5-2.0 (last-bit); scenery collision rejection 0.8-1.5 (exact); remaining part-world passes (Leon, objects) ~0.5 | ~30-32 | 20-25 |
+| R, per image | 63.6 | packet plumbing ~1, UI image caching ~1-1.5, small copies / GX calls ~0.5 | ~60-61 | 16.7-26.7 / 8.3-13.3 |
+
+**Unresolved gaps: G ~5-12 ms, R ~33-44 ms at 15 fps (more at 30).** Neither closes by tuning the
+current per-tick and per-image work. R has to come from drawing less per view (the Low-mode per-view
+budget and Ganado meshes, a measured scenery triangle budget); G's remaining gap needs structural
+reductions in how much simulation runs per tick (e.g. unseen parked Ganados computing only the part
+chains gameplay reads, already listed in the skeleton audit, ~1.6-2.4) on top of the items above.
+
 ## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
 
 (Superseded in part by the revised approach above: the 14 ms allocation is retired.)
@@ -428,5 +522,12 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-24 | sq27 | draw every tick, sq15 flags + GAME_ATCHK_LIST (LH) + GAME_ESP_OWNER | 102.72 | - | - | drawing baseline for the actor matrix item |
 | 09-24 | sq28 | sq27 + ACTOR_SKIN_FTRV=1 (skinned palette matrices through FTRV) | 101.69 (-1.03) | - | tr9 (=1, with ESP_OWNER) STRICT tr2 vs tr9, 3277 ticks; tr12 (=2): 22.1M on-screen corner points 50 units around each bone, max 0.0007 px, none above 0.25 px | committed dd8c4aa (render knob, default off). skin_position_matrix 1.52 -> 0.71 (378 -> 119 insns per build, 734 builds/frame) |
 | 09-24 | tr13 | ACTOR_SKIN_FTRV=2 extended check: every submitted skinned vertex through the same kernel with the scalar matrix; probe near-plane / nonfinite counts before the filter | - | - | STRICT tr2 vs tr13, 3237 ticks | 47.9M vertices: 0 nonfinite, 0 near / far classification differences (207,840 behind near, 39,292 near band), 3 screen-edge bits, max 0.0017 px on screen; probes 0 near disagreements |
+| 09-24 | tr14 | GAME_SKEL_FTRV=2, v1 column form (shadow) | - | - | STRICT tr2 vs tr14, 3277 ticks | 3.03M Ganado parts, max world 0.0039, rot 6.0e-7, 0 nonfinite |
+| 09-24 | sq32 | never-draw control rebuilt with the current recipe (ACTOR_SKIN_FTRV=1 in PERF) | 38.10 | - | - | control for the skeleton prototype (sq26 38.09) |
+| 09-24 | sq31 | sq32 + GAME_SKEL_FTRV=1 v1 (column form, 64-entry parent table) | 38.79 (+0.69) | - | tr14 | dropped: the 5.6 KB table evicts part data (partsWorldCalc dmiss 0.32 -> 0.55; PSMTXCopy +0.19, RotMatrix +0.15) |
+| 09-24 | sq33 | sq32 + GAME_SKEL_FTRV=1 v2 (row form: l_mat rows in XMTRX, parent rows in place) | 37.38 (-0.72) | - | tr15 (=2) STRICT 3277 ticks: max world 0.0039, rot 4.8e-7; decisions tr18/tr19 | partsWorldCalc 2.92 -> 2.54, Concat -0.37, TransMatrix -0.12; -241k insns/tick |
+| 09-24 | tr16/tr17 | GAME_DECISION_TRACE=1: control / GAME_SKEL_FTRV=1 live | - | - | tr16 STRICT vs tr2; tr17 discrete identical, float drift only | all decisions identical except 5 frames of candidate polygon tests (see tr18-tr21) |
+| 09-24 | tr18/tr19 | + line-query answers hashed: control / GAME_SKEL_FTRV=1 live | - | - | tr18 STRICT vs tr2; tr19 discrete identical | RNG, flags, AI / motion state, HP, counts, 2.6M em-em results, 62k area, 179k damage identical; 0 position drift; 8 frames with one extra line query |
+| 09-24 | tr20/tr21 | GAME_DECISION_TRACE=2 (private): per-query log around those frames | - | - | - | the extra query is sndWallCheck (sound occlusion, "no wall"); same-code runs differ likewise (tr16/tr18 5 frames, tr18/tr20 2, tr19/tr21 4): audio-timing noise. GAME_SKEL_FTRV accepted, joins LH |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
