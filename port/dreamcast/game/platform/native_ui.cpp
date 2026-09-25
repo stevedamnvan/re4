@@ -129,6 +129,9 @@
 #include "../../room/gpu_lifecycle.hpp"
 #include "../../room/pvr_geometry.hpp"
 
+#if RE4DC_COARSE_LEON
+extern "C" int re4dc_coarse_actor_texture_key(const Re4dcUiImage*,unsigned*,unsigned*);
+#endif
 namespace {
 constexpr unsigned kQuadCount=256, kTextureCount=RE4DC_TEX_RESIDENT?RE4DC_TEX_SLOTS:RE4DC_PVR_STREAM?80:48, kSourceCount=RE4DC_PVR_STREAM?128:256, kVramBudget=4*1024*1024;
 #if RE4DC_UI_VRAM
@@ -957,6 +960,9 @@ inline unsigned source_slot(const Re4dcUiImage& i){
 static_assert(kSourceCount<255 && kTextureCount<255);
 #endif
 int external_image_key(const Re4dcUiImage& image,Key& external) {
+#if RE4DC_COARSE_LEON
+    if(re4dc_coarse_actor_texture_key(&image,&external.crc,&external.fnv))return 1;
+#endif
     int native=room_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
     if(!native)native=core_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
     if(!native)native=option_identities.lookup(image.pixels,image.width,image.height,image.format,external.crc,external.fnv,image.palette,image.palette_format,image.palette_bytes);
@@ -2684,6 +2690,13 @@ extern "C" void re4dc_model_direct_end(unsigned vertices){
     (void)vertices;
 #endif
 }
+#if RE4DC_COARSE_LEON && !RE4DC_COARSE
+// ACTOR_SWAP (version A benchmark, COARSE=0): the reduced-mesh adapters' texture check.
+extern "C" int re4dc_coarse_leon_texture_ready(const Re4dcUiImage* image,unsigned crc,unsigned fnv){
+    if(!frame_ready || stream_aborted || direct_open)return 0;
+    const Key key{crc,fnv};return load(*image,false,&key)!=nullptr;
+}
+#endif
 #if RE4DC_COARSE
 #if !RE4DC_TA_DIRECT || !RE4DC_PVR_STREAM || !RE4DC_D349_RENDERER_STACK
 #error COARSE extends the TA_DIRECT PVR_STREAM=1 D349 frame owner
@@ -2692,6 +2705,12 @@ extern "C" void re4dc_model_direct_end(unsigned vertices){
 // GEQUAL with write, no culling, the fog table when asked) goes out by store queue; the caller
 // writes its vertices from the returned address (8 words each, EOL ends a strip) and closes with
 // their count. nullptr: no frame to draw into.
+#if RE4DC_COARSE_LEON
+extern "C" int re4dc_coarse_leon_texture_ready(const Re4dcUiImage* image,unsigned crc,unsigned fnv){
+    if(!frame_ready || stream_aborted || direct_open)return 0;
+    const Key key{crc,fnv};return load(*image,false,&key)!=nullptr;
+}
+#endif
 extern "C" std::uint32_t* re4dc_coarse_begin(int fog){
 #if RE4DC_COARSE >= 2
     static unsigned dbg;

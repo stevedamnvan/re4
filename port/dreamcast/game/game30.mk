@@ -258,6 +258,77 @@ endif
 #          OTs 0 / TEX_RENDER1, then the coarse view in place of the world OTs ("COARSE" log line every
 #          120 images). =2: + camera / stream state and a screen-point probe (what covers the view).
 COARSE ?= 0
+# ACTOR_SWAP=1 (benchmark, version A; needs COARSE=0 COARSE_LEON=1 COARSE_GANADO=1): the old renderer's
+#              ModelRender draws Leon and the Ganados through the COARSE_LEON / COARSE_GANADO adapters (the
+#              reduced meshes, native actor submission) instead of their source infos, so old and new
+#              renderers are timed with the same character models (actor_swap.cpp). Presentation only.
+ACTOR_SWAP ?= 0
+ifneq ($(ACTOR_SWAP),0)
+ifneq ($(COARSE),0)
+$(error ACTOR_SWAP is the version A (COARSE=0) twin of the coarse actor adapters)
+endif
+ifneq ($(COARSE_LEON)$(COARSE_GANADO),11)
+$(error ACTOR_SWAP needs COARSE_LEON=1 COARSE_GANADO=1)
+endif
+PLATFORM_OBJS += $(OBJDIR)/actor_swap.o
+$(OBJDIR)/actor_swap.o: actor_swap.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@
+$(OBJDIR)/src/game/trans.o: GAME_CPPFLAGS += -DRE4DC_ACTOR_SWAP=1
+endif
+# Private live-Ganado experiment. Limit affects mesh presentation only; ACT_CAP remains 0.
+COARSE_GANADO ?= 0
+COARSE_GANADO_LIMIT ?= -1
+ifneq ($(COARSE_GANADO),0)
+ifeq ($(COARSE_LEON),0)
+$(error COARSE_GANADO requires COARSE_LEON=1 for the shared hooks)
+endif
+PLATFORM_OBJS += $(OBJDIR)/coarse_ganado.o
+$(OBJDIR)/coarse.o $(OBJDIR)/coarse_actor.o: GAME_CPPFLAGS += -DRE4DC_COARSE_GANADO=1
+# COARSE_FREEZE_AT=N (diagnostic, captures only): the CPU stops in frame N's actor pass (frame N-1 stays on screen)
+COARSE_FREEZE_AT ?= 0
+ifneq ($(COARSE_FREEZE_AT),0)
+$(OBJDIR)/coarse_ganado.o: GAME_CPPFLAGS += -DRE4DC_COARSE_FREEZE_AT=$(COARSE_FREEZE_AT)
+endif
+$(OBJDIR)/coarse_ganado.o: coarse_ganado.cpp $(COARSE_ACTOR_ASSET_DIR)/ganado874_runtime.h
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -DRE4DC_COARSE_GANADO_LIMIT=$(COARSE_GANADO_LIMIT) -I$(COARSE_ACTOR_ASSET_DIR) -MMD -MP -c $< -o $@
+endif
+# Private 4K Leon proof through the existing actor path; generated assets stay outside Git.
+COARSE_LEON ?= 0
+ifneq ($(COARSE_LEON),0)
+ifeq ($(COARSE)$(ACTOR_SWAP),00)
+$(error COARSE_LEON requires COARSE (or ACTOR_SWAP=1, the version A benchmark))
+endif
+ifneq ($(NATIVE_ACTOR_FAST)$(NATIVE_ACTOR_SKIN_LAZY),11)
+$(error COARSE_LEON requires NATIVE_ACTOR_FAST=1 NATIVE_ACTOR_SKIN_LAZY=1)
+endif
+ifndef COARSE_ACTOR_ASSET_DIR
+$(error COARSE_ACTOR_ASSET_DIR must point at the private qualified asset)
+endif
+PLATFORM_OBJS += $(OBJDIR)/coarse_actor.o
+$(OBJDIR)/coarse.o $(OBJDIR)/model_bridge.o: GAME_CPPFLAGS += -DRE4DC_COARSE_LEON=1
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -DRE4DC_COARSE_LEON=1
+$(OBJDIR)/coarse_actor.o: coarse_actor.cpp $(COARSE_ACTOR_ASSET_DIR)/leon4k_runtime.h
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -I$(COARSE_ACTOR_ASSET_DIR) -MMD -MP -c $< -o $@
+endif
+# COARSE_SKIN_FTRV=1 (coarse actor adapters, render-only): palette matrices with FTRV (coarse_skin_sh4.S):
+#                    T = root^-1 x part x bind^-1 for the bones the palettes use (two FTRV passes), each
+#                    palette entry the weighted sum of its bones' T (three FTRVs; one-bone entries copied)
+#                    instead of 2 PSMTXConcat per bone and the scalar weight loop. =2 check build: the C
+#                    path runs too and COARSE_SKIN_CHK logs the largest difference.
+COARSE_SKIN_FTRV ?= 0
+ifneq ($(COARSE_SKIN_FTRV),0)
+ifneq ($(COARSE_LEON),1)
+$(error COARSE_SKIN_FTRV needs COARSE_LEON=1)
+endif
+PLATFORM_OBJS += $(OBJDIR)/coarse_skin_sh4.o
+$(OBJDIR)/coarse_actor.o $(OBJDIR)/coarse_ganado.o: GAME_CPPFLAGS += -DRE4DC_COARSE_SKIN_FTRV=$(COARSE_SKIN_FTRV)
+$(OBJDIR)/coarse_skin_sh4.o: coarse_skin_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+endif
 ifneq ($(COARSE),0)
 ifneq ($(PACE_CATCHUP),2)
 $(error COARSE needs PACE_CATCHUP=2 and PACE_TRANS_SKIP (the qualified mask 4063))

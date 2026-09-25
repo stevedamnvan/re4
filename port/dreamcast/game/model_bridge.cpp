@@ -63,8 +63,15 @@ unsigned wrap_s,wrap_t;
 float scroll_u,scroll_v;
 }
 #if RE4DC_NATIVE_ACTOR_FAST
+#if RE4DC_COARSE_LEON
+extern "C" int re4dc_coarse_actor_source(const void*,Re4dcActorSource*);
+extern "C" void re4dc_bind_actor_frame(){bind_actor_frame();}
+#endif
 // Unskinned source arrays of an info, for draw-time skinning (NATIVE_ACTOR_SKIN).
 extern "C" int re4dc_actor_model_source(const void* info_ptr,Re4dcActorSource* out){
+#if RE4DC_COARSE_LEON
+    if(re4dc_coarse_actor_source(info_ptr,out))return 1;
+#endif
     auto* info=(const cModelInfo*)info_ptr;
     if(!info || !out || !info->pData)return 0;
     const ModelData* d=info->pData;
@@ -87,6 +94,9 @@ extern "C" int re4dc_actor_model_buffers(Re4dcModelPart* p){
 // Static prelit hint: no motion playing (Motion.pMot NULL), no shape
 // (vertex delta) table and no shape-animation flag on the info.
 extern "C" int re4dc_actor_model_prelit(const void* model,const void* info_ptr){
+#if RE4DC_COARSE_LEON
+    Re4dcActorSource alternate{};if(re4dc_coarse_actor_source(info_ptr,&alternate))return 0;
+#endif
     auto* m=(const cModel*)model;auto* info=(const cModelInfo*)info_ptr;
     if(!m || !info || !info->pData)return 0;
     return !m->pMotion && !info->pData->shapeOfs && !(info->be_flag&2);

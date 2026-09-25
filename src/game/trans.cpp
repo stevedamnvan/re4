@@ -474,6 +474,9 @@ void org_LoadTexObj(u32 id, int map)
 #if RE4DC_PACE_CATCHUP
 // port/dreamcast/game/pace.cpp (PACE_CATCHUP): render skip with catch-up.
 extern "C" int re4dc_pace_skipping;     // ModelRender: this iteration draws nothing
+#if RE4DC_ACTOR_SWAP
+extern "C" int re4dc_actor_swap(cModel* m);   // ACTOR_SWAP benchmark (port/dreamcast/game/actor_swap.cpp)
+#endif
 extern "C" int re4dc_pace_drop_models;  // v2: this tick's image is dropped (no ModelTrans)
 #ifndef RE4DC_PACE_TRANS_SKIP
 #define RE4DC_PACE_TRANS_SKIP 0
@@ -1402,6 +1405,12 @@ void ModelRender(cModel* m)
     if (m->invisible_factor * m->invisible_factor2 == 0.0f) {
         return;
     }
+#if RE4DC_ACTOR_SWAP
+    // ACTOR_SWAP (benchmark): Leon / the Ganados through the reduced-mesh adapters, both OT passes.
+    if (re4dc_actor_swap(m)) {
+        return;
+    }
+#endif
 #if RE4DC_FRONT_NATIVE && defined(__sh__)
     int frontNative = frontNativeOk(m);
 #if RE4DC_FRONT_NATIVE < 2

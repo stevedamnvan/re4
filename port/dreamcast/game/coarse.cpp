@@ -44,6 +44,15 @@ extern "C" {
 int re4dc_coarse_image;   // Render(): the image being drawn is coarse (latched by Trans())
 }
 
+#if RE4DC_COARSE_LEON
+extern "C" int re4dc_coarse_leon(cModel*);
+#endif
+#if RE4DC_COARSE_GANADO
+extern "C" int re4dc_coarse_ganado(cModel*);
+extern "C" void re4dc_coarse_ganado_begin();
+extern "C" void re4dc_coarse_ganado_end();
+extern "C" int re4dc_coarse_ganado_layout();
+#endif
 namespace {
 constexpr float kNear = 40.0f;         // clip plane, mm in front of the eye
 constexpr float kFar = 25000.0f;       // block cull distance (FOG_FAR: opaque fog there)
@@ -561,10 +570,30 @@ void blob(Out& o, const Vec& at, float r)
 
 void draw_model(Out& o, cModel* m, std::uint32_t rgb, float t)
 {
-    if (!actor_visible(m)) {
-        return;
-    }
+    bool crowd_layout=false;
+#if RE4DC_COARSE_GANADO
+    crowd_layout=re4dc_coarse_ganado_layout() && m->id>=0x10 && m->id<=0x20;
+#endif
+    if (!crowd_layout && !actor_visible(m))return;
     g_st.actors++;
+#if RE4DC_COARSE_LEON
+    if(m==(cModel*)pPL){
+        if(o.sq)re4dc_coarse_end(o.n);
+        o.total+=o.n;o.n=0;o.sq=nullptr;
+        const int handled=re4dc_coarse_leon(m);
+        o.sq=re4dc_coarse_begin(1);load_rows(g_S);
+        if(handled){if(o.sq)blob(o,m->pos,330.0f);return;}
+    }
+#endif
+#if RE4DC_COARSE_GANADO
+    if(m->id>=0x10 && m->id<=0x20){
+        if(o.sq)re4dc_coarse_end(o.n);
+        o.total+=o.n;o.n=0;o.sq=nullptr;
+        const int handled=re4dc_coarse_ganado(m);
+        o.sq=re4dc_coarse_begin(1);load_rows(g_S);
+        if(handled){if(o.sq && !crowd_layout)blob(o,m->pos,330.0f);return;}
+    }
+#endif
     for (cParts* p = m->pList; p; p = p->pList) {
         if (p->motParts.flags & 2) {
             continue;   // no world matrix this tick (partsWorldCalc skipped it)
@@ -584,6 +613,9 @@ void draw_model(Out& o, cModel* m, std::uint32_t rgb, float t)
 
 void draw_actors(Out& o)
 {
+#if RE4DC_COARSE_GANADO
+    re4dc_coarse_ganado_begin();
+#endif
     load_rows(g_S);
     cModel* pl = pPL;
     cModel* sub = pSUB;
@@ -601,6 +633,9 @@ void draw_actors(Out& o)
         const bool ganado = m->id >= 0x10 && m->id <= 0x20;
         draw_model(o, m, ganado ? 0x8A5A3A : 0x707070, ganado ? 44.0f : 60.0f);
     }
+#if RE4DC_COARSE_GANADO
+    re4dc_coarse_ganado_end();
+#endif
 }
 
 // ------------------------------------------------------------------ effects
