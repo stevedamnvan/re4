@@ -264,6 +264,24 @@ Vec* Esp3f_GetVecPtr(cEsp3f* p, u32 no);
 typedef cEsp* (*EspCreateFunc)();
 typedef void (*EspTransFunc)(cEsp*);
 void PushEsp(cEsp* esp);
+// GAME_ESP_OWNER (game30.mk, square plan: active effects): live esp slots counted per bucket of
+// info.Core_pEm, so EspDelete with an owner (c != 0) returns at once when no live slot can have that
+// owner (cEm10::move deletes its own effects every tick in several states; the slot loop then finds
+// nothing). The count follows every change of a live slot's Core_pEm: PullEsp / PushEsp, and the
+// three info copies (ESP_INFO_SET); pool alloc / free / push / pop mark it stale and the next
+// EspDelete recounts. =2 (check build): every early return is also checked by the slot loop.
+#if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
+extern "C" unsigned short re4dc_esp_own[64];
+extern "C" unsigned long re4dc_esp_own_valid;
+extern "C" void re4dc_esp_info_set(cEsp* esp, const EspInfo* info);
+static inline unsigned long re4dcEspOwnB(unsigned long pEm)
+{
+    return ((pEm >> 4) ^ (pEm >> 10)) & 63;
+}
+#define ESP_INFO_SET(esp, inf) re4dc_esp_info_set((cEsp*) (esp), (inf))
+#else
+#define ESP_INFO_SET(esp, inf) ((esp)->info = *(inf))
+#endif
 extern "C" {
 void EspFuncTblSet(int id, EspCreateFunc create, EspTransFunc trans);
 int PullEsp(cEsp** out, int id);

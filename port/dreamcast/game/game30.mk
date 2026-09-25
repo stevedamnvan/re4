@@ -117,6 +117,14 @@ endif
 GAME_CPPFLAGS += -DRE4DC_ATCHK_LIST=$(GAME_ATCHK_LIST)
 PLATFORM_CPPFLAGS += -DRE4DC_ATCHK_LIST=$(GAME_ATCHK_LIST)
 endif
+# GAME_ESP_OWNER=1 (square plan: active effects): live esp slots counted per owner (info.Core_pEm)
+#                    bucket, so EspDelete with an owner returns at once when that owner has no live
+#                    slot (include/esp.h). A header knob (ESP_INFO_SET): every game object gets it.
+#                    =2: every early return is checked by the slot loop ("ESPOWN" log line).
+GAME_ESP_OWNER ?= 0
+ifneq ($(GAME_ESP_OWNER),0)
+GAME_CPPFLAGS += -DRE4DC_ESP_OWNER=$(GAME_ESP_OWNER)
+endif
 # GAME_COL_PREFETCH=1: the scenery collision walks (block chains, block polygon lists) prefetch the next
 #                    block and the next polygon's record, vertex and normal. Loads only: same answers.
 GAME_COL_PREFETCH ?= 0

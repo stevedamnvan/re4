@@ -255,11 +255,59 @@ void EffectEventDelete()
 
 // Releases every live sprite whose owner info matches (a/b/c each skipped when 0) and, when a model is
 // given, that is attached to that model instance (pointer and serial).
+#if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
+static void espOwnRecount(cEspSystem* sys)
+{
+    u32 i;
+    for (i = 0; i < 64; i++) {
+        re4dc_esp_own[i] = 0;
+    }
+    for (i = 0; sys->pEspBuf != NULL && i < sys->nEsp; i++) {
+        cEsp* esp = (cEsp*) (sys->pEspBuf + i * 0x150);
+        if (esp->m_Be_flg & 1) {
+            re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]++;
+        }
+    }
+    re4dc_esp_own_valid = 1;
+}
+#if RE4DC_ESP_OWNER == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 espOwnCalls, espOwnSkips, espOwnMis, espOwnRecounts;
+#endif
+#endif
 void EspDelete(int a, int b, u32 c, cModel* model)
 {
     cEspSystem* sys = g_pEspSys;
     u32 i;
 
+#if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
+    if (c != 0) {
+        if (!re4dc_esp_own_valid) {
+            espOwnRecount(sys);
+#if RE4DC_ESP_OWNER == 2
+            espOwnRecounts++;
+#endif
+        }
+#if RE4DC_ESP_OWNER == 2
+        if (++espOwnCalls % 1024 == 0) {
+            re4dc_log("ESPOWN calls=%u skips=%u mismatch=%u recounts=%u\n", espOwnCalls, espOwnSkips, espOwnMis,
+                      espOwnRecounts);
+        }
+#endif
+        if (re4dc_esp_own[re4dcEspOwnB(c)] == 0) {
+#if RE4DC_ESP_OWNER == 2
+            espOwnSkips++;
+            for (i = 0; i < sys->nEsp; i++) {
+                cEsp* esp = (cEsp*) (sys->pEspBuf + i * 0x150);
+                if ((esp->m_Be_flg & 1) && esp->info.Core_pEm == c) {
+                    espOwnMis++;
+                }
+            }
+#endif
+            return;
+        }
+    }
+#endif
     for (i = 0; i < sys->nEsp; i++) {
         cEsp* esp = (cEsp*) (sys->pEspBuf + i * 0x150);
 

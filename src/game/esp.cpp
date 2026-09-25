@@ -34,6 +34,28 @@ int EspArrayPush(u32 n);
 int EspArrayPop();
 }
 
+#if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
+extern "C" {
+unsigned short re4dc_esp_own[64];
+unsigned long re4dc_esp_own_valid;
+}
+// Copies an owner block into a slot, moving a live slot between owner buckets.
+extern "C" void re4dc_esp_info_set(cEsp* esp, const EspInfo* info)
+{
+    int live = re4dc_esp_own_valid && (esp->m_Be_flg & 1);
+    if (live) {
+        re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]--;
+    }
+    esp->info = *info;
+    if (live) {
+        re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]++;
+    }
+}
+#define ESP_OWN_STALE() (re4dc_esp_own_valid = 0)
+#else
+#define ESP_OWN_STALE() ((void) 0)
+#endif
+
 // Default EspTransTbl entry: an effect whose id has no registered trans function is reported and
 // released.
 void EspDummyTrans(cEsp* esp)
@@ -105,6 +127,11 @@ int PullEsp(cEsp** out, int id)
     *out = esp;
     if (esp != sys->pDmyEsp) {
         esp->m_Be_flg |= 1;
+#if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
+        if (re4dc_esp_own_valid) {
+            re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]++;
+        }
+#endif
         ret = 1;
         sys->ActiveEspNum++;
         (*out)->m_Id = id;
@@ -208,6 +235,11 @@ u32 tubo_amb = 0;
 void PushEsp(cEsp* esp)
 {
     if (esp->m_Be_flg & 1) {
+#if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
+        if (re4dc_esp_own_valid) {
+            re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]--;
+        }
+#endif
         esp->m_Be_flg &= ~3;
         g_pEspSys->ActiveEspNum--;
         esp->Destruct();
@@ -544,6 +576,7 @@ int EspArrayAlloc(u32 n)
     u8* p;
 
     EspArrayFree();
+    ESP_OWN_STALE();
     if (n == 0) {
         return 0;
     }
@@ -575,6 +608,7 @@ int EspArrayFree()
     }
     Mem_free(sys->pEspBuf);
     sys->pEspBuf = NULL;
+    ESP_OWN_STALE();
     return 1;
 }
 
@@ -587,6 +621,7 @@ int EspArrayPush(u32 n)
     if (sys->pEspBufSave != NULL) {
         return 0;
     }
+    ESP_OWN_STALE();
     sys->pEspBufSave = sys->pEspBuf;
     sys->pEspBuf = (u8*) Debug_alloc(n * 0x150, 1);
     sys->nEspBack = sys->nEsp;
@@ -602,6 +637,7 @@ int EspArrayPop()
     if (sys->pEspBufSave == NULL) {
         return 0;
     }
+    ESP_OWN_STALE();
     Debug_free(sys->pEspBuf);
     sys->pEspBuf = sys->pEspBufSave;
     sys->pEspBufSave = NULL;

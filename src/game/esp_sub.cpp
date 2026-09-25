@@ -1341,7 +1341,7 @@ int EspSeqSet(EspGenWork* rec, EspInfo* info, u32* seed, cModel* model, Mtx* mtx
         return 0;
     }
     if (PullEsp(&e.p, rec->Id) != 0) {
-        e.p->info = *info;
+        ESP_INFO_SET(e.p, info);
         e.p->m_Id = rec->Id;
         e.p->m_Tex_id = rec->Tex_id;
         e.p->m_Type = rec->Type;
