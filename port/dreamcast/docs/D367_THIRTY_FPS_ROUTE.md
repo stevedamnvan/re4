@@ -217,10 +217,14 @@ Status, uncapped, same stack, hw ms:
   - STRICT with every decision identical against the uncapped control (tr41 / tr42, 4185 frames, 0 drift).
 - Fit / gap: complete 42.55 ms per tick, against 33.33 bare (-9.22) and 30.00 with the margin (**-12.55**).
   R fits; **G_q must fall to <= 24.97**. G alone exceeds real time (37.52 > 33.33).
-- Next, in the user's order:
-  1. whole animation / skeleton operations;
-  2. collision traversal;
-  3. visual simulation once its gameplay readers are known.
+- Skeleton step (user's order, item 1) done: GAME_PWC_KERNEL=3 (last-bit, decisions identical) +
+  GAME_PMC_KERNEL=1 + GAME_HERMITE_FAST=1 (exact): **G_q 37.52 -> 34.40**; complete coarse tick 39.78 ms
+  (25.1 fps at 83.8% speed); gap 9.43.
+- One-house test (user request): BIN 38 as a 400-triangle baked shell with a 256 VQ texture costs ~0.33
+  ms per image (v2; v1 0.60), 18 KB VRAM, STRICT (tr51); views and door notes in the plan doc.
+- **Current order (user, 2026-09-25):** (1) land the coarse renderer with frame pacing, (2) R headroom
+  (~2.1 ms of source work still runs on each drawn coarse tick), (3) back to G: collision traversal, then
+  visual simulation once its gameplay readers are known; appearance (step 5) after G.
 - The calibration disc c8 is in `D:\RE4DC-HWCAL` with the model's predictions (hwcal PREDICTIONS.md).
   It awaits the user's console run.
 - The code (coarse.cpp, PACE_TRANS_SKIP) is parked: it stacks on the unlanded pacing patch and lands

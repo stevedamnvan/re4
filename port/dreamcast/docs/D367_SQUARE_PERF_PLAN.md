@@ -298,6 +298,101 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
+### Current order and status (updated 2026-09-25, after the skeleton step and the one-house test)
+
+**The order we follow now (user, 2026-09-25):**
+1. **Land the coarse renderer with frame pacing.** coarse.cpp, PACE_TRANS_SKIP and the trace hashes stack
+   on the unlanded pacing stack, so the pacing landing comes first (the user's standing priority "frame
+   pacing, never to be deprioritised again"). Source: tree5's snapshot (b7a1382; patch against 4594c51,
+   sha256 95cd58a5...), minus the private knobs (GAME_SKEL_AUDIT, GAME_IK_PASS, POOL_PEAK_LOG). The
+   pacing player setting is the title Options row "Frame pacing: Smooth / Fast / Off" (user decision
+   2026-09-24; no boot question). Gates: knob-off identity, the pacing STRICT arms, the coarse STRICT
+   arms (tr42 / tr51 class), hw numbers, then the procedure.
+2. **R headroom.** About 2.1 ms of source work still runs on every drawn coarse tick (list below). R is
+   5.03 (v0.4, sq52) and reads ~5.4 on the skeleton stack (sq61 39.78 - sq57 34.40; code-layout effects
+   included): only ~0.6 ms is left under R <= 6 for any appearance work, so this trim comes before step 5.
+3. **Back to G** in the user's order: collision traversal, then visual simulation (their gameplay
+   readers first). Appearance (step 5), extending house shells included, follows G.
+
+**Where each step of the rethink stands:**
+
+| step | state |
+|---|---|
+| 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
+| 2. Coarse complete square | done as a measurement tool: R 5.03, STRICT every decision; not landed (item 1); R headroom (item 2) |
+| 3. Close G <= 24 | skeleton step done: G_q 37.52 -> 34.40 (-3.12); gap 9.43 to 24.97; collision next |
+| 4. 30 fps on hardware | waits for 3 and the calibration run |
+| 5. Restore appearance | one-house test measured (below); nothing else started |
+
+**What remains on the coarse renderer** (answer to the user, 2026-09-25):
+1. Landing (order item 1).
+2. Source work still invoked on a drawn tick, ~2.1 ms: HUD id quads ~0.6 (81 PSMTXConcat per tick),
+   IDSystem::unitTrans 0.48, model asset preparation 0.18, ExecOt 0.13, OSCheckHeap 0.12, GXProject 0.09,
+   small rows ~0.15 (order item 2).
+3. Appearance (step 5): actors are ribbons (Leon's jacket cloth draws as a curtain of slabs); scenery is
+   flat collision (no ground texture, trees, fences, props, the well, sky); doors draw as flat slabs from
+   their own collision pieces (they move correctly); interiors are flat; effects are plain billboards and
+   screen sprites are left out.
+4. Rooms: only r101 has run coarse; r100 / r103 not yet; the house data is r101's.
+5. The step-2 spec's "compact gameplay records": it reads the game's own structures.
+6. Not measured: PVR fill / ISP time (outside the CPU model); the console calibration.
+
+#### Skeleton operations (user's order, item 1; 2026-09-25)
+
+Never-draw uncapped arms (PACE_FORCE=A, PACE_TRANS_SKIP=4063, ACT_CAP=0), work = total - waits:
+
+| arm | knob (stacked) | work | vs previous | gameplay |
+|---|---|---:|---:|---|
+| sq50 | reference | 37.52 | - | tr41 |
+| sq53 | GAME_PWC_KERNEL=1 (Ganado part-world pass as one SH-4 loop; exact twin of GAME_SKEL_FTRV=1) | 37.13 | -0.39 | tr43 (=2): 4.28M parts compared, 0 mismatched words; tr44 STRICT vs tr41, 4186 frames |
+| sq54 | GAME_PWC_KERNEL=3 (every model's pass on the kernel: Leon and objects move to FTRV, last-bit) | 34.93 | -2.20 | tr45 vs tr41: every decision identical (em-em 2.90M, 411k line queries with 6.6M candidate polygon tests, 59.6k area, 211k damage); player drift 0, enemy max 0.000488 units |
+| sq56 | + GAME_PMC_KERNEL=1 (partsMatCalc's memo hits as one loop; exact) | 34.73 | -0.20 | tr46 STRICT vs tr45, 4236 frames |
+| sq57 | + GAME_HERMITE_FAST=1 (HermiteInterpolation restructured; exact) | **34.40** | -0.33 | tr47 (=2): 1.53M calls, 0 mismatches; STRICT vs tr46, 4202 frames |
+| sq58 / sq59 | + GAME_SKEL_PF=1 / =2 (prefetch the next part's lines) | 34.50 / 34.54 | +0.10 / +0.14 | tr48 STRICT; dropped (the one-fill bus: the prefetches wait) |
+| sq60 | sq57 + GAME_WORKAT_INLINE=1 (demand-backed workAt inline; exact) | 34.62 | +0.22 | tr49 STRICT vs tr47, 4202 frames |
+
+- GAME_WORKAT_INLINE removes 0.83 ms of its own rows (calls and instructions as expected) but I-miss
+  and D-miss rise +0.35 each elsewhere: code layout. Kept as an exact knob to re-measure with
+  profile-guided function ordering (never-draw arm: I-miss 4.4 ms, D-miss 3.8 ms per tick).
+- Recipe for the next steps: GAME_PWC_KERNEL=3 GAME_PMC_KERNEL=1 GAME_HERMITE_FAST=1. =3 is the last-bit
+  option (decisions identical); =1 is the exact alternative, 2.20 ms slower.
+- G_q **34.40** (-3.12 vs sq50). Complete every-tick-drawn coarse tick: sq61 **39.78** (sq52 42.55):
+  25.1 fps at 83.8% speed. Gap: G must reach <= 24.97 (-9.43).
+
+#### One-house test (user request, 2026-09-25)
+
+The user's request: one house on its existing baked appearance, a simple shell, correct doors and
+openings; measure the complete cost and inspect it from several angles before extending it.
+- **Candidate:** COARSE_HOUSE=1 (test knob). r101 BIN 38 (the house at the fight camera) as its baked
+  render shell: bl_house_shell.py --faces 400 --tex-size 256, fitted to the room collision (shell vertex
+  -> collision p50 78 mm, placement sign checked). 400 textured triangles, a 256 x 256 VQ bake bound by
+  package key, in place of the collision polygons of its outer surfaces.
+- **Cost** (every tick drawn, same stack as sq61):
+
+| arm | what | re4dc_coarse_draw | instructions per image | model total | trace |
+|---|---|---:|---:|---:|---|
+| sq61 | control (coarse, skeleton knobs) | 0.435 | 48.2k | 39.79 | - |
+| sq62 | v1: per triangle cross product, light, 3 transforms, clip loop | 1.038 (**+0.60**) | 140.2k | 40.25 | tr50 STRICT vs tr42, 8078 frames |
+| sq63 | v2: 325 positions transformed once, screen-space back faces, light once | 0.762 (**+0.33**) | 91.0k | 40.59 | tr51 STRICT vs tr42 (8111) and tr50 |
+
+  The model totals move by more than the house (+0.46 / +0.80) from layout (the game-logic rows move
+  +0.27 / +0.48 in render-only builds). Per image (v2): 123 house triangles drawn, 26 flat ones gone
+  (+291 TA vertices, +9 KB vertex data); VRAM +18,432 bytes (VQ; 131,072 as 16-bit); 12.5 KB of tables
+  and 11.9 KB of work buffers. Flycast wall time of the house itself: 610 us (v1), 304 us (v2).
+- **Views** (hv-* evidence: start, 8 m corner, 13 m side, 19 m across the lane, the rear wall; each
+  against the Standard full renderer and the flat coarse view): the shell brings back the roofline, the
+  window and door openings and the stone texture that the collision lacks; its 256 bake reads better than
+  Standard mode's 64 x 64 shell of the same house.
+- **Doors and openings:** the door (SatMgr piece 2, its own collision) draws as a flat slab in its
+  opening and moves with the game's door state; the shell leaves that doorway open above ~30 cm.
+  The house has an interior (80 piece-0 polygons inside its footprint). v1 hid 22 inside surfaces of its
+  walls (see-through from inside); v2 keeps polygons facing away from the nearest shell face, and one of
+  them shows as a dark flat triangle in a doorway in the 13 m side view. A volume test (inside the shell)
+  is the fix if the houses are extended.
+- **Per millisecond:** v2 is ~0.33 ms per house in view with this implementation; with ~2.1 ms of R
+  headroom recovered (order item 2), a handful of shells fit. Extending across the village is
+  appearance work (step 5) and the user's call after these results.
+
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
 | arm | hw ms | render-side | actors | logic/tick | scenery | ui | 2L+R |
@@ -840,3 +935,12 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq51 | uncapped, every tick drawn, source renderer | 104.75 (R 63.22 vs sq49) | - | - | drawing baseline |
 | 09-25 | sq52 | uncapped, every tick drawn, COARSE v0.4 | 42.55 (R 5.03) | - | tr42 STRICT vs tr41 | the coarse candidate, uncapped: -12.55 with the margin, -9.22 bare |
 | 09-25 | tr41/tr42 | GAME_DECISION_TRACE=1, ACT_CAP=0: control / coarse every tick | - | - | STRICT 4185 frames; decisions identical (2.90M em-em, 411k line queries, 59.6k area, 211k damage), 0 drift | uncapped gameplay preserved |
+| 09-25 | sq53 | never draw (sq50 flags) + GAME_PWC_KERNEL=1 | 37.13 work (-0.39) | - | tr43 (=2) 0 mismatched words; tr44 STRICT vs tr41 | exact kernel |
+| 09-25 | sq54 | + GAME_PWC_KERNEL=3 (all models on the kernel, last-bit) | 34.93 (-2.20) | - | tr45: every decision identical, enemy drift max 0.000488 | recipe (last-bit option) |
+| 09-25 | sq56 | + GAME_PMC_KERNEL=1 | 34.73 (-0.20) | - | tr46 STRICT vs tr45 | recipe |
+| 09-25 | sq57 | + GAME_HERMITE_FAST=1 | 34.40 (-0.33) | - | tr47 (=2) 0 mismatches, STRICT vs tr46 | recipe: **G_q 34.40** |
+| 09-25 | sq58/sq59 | + GAME_SKEL_PF=1 / =2 | 34.50 / 34.54 | - | tr48 STRICT | dropped |
+| 09-25 | sq60 | sq57 + GAME_WORKAT_INLINE=1 | 34.62 (+0.22; own rows -0.83, I/D-miss +0.35 each) | - | tr49 STRICT vs tr47 | kept as a knob; re-measure with function ordering |
+| 09-25 | sq61 | every tick drawn, COARSE v0.4 + skeleton recipe | 39.78 | - | - | control for the house test (sq52 42.55) |
+| 09-25 | sq62 | sq61 + COARSE_HOUSE v1 (BIN 38 shell, 400 tris, 256 VQ) | 40.24 (house row +0.60) | - | tr50 STRICT vs tr42, 8078 frames | superseded by v2 |
+| 09-25 | sq63 | sq61 + COARSE_HOUSE v2 (indexed, screen-space back faces) | 40.58 (house row +0.33) | - | tr51 STRICT vs tr42 (8111) and tr50 | the house test result; extension is step 5 |
