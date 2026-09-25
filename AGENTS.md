@@ -2,10 +2,10 @@
 
 ## Current direction (D367): supersedes the sections below where they conflict
 
-- **Targets:** the route target is unchanged: normal menu/New Game -> r100 -> r101 -> r103 playable. The frame-time target is now 20 fps (50 ms) on real NTSC Dreamcast hardware via GDEMU + VMU, with 15 fps the fallback in fights. The SH-4 hardware model (`tools/hwmodel/hwproject.sh`) is the hardware estimate; Flycast is a proxy.
+- **Targets:** the route target is unchanged: normal menu/New Game -> r100 -> r101 -> r103 playable. The frame-time target is now 30 fps (per tick: gameplay G <= 24 + render R <= 6 + a 3.33 margin; the 2026-09-25 rethink, a coarse complete square first) on real NTSC Dreamcast hardware via GDEMU + VMU; 20 fps and a 15 fps fight fallback were the earlier targets. The SH-4 hardware model (`tools/hwmodel/hwproject.sh`) is the hardware estimate; Flycast is a proxy.
 - **Rendering:** the user dropped GameCube rendering tech in favour of Dreamcast-native approaches and allows new offline assets.
 - **Never altered:** collision, event sequencing, game state and AI. Render-only changes must keep the logic trace STRICT.
-- **Decisions and work order:** every option is chosen by its hw ms impact. Performance work is one serialized lane (see `port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md`, which also lists every standing user decision).
+- **Decisions and work order:** every option is chosen by its hw ms impact. Since 2026-09-25 performance work runs in parallel, non-overlapping agent lanes, each change measured by one cost arm and one STRICT gate; the main session lands every patch (lane map: `port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md`, "Current order and status"; every standing user decision: `port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md`).
 - **How to resume:** use the shared skill `re4-dreamcast-d367`, which covers the harness, commit recipe, state files and decisions.
 - **Historical:** the Astra/Sol (GPT-6) assignment and the D349-cutover milestone below are history. Current work is user-directed through that skill. Codex sessions follow the same lane, rules and commit procedure.
 
@@ -60,7 +60,7 @@ Work through implementation, relevant checks, target execution and routine fixes
 until the defined milestone works. A first patch, passing host tests or a commit
 is not a stop instruction. Sol and Astra use the same contracts. Current user
 assignment: Astra locks architecture/handoff, then GPT-6 Sol at Max implements.
-This does not authorize additional agents. Assigned parallel work needs isolated
+This does not authorize additional agents (historical: the D367 parallel lanes of 2026-09-25 are user-authorized). Assigned parallel work needs isolated
 ownership and an exclusive emulator window.
 
 Astra decides architecture; Sol executes the approved architecture. Follow the

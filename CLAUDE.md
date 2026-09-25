@@ -1,21 +1,20 @@
 # RE4 Dreamcast working handoff
 
-Updated 2026-09-23. Project rules: [AGENTS.md](AGENTS.md).
+Updated 2026-09-25. Project rules: [AGENTS.md](AGENTS.md).
 
-**Active (D367, user-directed, 2026-09-23).** Goals:
-- 20 fps (50 ms/frame) on a real NTSC Dreamcast via GDEMU + VMU. 30 fps was the original target; 15 fps is the fallback in fights.
+**Active (D367, user-directed).** Goals:
+- 30 fps (33.3 ms a tick: gameplay G <= 24 + render R <= 6 + a margin) on a real NTSC Dreamcast via GDEMU + VMU, per the 2026-09-25 rethink (a coarse complete square first); 20 fps and a 15 fps fight fallback were the earlier targets.
 - The recovered game playing r100 -> r101 -> r103 with PS2-FMV cutscenes, music, inventory and retry.
 
 Resume with the shared skill `re4-dreamcast-d367` (Claude and Codex): it covers the procedure, harness, commit recipe and standing decisions. Then read [D367_THIRTY_FPS_ROUTE.md](port/dreamcast/docs/D367_THIRTY_FPS_ROUTE.md):
-- its "Work plan: serialized perf lane" table: one integrated build, steps 1-5, each measured stacked by hwproject hw ms;
-- the 20 fps budget;
+- its "30 fps rethink" status (the older "Work plan: serialized perf lane" table and the 20 fps budget are history);
 - every user decision.
 
 Build recipes are in [tools/d367/README.md](port/dreamcast/tools/d367/README.md). LH is the integrated base: 83 ms Flycast, 120.3 hw.
 
-2026-09-25: the r101 square (30 fps rethink) follows [D367_SQUARE_PERF_PLAN.md](port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md), section "Current order and status". Frame pacing and the coarse renderer landed default off (f4da5fd); R headroom and code placement (LINK_ORDER) landed default off (801d72d); the em-em candidate cache GAME_ATCHK_CACHE (aeefd26), the workAt inline GAME_WORKAT_INLINE (3eaa868) and the line queries' leaf and block walk kernels GAME_LINE_LEAF (cf46edc) and GAME_LINE_WALK (ba73027) and the pieces' transforms GAME_LINE_PIECE (4e394ea) landed default off: G_q 30.66, R ~4 (coarse, stick figures; the reduced characters are ~24 ms until the fast character path lands). Next: G (collision traversal: the line queries; then visual simulation).
+2026-09-25: the r101 square (30 fps rethink) follows [D367_SQUARE_PERF_PLAN.md](port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md), section "Current order and status". Frame pacing and the coarse renderer landed default off (f4da5fd); R headroom and code placement (LINK_ORDER) landed default off (801d72d); the em-em candidate cache GAME_ATCHK_CACHE (aeefd26), the workAt inline GAME_WORKAT_INLINE (3eaa868) and the line queries' leaf and block walk kernels GAME_LINE_LEAF (cf46edc) and GAME_LINE_WALK (ba73027) and the pieces' transforms GAME_LINE_PIECE (4e394ea) landed default off: G_q 30.66 (sq97); R 4.05 with coarse stick figures (cl22), 26.47 with the reduced characters (version C, cl21). Since the evening of 2026-09-25 the work runs in parallel, non-overlapping agent lanes (cl characters, vl vertex loop, gc collision, fx effects, sk skeleton, wd world, bg route bugs; lane map in that section): per change one cost arm and one STRICT gate, and the main session lands every patch via warp/tree7. An external, user-launched agent builds the first level's cast models; no in-session agent builds models.
 
-State at this update (HEAD 5285bc7 or later):
+State at the 2026-09-23 update (HEAD 5285bc7; history, superseded by the paragraph above):
 - **Perf lane:**
   - Step 0 (FRONT_NATIVE, RELEASE_FLAGS) landed.
   - Step 2 (logic, 12.0 hw ms/tick) landed.
@@ -31,8 +30,7 @@ State at this update (HEAD 5285bc7 or later):
   Also: a room re-entry takes ~15 s (motion-key per-sector reads plus an unprofiled remainder).
 - **Agent state:** each area has `/root/probe/d367-agents/<area>/STATE.md`. Read it before resuming that area.
 
-Evidence goes on D:\Flycast-Evidence
-e4-dreamcast (new dirs from the C: harness template). Run at most 2 Flycasts per agent, and delete disc images after each run.
+Evidence goes on D:\Flycast-Evidence\re4-dreamcast (new dirs from the C: harness template). The per-agent Flycast cap was lifted on 2026-09-25 (keep flycast.exe at 10 or fewer machine-wide; builds use make -j4); delete disc images after each run.
 
 The sections below (D366 pause, the four-owner "beat D349" sequence, Sol/Max assignment) are historical context; where they conflict, D367 wins. The [D366 pause handover](port/dreamcast/docs/R4_D366_CLAUDE_HANDOFF.md) still describes the inherited dirty overlay (~75 files; never stage, reset or clean it).
 

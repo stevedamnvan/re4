@@ -1,6 +1,7 @@
 # D367 square performance plan: r101 at 15 fps real time
 
-Owner: the D367 serialized perf lane. Started 2026-09-24 from the user's play tests. The repeatable loop
+Owner: the D367 main session, which since 2026-09-25 coordinates parallel lanes (section "Current order
+and status") and lands every patch. Started 2026-09-24 from the user's play tests. The repeatable loop
 lives in the `re4-dreamcast-square-perf` skill. This file is the plan and the ledger: update the ledger
 with every measured arm, and the plan when an item lands or is dropped.
 
@@ -298,7 +299,30 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
-### Current order and status (updated 2026-09-25, after the pieces' transforms in the line walk kernel)
+### Current order and status (updated 2026-09-25 evening: version C measured, parallel lanes)
+
+**How the work runs now (user, 2026-09-25 evening): parallel, non-overlapping agent lanes.** The user:
+"I don't want to spend more time benchmarking. I want to focus on the remaining optimization that can be
+parallelized." Per change: one cost arm and one STRICT gate (vs tr56, tr42, tr84), no series. Each lane
+develops in its own tree with its own arm prefix and hands its patch to the main session.
+
+| lane (arm prefix) | tree (under /root/probe/d367-agents) | owns |
+|---|---|---|
+| cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building |
+| vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: a hand-written SH-4 vertex loop in platform/native_actor_fast.cpp |
+| gc collision | lane-gcol/tree | the resumable sphere walk, the em-em rows |
+| fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept) |
+| sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map for deferring draw-only work |
+| wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky |
+| bg route bugs | lane-bugs | the pre-pivot backlog: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough (paused: its agent was stopped; relaunch on the user's word) |
+
+- **The main session** coordinates, lands every patch through warp/tree7 (knob-off identity, a carry-over
+  build of the arm's flags, then the commit procedure), keeps these docs current and owns the coarse HUD
+  fix (unlit "88" ammo digits, a flat lens).
+- **Models:** an external agent the user launches builds and reduces the rest of the first level's cast
+  (r100 / r101 / r103: Ganado variants, held items and hats, animals, crows, Leon's weapons) in the private
+  `re4-assets-private/cast-20260925/` (prompt: `character-prototype-20260925/CAST-AGENT-PROMPT.md`). No
+  in-session agent builds models; the cl lane integrates what it delivers.
 
 **The order we follow now (user, 2026-09-25):**
 1. **Land the coarse renderer with frame pacing.** Done: **f4da5fd** (patch land2-pacing-coarse.patch,
@@ -331,8 +355,9 @@ The part-world pass takes two paths:
    (sq91), gap 6.78. Then the line queries' leaf kernel (GAME_LINE_LEAF, cf46edc; exact): G_q 31.31 (sq94),
    gap 6.34. Then their block walk kernel (GAME_LINE_WALK, ba73027; exact): G_q 30.94 (sq96), gap 5.97. Then
    the pieces' transforms in that kernel (GAME_LINE_PIECE, 4e394ea; exact): **G_q 30.66** (sq97), gap **5.69**.
-   Next: the sphere queries, then visual simulation. The reduced characters (appearance, step 5) are with
-   the coarse-character agent: section "Reduced characters and the character path" below.
+   The rest of G runs in the lanes above: gc the sphere walk and the em-em rows, fx effects, sk skeleton /
+   motion / cloth / maths. The reduced characters (appearance, step 5): section "Reduced characters and the
+   character path" below.
 
 **Where each step of the rethink stands:**
 
@@ -340,60 +365,70 @@ The part-world pass takes two paths:
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28), all exact: G_q 30.66; gap 5.69 to 24.97; the sphere queries next |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28), all exact: G_q 30.66 (sq97); gap 5.69 to 24.97; in lanes: gc sphere walk and em-em rows, fx Esp / Efm, sk skeleton / motion / cloth / maths and the gameplay-reader map |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
-| 5. Restore appearance | one-house test measured (below); reduced characters integrated by the coarse-character agent but ~24 ms for Leon + 5 Ganados (estimate); the fast character path is queued (section "Reduced characters and the character path") |
+| 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); in lanes: cl fitted meshes, vl vertex loop, wd textured coarse world <= ~3 ms; the external agent: the first level's cast models; the main session: the coarse HUD fix |
 
 **What remains on the coarse renderer** (answer to the user, 2026-09-25):
 1. Landing (order item 1): done, f4da5fd.
 2. Source work still invoked on a drawn tick: ~0.8 ms after order item 2 (was ~2.1): the HUD's id quads
    ~0.49 (27 per tick: texture lookup, PSMTXConcat, 4 GXProject, the native UI submit and resolve), the
    IDSystem lists ~0.1, small rows. EspDelete (0.42) and audio_step (0.15) run on every tick: G, not R.
-3. Appearance (step 5): actors are ribbons (Leon's jacket cloth draws as a curtain of slabs); scenery is
-   flat collision (no ground texture, trees, fences, props, the well, sky); doors draw as flat slabs from
+3. Appearance (step 5): actors are ribbons by default (Leon's jacket cloth draws as a curtain of slabs;
+   the reduced characters are version C, below); scenery is flat collision (the wd lane textures it) (no ground texture, trees, fences, props, the well, sky); doors draw as flat slabs from
    their own collision pieces (they move correctly); interiors are flat; effects are plain billboards and
-   screen sprites are left out.
+   screen sprites are left out. Open bug: the HUD shows unlit "88" ammo digits and a flat lens (the
+   main session owns the fix).
 4. Rooms: only r101 has run coarse; r100 / r103 not yet; the house data is r101's.
 5. The step-2 spec's "compact gameplay records": it reads the game's own structures.
 6. Not measured: PVR fill / ISP time (outside the CPU model); the console calibration.
 
 #### Reduced characters and the character path (2026-09-25)
 
-The user asked for version C: the coarse renderer, today's G and the coarse-character agent's reduced
-models (the 3,989-triangle Leon with hair v2 and the 874-triangle Ganado; private bundles; the agent's
-worktrees under /root/probe/d367-agents/coarse-actors-4k). Every figure names its image. G is sq96's 30.94
-(30.66 with GAME_LINE_PIECE).
+Version C is the coarse renderer, today's G and the reduced models the character lane integrated (the
+3,989-triangle Leon with hair v2 and the 874-triangle Ganado; private bundles). Measured by the character
+agent on a snapshot of tree5 (coarse-actors-4k/stack-tree), r101 square frames 1000-1119, ACT_CAP=0;
+never-draw G cl23 30.66 (as sq97); gate cl24 STRICT vs tr56, tr42 and tr84. Every figure names its image.
+Caveat: the fixture faces a wall (0-1 Ganado visible, 6 character meshes submitted), so a view full of
+Ganados costs more.
 
-| version | image | R a drawn frame | every tick drawn | paced to full speed |
-|---|---|---:|---|---|
-| A (sq98, measured) | source renderer, original models | 68.6 | 10.0 fps at 33% speed | ~1 fps |
-| C (estimate) | coarse world, reduced Leon and Ganados | ~28 | ~17 fps at ~56% speed | ~2.5 fps |
-| B | coarse world, stick figures | ~4 | ~29 fps at ~95% speed | ~18 fps |
+| version | image | W a drawn tick | R | every tick drawn | paced to full speed |
+|---|---|---:|---:|---|---:|
+| A (cl27) | source renderer, source characters | 99.58 | 68.92 | 10.0 fps at 33% speed | 1.16 fps |
+| A' (cl26, benchmark only) | source renderer, the reduced characters (ACTOR_SWAP) | 93.68 | 63.02 | - | 1.27 fps |
+| C (cl21) | coarse world, reduced Leon and Ganados | 57.13 | 26.47 | 17.5 fps at 58% speed | 3.0 fps |
+| B (cl22) | coarse world, stick figures | 34.71 | 4.05 | 28.8 fps at 96% speed | 19.8 fps |
 
-- A's R (sq98 - sq96): characters 24.4, scenery 17.0, the game's own draw preparation 14.1, UI 7.6,
-  copies and the rest ~5.5. C keeps ~24 ms of characters and replaces the rest with ~4 ms of coarse world.
-- C's estimate: the agent's cl17 (66.44 ms a frame, every tick drawn, on its b7a1382 base; about 5 Ganado
-  meshes submitted, 1-2 clearly visible) minus that base's G (~37.4, as sq52) and ~1 ms of the R-headroom
-  knobs. The agent measures C on a snapshot of tree5 (coarse-actors-4k/stack-tree): every tick drawn, a
-  matched stick-figure control, never-draw G, a STRICT gate, and the same models on both renderers.
-- The reduced characters draw through the actors30 character code (platform/native_actor_fast.cpp)
-  through the agent's adapter. Version A draws with the same code, so with the same models the two
-  renderers differ only in setup (estimate 2-6 ms a frame). Profile of the agent's crowd runs (cl15-n0 and
-  n8; re4dc_actor_submit runs 3.68M instructions a tick for Leon + 8 Ganados):
+Paced to full speed = (1000 - 30 x 30.66) / R images a second.
+
+- The new renderer against the old with the same characters (cl26 - cl21): -36.55 ms a drawn tick (-39%),
+  whole frame: mostly the world (scenery meshes ~13 ms), the game's draw preparation, effects and
+  lighting. The characters' own share of that difference wasn't measured separately, so the earlier
+  estimate that the renderers' character setup differs by only 2-6 ms is neither confirmed nor refuted.
+- The reduced characters cost 22.42 ms over stick figures (cl21 - cl22): re4dc_actor_submit 12.5, the
+  Ganado adapter 3.7, the Leon adapter 2.1, skin palettes 1.3, the rest spread. The cl17-based estimate
+  of R ~28 for C was close (26.47 measured).
+- Why they cost that much (profile of the agent's crowd runs cl15-n0 and n8; re4dc_actor_submit runs
+  3.68M instructions a tick for Leon + 8 Ganados):
   - ~130 instructions per transformed vertex: compiled C with stack spills and a mul.l index scale;
   - a Ganado triangle costs 1.41 transformed vertices and 2.28 strip vertices (Leon 1.17 and 2.42); a
-    mesh prepared for this path needs ~0.6 and ~1.3;
-  - more weight palettes than the source models (Leon 665 vs 359, Ganado 193 vs 111): ~313 palette
-    passes a Ganado;
-  - so ~2.75 ms a Ganado and 9.9 ms for Leon, all in. Triangle count doesn't predict the cost (the
-    agent's triangle-only estimator failed).
-- **The fast character path (user, 2026-09-25; queued for the coarse-character agent after version C):**
-  1. prepare the meshes for this path offline and deterministically (strips, shared vertices, merged
-     weight palettes), keeping the approved look; measured on its own;
-  2. a hand-written SH-4 vertex loop (transform, outcodes, lighting) and a cheaper adapter, behind a
-     default-off knob with a =2 bit check against the C path, render-only STRICT; measured on C and A.
-  Target: Leon + 5 Ganados from ~24 to 6-8 ms. At G <= 24 that takes C from ~10 to ~25 fps paced to full
-  speed.
+    mesh prepared for this path needs ~0.6-0.7 and <= 1.3;
+  - more weight palettes than the source models (Leon 665 vs 359, Ganado 193 vs 111).
+  Triangle count doesn't predict the cost (the agent's triangle-only estimator failed).
+- **The fast character path (user, 2026-09-25), two parallel lanes:**
+  1. cl (coarse-actors-4k/stack-tree): fit the approved meshes to this code offline, deterministically and
+     losslessly (<= 1.3 strip vertices and ~0.6-0.7 transformed vertices a triangle, weight palettes <= the
+     source's, no section submitted twice; the look unchanged), then a cheaper adapter. Estimate: the
+     characters from 22 to 13-15 ms.
+  2. vl (lane-vloop/tree): ACTOR_VTX_KERNEL, a hand-written SH-4 vertex loop (transform, outcodes,
+     lighting) in platform/native_actor_fast.cpp, default off, with a =2 bit check against the C path,
+     render-only STRICT. Estimate with the fitted meshes: ~6-8 ms.
+  At G <= 24 with ~6-8 ms of characters, C paces at ~23-28 fps to full speed (R ~10-12); 30 fps needs
+  R <= 6.
+- New models for the rest of the first level's cast come from the external agent (section "Current order
+  and status"); the cl lane integrates them.
+- Coarse-path bug seen in C: the HUD shows unlit "88" ammo digits and a flat lens. The main session owns
+  the fix.
 
 #### Skeleton operations (user's order, item 1; 2026-09-25)
 
@@ -631,10 +666,11 @@ count as sq72):
   sq96)**: PSMTXMultVec 0.73 -> 0.44, hitCheck2 0.56 -> 0.43, the walk 1.03 -> 0.88, the new entry 0.32.
   tr83 (=2) 0 mismatches in the ends and the leaves over 5.37M pieces; tr83 / tr84 STRICT vs tr56 and
   tr42, every decision identical.
-- Next in collision traversal:
+- Next in collision traversal (the gc lane, lane-gcol/tree):
   - the sphere walk: a resumable kernel, since a hit moves the sphere, so leaves can't be collected first
     (designed; ~0.17 ms estimated);
-  - then visual simulation.
+  - the em-em rows.
+  Visual simulation is the sk and fx lanes' (section "Current order and status").
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
@@ -1223,3 +1259,8 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq97 | sq96 + GAME_LINE_PIECE=1 (the pieces' transforms in the walk kernel) | 30.66 (-0.28) | - | tr83 (=2) 0 mismatches over 5.37M pieces; tr83 / tr84 STRICT vs tr56 and tr42, every decision identical | landed 4e394ea: **G_q 30.66** |
 | 09-25 | land8 | GAME_LINE_PIECE landed (4e394ea) | - | - | knob-off identity (default, canonical); tr84 carry-over 446 / 455 objects identical (the rest tree5-only) | landed, default off |
 | 09-25 | sq98 | version A: the source renderer and original models, sq96's G knobs, every tick drawn (`$B0 PACE_MODE=off` + K2 + RH) | 99.57 a drawn tick (sq51, yesterday's code: 104.75) | - | - | reference for version C: R 68.6 (sq98 - sq96) |
+| 09-25 | cl21 | version C: the coarse world, reduced Leon (3,989 triangles, hair v2) and Ganados (874), every tick drawn, ACT_CAP=0 (tree5 snapshot, coarse-actors-4k/stack-tree) | W 57.13 (R 26.47) | - | cl24 STRICT vs tr56 / tr42 / tr84 | measured: 17.5 fps at 58% speed; 3.0 fps paced |
+| 09-25 | cl22 | version B: stick figures, the matched control | W 34.71 (R 4.05) | - | - | control: 28.8 fps at 96% speed; 19.8 fps paced |
+| 09-25 | cl23 | never draw, the same stack | 30.66 | - | - | G control (as sq97) |
+| 09-25 | cl26 | version A' (benchmark only): the source renderer with the same reduced characters (ACTOR_SWAP) | W 93.68 (R 63.02) | - | - | 1.27 fps paced; the new renderer is -36.55 a drawn tick, whole frame |
+| 09-25 | cl27 | version A: the source renderer, source characters | W 99.58 (R 68.92) | - | - | 1.16 fps paced |

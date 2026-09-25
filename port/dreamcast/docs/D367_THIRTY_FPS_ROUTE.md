@@ -176,9 +176,9 @@ Worth porting (with estimated hardware savings):
 4. a small grouped render hot path (-1 to -2);
 5. ~~a per-frame transformed-vertex cache for scenery~~: measured at 0. The transform-once meshlets (02d5a0f) already realise it (24.4% of corners saved), and repeats across draws use different matrices. What's left is a converter-side position/attribute split, ~-0.5 to -0.8 ms, unmeasured.
 
-## Work plan: serialized perf lane (2026-09-23)
+## Work plan: serialized perf lane (2026-09-23; superseded 2026-09-25 by the parallel lanes under "30 fps rethink")
 
-Performance work is serialized: one integrated build, one change at a time.
+Performance work was serialized until 2026-09-25: one integrated build, one change at a time.
 - After each step, measure the stacked build with hwproject and Flycast, in the r100 quiet window and the r101 fight, reporting p50, p99 and max against the 50 ms target.
 - Gains measured as separate arms overlap in the same frames, so only the stacked number counts.
 
@@ -203,7 +203,8 @@ every measured arm: [D367_SQUARE_PERF_PLAN.md](D367_SQUARE_PERF_PLAN.md). Order:
 (GAME_VEC_INLINE, collision fast paths, FTRV bones) -> offline-converted Ganado v4 blobs + flat light ->
 converted Standard room archive with per-part residency (also the r100 ambush memory fix) -> single-version
 scenery with better textures, nearer fog and a backdrop -> square PVS -> queued 64 KiB reads -> selective
--O3/LTO; Fast pacing (PACE_CAP=2) is the play default meanwhile. Other perf work yields to it.
+-O3/LTO; Fast pacing (PACE_CAP=2) is the play default meanwhile. (The 30 fps rethink below replaced this goal on
+2026-09-25.)
 
 **30 fps rethink (user, 2026-09-25): the coarse complete square first**
 (`re4-research\RE4_DC_30FPS_RETHINK_2026-09-25.md`; budget G <= 24 + R <= 6 + 3.33 margin per tick).
@@ -227,13 +228,29 @@ Status, uncapped, same stack, hw ms:
   done (801d72d, LINK_ORDER, exact: G_q 33.39), collision traversal under way (the em-em candidate cache
   GAME_ATCHK_CACHE, aeefd26, the workAt inline GAME_WORKAT_INLINE, 3eaa868, and the line queries' leaf and
   block walk kernels GAME_LINE_LEAF, cf46edc, and GAME_LINE_WALK, ba73027, and the pieces' transforms in the walk
-  kernel GAME_LINE_PIECE, 4e394ea, all exact: **G_q 30.66**, gap 5.69; the sphere queries next), then visual
-  simulation once its gameplay readers are known; appearance (step 5) after G.
-- Characters (user, 2026-09-25): the coarse-character agent's reduced models (3,989-triangle Leon,
-  874-triangle Ganado) draw through the actors30 character code, ~24 ms a frame for Leon + 5 Ganados
-  (estimate; version A's characters 24.4). The user queued a fast character path for that agent after
-  its version C measurement: meshes prepared for the path, then a hand-written vertex loop; target 6-8
-  ms (plan doc, "Reduced characters and the character path").
+  kernel GAME_LINE_PIECE, 4e394ea, all exact: **G_q 30.66**, gap 5.69). Since the evening of 2026-09-25 the rest runs in parallel lanes
+  (next bullet).
+- **Parallel lanes (user, 2026-09-25: "I don't want to spend more time benchmarking. I want to focus on the
+  remaining optimization that can be parallelized").** One agent per non-overlapping lane (arm prefix,
+  tree under /root/probe/d367-agents): cl characters (coarse-actors-4k/stack-tree: meshes fitted to the
+  character code losslessly, a cheaper adapter, then integrating new cast models), vl vertex loop
+  (lane-vloop/tree: ACTOR_VTX_KERNEL), gc collision (lane-gcol/tree: sphere walk, em-em rows), fx effects
+  (lane-gfx/tree: Esp / Efm, exact), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
+  gameplay-reader map), wd world (lane-world/tree: textured coarse world <= ~3 ms), bg route bugs
+  (lane-bugs: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough; paused). Per change: one
+  cost arm and one STRICT gate, no series. The main session lands every patch via warp/tree7 (knob-off
+  identity, carry-over), keeps the docs current and owns the coarse HUD fix. An external, user-launched
+  agent builds and reduces the first level's cast models (private `cast-20260925/`); no in-session agent
+  builds models. Lane map and owners: the plan doc, "Current order and status".
+- Characters (2026-09-25): the reduced models (3,989-triangle Leon, 874-triangle Ganado) draw through the
+  actors30 character code. Version C measured (r101 square, ACT_CAP=0, frames 1000-1119; every figure
+  names its image): coarse world + reduced characters W 57.13, R 26.47 (cl21; 17.5 fps every tick drawn
+  at 58% speed, 3.0 fps paced to full speed); coarse stick figures W 34.71, R 4.05 (cl22; 28.8 fps at 96%,
+  19.8 paced); the source renderer with the same reduced characters R 63.02 (cl26), with source
+  characters R 68.92 (cl27). The reduced characters cost 22.42 ms over stick figures (re4dc_actor_submit
+  12.5, adapters 5.8, skin palettes 1.3); gate cl24 STRICT. The fast character path is the cl lane
+  (fitted meshes, est. 22 -> 13-15 ms) plus the vl lane (the vertex loop, est. -> ~6-8 ms). Plan doc,
+  "Reduced characters and the character path".
 - The calibration disc c8 is in `D:\RE4DC-HWCAL` with the model's predictions (hwcal PREDICTIONS.md).
   It awaits the user's console run.
 - Landed f4da5fd (default off; knob-off identity, tr42 carry-over): frame pacing (PACE_CATCHUP), PACE_TRANS_SKIP,
@@ -248,7 +265,7 @@ Status, uncapped, same stack, hw ms:
 Details and the ledger are in [D367_SQUARE_PERF_PLAN.md](D367_SQUARE_PERF_PLAN.md).
 
 Parallel tracks (off the frame path; needed for the console gate):
-- r101/r103 bring-up (frontier W4, W9 packages);
+- r101/r103 bring-up (frontier W4, W9 packages) and the route bugs: the bg lane (lane-bugs; paused);
 - audio;
 - cutscenes;
 - inventory/retry (W11);

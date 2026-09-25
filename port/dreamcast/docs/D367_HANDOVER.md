@@ -1,7 +1,8 @@
-# D367 handover: all workstreams on hold (2026-09-24)
+# D367 handover: the hold of 2026-09-24 (lifted 2026-09-25: parallel lanes, see "How to resume")
 
-**Serial mode (later on 2026-09-24):** the user asked for the backlog to be worked through serially in one session,
-without sub-agents. Landed so far in that mode: 23074db warp rig v2 (DBG_WARP), 9bba3c8 ARAM block units re-read
+**Serial mode (later on 2026-09-24; ended 2026-09-25):** the user asked for the backlog to be worked through
+serially in one session, without sub-agents. Since 2026-09-25 the work runs in parallel lanes ("How to resume").
+Landed in serial mode: 23074db warp rig v2 (DBG_WARP), 9bba3c8 ARAM block units re-read
 from GD-ROM, 4980a40 + 976c93d SS_POOL_HIGH (the r101 call reset and the file-screen reset after it), a0c3079
 NATIVE_PKG_HIGH (FILE_01 westward reload), 8332a22 W9b (R4IM v3 runtime + converter: r101 scenery draws),
 ea1e2d3 VRAM_PAGES (default off), 9951d17 items 20+21 (TREE_IMPOSTOR/MESH_TEXTURES on W9b, default off), 010169c
@@ -36,7 +37,8 @@ ambush reserve -> ACTOR_FOG_GATE gates -> SS_UI_ORDER. Findings:
 - Launcher (private, D:\RE4DC-Play): the DualSense relaunch lost the game log (stale flycast.log RAM address);
   Play-RE4DC.ps1 now waits for the old Flycast and read_log.py re-reads the address.
 
-The user put every workstream on hold at this point. This document is the resume entry: read it first, then the
+The user put every workstream on hold at this point (lifted 2026-09-25). For the hold-era streams this document is
+the entry: read it, then the
 `re4-dreamcast-d367` skill, then the owning area's `STATE.md` under `/root/probe/d367-agents/<area>/`. Each agent was
 told to stop at a safe point, stop its own processes by PID, delete discs/stage dirs (evidence kept) and write its
 STATE.md as a handover.
@@ -55,7 +57,7 @@ STATE.md as a handover.
 | r100 -> r101 door | ARAM block-swap fix landed (9bba3c8); swaps in both directions pass in Flycast. |
 | r101 | Loads by direct entry and by warp. The first-visit Hunnigan call and the "Playing Manual 2" file screen after it now work (SS_POOL_HIGH=1, in the M1 recipe; 4980a40, 976c93d). With W9b (8332a22) the scenery draws. With tex-vq6 (46b9f4f; r101 textures VQ) the square fight runs: warp r101-bell-fight 10.1 fps Standard / 9.4 Original in Flycast (test build), 15 failed uploads (was 4,613). Not yet played through to the bell. |
 | r103 | Plan only (user: "work on this plan but don't implement"). |
-| Performance | r100 8-Ganado fight ~125 hw ms/frame after this session's cuts; target 50 ms (20 fps). |
+| Performance | 2026-09-25, the r101 square (30 fps rethink, ACT_CAP=0): never-draw G_q 30.66 ms a tick (sq97), target 24.97 (gap 5.69); R 4.05 with coarse stick figures (cl22), 26.47 with the reduced characters (version C, cl21); the source renderer R 68.92 (cl27). Plan: D367_SQUARE_PERF_PLAN.md. (At the hold: the r100 8-Ganado fight ~125 hw ms/frame against a 50 ms target.) |
 
 ## Critical path and blockers
 
@@ -225,8 +227,10 @@ build or watcher of theirs is running.
 ## How to resume
 
 1. Read this file, the skill, and the area STATE.md files above.
-2. Serial mode has landed the warp rig, ARAM fix, r101 call reset, FILE_01 reload, W9b, VRAM_PAGES, items 20+21,
-   QUALITY_ASSETS and tex-vq6. Next in the serial backlog:
+2. Since 2026-09-25 the work runs in parallel, non-overlapping agent lanes; the lane map, owners and the landing
+   rule are in D367_SQUARE_PERF_PLAN.md, "Current order and status". Serial mode had landed the warp rig, ARAM fix,
+   r101 call reset, FILE_01 reload, W9b, VRAM_PAGES, items 20+21, QUALITY_ASSETS and tex-vq6. The rest of the serial
+   backlog belongs to the route-bugs lane (bg, lane-bugs; paused):
    - r100 after-state crows (heap 4, see blocker 3);
    - the m1 restage with em15 keys;
    - r101 -> r103 (the bell movie plays since 07d4a82);
@@ -239,6 +243,8 @@ build or watcher of theirs is running.
      texture packages (open failed): trace the staging gap;
    - ADPCM movie audio (queued by the user after the ring fix);
    - r100 Standard proof.
-3. Resume the other streams in the order of the dependency list in the route doc; every patch still goes through
+3. Other streams go to their lane; per change one cost arm and one STRICT gate, no series (user: minimal
+   benchmarking). Lane agents hand their patches to the main session, which lands them via warp/tree7; every
+   patch still goes through
    the commit procedure in the skill (sha check, HEAD guard, empty index, `git apply --check` / `--cached --check`,
    commit with the Co-Authored-By line, push, dirty count stays 75).
