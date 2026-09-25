@@ -134,6 +134,19 @@ endif
 GAME_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
 PLATFORM_CPPFLAGS += -DRE4DC_ATCHK_CACHE=$(GAME_ATCHK_CACHE)
 endif
+# GAME_LINE_LEAF=1 (G, collision traversal; exact): the scenery line queries' leaf loop (atari.cpp
+#                  blkPolyLineCkCore) runs the polyBit dedup and At_poly_line_ck's first four tests (plane
+#                  crossing, three edge sides) in platform/lnk_sh4.S with the same float operations on
+#                  the same operands; only the polygons passing all four reach At_poly_line_ck. =2 (check
+#                  build): every verdict compared with the tests in C and At_poly_line_ck ("LNK" lines).
+GAME_LINE_LEAF ?= 0
+ifneq ($(GAME_LINE_LEAF),0)
+PLATFORM_OBJS += $(OBJDIR)/platform/lnk_sh4.o
+$(OBJDIR)/platform/lnk_sh4.o: platform/lnk_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_LEAF=$(GAME_LINE_LEAF)
+endif
 # GAME_WORKAT_INLINE=1 (the 30 fps rethink; port overhead, exact; needs OBJECT_DEMAND=1 ENEMY_DEMAND=1):
 #                    the demand-backed cObj / cEm managers' workAt (parts_bridge.cpp: two out-of-line
 #                    calls per lookup, ~3,700 lookups per square tick from EfmDelete, GetEmPtrFromList,

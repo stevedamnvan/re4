@@ -1026,6 +1026,167 @@ int blkPolyLineCk(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag, int
     return ret;
 }
 
+#if defined(RE4DC_LINE_LEAF) && RE4DC_LINE_LEAF
+// GAME_LINE_LEAF (game30.mk; G, collision traversal; exact): a leaf's polygons run the dedup on polyBit
+// and At_poly_line_ck's first four tests (the plane crossing, the three edge sides) in
+// platform/lnk_sh4.S, with the same float operations on the same operands; only the polygons passing
+// all four reach At_poly_line_ck and the hit compare, in index order, so every result, distance
+// compare and normal is the loop's. =2 (check build): each chunk's untested polygons are listed
+// first, and every verdict is compared with the four tests in C and with At_poly_line_ck ("LNK" lines).
+struct LineLeafQ {
+    Vec p0;         // 0x00  vert0
+    Vec p1;         // 0x0C  vert1
+    Vec a;          // 0x18  vert1 - vert0 (At_poly_line_ck's a)
+    Vec* vtx;       // 0x24
+    Vec* nrm;       // 0x28
+    Vec* edge;      // 0x2C
+    AtPoly* poly;   // 0x30
+    u8* bits;       // 0x34  polyBit
+};
+static_assert(__builtin_offsetof(LineLeafQ, vtx) == 0x24 && __builtin_offsetof(LineLeafQ, bits) == 0x34,
+              "platform/lnk_sh4.S reads these offsets");
+extern "C" int re4dc_line_leaf(const LineLeafQ* q, const u16* idx, int n, u16* out);
+#define LNK_CHUNK 64
+#if RE4DC_LINE_LEAF == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 lnkCalls, lnkTested, lnkSurv, lnkBad, lnkLoose, lnkLost, lnkOrder;
+// At_poly_line_ck's first four tests (at_sub.cpp), as written there: 1 when all four pass.
+static int lnkPass4(AtPolyData* pd, AtPoly* poly, Vec* vert0, Vec* vert1)
+{
+    Vec d0;
+    Vec d1;
+    Vec c;
+    Vec a;
+    Vec b;
+    Vec* vtx = pd->vtx;
+    Vec* v0 = &vtx[poly->v[0]];
+    Vec* v1;
+    Vec* v2;
+    Vec* nrm = &pd->nrm[poly->n];
+    f32 dp0;
+    f32 dp1;
+
+    d0.x = vert0->x - v0->x;
+    d0.y = vert0->y - v0->y;
+    d0.z = vert0->z - v0->z;
+    d1.x = vert1->x - v0->x;
+    d1.y = vert1->y - v0->y;
+    d1.z = vert1->z - v0->z;
+    dp0 = d0.x * nrm->x + d0.y * nrm->y;
+    dp0 += d0.z * nrm->z;
+    dp1 = d1.x * nrm->x + d1.y * nrm->y;
+    dp1 += d1.z * nrm->z;
+    if (dp0 * dp1 > 0.0f) {
+        return 0;
+    }
+    v1 = &vtx[poly->v[1]];
+    PSVECSubtract(vert1, vert0, &a);
+    PSVECSubtract(vert0, v0, &b);
+    PSVECCrossProduct(&pd->edge[poly->e[0]], &a, &c);
+    if (PSVECDotProduct(&c, &b) < 0.0f) {
+        return 0;
+    }
+    v2 = &vtx[poly->v[2]];
+    PSVECSubtract(vert0, v1, &b);
+    PSVECCrossProduct(&pd->edge[poly->e[1]], &a, &c);
+    if (PSVECDotProduct(&c, &b) < 0.0f) {
+        return 0;
+    }
+    PSVECSubtract(vert0, v2, &b);
+    PSVECCrossProduct(&pd->edge[poly->e[2]], &a, &c);
+    if (PSVECDotProduct(&c, &b) < 0.0f) {
+        return 0;
+    }
+    return 1;
+}
+#endif
+static int lineLeaf(cSat* sat, u16* idx, int n, Vec* pos0, Vec* pos1, int flag, int mask, Vec* hit, u32* pn)
+{
+    LineLeafQ q;
+    u16 surv[LNK_CHUNK];
+    Vec h;
+    int ret = 0;
+
+    q.p0 = *pos0;
+    q.p1 = *pos1;
+    PSVECSubtract(pos1, pos0, &q.a);
+    q.vtx = sat->vtx;
+    q.nrm = sat->norm_p;
+    q.edge = sat->edge_p;
+    q.poly = sat->poly_p;
+    q.bits = polyBit;
+    while (n > 0) {
+        const int c = n < LNK_CHUNK ? n : LNK_CHUNK;
+#if RE4DC_LINE_LEAF == 2
+        u16 cand[LNK_CHUNK];
+        int nc = 0;
+        for (int i = 0; i < c; i++) {
+            const u32 no = idx[i];
+            const u32 bit = 1 << (no & 7);
+            if ((polyBit[no >> 3] & bit) == 0) {
+                polyBit[no >> 3] |= bit;
+                cand[nc++] = no;
+            }
+        }
+        for (int j = 0; j < nc; j++) {
+            polyBit[cand[j] >> 3] &= ~(1 << (cand[j] & 7));
+        }
+#endif
+        const int k = re4dc_line_leaf(&q, idx, c, surv);
+#if RE4DC_LINE_LEAF == 2
+        {
+            int s = 0;
+            for (int j = 0; j < nc; j++) {
+                AtPoly* poly = &sat->poly_p[cand[j]];
+                const int kept = s < k && surv[s] == cand[j];
+                const int p4 = lnkPass4((AtPolyData*) sat, poly, pos0, pos1);
+                if (kept) {
+                    s++;
+                }
+                if (p4 && !kept) {
+                    ++lnkBad;
+                }
+                if (!p4 && kept) {
+                    ++lnkLoose;
+                }
+                if (!kept && At_poly_line_ck((AtPolyData*) sat, &h, poly, pos0, pos1, flag, mask) != 0) {
+                    ++lnkLost;
+                }
+                if ((polyBit[cand[j] >> 3] & (1 << (cand[j] & 7))) == 0) {
+                    ++lnkOrder;
+                }
+            }
+            if (s != k) {
+                ++lnkOrder;
+            }
+            lnkTested += nc;
+            lnkSurv += k;
+            if (++lnkCalls % 8192 == 0) {
+                re4dc_log("LNK calls=%u tested=%u surv=%u bad=%u loose=%u lost=%u order=%u\n", lnkCalls, lnkTested,
+                          lnkSurv, lnkBad, lnkLoose, lnkLost, lnkOrder);
+            }
+        }
+#endif
+        for (int i = 0; i < k; i++) {
+            AtPoly* poly = &sat->poly_p[surv[i]];
+            const u32 attr = At_poly_line_ck((AtPolyData*) sat, &h, poly, pos0, pos1, flag, mask);
+            if (attr) {
+                if (GetDistance(pos0, &h) < GetDistance(pos0, hit)) {
+                    *hit = h;
+                    ret = attr;
+                    if (pn) {
+                        *pn = (u32) &sat->norm_p[poly->n];
+                    }
+                }
+            }
+        }
+        idx += c;
+        n -= c;
+    }
+    return ret;
+}
+#endif
+
 // Line test of one block's polygons (floor / wall subset by flag), each once per query; keeps
 // the hit closest to pos0 and its normal.
 int blkPolyLineCkCore(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag, int mask, Vec* hit, u32* pn)
@@ -1049,6 +1210,9 @@ int blkPolyLineCkCore(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag,
     }
     n = end - start;
     idx = &blk->idx[start];
+#if defined(RE4DC_LINE_LEAF) && RE4DC_LINE_LEAF
+    return n > 0 ? lineLeaf(sat, idx, n, pos0, pos1, flag, mask, hit, pn) : 0;
+#else
 #if defined(RE4DC_COL_PREFETCH) && RE4DC_COL_PREFETCH
     u16* idxEnd = &blk->idx[end];
     if (n > 0) {
@@ -1084,6 +1248,7 @@ int blkPolyLineCkCore(cSat* sat, cSatBlock* blk, Vec* pos0, Vec* pos1, int flag,
         }
     }
     return ret;
+#endif
 }
 
 // Releases a piece (freeing a file built by create(poly)); an invalid pointer is an error.
