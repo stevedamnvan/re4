@@ -225,8 +225,9 @@ Status, uncapped, same stack, hw ms:
 - **Current order (user, 2026-09-25):** (1) land the coarse renderer with frame pacing (done: f4da5fd), (2) R headroom
   (done: 801d72d; source work on a drawn coarse tick ~2.1 -> ~0.8 ms, R ~4), (3) back to G: code placement
   done (801d72d, LINK_ORDER, exact: G_q 33.39), collision traversal under way (the em-em candidate cache
-  GAME_ATCHK_CACHE, aeefd26, exact: **G_q 32.23**, gap 7.26; the line queries next), then visual simulation once
-  its gameplay readers are known; appearance (step 5) after G.
+  GAME_ATCHK_CACHE, aeefd26, then the workAt inline GAME_WORKAT_INLINE, 3eaa868, both exact: **G_q 31.75**, gap
+  6.78; the line queries next), then visual simulation once its gameplay readers are known; appearance
+  (step 5) after G.
 - The calibration disc c8 is in `D:\RE4DC-HWCAL` with the model's predictions (hwcal PREDICTIONS.md).
   It awaits the user's console run.
 - Landed f4da5fd (default off; knob-off identity, tr42 carry-over): frame pacing (PACE_CATCHUP), PACE_TRANS_SKIP,

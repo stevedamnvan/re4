@@ -298,7 +298,7 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
-### Current order and status (updated 2026-09-25, after the em-em candidate cache)
+### Current order and status (updated 2026-09-25, after the workAt inline)
 
 **The order we follow now (user, 2026-09-25):**
 1. **Land the coarse renderer with frame pacing.** Done: **f4da5fd** (patch land2-pacing-coarse.patch,
@@ -326,9 +326,10 @@ The part-world pass takes two paths:
    readers first). Appearance (step 5), extending house shells included, follows G. First G step done
    with item 2: code placement (LINK_ORDER, 801d72d; exact): **G_q 33.39** (sq72; the same code unplaced
    34.64), gap 8.42 to 24.97 (section "Code placement" below). Collision traversal, first step: the em-em
-   candidate cache (GAME_ATCHK_CACHE, aeefd26; exact): **G_q 32.23** (sq85), gap **7.26** to 24.97 (section
-   "Collision traversal" below). Next: the scenery line queries' leaf walk and polygon test (4.35 ms),
-   then visual simulation.
+   candidate cache (GAME_ATCHK_CACHE, aeefd26; exact): G_q 32.23 (sq85), gap 7.26 to 24.97 (section
+   "Collision traversal" below). Then the workAt inline (GAME_WORKAT_INLINE, 3eaa868; exact): **G_q 31.75**
+   (sq91), gap **6.78**. Next: the scenery line queries (4.35 ms: a leaf kernel is in test, then the block
+   walk), then visual simulation.
 
 **Where each step of the rethink stands:**
 
@@ -336,7 +337,7 @@ The part-world pass takes two paths:
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25) and the em-em candidate cache (aeefd26, -1.16), all exact: G_q 32.23; gap 7.26 to 24.97; the line queries' leaf walk next |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16) and the workAt inline (3eaa868, -0.48), all exact: G_q 31.75; gap 6.78 to 24.97; the line queries next |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); nothing else started |
 
@@ -529,7 +530,26 @@ count as sq72):
   - Sphere queries: ~1.07 (784 block sphere tests a tick).
   - at_mod: ~1.5 (getPos 0.34, ObjHitCheck 0.32 in 5 calls, At_em_* 0.34, atchkPasses 0.17).
   - sce_at: ~0.3.
-- Next in collision traversal: the leaf walk and the polygon test.
+- Arms after the cache (never draw, paired with sq85; drawn arms with sq86, 36.45, R 4.22):
+
+  | arm | change | work | vs sq85 | gameplay |
+  |---|---|---:|---:|---|
+  | sq87 | the order file regenerated from the cache's runs (ordgen_c3.py) | 32.29 | +0.06 | - |
+  | sq89 | GAME_OBJHIT_LIST=1: ObjHitCheck walks GAME_ATCHK_LIST's array of the object list, header and id lines prefetched | 32.25 | +0.02 | tr72 (=2) 0 mismatches over 41k calls; tr73 STRICT, identical |
+  | sq90 | sq89 + GAME_WORKAT_INLINE=1 | 31.58 | -0.65 | - |
+  | **sq91** | **GAME_WORKAT_INLINE=1** | **31.75** | **-0.48** | tr74 STRICT vs tr56 and tr42, every decision identical |
+
+- The regenerated order lost drawn as well (sq88 36.84, +0.39): the landed order stays.
+- ObjHitCheck's array walk: its row fell 0.317 -> 0.284 ms, but two prefetches per object took it from
+  3,777 to 6,555 instructions a call. Parked in tree5.
+- **GAME_WORKAT_INLINE (landed 3eaa868, default off; needs OBJECT_DEMAND=1 ENEMY_DEMAND=1).** A tree5 knob
+  since sq60, where it lost 0.22 before code placement (I-miss and D-miss +0.35 each). With the order file
+  it pays: the workAt and frozen rows (0.83 ms) go, 96k fewer instructions a tick, I-miss +0.05. The
+  demand-backed cObj / cEm managers' workAt reads the slot table inline (include/cManager.h) when no pool
+  is frozen for the sub screen (a count parts_bridge.cpp keeps as it freezes and thaws), the array is the
+  room's own and the index is in range; every other case takes the bridge as before.
+- Next in collision traversal: the scenery line queries' leaf loop (a kernel for At_poly_line_ck's first
+  four tests is in test), then the block walk (blkPolyLineCk and lineOverlap, 1.36 ms).
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
@@ -1102,3 +1122,9 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq84 | rev 5: noted infos applied in place | 32.70 (-0.69) | - | tr68 0 mismatches, 36 fresh; tr69 STRICT, identical | revised |
 | 09-25 | sq85 | rev 6: + infos absent from the list remembered | 32.23 (-1.16) | - | tr70 0 mismatches over 442k reuses; tr71 STRICT vs tr56 and tr42, every decision identical | landed aeefd26: **G_q 32.23** |
 | 09-25 | land4 | GAME_ATCHK_CACHE landed (aeefd26) | - | - | knob-off identity (default, canonical); tr71 carry-over 444 / 453 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | sq86 | sq85 drawn (PACE_MODE=off, COARSE=1) | 36.45 (R 4.22) | - | - | the drawn control |
+| 09-25 | sq87 / sq88 | the order file regenerated from sq85 / sq86 (never draw / drawn) | 32.29 (+0.06) / 36.84 (+0.39) | - | - | dropped: the landed order stays |
+| 09-25 | sq89 | sq85 + GAME_OBJHIT_LIST=1 (ObjHitCheck on the object list's array) | 32.25 (+0.02) | - | tr72 (=2) 0 mismatches over 41k calls; tr73 STRICT, identical | parked: prefetches cost what the stalls saved |
+| 09-25 | sq90 | sq89 + GAME_WORKAT_INLINE=1 | 31.58 (-0.65) | - | - | measured without OH1 next |
+| 09-25 | sq91 | sq85 + GAME_WORKAT_INLINE=1 | 31.75 (-0.48) | - | tr74 STRICT vs tr56 and tr42, every decision identical | landed 3eaa868: **G_q 31.75** |
+| 09-25 | land5 | GAME_WORKAT_INLINE landed (3eaa868) | - | - | knob-off identity (default, canonical); tr74 carry-over 444 / 453 objects identical (the rest tree5-only) | landed, default off |

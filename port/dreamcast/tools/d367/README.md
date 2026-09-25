@@ -35,6 +35,8 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
 - The em-em candidate cache (aeefd26; exact, room-independent; not in LH yet: gated on the r101 square): the
   coarse-square arms add `GAME_ATCHK_CACHE=1` (needs GAME_ATCHK_LIST=1, in LH). `GAME_ATCHK_CACHE=2` is its
   check build (every reuse compared with a fresh collection, "ATC" lines).
+- The workAt inline (3eaa868; exact, room-independent; not in LH yet): the coarse-square arms add
+  `GAME_WORKAT_INLINE=1` (needs OBJECT_DEMAND=1 ENEMY_DEMAND=1).
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 
