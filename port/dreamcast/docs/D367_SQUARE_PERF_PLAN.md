@@ -324,6 +324,20 @@ low_RotMatrix 0.55, SINF/COSF 0.77, MultVec 0.16). RotVector is a pure function 
 angle bits, so a value-keyed memo is exact. (The skeleton audit's 12% low_RotMatrix repeat rate
 was measured per destination matrix, a stack temporary here, so it does not bound this.)
 
+**Result (GAME_ROTVEC_MEMO, 7d0401d, 2026-09-25): -0.54 hw ms/tick on its own rows, exact.** Only
+yaw-only angles are memoised (low_RotMatrix treats rot.x and rot.z == 0.0f, either sign, as sin 0 /
+cos 1, so the key is src + rot.y); an entry is one aligned 32-byte line, 256 entries (8 KB). tr24:
+3.21M calls, 80.5% hits, 0.66% non-yaw calls, 0 mismatches, logic trace STRICT vs tr19 over 4381
+frames. RotVector + low_RotMatrix + SINF/COSF 1.62 -> 1.08 (sq35 -> sq39). The first six-word form
+(40-byte entries, sq38) saved less on these rows (1.18): both lines of its entry missed ~68% of
+lookups (per-PC profile). Whole-square work moved -0.21 (sq39) / -0.39 (sq38), differences between
+them spread over unrelated rows: build-layout noise (~+-0.3). The lookup and the src / angle loads
+(caller data, missed in the original too) remain; the rest of the 1.85 is getPos and MultVec.
+
+Measurement rule from these arms: exclude the pacing wait rows (re4dc_pace_end,
+re4dc_vi_retrace_count) from never-draw totals. They are spin time that follows Flycast timing: ~0.01
+in earlier arms, 0.2-0.7 in these. Work G = total - those rows.
+
 ### Skeleton prototype: GAME_SKEL_FTRV on the Ganado part-world pass (2026-09-24)
 
 Scope: every partsWorldCalc run inside cEm10::move (an `extern "C"` scope counter set by a guard at
@@ -409,7 +423,7 @@ before GAME_SKEL_FTRV). W + G with the skeleton change is not yet measured as on
 
 | work | today | identified next items (estimates) | after them | needed (15 fps / 30 fps) |
 |---|---:|---|---:|---|
-| G, retained | 37.4 | RotVector/getPos memo ~1.5 (exact); Ganado local matrices <= 1.4; motion keys <= 1.2; FSCA trig 1.5-2.0 (last-bit); scenery collision rejection 0.8-1.5 (exact); remaining part-world passes (Leon, objects) ~0.5 | ~30-32 | 20-25 |
+| G, retained | 37.4 (36.8-37.2 after GAME_ROTVEC_MEMO, measured) | RotVector memo (done: -0.54 on its rows, not ~1.5); Ganado local matrices <= 1.4; motion keys <= 1.2; FSCA trig 1.5-2.0 (last-bit); scenery collision rejection 0.8-1.5 (exact); remaining part-world passes (Leon, objects) ~0.5 | ~30-32 | 20-25 |
 | R, per image | 63.6 | packet plumbing ~1, UI image caching ~1-1.5, small copies / GX calls ~0.5 | ~60-61 | 16.7-26.7 / 8.3-13.3 |
 
 **Unresolved gaps: G ~5-12 ms, R ~33-44 ms at 15 fps (more at 30).** Neither closes by tuning the
@@ -529,5 +543,10 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-24 | tr16/tr17 | GAME_DECISION_TRACE=1: control / GAME_SKEL_FTRV=1 live | - | - | tr16 STRICT vs tr2; tr17 discrete identical, float drift only | all decisions identical except 5 frames of candidate polygon tests (see tr18-tr21) |
 | 09-24 | tr18/tr19 | + line-query answers hashed: control / GAME_SKEL_FTRV=1 live | - | - | tr18 STRICT vs tr2; tr19 discrete identical | RNG, flags, AI / motion state, HP, counts, 2.6M em-em results, 62k area, 179k damage identical; 0 position drift; 8 frames with one extra line query |
 | 09-24 | tr20/tr21 | GAME_DECISION_TRACE=2 (private): per-query log around those frames | - | - | - | the extra query is sndWallCheck (sound occlusion, "no wall"); same-code runs differ likewise (tr16/tr18 5 frames, tr18/tr20 2, tr19/tr21 4): audio-timing noise. GAME_SKEL_FTRV accepted, joins LH |
+| 09-25 | tr22/tr23 | GAME_ROTVEC_MEMO=2, six-word key, 32 / 256 entries | - | - | tr22 STRICT vs tr19 | 35% / 87% hits, 0 mismatches |
+| 09-25 | sq35 | never-draw control (LH with GAME_SKEL_FTRV) | 37.37 work (37.38 total) | - | - | control for the memo; work = total - pacing wait rows |
+| 09-25 | sq34 | sq35 + memo v1, 32 entries (struct copies compiled to library memcpy) | 38.34 (+0.97) | - | - | dropped: rewritten with word loads / stores |
+| 09-25 | sq36/sq37/sq38 | sq35 + six-word memo, 64 / 128 / 256 entries (40-byte entries) | 37.47 / 37.07 / 36.98 | - | tr23 (256) | superseded by sq39: RotVector 0.70, both entry lines miss ~68% |
+| 09-25 | sq39 | sq35 + yaw-only memo, 256 one-line entries | 37.16 (-0.21; memo rows -0.54) | - | tr24 (=2): 3.21M calls, 80.5% hits, 0 mismatches, STRICT vs tr19 4381 frames | committed 7d0401d, in LH. RotVector+low_RotMatrix+trig 1.62 -> 1.08 |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
