@@ -298,7 +298,7 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
-### Current order and status (updated 2026-09-25, after R headroom and code placement)
+### Current order and status (updated 2026-09-25, after the em-em candidate cache)
 
 **The order we follow now (user, 2026-09-25):**
 1. **Land the coarse renderer with frame pacing.** Done: **f4da5fd** (patch land2-pacing-coarse.patch,
@@ -325,7 +325,10 @@ The part-world pass takes two paths:
 3. **Back to G** in the user's order: collision traversal, then visual simulation (their gameplay
    readers first). Appearance (step 5), extending house shells included, follows G. First G step done
    with item 2: code placement (LINK_ORDER, 801d72d; exact): **G_q 33.39** (sq72; the same code unplaced
-   34.64), gap **8.42** to 24.97 (section "Code placement" below). Next: collision traversal.
+   34.64), gap 8.42 to 24.97 (section "Code placement" below). Collision traversal, first step: the em-em
+   candidate cache (GAME_ATCHK_CACHE, aeefd26; exact): **G_q 32.23** (sq85), gap **7.26** to 24.97 (section
+   "Collision traversal" below). Next: the scenery line queries' leaf walk and polygon test (4.35 ms),
+   then visual simulation.
 
 **Where each step of the rethink stands:**
 
@@ -333,7 +336,7 @@ The part-world pass takes two paths:
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40) and code placement (801d72d, -1.25 exact): G_q 33.39; gap 8.42 to 24.97; collision traversal next |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25) and the em-em candidate cache (aeefd26, -1.16), all exact: G_q 32.23; gap 7.26 to 24.97; the line queries' leaf walk next |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); nothing else started |
 
@@ -463,6 +466,70 @@ control's objects (identical objects, identical .text size, identical instructio
 - The landed order is link-order/r101-square-c3-8k.ld (from sq67 + sq68). It is tied to the code:
   regenerate it after code changes (sections it names that no longer exist are ignored). Square arms
   pass `LINK_ORDER=link-order/r101-square-c3-8k.ld` from here on.
+
+#### Collision traversal (G, order item 3, 2026-09-25)
+
+Collision was ~8.8 ms of G_q 33.39 (by file, sq72: atari.cpp 3.72, at_mod.cpp 2.54, at_sub.cpp 1.87,
+sce_at.cpp 0.38, atariInfo.cpp 0.34). Never-draw arms (PACE_FORCE=A, skeleton knobs, the landed order
+file), paired with the fresh control sq81 (a full rebuild of the same tree: 33.39, the same instruction
+count as sq72):
+
+| arm | change | work | vs control | gameplay |
+|---|---|---:|---:|---|
+| sq78 | GAME_LINE_KERNEL=1: a piece's scenery line test (blkPolyLineCk, Core, At_poly_line_ck) as one walk: same blocks, polygons and float expressions | 33.59 | +0.20 | tr57 (=2) 0 mismatches; tr58 STRICT |
+| sq79 | GAME_SAT_REJECT=1: skip a piece whose top-level blocks the query's XZ box misses (skips proved by a margin) | 34.01 | +0.62 | tr59 (=2) 0 bad skips; tr60 STRICT |
+| sq80 | GAME_ATCHK_CACHE rev 1: em-em candidates kept per list, a counter bumped by every test-changing write | 32.84 | -0.55 | tr62 (=2) 0 mismatches, 74% reused; tr63 STRICT, every decision identical |
+| sq82 | rev 2: the changed infos noted in a ring; a reuse re-tests them | 32.48 | -0.91 | tr64 0 mismatches, 87% reused; tr65 STRICT, identical |
+| sq83 | rev 3: notes outside a list's body range skipped (rev 4, the fields' address-of deleted, compiles to the same code) | 32.40 | -0.99 | tr66 0 mismatches; tr67 STRICT, identical |
+| sq84 | rev 5: the noted infos applied to the kept bodies in place | 32.70 | -0.69 | tr68 0 mismatches, 36 fresh collections; tr69 STRICT, identical |
+| **sq85** | **rev 6: + infos found absent from the list remembered per list generation** | **32.23** | **-1.16** | tr70 0 mismatches over 442k reuses; tr71 STRICT vs tr56 and tr42, identical |
+
+- The line kernel: the walk rows fell 3.86 -> 3.50, but hitCheck2's per-query setup rose 0.23. The line
+  queries don't cost call overhead; they cost the per-polygon tests (At_poly_line_ck: 1918 a tick, 184
+  instructions each).
+- The piece reject saved 0.24 in the walks (blkPolyLineCk, lineOverlap) and spent 0.24 on its own test
+  (hitCheck2): the pieces it skips already stop at their root box.
+- Census (GAME_COL_STATS=1, a stats-only test knob kept in tree5; tr61 STRICT):
+  - Line queries repeat 1.9% of the time against the previous tick and 2.3% within a tick, so
+    remembering answers can't pay.
+  - World-vertical queries are 39.6% of the queries but only 8.2% of the polygon tests.
+  - The em-em candidate lists equal the previous collection in 99.995% of the collections: hence the
+    cache.
+- **GAME_ATCHK_CACHE (landed aeefd26, default off, needs GAME_ATCHK_LIST).** Each list's collected bodies are
+  kept while the list is unchanged (its generation, head and length). Every body whose test changed is
+  applied to them: removed if its test now fails, inserted at its list position if its test now passes.
+  "Every change is seen" holds by construction:
+  - With the knob on, m_flag and m_radius2 are same-size wrappers that note a write flipping the test
+    (bit 0x200, radius != 0) in a 64-entry ring.
+  - Copies between infos and taking either field's address are deleted, so a write that could pass
+    the notes doesn't compile.
+  - The 15 volatile flag helpers (st2 / st3 rooms, em2b / em35 / em36, wep_mod.h) take the address with
+    __builtin_addressof and note the info. Rev 2 had covered 9; a full source search found the other 6
+    (none of them built today), and the deleted address-of makes any missed one a compile error.
+  - AtariInfoConstruct notes its memset. A source audit of the built modules found no other bulk write
+    to a live body.
+  - List changes bump the list generation (GAME_ATCHK_LIST).
+  - The =2 check build also collects afresh and compares every reuse.
+- What each revision taught:
+  - Rev 1 reused only 74%: dead Ganados write m_radius2 = 0 and then 0 * 0.7 + 75 every tick
+    (em10SlopeMove).
+  - Rev 3's range skip showed that rev 2's remaining misses (13%) were not one list's notes breaking the
+    other list's reuse: only 66 notes fell outside a list's range.
+  - Rev 5's check build found what they were: of ~32k disagreeing notes, 2 were inserts, 7 removals,
+    and the rest infos absent from the list. Dead Ganados leave the enemy alive list but keep running
+    their move (their own EmAtCheck, then atari.move pulls m_radius2 back to m_radius2_n = 0), so they
+    flip their test twice a tick. Rev 5 walked the list for each of them (atchkCandidates 0.41 ms).
+  - Rev 6 remembers them: atchkCandidates 0.10 ms (161 instructions per call) in place of
+    atchkCollectList's 1.30; D-miss 3.79 -> 3.30 ms.
+- Collision after the cache (sq85): ~7.4 ms.
+  - Scenery line queries: 4.35 ms. There are 107 a tick (getFloor 42, hitCheck 37, wallAdjust 28),
+    walking 629 pieces with 3402 block box tests, 254 leaf visits and 1918 polygon tests. By function:
+    At_poly_line_ck 1.60, blkPolyLineCkCore 0.92 (~930 instructions per leaf visit for 7.6 polygon
+    tests), blkPolyLineCk 0.81, lineOverlap 0.55, hitCheck2 0.47.
+  - Sphere queries: ~1.07 (784 block sphere tests a tick).
+  - at_mod: ~1.5 (getPos 0.34, ObjHitCheck 0.32 in 5 calls, At_em_* 0.34, atchkPasses 0.17).
+  - sce_at: ~0.3.
+- Next in collision traversal: the leaf walk and the polygon test.
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
@@ -1026,3 +1093,12 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq73 / sq74 | + LINK_ORDER C3, 4 KB clusters | 37.73 / 33.87 (-0.97 / -0.77) | - | - | 8 KB kept |
 | 09-25 | sq75 | sq68 + coarse effect-loop hoist + word palette compare | 38.33 (-0.37; own rows -0.19) | - | tr55 STRICT vs tr42 | landed 801d72d |
 | 09-25 | land3 | R headroom knobs + LINK_ORDER landed (801d72d) | - | - | knob-off identity (default, canonical); tr55 carry-over 444 / 453 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | sq78 | sq72 + GAME_LINE_KERNEL=1 (a piece's line walk as one kernel) | 33.59 (+0.20) | - | tr57 (=2) 0 mismatches; tr58 STRICT | dropped: the per-polygon tests dominate |
+| 09-25 | sq79 | sq72 + GAME_SAT_REJECT=1 (skip pieces the query's XZ box misses) | 34.01 (+0.62) | - | tr59 (=2) 0 bad skips; tr60 STRICT | dropped: the test costs what the skipped walks cost |
+| 09-25 | tr61 | GAME_COL_STATS census (test knob) | - | - | STRICT | line queries repeat 1.9% / 2.3%; em-em lists 99.995% |
+| 09-25 | sq80 / sq81 | + GAME_ATCHK_CACHE rev 1 (counter) / fresh control | 32.84 (-0.55) / 33.39 (= sq72) | - | tr62 (=2) 0 mismatches, 74% reused; tr63 STRICT, every decision identical | revised |
+| 09-25 | sq82 | rev 2: noted ring | 32.48 (-0.91) | - | tr64 0 mismatches, 87% reused; tr65 STRICT, identical | revised |
+| 09-25 | sq83 | rev 3 (+ rev 4, the same code): range skip; the fields' address-of deleted | 32.40 (-0.99) | - | tr66 0 mismatches; tr67 STRICT, identical | revised |
+| 09-25 | sq84 | rev 5: noted infos applied in place | 32.70 (-0.69) | - | tr68 0 mismatches, 36 fresh; tr69 STRICT, identical | revised |
+| 09-25 | sq85 | rev 6: + infos absent from the list remembered | 32.23 (-1.16) | - | tr70 0 mismatches over 442k reuses; tr71 STRICT vs tr56 and tr42, every decision identical | landed aeefd26: **G_q 32.23** |
+| 09-25 | land4 | GAME_ATCHK_CACHE landed (aeefd26) | - | - | knob-off identity (default, canonical); tr71 carry-over 444 / 453 objects identical (the rest tree5-only) | landed, default off |

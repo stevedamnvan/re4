@@ -32,6 +32,9 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   and `LINK_ORDER=link-order/r101-square-c3-8k.ld` (the hot code placed first in .text from hwproject
   evidence; regenerate it with `tools/d367/ordgen_c3.py --objdir <OBJDIR> -o <file> <never-draw run>
   <drawn run>` after code changes).
+- The em-em candidate cache (aeefd26; exact, room-independent; not in LH yet: gated on the r101 square): the
+  coarse-square arms add `GAME_ATCHK_CACHE=1` (needs GAME_ATCHK_LIST=1, in LH). `GAME_ATCHK_CACHE=2` is its
+  check build (every reuse compared with a fresh collection, "ATC" lines).
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 
