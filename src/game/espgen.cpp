@@ -120,6 +120,74 @@ static inline int EspgenIsActive(EspgenWork* w)
     return on;
 }
 
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+// GAME_FX_SCAN (esp.h): re4dc_fx_eg_occ has a bit for every slot whose flag has bit 0 or 1 set
+// (in use or delete requested). Only PullEspgen / PullEspgenFront make a slot occupied and only
+// EspgenMove's clear of a deleted slot frees it, so the per-tick loops (the source loops) step over
+// runs of free slots while the map is the one they checked (fxEgGen unchanged), re-reading the
+// word at every step. Pools of up to 256 slots; rebuilt when the array changes.
+#define FX_EG_WORDS 8
+extern "C" {
+unsigned long re4dc_fx_eg_occ[FX_EG_WORDS];
+unsigned long re4dc_fx_eg_ok;
+}
+static int fxEgValid;
+static EspgenWork* fxEgArr;
+static u32 fxEgN;
+static u32 fxEgGen;   // bumped when the map goes stale or is rebuilt
+static __attribute__((noinline, cold)) void fxEgSync()
+{
+    u32 i;
+
+    memclr_asm(re4dc_fx_eg_occ, sizeof(re4dc_fx_eg_occ));
+    fxEgGen++;
+    fxEgArr = EspgenArray;
+    fxEgN = nEspgen;
+    re4dc_fx_eg_ok = EspgenArray != NULL && nEspgen <= 32 * FX_EG_WORDS;
+    for (i = 0; re4dc_fx_eg_ok && i < nEspgen; i++) {
+        if (EspgenArray[i].flag & 3) {
+            re4dc_fx_eg_occ[i >> 5] |= 1u << (i & 31);
+        }
+    }
+    fxEgValid = 1;
+}
+static inline int fxEgReady()
+{
+    if (!fxEgValid || EspgenArray != fxEgArr || nEspgen != fxEgN) {
+        fxEgSync();
+    }
+    return re4dc_fx_eg_ok;
+}
+// Slot w's bit (on: occupied).
+static inline void fxEgMark(EspgenWork* w, int on)
+{
+    u32 idx = (u32) (w - EspgenArray);
+
+    if (fxEgValid && re4dc_fx_eg_ok && EspgenArray == fxEgArr && idx < nEspgen) {
+        if (on) {
+            re4dc_fx_eg_occ[idx >> 5] |= 1u << (idx & 31);
+        } else {
+            re4dc_fx_eg_occ[idx >> 5] &= ~(1u << (idx & 31));
+        }
+    }
+}
+#define FX_EG_STALE() (fxEgValid = 0, fxEgGen++)
+#if RE4DC_FX_SCAN == 2
+// Check build: skipped slots [from, to) must be free (EspgenMove) or inactive (Trans / Delete).
+static void fxChkEgSkip(EspgenWork* base, u32 from, u32 to, int occupied)
+{
+    for (; from < to && from < nEspgen; from++) {
+        EspgenWork* w = &base[from];
+        if (occupied ? (w->flag & 3) != 0 : EspgenIsActive(w)) {
+            re4dc_fx_chk[FXC_MIS_EG]++;
+        }
+    }
+}
+#endif
+#else
+#define FX_EG_STALE() ((void) 0)
+#endif
+
 // Work size checks: the generator works must fit the 0xB4 bytes after the EspgenWork header.
 #define ESPGEN_WORK_SIZE (sizeof(EspgenWork) - 0x14)
 
@@ -229,6 +297,7 @@ int EspgenInit()
 // runs the work-size checks. The array itself is allocated separately by EspgenArrayAlloc.
 int EspgenRoomInit()
 {
+    FX_EG_STALE();
     EspgenArray = NULL;
     nEspgen = 0;
     g_Call_no = 0;
@@ -252,6 +321,7 @@ int EspgenArrayAlloc(int n)
     u32 size;
 
     EspgenArrayFree();
+    FX_EG_STALE();
     if (n == 0) {
         return 0;
     }
@@ -280,6 +350,7 @@ int EspgenArrayFree()
     }
     Mem_free(EspgenArray);
     EspgenArray = NULL;
+    FX_EG_STALE();
     return 1;
 }
 
@@ -289,6 +360,7 @@ int EspgenArrayPush(int n)
     if (pEspgenArrayBack != NULL) {
         return 0;
     }
+    FX_EG_STALE();
     pEspgenArrayBack = EspgenArray;
     EspgenArray = (EspgenWork*) Debug_alloc(n * sizeof(EspgenWork), 1);
     nEspgenBack = nEspgen;
@@ -302,6 +374,7 @@ int EspgenArrayPop()
     if (pEspgenArrayBack == NULL) {
         return 0;
     }
+    FX_EG_STALE();
     Debug_free(EspgenArray);
     EspgenArray = pEspgenArrayBack;
     pEspgenArrayBack = NULL;
@@ -323,6 +396,9 @@ int PullEspgen(EspgenWork** out)
         if (!(w->flag & 1) || (w->flag & 2)) {
             memclr_asm(w, sizeof(EspgenWork));
             w->flag |= 1;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+            fxEgMark(w, 1);
+#endif
             *out = w;
             break;
         }
@@ -369,6 +445,9 @@ int PullEspgenFront(EspgenWork** out)
         if (!(w->flag & 1) || (w->flag & 2)) {
             memclr_asm(w, sizeof(EspgenWork));
             w->flag |= 1;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+            fxEgMark(w, 1);
+#endif
             *out = w;
             break;
         }
@@ -390,6 +469,36 @@ void EspgenArrayClear()
     }
 }
 
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+// One slot of EspgenMove's loop, as the source body.
+static inline void fxEgMoveOne(EspgenWork* w, int pause, u32* cnt)
+{
+    u32 max;
+
+    if (w->flag & 2) {
+        w->flag &= ~3;
+        fxEgMark(w, 0);
+    } else if (EspgenIsActive(w)) {
+        max = GetEspgenIdMax();
+        if (w->id < max) {
+            if (pause && !(w->info.Core_flg & 0x8000)) {
+                return;
+            }
+            if (w->id < ESPGEN_APP_ID) {
+                EspgenMoveTbl[w->id](w);
+            } else {
+                EspgenMoveTblApp[w->id - ESPGEN_APP_ID](w);
+            }
+            if (!(w->flag & 2)) {
+                (*cnt)++;
+            }
+        } else {
+            pLog->err(0, 0, "ESP_CTRL : CTRL_ID[%x] is invalid.", w->id);
+        }
+    }
+}
+#endif
+
 // Per-frame move of all controllers: clears the slots deleted last frame, then runs the id's Move
 // entry for every active one (during an event only those with Core_flg bit 0; while Status_flg[1]
 // bit 1 pauses the game only those with Core_flg 0x8000). Prints the active count at (472,216).
@@ -406,6 +515,38 @@ int EspgenMove()
         pause = 1;
     }
     cnt = 0;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+    {
+        const int use = fxEgReady();
+        const u32 gen = fxEgGen;
+#if RE4DC_FX_SCAN == 2
+        re4dc_fx_chk[FXC_EG_MOVE]++;
+#endif
+        for (i = 0; i < nEspgen; i++) {
+            if (use && fxEgGen == gen) {
+                unsigned long m = re4dc_fx_eg_occ[i >> 5] >> (i & 31);
+                if (m == 0) {
+#if RE4DC_FX_SCAN == 2
+                    fxChkEgSkip(base, i, (i | 31) + 1, 1);
+#endif
+                    i |= 31;
+                    continue;
+                }
+                m = re4dcFxCtz(m);
+#if RE4DC_FX_SCAN == 2
+                fxChkEgSkip(base, i, i + m, 1);
+#endif
+                i += m;
+            }
+            fxEgMoveOne(&base[i], pause, &cnt);
+        }
+#if RE4DC_FX_SCAN == 2
+        if (!use || fxEgGen != gen) {
+            re4dc_fx_chk[FXC_FALLBACK]++;
+        }
+#endif
+    }
+#else
     for (i = 0, w = base; i < nEspgen; i++, w++) {
         if (w->flag & 2) {
             w->flag &= ~3;
@@ -428,6 +569,7 @@ int EspgenMove()
             }
         }
     }
+#endif
     if (pG->Debug_flg[3] & 0x8000) {
         eprintf(472, 216, 0, 0, "%d", cnt);
     } else {
@@ -440,6 +582,72 @@ int EspgenMove()
 extern "C" int re4dc_esp_logic_only;
 #endif
 // Per-frame draw pass: runs the id's Trans entry (when any) for every active controller.
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+// One slot of EspgenTrans's loop, as the source body.
+static inline void fxEgTransOne(EspgenWork* w)
+{
+    EspgenTransFunc func;
+    u32 max;
+
+    if (!EspgenIsActive(w)) {
+        return;
+    }
+    max = GetEspgenIdMax();
+    if (w->id < max) {
+        if (w->id < ESPGEN_APP_ID) {
+            func = EspgenTransTbl[w->id];
+        } else {
+            func = EspgenTransTblApp[w->id - ESPGEN_APP_ID];
+        }
+        if (func != NULL) {
+#if RE4DC_PACE_TRANS_SKIP
+            // Logic-only (trans.cpp, bit 2048): keep the flare's after-render visibility test
+            // (SetEsp spawns from it, drawing the shared RNG) and espgen45's per-frame clear of
+            // Status_flg[1] 0x20; the other entries only queue draws.
+            if (re4dc_esp_logic_only && func != Espgen01_Trans) {
+                if (func == Espgen45_Trans) {
+                    pG->Status_flg[1] &= ~0x20;
+                }
+                return;
+            }
+#endif
+            func(w);
+        }
+    } else {
+        pLog->err(0, 0, "ESP_CTRL : CTRL_ID[%x] is invalid.", w->id);
+    }
+}
+int EspgenTrans()
+{
+    EspgenWork* base = EspgenArray;
+    const int use = fxEgReady();   // only occupied slots can be active
+    const u32 gen = fxEgGen;
+    u32 i;
+
+#if RE4DC_FX_SCAN == 2
+    re4dc_fx_chk[FXC_EG_MOVE]++;
+#endif
+    for (i = 0; i < nEspgen; i++) {
+        if (use && fxEgGen == gen) {
+            unsigned long m = re4dc_fx_eg_occ[i >> 5] >> (i & 31);
+            if (m == 0) {
+#if RE4DC_FX_SCAN == 2
+                fxChkEgSkip(base, i, (i | 31) + 1, 0);
+#endif
+                i |= 31;
+                continue;
+            }
+            m = re4dcFxCtz(m);
+#if RE4DC_FX_SCAN == 2
+            fxChkEgSkip(base, i, i + m, 0);
+#endif
+            i += m;
+        }
+        fxEgTransOne(&base[i]);
+    }
+    return 1;
+}
+#else
 int EspgenTrans()
 {
     EspgenWork* w;
@@ -479,9 +687,72 @@ int EspgenTrans()
     }
     return 1;
 }
+#endif
 
 // Releases every controller whose owner info matches Core_flg == a, Core_kind == b, Core_pEm == c
 // (each test skipped when 0): effects owned by a dying enemy/object.
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+// The source loop's test for one slot.
+static inline int fxEgDelHit(EspgenWork* w, int a, int b, int c)
+{
+    if ((w->flag & 1) && !(w->flag & 2)) {
+        if (a != 0 && w->info.Core_flg != a) {
+            return 0;
+        }
+        if (b != 0 && w->info.Core_kind != b) {
+            return 0;
+        }
+        if (c != 0 && w->info.Core_pEm != c) {
+            return 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+#if RE4DC_FX_SCAN == 2
+// Check build: none of the skipped slots [from, to) may match.
+static void fxChkEgDelSkip(EspgenWork* base, u32 from, u32 to, int a, int b, int c)
+{
+    for (; from < to && from < nEspgen; from++) {
+        if (fxEgDelHit(&base[from], a, b, c)) {
+            re4dc_fx_chk[FXC_MIS_EG]++;
+        }
+    }
+}
+#endif
+// Only occupied slots can match: the source loop, stepping over runs of free slots.
+void EspgenDelete(int a, int b, int c)
+{
+    EspgenWork* base = EspgenArray;
+    const int use = fxEgReady();
+    const u32 gen = fxEgGen;
+    u32 i;
+
+#if RE4DC_FX_SCAN == 2
+    re4dc_fx_chk[FXC_EG_DEL]++;
+#endif
+    for (i = 0; i < nEspgen; i++) {
+        if (use && fxEgGen == gen) {
+            unsigned long m = re4dc_fx_eg_occ[i >> 5] >> (i & 31);
+            if (m == 0) {
+#if RE4DC_FX_SCAN == 2
+                fxChkEgDelSkip(base, i, (i | 31) + 1, a, b, c);
+#endif
+                i |= 31;
+                continue;
+            }
+            m = re4dcFxCtz(m);
+#if RE4DC_FX_SCAN == 2
+            fxChkEgDelSkip(base, i, i + m, a, b, c);
+#endif
+            i += m;
+        }
+        if (fxEgDelHit(&base[i], a, b, c)) {
+            PushEspgen(&base[i]);
+        }
+    }
+}
+#else
 void EspgenDelete(int a, int b, int c)
 {
     EspgenWork* w;
@@ -502,6 +773,7 @@ void EspgenDelete(int a, int b, int c)
         }
     }
 }
+#endif
 
 // Releases every controller that is neither permanent (Core_flg bit 0) nor event-owned (bit 0x800):
 // event end.

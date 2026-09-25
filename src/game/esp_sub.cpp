@@ -960,12 +960,229 @@ void cEsp::move()
     pLog->err(0, 0, "ESP : ESP_ID[%x] move() invalid", m_Id);
 }
 
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE
+// GAME_FX_MOVE (game30.mk, lane fx; exact): CommonMove with ColorUpdate and SQRTF inline, and
+// AnmMove with EspGetAnmAddr inline. The same float operations on the same operands, the same
+// stores before each PushEsp; the fields from m_Pos to m_D_size_plus are contiguous, so they are
+// read through one walking pointer (SH-4 FP loads have no displacement form: a field read is
+// otherwise three instructions). The kernel returns why the effect died (the caller pushes it) so
+// the =2 check build can run it on a copy beside the source functions and compare every field
+// ("FXM" lines).
+// SQRTF (math_sub.cpp), inline.
+static inline f32 fxSqrtf(f32 x)
+{
+    if (x <= 0.00001f) {
+        return 0.0f;
+    }
+    return __builtin_sqrtf(x);
+}
+// ColorUpdate without its PushEsp: 1 when alpha fell below 4 (the caller pushes).
+static inline int fxColorKernel(cEsp* e, int life)
+{
+    const int maxc = e->m_Col_max_cnt;
+
+    if (maxc < life) {
+        if (maxc + e->m_Col_start_cnt <= life) {
+            f32* q = &e->m_Col_r;   // m_Col_r, g, b, a, then m_Col_d_r, g, b, a
+            f32 r, g, b, a, dr, dg, db, da;
+            const f32 top = 255.0f;
+            FXL(q, r);
+            FXL(q, g);
+            FXL(q, b);
+            FXL(q, a);
+            FXL(q, dr);
+            FXL(q, dg);
+            FXL(q, db);
+            FXL(q, da);
+            r *= dr;
+            g *= dg;
+            b *= db;
+            a *= da;
+            if (r > top) {
+                r = top;
+            }
+            if (g > top) {
+                g = top;
+            }
+            if (b > top) {
+                b = top;
+            }
+            if (a > top) {
+                a = top;
+            }
+            q = &e->m_Col_a + 1;
+            FXS(q, a);
+            FXS(q, b);
+            FXS(q, g);
+            FXS(q, r);
+            if (a < 4.0f) {
+                return 1;
+            }
+        }
+    } else if (maxc != 0) {
+        f32 rate = (f32) life / (f32) maxc;
+        if (e->m_Blend_type == 3) {
+            e->m_Col_r = (f32) e->m_Col_start_r * rate;
+            e->m_Col_g = (f32) e->m_Col_start_g * rate;
+            e->m_Col_b = (f32) e->m_Col_start_b * rate;
+        }
+        e->m_Col_a = (f32) e->m_Col_start_a * rate;
+    }
+    return 0;
+}
+// CommonMove without its PushEsp calls: 0 alive, 1 died at the scale, 2 at the colour, 3 at the
+// life end (the caller pushes, as the source does at each of those points). Inlined, so the code
+// stays under the name the link order places (cEsp::CommonMove).
+static inline __attribute__((always_inline)) int fxCommonKernel(cEsp* e)
+{
+    int life;
+    f32* q;
+
+    if (e->parent != pEffParentWorld && e->m_Release_time != 0xFF && e->m_Release_time <= e->m_Life_time) {
+        e->ApplyMatrix(e->parent->mat);
+        e->parent = pEffParentWorld;
+    }
+    life = e->m_Life_time;
+    if (e->m_Pos_start_cnt == 0 || e->m_Pos_start_cnt <= life) {
+        f32 px, py, pz, sx, sy, sz, d, ax, ay, az;
+        q = &e->m_Pos.x;   // m_Pos, m_Speed, m_D_speed, m_Speed_plus
+        FXL(q, px);
+        FXL(q, py);
+        FXL(q, pz);
+        FXL(q, sx);
+        FXL(q, sy);
+        FXL(q, sz);
+        FXL(q, d);
+        FXL(q, ax);
+        FXL(q, ay);
+        FXL(q, az);
+        px = px + sx;
+        py = py + sy;
+        pz = pz + sz;
+        sx = sx + ax;
+        sy = sy + ay;
+        sz = sz + az;
+        sx = sx * d;
+        sy = sy * d;
+        sz = sz * d;
+        q = &e->m_D_speed;
+        FXS(q, sz);
+        FXS(q, sy);
+        FXS(q, sx);
+        FXS(q, pz);
+        FXS(q, py);
+        FXS(q, px);
+    }
+    if (e->m_Size_start_cnt == 0 || e->m_Size_start_cnt <= life) {
+        f32 mul, plus, dz;
+        q = &e->m_Size_mul;   // m_Size_mul, m_Size_plus, m_D_size_plus
+        FXL(q, mul);
+        FXL(q, plus);
+        FXL(q, dz);
+        mul += plus;
+        plus *= dz;
+        q = &e->m_D_size_plus;
+        FXS(q, plus);
+        FXS(q, mul);
+        if (mul <= 0.0f) {
+            return 1;
+        }
+    }
+    {
+        f32 gx, gy, gz, hx, hy, hz;
+        q = &e->m_Ang.x;   // m_Ang, m_Ang_plus
+        FXL(q, gx);
+        FXL(q, gy);
+        FXL(q, gz);
+        FXL(q, hx);
+        FXL(q, hy);
+        FXL(q, hz);
+        gx = gx + hx;
+        gy = gy + hy;
+        gz = gz + hz;
+        q = &e->m_Ang_plus.x;
+        FXS(q, gz);
+        FXS(q, gy);
+        FXS(q, gx);
+    }
+    if (fxColorKernel(e, life)) {
+        return 2;
+    }
+    if (e->m_Life_max != 0 && e->m_Life_max <= life) {
+        return 3;
+    }
+    e->m_Life_time = life + 1;
+    {
+        f32 bx, by, mul;
+        q = &e->m_Size_base_x;   // m_Size_base_x, m_Size_base_y, m_Size_mul
+        FXL(q, bx);
+        FXL(q, by);
+        FXL(q, mul);
+        e->m_Radius = fxSqrtf(bx * bx + by * by) * mul;
+    }
+    return 0;
+}
+#if RE4DC_FX_MOVE == 2
+// The kernel for callers in other units (esp48's =2 copy): 0 alive, else why it died (not pushed).
+extern "C" int re4dc_fx_common_kernel(cEsp* e)
+{
+    return fxCommonKernel(e);
+}
+#include <string.h>
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 fxmCalls, fxmMis, fxmDead, fxmAnm, fxmAnmMis;
+#endif
+int cEsp::CommonMove()
+{
+#if RE4DC_FX_MOVE == 2
+    // The kernel on a copy, the source on the live effect; every byte of the two compared.
+    u32 copy[0x150 / 4];
+    u32 live[0x150 / 4];
+    int why;
+    int ret;
+    u32 i;
+    memcpy(copy, this, 0x150);
+    why = fxCommonKernel((cEsp*) copy);
+    ret = CommonMoveSrc();
+    fxmCalls++;
+    if ((ret == 0) != (why != 0)) {
+        fxmMis++;
+    } else if (why == 0) {
+        memcpy(live, this, 0x150);
+        for (i = 0; i < 0x150 / 4; i++) {
+            if (copy[i] != live[i]) {
+                fxmMis++;
+                break;
+            }
+        }
+    } else {
+        fxmDead++;
+    }
+    if (fxmCalls % 4096 == 0) {
+        re4dc_log("FXM calls=%u mismatch=%u dead=%u anm=%u anm_mismatch=%u\n", fxmCalls, fxmMis, fxmDead, fxmAnm,
+                  fxmAnmMis);
+    }
+    return ret;
+#else
+    if (fxCommonKernel(this)) {
+        PushEsp(this);
+        return 0;
+    }
+    return 1;
+#endif
+}
+#endif
+#if !(defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE) || RE4DC_FX_MOVE == 2
 // Per-frame update shared by every effect: detaches from the parent parts after m_Release_time
 // frames (baking the parent matrix into pos/speed), integrates speed (+Speed_plus, *D_speed) once
 // m_Pos_start_cnt has passed, scale (m_Size_mul += m_Size_plus, *D_size_plus; dies at <= 0) once
 // m_Size_start_cnt has passed, angle, colour (ColorUpdate), and kills the effect (PushEsp) when
 // m_Life_time reaches m_Life_max. Returns 0 when the effect died this frame. Updates m_Radius.
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE == 2
+int cEsp::CommonMoveSrc()
+#else
 int cEsp::CommonMove()
+#endif
 {
     if (parent != pEffParentWorld && m_Release_time != 0xFF && m_Release_time <= m_Life_time) {
         ApplyMatrix(parent->mat);
@@ -996,6 +1213,7 @@ int cEsp::CommonMove()
     m_Radius = SQRTF(m_Size_base_x * m_Size_base_x + m_Size_base_y * m_Size_base_y) * m_Size_mul;
     return 1;
 }
+#endif
 
 // Colour envelope: fades in over the first m_Col_max_cnt frames (alpha, and rgb for Blend_type 3),
 // holds for m_Col_start_cnt frames, then multiplies rgba by m_Col_d_* every frame (clamped to 255)
@@ -1047,7 +1265,109 @@ int cEsp::SetFreeWork(EspGenWork* gen, u32* seed)
 // current pattern's frame count and steps m_Ptn_no; at the end Loop 0 returns 0 (animation over,
 // callers stop drawing), 1 restarts, 2 holds the last pattern. Same for the mask animation
 // (m_MaskTex_id / m_MaskPtn_no) when Tool_flg 0x4000.
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE
+// AnmMove with EspGetAnmAddr inline (quiet: no error lines, for the =2 copy). Inlined into
+// cEsp::AnmMove (the name the link order places).
+static inline __attribute__((always_inline)) int fxAnmKernel(cEsp* e, int quiet)
+{
+    EspTexWk* tw = &g_pEspSys->Esp_tex_tbl[e->m_Tex_id];
+    EspAnmData* anm;
+    u32 time;
+
+    if (tw->Owner == 0xD2) {
+        if (!quiet) {
+            pLog->err(0, 0, "ESP : TexId[%x] no data", e->m_Tex_id);
+        }
+        return 0;
+    }
+    anm = tw->pAnm;
+    if (anm->Data_num == 0) {
+        time = 1;
+    } else {
+        time = anm->Frame_cnt[anm->Frames + e->m_Ptn_no];
+    }
+    e->m_Anm_cnt += e->m_Anm_rate;
+    while ((e->m_Anm_cnt >> 5) > (u16) time) {
+        e->m_Ptn_no++;
+        e->m_Anm_cnt -= time << 5;
+        if (e->m_Ptn_no >= anm->Frames) {
+            switch (anm->Loop & 3) {
+            case 0:
+                return 0;
+            case 1:
+                e->m_Ptn_no = 0;
+                break;
+            case 2:
+                e->m_Ptn_no = anm->Frames - 1;
+                break;
+            }
+        }
+    }
+    if (e->m_Tool_flg & 0x4000) {
+        tw = &g_pEspSys->Esp_tex_tbl[e->m_MaskTex_id];
+        if (tw->Owner == 0xD2) {
+            if (!quiet) {
+                pLog->err(0, 0, "ESP : MaskTexId[%x] no data", e->m_Tex_id);
+            }
+            return 0;
+        }
+        anm = tw->pAnm;
+        if (anm->Data_num == 0) {
+            time = 1;
+        } else {
+            time = anm->Frame_cnt[anm->Frames + e->m_MaskPtn_no];
+        }
+        e->m_MaskAnm_cnt += e->m_Anm_rate;
+        while ((e->m_MaskAnm_cnt >> 5) > (u16) time) {
+            e->m_MaskPtn_no++;
+            e->m_MaskAnm_cnt -= time << 5;
+            if (e->m_MaskPtn_no >= anm->Frames) {
+                switch (anm->Loop & 3) {
+                case 0:
+                    return 0;
+                case 1:
+                    e->m_MaskPtn_no = 0;
+                    break;
+                case 2:
+                    e->m_MaskPtn_no = anm->Frames - 1;
+                    break;
+                }
+            }
+        }
+    }
+    return 1;
+}
+#if RE4DC_FX_MOVE == 2
+extern "C" int re4dc_fx_anm_kernel(cEsp* e, int quiet)
+{
+    return fxAnmKernel(e, quiet);
+}
+#endif
 int cEsp::AnmMove()
+{
+#if RE4DC_FX_MOVE == 2
+    u32 copy[0x150 / 4];
+    int a;
+    int b;
+    memcpy(copy, this, 0x150);
+    a = fxAnmKernel((cEsp*) copy, 1);
+    b = AnmMoveSrc();
+    fxmAnm++;
+    if (a != b || memcmp(copy, this, 0x150) != 0) {
+        fxmAnmMis++;
+    }
+    return b;
+#else
+    return fxAnmKernel(this, 0);
+#endif
+}
+#endif
+#if !(defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE) || RE4DC_FX_MOVE == 2
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE == 2
+int cEsp::AnmMoveSrc()
+#else
+int cEsp::AnmMove()
+#endif
 {
     EspAnmData* anm;
     u32 time;
@@ -1108,6 +1428,7 @@ int cEsp::AnmMove()
     }
     return 1;
 }
+#endif
 
 // Sets the sprite's material colour for the draw: lit sprites (Tool_flg 0x40) get the effect light
 // list, Tool_flg 0x80/0x20000 select colour/alpha scaling; m_Flg bit 0 premultiplies rgb by alpha

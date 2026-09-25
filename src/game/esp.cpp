@@ -55,19 +55,110 @@ extern "C" {
 unsigned short re4dc_esp_own[64];
 unsigned long re4dc_esp_own_valid;
 }
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+// GAME_FX_SCAN (esp.h): the live / owner-bucket slot maps.
+extern "C" {
+unsigned long re4dc_fx_esp_live[RE4DC_FX_ESP_WORDS];
+unsigned long re4dc_fx_esp_ownmap[64][RE4DC_FX_ESP_WORDS];
+unsigned long re4dc_fx_esp_ok;
+unsigned long re4dc_fx_esp_gen;
+unsigned long re4dc_fx_chk[16];
+}
+static u8* fxEspBuf;   // the pool the maps were built for
+static u32 fxEspN;
+// Slot `esp`'s bit in its owner bucket's row (Core_pEm 0 is in no row).
+static inline void fxEspOwnBit(cEspSystem* sys, cEsp* esp, int on)
+{
+    u32 idx = (u32) ((u8*) esp - sys->pEspBuf) / 0x150;
+    u32 pEm = esp->info.Core_pEm;
+
+    if (idx < sys->nEsp && idx < 32 * RE4DC_FX_ESP_WORDS && pEm != 0) {
+        unsigned long* w = &re4dc_fx_esp_ownmap[re4dcEspOwnB(pEm)][idx >> 5];
+        if (on) {
+            *w |= 1u << (idx & 31);
+        } else {
+            *w &= ~(1u << (idx & 31));
+        }
+    }
+}
+// Slot `esp`'s live bit and owner bit.
+static inline void fxEspMark(cEspSystem* sys, cEsp* esp, int on)
+{
+    u32 idx = (u32) ((u8*) esp - sys->pEspBuf) / 0x150;
+
+    if (idx < sys->nEsp && idx < 32 * RE4DC_FX_ESP_WORDS) {
+        if (on) {
+            re4dc_fx_esp_live[idx >> 5] |= 1u << (idx & 31);
+        } else {
+            re4dc_fx_esp_live[idx >> 5] &= ~(1u << (idx & 31));
+        }
+        fxEspOwnBit(sys, esp, on);
+    }
+}
+// Rebuilds the owner counts and the maps from the pool.
+extern "C" void re4dc_fx_esp_sync()
+{
+    cEspSystem* sys = g_pEspSys;
+    u32 i;
+
+    for (i = 0; i < 64; i++) {
+        re4dc_esp_own[i] = 0;
+    }
+    memclr_asm(re4dc_fx_esp_live, sizeof(re4dc_fx_esp_live));
+    memclr_asm(re4dc_fx_esp_ownmap, sizeof(re4dc_fx_esp_ownmap));
+    fxEspBuf = sys->pEspBuf;
+    fxEspN = sys->nEsp;
+    re4dc_fx_esp_gen++;
+    re4dc_fx_esp_ok = sys->pEspBuf != NULL && sys->nEsp <= 32 * RE4DC_FX_ESP_WORDS;
+    for (i = 0; sys->pEspBuf != NULL && i < sys->nEsp; i++) {
+        cEsp* esp = (cEsp*) (sys->pEspBuf + i * 0x150);
+        if (esp->m_Be_flg & 1) {
+            re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]++;
+            if (re4dc_fx_esp_ok) {
+                fxEspMark(sys, esp, 1);
+            }
+        }
+    }
+    re4dc_esp_own_valid = 1;
+}
+// 1 when the maps describe the current pool (rebuilt first when stale).
+extern "C" int re4dc_fx_esp_ready()
+{
+    cEspSystem* sys = g_pEspSys;
+
+    if (!re4dc_esp_own_valid || sys->pEspBuf != fxEspBuf || sys->nEsp != fxEspN) {
+        re4dc_fx_esp_sync();
+    }
+    return re4dc_fx_esp_ok;
+}
+#endif
 // Copies an owner block into a slot, moving a live slot between owner buckets.
 extern "C" void re4dc_esp_info_set(cEsp* esp, const EspInfo* info)
 {
     int live = re4dc_esp_own_valid && (esp->m_Be_flg & 1);
     if (live) {
         re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]--;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+        if (re4dc_fx_esp_ok) {
+            fxEspOwnBit(g_pEspSys, esp, 0);
+        }
+#endif
     }
     esp->info = *info;
     if (live) {
         re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]++;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+        if (re4dc_fx_esp_ok) {
+            fxEspOwnBit(g_pEspSys, esp, 1);
+        }
+#endif
     }
 }
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+#define ESP_OWN_STALE() (re4dc_esp_own_valid = 0, re4dc_fx_esp_gen++)
+#else
 #define ESP_OWN_STALE() (re4dc_esp_own_valid = 0)
+#endif
 #else
 #define ESP_OWN_STALE() ((void) 0)
 #endif
@@ -146,6 +237,11 @@ int PullEsp(cEsp** out, int id)
 #if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
         if (re4dc_esp_own_valid) {
             re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]++;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+            if (re4dc_fx_esp_ok) {
+                fxEspMark(sys, esp, 1);
+            }
+#endif
         }
 #endif
         ret = 1;
@@ -259,6 +355,11 @@ void PushEsp(cEsp* esp)
 #if defined(RE4DC_ESP_OWNER) && RE4DC_ESP_OWNER
         if (re4dc_esp_own_valid) {
             re4dc_esp_own[re4dcEspOwnB(esp->info.Core_pEm)]--;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+            if (re4dc_fx_esp_ok) {
+                fxEspMark(g_pEspSys, esp, 0);
+            }
+#endif
         }
 #endif
         esp->m_Be_flg &= ~3;
@@ -268,6 +369,120 @@ void PushEsp(cEsp* esp)
         pLog->warn(0, 0, "PushEsp() : No alive work is pushed.");
     }
 }
+
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+// ESP_IsActive, inline.
+static inline int fxEspActive(cEsp* esp)
+{
+    if (!(esp->m_Be_flg & 1)) {
+        return 0;
+    }
+    if (pG->Status_flg[1] & 0x10000000) {
+        if (!(esp->info.Core_flg & 1)) {
+            return 0;
+        }
+        if (esp->parent != pEffParentWorld) {
+            cModel* m = esp->m_pMod;
+            if (m != NULL) {
+                int off = !(m->be_flag & 0x800);
+                if (off) {
+                    return 0;
+                }
+            }
+        }
+    }
+    return 1;
+}
+// One slot of EspMove's loop, as the source body.
+static inline void fxEspMoveOne(cEspSystem* sys, u32 i, int pause, u32* cnt)
+{
+    cEsp* esp = (cEsp*) (sys->pEspBuf + i * 0x150);
+
+    if (!fxEspActive(esp)) {
+        return;
+    }
+    if (esp->parent != pEffParentWorld) {
+        cModel* m = esp->m_pMod;
+        if (m != NULL) {
+            if ((m->be_flag & 0x201) != 1 || m->serial != esp->m_Guid_pMod) {
+                PushEsp(esp);
+                return;
+            }
+        }
+    }
+    if (pause) {
+        if (!(esp->info.Core_flg & 0x8000)) {
+            return;
+        }
+    }
+    esp->move();
+    if (esp->m_Be_flg & 1) {
+        (*cnt)++;
+        if (pG->debug_mode == 0xE) {
+            esp_num_list[esp->info.owner]++;
+        }
+    }
+}
+#if RE4DC_FX_SCAN == 2
+// Check build: the slots a fast loop skips are tested the way the source loop tests them, and
+// every one that the source would act on counts as a mismatch (counters: esp.h FXC_*).
+extern "C" void re4dc_log(const char* fmt, ...);
+// Every map bit against the pool.
+static void fxChkMaps(cEspSystem* sys)
+{
+    u32 i;
+    u32 own = 0;
+    u32 set = 0;
+
+    for (i = 0; i < 32 * RE4DC_FX_ESP_WORDS; i++) {
+        int bit = (re4dc_fx_esp_live[i >> 5] >> (i & 31)) & 1;
+        int live = i < sys->nEsp && (((cEsp*) (sys->pEspBuf + i * 0x150))->m_Be_flg & 1);
+        if (bit != live) {
+            re4dc_fx_chk[FXC_MAP_ERR]++;
+        }
+        if (live) {
+            cEsp* esp = (cEsp*) (sys->pEspBuf + i * 0x150);
+            if (esp->info.Core_pEm != 0) {
+                own++;
+                if (!((re4dc_fx_esp_ownmap[re4dcEspOwnB(esp->info.Core_pEm)][i >> 5] >> (i & 31)) & 1)) {
+                    re4dc_fx_chk[FXC_MAP_ERR]++;
+                }
+            }
+        }
+    }
+    for (i = 0; i < 64 * RE4DC_FX_ESP_WORDS; i++) {
+        unsigned long w = re4dc_fx_esp_ownmap[i / RE4DC_FX_ESP_WORDS][i % RE4DC_FX_ESP_WORDS];
+        while (w != 0) {
+            set++;
+            w &= w - 1;
+        }
+    }
+    if (set != own) {
+        re4dc_fx_chk[FXC_MAP_ERR]++;
+    }
+}
+// EspMove skipped [from, to): none may be active.
+static void fxChkMoveSkip(cEspSystem* sys, u32 from, u32 to)
+{
+    for (; from < to && from < sys->nEsp; from++) {
+        if (fxEspActive((cEsp*) (sys->pEspBuf + from * 0x150))) {
+            re4dc_fx_chk[FXC_MIS_ESP]++;
+        }
+    }
+}
+static void fxChkLog()
+{
+    if (re4dc_fx_chk[FXC_ESP_MOVE] % 128 == 1) {
+        re4dc_log("FXS move=%u visit=%u espdel=%u egpass=%u egdel=%u efm=%u efmbuild=%u mis_esp=%u mis_eg=%u "
+                  "mis_efm=%u maperr=%u fallback=%u\n",
+                  re4dc_fx_chk[FXC_ESP_MOVE], re4dc_fx_chk[FXC_VISIT], re4dc_fx_chk[FXC_ESP_DEL],
+                  re4dc_fx_chk[FXC_EG_MOVE], re4dc_fx_chk[FXC_EG_DEL], re4dc_fx_chk[FXC_EFM],
+                  re4dc_fx_chk[FXC_EFM_BUILD], re4dc_fx_chk[FXC_MIS_ESP], re4dc_fx_chk[FXC_MIS_EG],
+                  re4dc_fx_chk[FXC_MIS_EFM], re4dc_fx_chk[FXC_MAP_ERR], re4dc_fx_chk[FXC_FALLBACK]);
+    }
+}
+#endif
+#endif
 
 // Per-frame update of all effects (game loop, after EspgenMove). Drops effects whose attached model
 // died or was re-used (be_flag / serial mismatch); during the pause (Status_flg[1] bit1) only
@@ -290,6 +505,45 @@ int EspMove()
         pause = 1;
     }
     cnt = 0;
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+    // The source loop; a slot whose live bit is clear fails ESP_IsActive, so while the map is current
+    // a run of them is stepped over without reading the slots.
+    {
+        const int use = re4dc_fx_esp_ready();
+        const unsigned long gen = re4dc_fx_esp_gen;
+#if RE4DC_FX_SCAN == 2
+        if (use) {
+            fxChkMaps(sys);
+        }
+        re4dc_fx_chk[FXC_ESP_MOVE]++;
+#endif
+        for (i = 0; i < sys->nEsp; i++) {
+            if (use && re4dc_fx_esp_gen == gen) {
+                unsigned long m = re4dc_fx_esp_live[i >> 5] >> (i & 31);
+                if (m == 0) {
+#if RE4DC_FX_SCAN == 2
+                    fxChkMoveSkip(sys, i, (i | 31) + 1);
+#endif
+                    i |= 31;
+                    continue;
+                }
+                m = re4dcFxCtz(m);
+#if RE4DC_FX_SCAN == 2
+                fxChkMoveSkip(sys, i, i + m);
+                re4dc_fx_chk[FXC_VISIT]++;
+#endif
+                i += m;
+            }
+            fxEspMoveOne(sys, i, pause, &cnt);
+        }
+#if RE4DC_FX_SCAN == 2
+        if (!use || re4dc_fx_esp_gen != gen) {
+            re4dc_fx_chk[FXC_FALLBACK]++;
+        }
+        fxChkLog();
+#endif
+    }
+#else
     for (i = 0; i < sys->nEsp; i++) {
         esp = (cEsp*) (sys->pEspBuf + i * 0x150);
         if (!ESP_IsActive(esp)) {
@@ -317,6 +571,7 @@ int EspMove()
             }
         }
     }
+#endif
     color = 0;
     if ((f32) cnt > (f32) sys->nEsp * 0.7f) {
         color = 0x16;

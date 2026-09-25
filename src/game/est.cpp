@@ -275,6 +275,99 @@ extern "C" void re4dc_log(const char* fmt, ...);
 static u32 espOwnCalls, espOwnSkips, espOwnMis, espOwnRecounts;
 #endif
 #endif
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+// The source loop's test for one slot.
+static inline int fxEspDelHit(cEsp* esp, int a, int b, u32 c, cModel* model)
+{
+    if ((esp->m_Be_flg & 1) == 0) {
+        return 0;
+    }
+    if (a != 0 && esp->info.Core_flg != a) {
+        return 0;
+    }
+    if (b != 0 && esp->info.Core_kind != b) {
+        return 0;
+    }
+    if (c != 0 && esp->info.Core_pEm != c) {
+        return 0;
+    }
+    if (model != NULL) {
+        if (esp->m_pMod != model) {
+            return 0;
+        }
+        if (esp->m_Guid_pMod != model->serial) {
+            return 0;
+        }
+    }
+    return 1;
+}
+#if RE4DC_FX_SCAN == 2
+// Check build: none of the skipped slots [from, to) may match.
+static void fxChkDelSkip(cEspSystem* sys, u32 from, u32 to, int a, int b, u32 c, cModel* model)
+{
+    for (; from < to && from < sys->nEsp; from++) {
+        if (fxEspDelHit((cEsp*) (sys->pEspBuf + from * 0x150), a, b, c, model)) {
+            re4dc_fx_chk[FXC_MIS_ESP]++;
+        }
+    }
+}
+#endif
+// GAME_FX_SCAN: with an owner (c != 0) only the slots in c's owner row can match (esp.h), so while
+// the rows are current the source loop steps over the runs outside that row; it returns at once
+// when the bucket is empty, as GAME_ESP_OWNER did.
+void EspDelete(int a, int b, u32 c, cModel* model)
+{
+    cEspSystem* sys = g_pEspSys;
+    const unsigned long* row = NULL;
+    unsigned long gen = 0;
+    u32 i;
+
+    if (c != 0) {
+        const int ok = re4dc_fx_esp_ready();   // counts and rows current
+        const u32 B = re4dcEspOwnB(c);
+        if (re4dc_esp_own[B] == 0) {
+#if RE4DC_FX_SCAN == 2
+            fxChkDelSkip(sys, 0, sys->nEsp, a, b, c, model);
+#endif
+            return;
+        }
+        if (ok) {
+            row = re4dc_fx_esp_ownmap[B];
+            gen = re4dc_fx_esp_gen;
+#if RE4DC_FX_SCAN == 2
+            re4dc_fx_chk[FXC_ESP_DEL]++;
+#endif
+        }
+    }
+    for (i = 0; i < sys->nEsp; i++) {
+        cEsp* esp;
+        if (row != NULL && re4dc_fx_esp_gen == gen) {
+            unsigned long m = row[i >> 5] >> (i & 31);
+            if (m == 0) {
+#if RE4DC_FX_SCAN == 2
+                fxChkDelSkip(sys, i, (i | 31) + 1, a, b, c, model);
+#endif
+                i |= 31;
+                continue;
+            }
+            m = re4dcFxCtz(m);
+#if RE4DC_FX_SCAN == 2
+            fxChkDelSkip(sys, i, i + m, a, b, c, model);
+#endif
+            i += m;
+        }
+        esp = (cEsp*) (sys->pEspBuf + i * 0x150);
+        if (fxEspDelHit(esp, a, b, c, model)) {
+            PushEsp(esp);
+        }
+    }
+#if RE4DC_FX_SCAN == 2
+    if (row != NULL && re4dc_fx_esp_gen != gen) {
+        re4dc_fx_chk[FXC_FALLBACK]++;
+    }
+#endif
+}
+#else
 void EspDelete(int a, int b, u32 c, cModel* model)
 {
     cEspSystem* sys = g_pEspSys;
@@ -334,6 +427,7 @@ void EspDelete(int a, int b, u32 c, cModel* model)
         PushEsp(esp);
     }
 }
+#endif
 
 // Releases every live sprite that is neither permanent (Core_flg bit 0) nor event-owned (bit 0x800).
 void EspDeleteEvent()

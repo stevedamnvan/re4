@@ -79,6 +79,51 @@ u8 GetEfmMoveId(u32 no)
 
 // Destroys every Efm object whose EfmCore matches: flg == a, kind == b, pEm == c (each test skipped
 // when the value is 0). Used to remove the effect models an enemy/effect owner spawned.
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN && defined(RE4DC_ATCHK_LIST) && RE4DC_ATCHK_LIST &&              \
+    defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+// GAME_FX_SCAN (esp.h): EfmDeleteSub acts only on objects with id 4, 5 or 9, and the id of the object
+// behind a slot changes only when ObjMgr creates one there (construct, then the alive-list change
+// that bumps re4dc_alive_gen[2]; slots stay mapped until the pool is freed, which bumps it too).
+// So the slots holding such objects are listed once per generation and EfmDelete runs the source
+// test on them alone, in slot order. When a call changes the alive list (a destroy), the rest of
+// that call is the source loop. Frozen / pushed pools take the source loop.
+#define FX_EFM 1
+static u32 fxEfmGen;
+static cObj* fxEfmArr;
+static u32 fxEfmN;
+static int fxEfmCnt = -2;   // -2: not built, -1: more than 64
+static u16 fxEfmIdx[64];
+static __attribute__((noinline, cold)) void fxEfmBuild(cObjMgr* m)
+{
+    u32 i;
+
+    fxEfmGen = re4dc_alive_gen[2];
+    fxEfmArr = m->pArray;
+    fxEfmN = m->nArray;
+    fxEfmCnt = 0;
+#if RE4DC_FX_SCAN == 2
+    re4dc_fx_chk[FXC_EFM_BUILD]++;
+#endif
+    for (i = 0; i < m->nArray; i++) {
+        cObj* obj = m->workAt(i);
+        if (obj && (obj->id == 4 || obj->id == 5 || obj->id == 9)) {
+            if (fxEfmCnt == 64) {
+                fxEfmCnt = -1;
+                return;
+            }
+            fxEfmIdx[fxEfmCnt++] = i;
+        }
+    }
+}
+// EfmDelete's source loop from slot i.
+static __attribute__((noinline, cold)) void fxEfmDeleteFrom(cObjMgr* m, u32 i)
+{
+    for (; i < m->nArray; i++) {
+        cObj* obj = m->workAt(i);
+        if (obj) EfmDeleteSub(obj);
+    }
+}
+#endif
 void EfmDelete(int a, int b, int c)
 {
     cObjMgr* m = &ObjMgr;
@@ -88,6 +133,49 @@ void EfmDelete(int a, int b, int c)
     g_Core_flg = a;
     g_Core_kind = b;
     g_Core_pEm = (cModel*) c;
+#if defined(FX_EFM)
+    if (!re4dc_frozen_pools && !m->pArrayPush && m->pArray != 0) {
+        if (fxEfmCnt == -2 || fxEfmGen != re4dc_alive_gen[2] || fxEfmArr != m->pArray || fxEfmN != m->nArray) {
+            fxEfmBuild(m);
+        }
+        if (fxEfmCnt >= 0) {
+            const u32 g0 = re4dc_alive_gen[2];
+            int k;
+#if RE4DC_FX_SCAN == 2
+            // every slot off the list must be one the source test ignores
+            u32 j;
+            re4dc_fx_chk[FXC_EFM]++;
+            for (j = 0, k = 0; j < m->nArray; j++) {
+                cObj* obj;
+                if (k < fxEfmCnt && fxEfmIdx[k] == j) {
+                    k++;
+                    continue;
+                }
+                obj = m->workAt(j);
+                if (obj && (obj->id == 4 || obj->id == 5 || obj->id == 9)) {
+                    re4dc_fx_chk[FXC_MIS_EFM]++;
+                }
+            }
+#endif
+            for (k = 0; k < fxEfmCnt; k++) {
+                cObj* obj;
+                i = fxEfmIdx[k];
+                obj = m->workAt(i);
+                if (obj) func(obj);
+                if (re4dc_alive_gen[2] != g0) {
+                    // the alive list changed: the rest of the call is the source loop
+#if RE4DC_FX_SCAN == 2
+                    re4dc_fx_chk[FXC_FALLBACK]++;
+#endif
+                    fxEfmDeleteFrom(m, i + 1);
+                    return;
+                }
+            }
+            return;
+        }
+    }
+    fxEfmDeleteFrom(m, 0);
+#else
     for (i = 0; i < m->nArray; i++) {
 #if !defined(__PPC__)
         cObj* obj = m->workAt(i);
@@ -96,6 +184,7 @@ void EfmDelete(int a, int b, int c)
         func((cObj*) ((u8*) m->pArray + m->size * i));
 #endif
     }
+#endif
 }
 
 // Per-object test for EfmDelete: destroys obj04/05/09 works whose core matches the g_Core_* filter.

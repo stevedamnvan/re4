@@ -250,10 +250,22 @@ public:
     int CommonMove();
     int AnmMove();
     int ColorUpdate();
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE == 2
+    int CommonMoveSrc();   // GAME_FX_MOVE=2: the source functions beside the kernels (esp_sub.cpp)
+    int AnmMoveSrc();
+#endif
     void ApplyMatrix(Mtx m);
     void CommonStateSet();
     int ChannelSet();   // col.a != 0 (esp18 tests it)
 };
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE
+// GAME_FX_MOVE (game30.mk, lane fx): field access through a walking pointer. FXL loads *p and advances
+// p by one float, FXS stores x at the float before p and moves p there (SH-4 fmov.s @Rm+ / @-Rn: FP
+// loads and stores have no displacement form, so a field is otherwise reached in three
+// instructions). Only loads and stores are asm; every float operation stays C (contraction off).
+#define FXL(p, x) __asm__ __volatile__("fmov.s @%1+,%0" : "=f"(x), "+r"(p) : : "memory")
+#define FXS(p, x) __asm__ __volatile__("fmov.s %1,@-%0" : "+r"(p) : "f"(x) : "memory")
+#endif
 
 // game/esp3f.cpp: vector buffer owned by an effect (see esp3f.cpp for the class)
 class cEsp3f;
@@ -281,6 +293,47 @@ static inline unsigned long re4dcEspOwnB(unsigned long pEm)
 #define ESP_INFO_SET(esp, inf) re4dc_esp_info_set((cEsp*) (esp), (inf))
 #else
 #define ESP_INFO_SET(esp, inf) ((esp)->info = *(inf))
+#endif
+// GAME_FX_SCAN (game30.mk, lane fx; exact; needs GAME_ESP_OWNER=1): slot bitmaps beside the owner
+// counts, so the per-tick pool scans visit only slots that can pass their tests, in the same
+// ascending order. re4dc_fx_esp_live: every live slot (PullEsp sets, PushEsp clears); row B of
+// re4dc_fx_esp_ownmap: every live slot whose Core_pEm is non-zero and falls in owner bucket B (the
+// three info copies move it). They follow re4dc_esp_own_valid (pool alloc / free / push / pop make
+// them stale; the next user rebuilds them) and describe pools of up to 1024 slots
+// (re4dc_fx_esp_ok). The loops keep the source shape (every slot in order, the source test on
+// each one reached) and step over runs of clear bits while the maps are the ones they checked
+// (re4dc_fx_esp_gen unchanged); the word is re-read at every step, so a slot pulled or pushed by a
+// call is seen or skipped exactly as the source loop would, and after a pool change the rest of the
+// pass tests every slot.
+#if defined(RE4DC_FX_SCAN) && RE4DC_FX_SCAN
+#define RE4DC_FX_ESP_WORDS 32
+extern "C" unsigned long re4dc_fx_esp_live[RE4DC_FX_ESP_WORDS];
+extern "C" unsigned long re4dc_fx_esp_ownmap[64][RE4DC_FX_ESP_WORDS];
+extern "C" unsigned long re4dc_fx_esp_ok;
+extern "C" int re4dc_fx_esp_ready();   // syncs when stale; 1 when the maps describe the pool
+extern "C" unsigned long re4dc_fx_esp_gen;   // bumped when the maps go stale or are rebuilt
+extern "C" unsigned long re4dc_fx_chk[16];   // =2 check counters (esp.cpp logs them)
+enum {
+    FXC_ESP_MOVE,   // EspMove passes
+    FXC_ESP_DEL,    // EspDelete calls through the owner rows
+    FXC_EG_MOVE,    // EspgenMove / EspgenTrans passes
+    FXC_EG_DEL,     // EspgenDelete calls through the occupied map
+    FXC_EFM,        // EfmDelete calls through the candidate list
+    FXC_EFM_BUILD,  // candidate list rebuilds
+    FXC_MIS_ESP,    // skipped esp slots the source would have moved / deleted
+    FXC_MIS_EG,     // skipped controllers the source would have moved / drawn / deleted
+    FXC_MIS_EFM,    // skipped objects the source would have tested (id 4 / 5 / 9)
+    FXC_MAP_ERR,    // map bits that disagree with the pool (live / owner rows)
+    FXC_FALLBACK,   // loops finished by the source loop after a pool change
+    FXC_VISIT,      // slots visited by the fast loops
+};
+// Index of the lowest set bit of x (x != 0).
+static inline unsigned long re4dcFxCtz(unsigned long x)
+{
+    static const unsigned char tbl[32] = {0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
+                                          31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6,  11, 5,  10, 9};
+    return tbl[((x & (0u - x)) * 0x077CB531u) >> 27];
+}
 #endif
 extern "C" {
 void EspFuncTblSet(int id, EspCreateFunc create, EspTransFunc trans);

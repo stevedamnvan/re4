@@ -201,6 +201,33 @@ GAME_ESP_OWNER ?= 0
 ifneq ($(GAME_ESP_OWNER),0)
 GAME_CPPFLAGS += -DRE4DC_ESP_OWNER=$(GAME_ESP_OWNER)
 endif
+# GAME_FX_SCAN=1 (30 fps rethink, lane fx; exact; needs GAME_ESP_OWNER=1): slot maps so the per-tick
+#                effect pool loops (the source loops) step over runs of slots their tests cannot pass,
+#                re-reading the map at every step: EspMove (live esp slots), EspDelete with an owner (the
+#                owner bucket's live slots), EspgenMove / EspgenTrans / EspgenDelete (occupied controllers),
+#                EfmDelete (slots holding obj 4 / 5 / 9, listed once per ObjMgr alive-list generation;
+#                with GAME_ATCHK_LIST=1 and GAME_WORKAT_INLINE=1, else the source loop). A header knob
+#                (include/esp.h). =2: every skipped slot is tested as the source loop would test it and
+#                counted, with the maps checked against the pools every tick ("FXS" lines).
+GAME_FX_SCAN ?= 0
+ifneq ($(GAME_FX_SCAN),0)
+ifeq ($(GAME_ESP_OWNER),0)
+$(error GAME_FX_SCAN needs GAME_ESP_OWNER=1)
+endif
+GAME_CPPFLAGS += -DRE4DC_FX_SCAN=$(GAME_FX_SCAN)
+PLATFORM_CPPFLAGS += -DRE4DC_FX_SCAN=$(GAME_FX_SCAN)
+endif
+# GAME_FX_MOVE=1 (30 fps rethink, lane fx; exact): the effect base update (cEsp::CommonMove with its
+#                ColorUpdate, cEsp::AnmMove) and cEsp48::move read and write their float fields through
+#                walking pointers (fmov.s @Rm+ / @-Rn, include/esp.h FXL / FXS): the same operations on
+#                the same operands in the same order, fewer address adds. A header knob (esp.h). =2: the
+#                source runs live and the new code on a copy of the effect, compared field for field
+#                ("FXM" / "FX48" lines; FX48 also counts sinf argument repeats).
+GAME_FX_MOVE ?= 0
+ifneq ($(GAME_FX_MOVE),0)
+GAME_CPPFLAGS += -DRE4DC_FX_MOVE=$(GAME_FX_MOVE)
+PLATFORM_CPPFLAGS += -DRE4DC_FX_MOVE=$(GAME_FX_MOVE)
+endif
 # GAME_ROTVEC_MEMO=1 (square plan: collision body positions; exact): RotVector (sub2.cpp) keeps yaw-only
 #                    results in 256 one-line entries keyed by the input bits (RVM_BITS=n: 2^n entries);
 #                    cAtariInfo::getPos repeats it for every candidate body on each EmAtCheck call.

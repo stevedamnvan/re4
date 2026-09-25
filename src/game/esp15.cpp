@@ -36,6 +36,85 @@ cEsp* Esp15_Create()
     return new cEsp15;
 }
 
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE
+// GAME_FX_MOVE: the three camera axes move() normalizes depend only on the camera (pos, at, up),
+// so they are kept with those nine words and recomputed, by the same calls in the same order, when
+// any of them changes. A zero vector (the source logs it) never enters the memo.
+struct Fx15Cam {
+    u32 key[9];   // param.pos, param.at, up (bits)
+    Vec side;     // normalize(cross(at - pos, up))
+    Vec up;       // normalize(up)
+    Vec view;     // normalize(at - pos)
+    int valid;
+};
+static Fx15Cam fx15Cam;
+static inline int fx15Zero(const Vec* v)
+{
+    return 0.0f == v->x && 0.0f == v->y && 0.0f == v->z;
+}
+static __attribute__((noinline)) const Fx15Cam* fx15CamFill(const u32* k)
+{
+    Fx15Cam* c = &fx15Cam;
+    Vec dir;
+    int i;
+
+    c->valid = 0;
+    PSVECSubtract(&pG->Cam.param.at, &pG->Cam.param.pos, &dir);
+    PSVECCrossProduct(&dir, &pG->Cam.up, &dir);
+    if (fx15Zero(&dir) || fx15Zero(&pG->Cam.up)) {
+        return NULL;
+    }
+    PSVECNormalize(&dir, &dir);
+    c->side = dir;
+    PSVECNormalize(&pG->Cam.up, &dir);
+    c->up = dir;
+    PSVECSubtract(&pG->Cam.param.at, &pG->Cam.param.pos, &dir);
+    if (fx15Zero(&dir)) {
+        return NULL;
+    }
+    PSVECNormalize(&dir, &dir);
+    c->view = dir;
+    for (i = 0; i < 9; i++) {
+        c->key[i] = k[i];
+    }
+    c->valid = 1;
+    return c;
+}
+// The memo for the current camera; NULL when an axis is a zero vector (the source path then runs).
+static inline const Fx15Cam* fx15CamGet()
+{
+    const u32* pos = (const u32*) &pG->Cam.param.pos;
+    const u32* at = (const u32*) &pG->Cam.param.at;
+    const u32* up = (const u32*) &pG->Cam.up;
+    const Fx15Cam* c = &fx15Cam;
+    u32 k[9];
+
+    k[0] = pos[0];
+    k[1] = pos[1];
+    k[2] = pos[2];
+    k[3] = at[0];
+    k[4] = at[1];
+    k[5] = at[2];
+    k[6] = up[0];
+    k[7] = up[1];
+    k[8] = up[2];
+    if (c->valid && c->key[0] == k[0] && c->key[1] == k[1] && c->key[2] == k[2] && c->key[3] == k[3] &&
+        c->key[4] == k[4] && c->key[5] == k[5] && c->key[6] == k[6] && c->key[7] == k[7] && c->key[8] == k[8]) {
+        return c;
+    }
+    return fx15CamFill(k);
+}
+#if RE4DC_FX_MOVE == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 fx15Calls, fx15Memo, fx15Mis;
+static inline int fx15Same(const Vec* a, const Vec* b)
+{
+    const u32* x = (const u32*) a;
+    const u32* y = (const u32*) b;
+    return x[0] == y[0] && x[1] == y[1] && x[2] == y[2];
+}
+#endif
+#endif
 // Restores the base alpha, runs the base update/animation, applies the indoor fade counter, wraps
 // the position into the camera box on the three camera axes, fades the alpha with view distance
 // and keeps the particle above Min_y.
@@ -82,10 +161,32 @@ void cEsp15::move()
             range = w->Range;
             half = range * 0.6f;
 
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE
+            const Fx15Cam* cam = fx15CamGet();
+#if RE4DC_FX_MOVE == 2
+            // the source runs; the memo is compared with it
+            const Fx15Cam* chk = cam;
+            cam = NULL;
+            fx15Calls++;
+            if (chk != NULL) {
+                fx15Memo++;
+            }
+#endif
+            if (cam != NULL) {
+                dir = cam->side;
+            } else
+#endif
+            {
             PSVECSubtract(&pG->Cam.param.at, &pG->Cam.param.pos, &dir);
             PSVECCrossProduct(&dir, &pG->Cam.up, &dir);
 #line 111 "D:/Bio4/Prog/esp15.cpp"
             VECNormalize(&dir, &dir);
+            }
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE == 2
+            if (chk != NULL && !fx15Same(&chk->side, &dir)) {
+                fx15Mis++;
+            }
+#endif
             PSVECSubtract(&m_Pos, &pG->Cam.param.pos, &tmp);
             d = PSVECDotProduct(&tmp, &dir);
             if (d >= 0.0f) {
@@ -98,8 +199,20 @@ void cEsp15::move()
                 PSVECAdd(&m_Pos, &sc, &m_Pos);
             }
 
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE
+            if (cam != NULL) {
+                dir = cam->up;
+            } else
+#endif
+            {
 #line 130 "D:/Bio4/Prog/esp15.cpp"
             VECNormalize(&pG->Cam.up, &dir);
+            }
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE == 2
+            if (chk != NULL && !fx15Same(&chk->up, &dir)) {
+                fx15Mis++;
+            }
+#endif
             PSVECSubtract(&m_Pos, &pG->Cam.param.pos, &tmp);
             d = PSVECDotProduct(&tmp, &dir);
             if (d >= 0.0f) {
@@ -112,9 +225,24 @@ void cEsp15::move()
                 PSVECAdd(&m_Pos, &sc2, &m_Pos);
             }
 
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE
+            if (cam != NULL) {
+                dir = cam->view;
+            } else
+#endif
+            {
             PSVECSubtract(&pG->Cam.param.at, &pG->Cam.param.pos, &dir);
 #line 152 "D:/Bio4/Prog/esp15.cpp"
             VECNormalize(&dir, &dir);
+            }
+#if defined(RE4DC_FX_MOVE) && RE4DC_FX_MOVE == 2
+            if (chk != NULL && !fx15Same(&chk->view, &dir)) {
+                fx15Mis++;
+            }
+            if (fx15Calls % 1024 == 0) {
+                re4dc_log("FX15 calls=%u memo=%u mismatch=%u\n", fx15Calls, fx15Memo, fx15Mis);
+            }
+#endif
             PSVECSubtract(&m_Pos, &pG->Cam.param.pos, &tmp);
             d = PSVECDotProduct(&tmp, &dir);
             if (d >= 0.0f) {
