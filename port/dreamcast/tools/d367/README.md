@@ -42,6 +42,9 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   (platform/lnk_sh4.S) after At_poly_line_ck.
 - The line queries' block walk kernel (ba73027; exact, room-independent; not in LH yet): the coarse-square arms
   add `GAME_LINE_WALK=1`; the order file places its kernel (platform/lnw_sh4.S) after the leaf kernel.
+- The pieces' transforms in the walk kernel (4e394ea; exact, room-independent; not in LH yet): the coarse-square
+  arms add `GAME_LINE_PIECE=1` (needs `GAME_LINE_WALK=1`); the entry lives in platform/lnw_sh4.S, so the
+  order file is unchanged.
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 

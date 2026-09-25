@@ -13,7 +13,7 @@ Resume with the shared skill `re4-dreamcast-d367` (Claude and Codex): it covers 
 
 Build recipes are in [tools/d367/README.md](port/dreamcast/tools/d367/README.md). LH is the integrated base: 83 ms Flycast, 120.3 hw.
 
-2026-09-25: the r101 square (30 fps rethink) follows [D367_SQUARE_PERF_PLAN.md](port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md), section "Current order and status". Frame pacing and the coarse renderer landed default off (f4da5fd); R headroom and code placement (LINK_ORDER) landed default off (801d72d); the em-em candidate cache GAME_ATCHK_CACHE (aeefd26), the workAt inline GAME_WORKAT_INLINE (3eaa868) and the line queries' leaf and block walk kernels GAME_LINE_LEAF (cf46edc) and GAME_LINE_WALK (ba73027) landed default off: G_q 30.94, R ~4. Next: G (collision traversal: the line queries; then visual simulation).
+2026-09-25: the r101 square (30 fps rethink) follows [D367_SQUARE_PERF_PLAN.md](port/dreamcast/docs/D367_SQUARE_PERF_PLAN.md), section "Current order and status". Frame pacing and the coarse renderer landed default off (f4da5fd); R headroom and code placement (LINK_ORDER) landed default off (801d72d); the em-em candidate cache GAME_ATCHK_CACHE (aeefd26), the workAt inline GAME_WORKAT_INLINE (3eaa868) and the line queries' leaf and block walk kernels GAME_LINE_LEAF (cf46edc) and GAME_LINE_WALK (ba73027) and the pieces' transforms GAME_LINE_PIECE (4e394ea) landed default off: G_q 30.66, R ~4 (coarse, stick figures; the reduced characters are ~24 ms until the fast character path lands). Next: G (collision traversal: the line queries; then visual simulation).
 
 State at this update (HEAD 5285bc7 or later):
 - **Perf lane:**

@@ -298,7 +298,7 @@ The part-world pass takes two paths:
 3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
    state changes and RNG calls.
 
-### Current order and status (updated 2026-09-25, after the line queries' block walk kernel)
+### Current order and status (updated 2026-09-25, after the pieces' transforms in the line walk kernel)
 
 **The order we follow now (user, 2026-09-25):**
 1. **Land the coarse renderer with frame pacing.** Done: **f4da5fd** (patch land2-pacing-coarse.patch,
@@ -329,8 +329,10 @@ The part-world pass takes two paths:
    candidate cache (GAME_ATCHK_CACHE, aeefd26; exact): G_q 32.23 (sq85), gap 7.26 to 24.97 (section
    "Collision traversal" below). Then the workAt inline (GAME_WORKAT_INLINE, 3eaa868; exact): G_q 31.75
    (sq91), gap 6.78. Then the line queries' leaf kernel (GAME_LINE_LEAF, cf46edc; exact): G_q 31.31 (sq94),
-   gap 6.34. Then their block walk kernel (GAME_LINE_WALK, ba73027; exact): **G_q 30.94** (sq96), gap **5.97**.
-   Next: the pieces' point transforms, the sphere queries, then visual simulation.
+   gap 6.34. Then their block walk kernel (GAME_LINE_WALK, ba73027; exact): G_q 30.94 (sq96), gap 5.97. Then
+   the pieces' transforms in that kernel (GAME_LINE_PIECE, 4e394ea; exact): **G_q 30.66** (sq97), gap **5.69**.
+   Next: the sphere queries, then visual simulation. The reduced characters (appearance, step 5) are with
+   the coarse-character agent: section "Reduced characters and the character path" below.
 
 **Where each step of the rethink stands:**
 
@@ -338,9 +340,9 @@ The part-world pass takes two paths:
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44) and block walk kernel (ba73027, -0.37), all exact: G_q 30.94; gap 5.97 to 24.97; the pieces' transforms and the sphere queries next |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28), all exact: G_q 30.66; gap 5.69 to 24.97; the sphere queries next |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
-| 5. Restore appearance | one-house test measured (below); nothing else started |
+| 5. Restore appearance | one-house test measured (below); reduced characters integrated by the coarse-character agent but ~24 ms for Leon + 5 Ganados (estimate); the fast character path is queued (section "Reduced characters and the character path") |
 
 **What remains on the coarse renderer** (answer to the user, 2026-09-25):
 1. Landing (order item 1): done, f4da5fd.
@@ -354,6 +356,44 @@ The part-world pass takes two paths:
 4. Rooms: only r101 has run coarse; r100 / r103 not yet; the house data is r101's.
 5. The step-2 spec's "compact gameplay records": it reads the game's own structures.
 6. Not measured: PVR fill / ISP time (outside the CPU model); the console calibration.
+
+#### Reduced characters and the character path (2026-09-25)
+
+The user asked for version C: the coarse renderer, today's G and the coarse-character agent's reduced
+models (the 3,989-triangle Leon with hair v2 and the 874-triangle Ganado; private bundles; the agent's
+worktrees under /root/probe/d367-agents/coarse-actors-4k). Every figure names its image. G is sq96's 30.94
+(30.66 with GAME_LINE_PIECE).
+
+| version | image | R a drawn frame | every tick drawn | paced to full speed |
+|---|---|---:|---|---|
+| A (sq98, measured) | source renderer, original models | 68.6 | 10.0 fps at 33% speed | ~1 fps |
+| C (estimate) | coarse world, reduced Leon and Ganados | ~28 | ~17 fps at ~56% speed | ~2.5 fps |
+| B | coarse world, stick figures | ~4 | ~29 fps at ~95% speed | ~18 fps |
+
+- A's R (sq98 - sq96): characters 24.4, scenery 17.0, the game's own draw preparation 14.1, UI 7.6,
+  copies and the rest ~5.5. C keeps ~24 ms of characters and replaces the rest with ~4 ms of coarse world.
+- C's estimate: the agent's cl17 (66.44 ms a frame, every tick drawn, on its b7a1382 base; about 5 Ganado
+  meshes submitted, 1-2 clearly visible) minus that base's G (~37.4, as sq52) and ~1 ms of the R-headroom
+  knobs. The agent measures C on a snapshot of tree5 (coarse-actors-4k/stack-tree): every tick drawn, a
+  matched stick-figure control, never-draw G, a STRICT gate, and the same models on both renderers.
+- The reduced characters draw through the actors30 character code (platform/native_actor_fast.cpp)
+  through the agent's adapter. Version A draws with the same code, so with the same models the two
+  renderers differ only in setup (estimate 2-6 ms a frame). Profile of the agent's crowd runs (cl15-n0 and
+  n8; re4dc_actor_submit runs 3.68M instructions a tick for Leon + 8 Ganados):
+  - ~130 instructions per transformed vertex: compiled C with stack spills and a mul.l index scale;
+  - a Ganado triangle costs 1.41 transformed vertices and 2.28 strip vertices (Leon 1.17 and 2.42); a
+    mesh prepared for this path needs ~0.6 and ~1.3;
+  - more weight palettes than the source models (Leon 665 vs 359, Ganado 193 vs 111): ~313 palette
+    passes a Ganado;
+  - so ~2.75 ms a Ganado and 9.9 ms for Leon, all in. Triangle count doesn't predict the cost (the
+    agent's triangle-only estimator failed).
+- **The fast character path (user, 2026-09-25; queued for the coarse-character agent after version C):**
+  1. prepare the meshes for this path offline and deterministically (strips, shared vertices, merged
+     weight palettes), keeping the approved look; measured on its own;
+  2. a hand-written SH-4 vertex loop (transform, outcodes, lighting) and a cheaper adapter, behind a
+     default-off knob with a =2 bit check against the C path, render-only STRICT; measured on C and A.
+  Target: Leon + 5 Ganados from ~24 to 6-8 ms. At G <= 24 that takes C from ~10 to ~25 fps paced to full
+  speed.
 
 #### Skeleton operations (user's order, item 1; 2026-09-25)
 
@@ -583,9 +623,17 @@ count as sq72):
   - sphere queries ~1.04: hitCheckSphere 0.42 for 784 box tests, of which 201 run all four
     edge-crossing tests and still miss;
   - em-em ~1.1 (getPos 0.34, At_em_sphere_rect_ck 0.25), ObjHitCheck 0.32, cDmgMgr::hitCheck 0.17.
+- The pieces' transforms in the walk kernel (GAME_LINE_PIECE, **landed 4e394ea, default off**). hitCheck2
+  transformed both ends of the segment into every live piece (1258 of the 2100 PSMTXMultVec calls a
+  tick), and ~83% of pieces then end with no overlapped leaf, having used only the ends' x and z. The
+  kernel's new entry (re4dc_line_piece) computes those rows with MTXMultVec's contract-off dataflow and
+  joins the walk; a piece with a leaf transforms both ends in full, as before. **sq97 30.66 (-0.28 vs
+  sq96)**: PSMTXMultVec 0.73 -> 0.44, hitCheck2 0.56 -> 0.43, the walk 1.03 -> 0.88, the new entry 0.32.
+  tr83 (=2) 0 mismatches in the ends and the leaves over 5.37M pieces; tr83 / tr84 STRICT vs tr56 and
+  tr42, every decision identical.
 - Next in collision traversal:
-  - the pieces' point transforms: ~70% of pieces only need the x and z of both ends for the walk;
-  - the sphere walk: a resumable kernel, since a hit moves the sphere, so leaves can't be collected first;
+  - the sphere walk: a resumable kernel, since a hit moves the sphere, so leaves can't be collected first
+    (designed; ~0.17 ms estimated);
   - then visual simulation.
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
@@ -1172,3 +1220,6 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq95 | sq94 + GAME_LINE_WALK=1 (block walk kernel, rev 1) | 31.20 (-0.11) | - | tr79 (=2) 0 mismatches over 5.33M walks; tr80 STRICT vs tr56 and tr42, every decision identical | rev 3 (next-block prefetch, piece-first walk) in test |
 | 09-25 | sq96 | sq94 + GAME_LINE_WALK=1 rev 3 (next-block prefetch, piece-first walk) | 30.94 (-0.37) | - | tr81 (=2) 0 mismatches over 5.35M walks; tr81 / tr82 STRICT vs tr56 and tr42, every decision identical | landed ba73027: **G_q 30.94** |
 | 09-25 | land7 | GAME_LINE_WALK landed (ba73027) | - | - | knob-off identity (default, canonical); tr82 carry-over 446 / 455 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | sq97 | sq96 + GAME_LINE_PIECE=1 (the pieces' transforms in the walk kernel) | 30.66 (-0.28) | - | tr83 (=2) 0 mismatches over 5.37M pieces; tr83 / tr84 STRICT vs tr56 and tr42, every decision identical | landed 4e394ea: **G_q 30.66** |
+| 09-25 | land8 | GAME_LINE_PIECE landed (4e394ea) | - | - | knob-off identity (default, canonical); tr84 carry-over 446 / 455 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | sq98 | version A: the source renderer and original models, sq96's G knobs, every tick drawn (`$B0 PACE_MODE=off` + K2 + RH) | 99.57 a drawn tick (sq51, yesterday's code: 104.75) | - | - | reference for version C: R 68.6 (sq98 - sq96) |
