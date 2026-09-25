@@ -25,6 +25,11 @@ better solution appears; then record the switch and why in the ledger.** Every s
 
 ## 30 fps rethink (user, 2026-09-25): the coarse complete square first
 
+**Correction (user review, 2026-09-25):** steps 1 and 2 below ran every arm, the controls
+included, with ACT_CAP=6, which throttles parked Ganados. Their G, R and STRICT results describe the
+throttled encounter. The reference is the **uncapped baseline** at the end of this section: G_q 37.52,
+R 5.03, gap 12.55 ms with the margin.
+
 Source: `C:\Game Dev\Emulators\re4-research\RE4_DC_30FPS_RETHINK_2026-09-25.md`. The SH4ZAM review
 (`re4-research\sh4zam-audit-20260925\AUDIT.md`) gives techniques for step 2 and math candidates for step 3.
 
@@ -179,8 +184,8 @@ Position drift is 0. Only the sound system's own queries differ (415 frames), as
 - Smooth (15 fps floor): 2 × 32.70 + 4.96 = 70.4 ms per image, i.e. 14.2 fps at 94.7% speed;
 - real speed: 981 of 1000 ms/s go to logic, leaving F <= 3.8 images/s.
 
-**Fit / gap:** R fits (4.96 <= 6). 30 fps needs G + R <= 33.33 - 3.33, i.e. **G <= 25.0 against
-32.70: a gap of 7.7 ms.** Step 3 (G) is now the critical path.
+**Fit / gap (capped, ACT_CAP=6; superseded by the uncapped baseline below):** R fits (4.96 <= 6).
+30 fps needs G + R <= 33.33 - 3.33, i.e. G <= 25.0 against 32.70: a gap of 7.7 ms.
 
 **Code (parked).** coarse.cpp, PACE_TRANS_SKIP and the trace hashes stack on the unlanded frame-pacing
 stack (pace.cpp / pace.mk, the main.cpp loop), so they land with pacing: the user's standing priority
@@ -193,6 +198,105 @@ stack (pace.cpp / pace.mk, the main.cpp loop), so they land with pacing: the use
 
 It also carries tree5's other private knobs (GAME_SKEL_AUDIT, GAME_IK_PASS, POOL_PEAK_LOG). The
 pacing landing extracts from it.
+
+### Uncapped baseline (user review, 2026-09-25): the reference for the rethink
+
+The user's review caught a baseline problem. Steps 1 and 2 above used ACT_CAP=6 in every arm, the
+controls included:
+- ACT_CAP_CREEP 4 runs a parked Ganado's update only once every fourth tick;
+- the counts show it happened: 8 of 14 cEm10::move calls per tick, i.e. 6 skipped per tick, 720
+  over the 120 measured ticks.
+
+So the STRICT result (tr40 vs tr32) only proves that coarse drawing preserves the **throttled**
+encounter. **Preserving RE4 gameplay is judged against the uncapped encounter (ACT_CAP=0).**
+ACT_CAP stays an approved option for the 15 fps plan. Capped numbers are a labelled variant, never
+"preserved gameplay".
+
+The same flags as sq43-sq48 with ACT_CAP=0 (act_cap.cpp is not linked, so no act_cap symbols).
+At runtime: 14 cEm10::move calls per tick in every uncapped arm.
+
+| arm | what | work hw ms/tick | R per image | capped twin |
+|---|---|---:|---:|---|
+| sq49 | never draw, full presentation stages | 41.53 | - | sq45 37.15 |
+| sq50 | never draw, qualified mask (**G_q**) | **37.52** | - | sq43 32.70 |
+| sq51 | every tick drawn, source renderer | 104.75 | 63.22 (vs sq49) | sq46 102.13 |
+| sq52 | every tick drawn, COARSE v0.4 | **42.55** | **5.03** (vs sq50) | sq48 37.66 |
+
+The cap hid **+4.82 ms of gameplay per tick** (G_q 32.70 -> 37.52). Coarse R barely moves (4.96 -> 5.03).
+
+R v0.4, uncapped, breaks down as follows.
+- The coarse pass, 2.64 ms:
+  - world blocks 1.07;
+  - actors 0.86;
+  - setup + effects 0.44;
+  - emit 0.27.
+- Source work still invoked on a drawn tick:
+  - IDSystem::unitTrans 0.49;
+  - HUD id quads ~0.3;
+  - model asset preparation 0.18;
+  - ExecOt 0.12;
+  - OSCheckHeap 0.12;
+  - GXProject 0.09.
+- Displacement: partsWorldCalc +0.33 and PSMTXConcat +0.31 on the same calls (+27 Concat from the HUD
+  quads). The image's code and data evict the skeleton's.
+
+Per image: 931 triangles and 2115 vertices; 20 actors, 263 segments, ~56 effects. Same TA / VRAM /
+heap class as sq48.
+
+**Paced timing** (hw model, 30 ticks/s):
+- every tick drawn: 42.55 ms per tick, i.e. 23.5 fps at 78.3% speed;
+- Smooth (2 ticks per image): 2 × 37.52 + 5.03 = 80.1 ms, i.e. 12.5 fps at 83.3% speed;
+- real speed is out of reach: 30 × 37.52 = 1126 ms of logic per second of game time, so even with no
+  drawing the square runs at 88.8% speed.
+
+**Fit / gap (uncapped):** complete 42.55 ms per tick, against 33.33 bare (-9.22) and 30.00 with the
+margin (**-12.55**). R fits (5.03 <= 6). **G_q must fall from 37.52 to <= 24.97.** The calibration disc
+still awaits the console run.
+
+Gameplay, uncapped (GAME_DECISION_TRACE=1, 420 s, r101 bell-fight warp): tr41 (control: source
+renderer, ACT_CAP=0) against tr42 (the coarse candidate: every tick drawn, PACE_TRANS_SKIP=4063,
+COARSE=1, ACT_CAP=0). **STRICT over 4185 frames, every decision identical:** em-em 2,897,312 results, 411,031 line queries
+(6.6M candidate polygon tests), 59,618 area checks, 210,951 damage tests, ep / eg effect behaviour;
+position drift 0 (41,978 enemy samples). Only the sound system's own queries differ (392 frames), as
+between two controls. **The coarse square preserves the uncapped encounter.** (Both trace arms carry
+the play stack's render-only knobs, FOG_FAR / CROWD_LOD / ACTOR_FOG_GATE; no act_cap symbols in
+either ELF.)
+
+Where uncapped G_q goes, by source file (sq50, capped sq43 in brackets). These locate experiments;
+they are not achievable savings.
+
+| group | files | hw ms/tick |
+|---|---|---:|
+| animation / skeleton | model.cpp 4.05, motion.cpp 2.46 (5.44 capped), ik 0.51, native_motion 0.22 | 7.24 |
+| collision | atari.cpp 3.70, at_mod.cpp 2.57, at_sub.cpp 1.90 (7.07 capped); sce_at 0.37, atariInfo 0.35 | 8.89 |
+| shared matrix / trig | PSMTX asm 3.32, math_sub 2.62, game30_trig 1.41, sub2 0.76 (RotVector, distances), vec 0.43, mtx 0.29, acos 0.25, quat 0.12 | 9.18 |
+| effects | esp_sub 1.07, esp 0.59, est 0.43 (EspDelete: 5 calls, 7.8k instructions each), esp_efm 0.34, esp48 0.28, espgen 0.26, esp15 0.15 | 3.12 |
+| cloth | pendulum.cpp | 1.01 |
+| Ganado behaviour | em10 0.84, em_sub 0.35 (line / cube tests), em 0.18 | 1.37 |
+| port bridges | parts_bridge.cpp (workAt / frozen lookups, ~3700 calls per tick) | 0.85 |
+
+The cap's +4.82 lands mostly in:
+- skeleton: model / motion / ik +1.16;
+- collision: +1.10;
+- shared math: +1.20;
+- effects: +0.65;
+- Ganado behaviour: +0.29.
+
+The part-world pass takes two paths:
+- **Ganado FTRV path:** 33 calls and 1122 parts per tick, 1.62 ms, 254 instructions per part.
+- **Library path (Leon, objects):** 73 calls and 655 parts per tick. It costs 1.59 ms in its own code
+  plus ~0.8 in Concat / MultVec / TransMatrix, i.e. ~3.6 us per part against ~1.45 on the FTRV path.
+- The compiled FTRV path spends most of its instructions on addressing: SH-4 FP loads have no
+  displacement form, so each field access costs three instructions.
+- It also spends 3 FDIVs per part on a parent scale that all parts of a Ganado share.
+
+**Next, the user's order:**
+1. Whole animation / skeleton operations: compact bone data, fewer intermediate loads / stores, every
+   gameplay update kept, conversion costs measured.
+2. Collision traversal: compact spatial data and conservative rejection, keeping the original
+   candidate order and decisions.
+3. Visual simulation (cloth, effects), removed only after identifying their gameplay readers, keeping
+   state changes and RNG calls.
 
 ## Where the time goes (hwproject, r101-bell-fight room frames 1000-1119, Standard stack)
 
@@ -731,3 +835,8 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq44 | every tick drawn, COARSE v0 (prisms) | 41.36 (R 8.66) | - | tr34 STRICT vs tr32, decisions identical | superseded |
 | 09-25 | sq47 | COARSE v0.1 (ribbons, FSRRA emit) | 38.71 (R 6.01) | - | - | superseded: an invisible wall covered the view (tr35-tr39 probes) |
 | 09-25 | sq48 | COARSE v0.4 (front faces, invisible walls skipped, village tones, source fog far) | 37.66 (R 4.96) | - | tr40 STRICT vs tr32 4403 frames, every decision identical | the coarse candidate; code parked on the pacing patch |
+| 09-25 | sq49 | uncapped never-draw control (sq45 flags, ACT_CAP=0) | 41.53 work | - | - | control; 14 cEm10::move per tick (8 capped) |
+| 09-25 | sq50 | uncapped never draw + PACE_TRANS_SKIP=4063 | 37.52 work | - | (tr41 / tr42) | **G_q uncapped**: the rethink's reference (+4.82 vs capped sq43) |
+| 09-25 | sq51 | uncapped, every tick drawn, source renderer | 104.75 (R 63.22 vs sq49) | - | - | drawing baseline |
+| 09-25 | sq52 | uncapped, every tick drawn, COARSE v0.4 | 42.55 (R 5.03) | - | tr42 STRICT vs tr41 | the coarse candidate, uncapped: -12.55 with the margin, -9.22 bare |
+| 09-25 | tr41/tr42 | GAME_DECISION_TRACE=1, ACT_CAP=0: control / coarse every tick | - | - | STRICT 4185 frames; decisions identical (2.90M em-em, 411k line queries, 59.6k area, 211k damage), 0 drift | uncapped gameplay preserved |
