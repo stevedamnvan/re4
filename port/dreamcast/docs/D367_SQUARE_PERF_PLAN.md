@@ -311,7 +311,8 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
 | vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: a hand-written SH-4 vertex loop in platform/native_actor_fast.cpp |
 | gc collision | lane-gcol/tree | the resumable sphere walk, the em-em rows |
-| fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept) |
+| fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
+| ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp, dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit) |
 | sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map for deferring draw-only work |
 | wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky |
 | bg route bugs | lane-bugs | the pre-pivot backlog: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough (paused: its agent was stopped; relaunch on the user's word) |
@@ -354,7 +355,9 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    "Collision traversal" below). Then the workAt inline (GAME_WORKAT_INLINE, 3eaa868; exact): G_q 31.75
    (sq91), gap 6.78. Then the line queries' leaf kernel (GAME_LINE_LEAF, cf46edc; exact): G_q 31.31 (sq94),
    gap 6.34. Then their block walk kernel (GAME_LINE_WALK, ba73027; exact): G_q 30.94 (sq96), gap 5.97. Then
-   the pieces' transforms in that kernel (GAME_LINE_PIECE, 4e394ea; exact): **G_q 30.66** (sq97), gap **5.69**.
+   the pieces' transforms in that kernel (GAME_LINE_PIECE, 4e394ea; exact): G_q 30.66 (sq97), gap 5.69. Then
+   the effect pools' scans and moves (GAME_FX_SCAN + GAME_FX_MOVE, 1d3dc4d, lane fx; exact): **G_q 29.55** (fx9),
+   gap **4.58** (section "Effect pools" below).
    The rest of G runs in the lanes above: gc the sphere walk and the em-em rows, fx effects, sk skeleton /
    motion / cloth / maths. The reduced characters (appearance, step 5): section "Reduced characters and the
    character path" below.
@@ -365,7 +368,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28), all exact: G_q 30.66 (sq97); gap 5.69 to 24.97; in lanes: gc sphere walk and em-em rows, fx Esp / Efm, sk skeleton / motion / cloth / maths and the gameplay-reader map |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), all exact: G_q 29.55 (fx9); gap 4.58 to 24.97; in lanes: gc sphere walk and em-em rows, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); in lanes: cl fitted meshes, vl vertex loop, wd textured coarse world <= ~3 ms; the external agent: the first level's cast models; the main session: the coarse HUD fix |
 
@@ -452,6 +455,30 @@ Paced to full speed = (1000 - 30 x 30.66) / R images a second.
   and status"); the cl lane integrates them.
 - Coarse-path bug seen in C: the HUD shows unlit "88" ammo digits and a flat lens. The main session owns
   the fix.
+
+#### Effect pools (lane fx, 2026-09-25; landed 1d3dc4d, default off)
+
+Never-draw uncapped arms against sq97 (30.66), exact, the RNG sequence kept:
+- GAME_FX_SCAN r3 (needs GAME_ESP_OWNER=1): slot bitmaps (live esp slots, owner rows, occupied espgen
+  controllers) so the source loops step over runs of clear bits, re-reading the map at every step, with
+  the same slot order and the same source test on every slot reached. EfmDelete lists obj 4 / 5 / 9 once
+  per ObjMgr alive-list generation (with GAME_ATCHK_LIST=1 and GAME_WORKAT_INLINE=1; else the source
+  loop). EspDelete 0.432 -> 0.038, EfmDelete + EfmDeleteSub 0.430 -> 0.011, EspgenDelete 0.182 -> 0.060,
+  EspgenTrans / EspgenMove -0.06 together.
+- GAME_FX_MOVE r2: CommonMove with ColorUpdate inlined and AnmMove with EspGetAnmAddr inlined, through
+  walking-pointer float loads and stores (the same operations on the same operands in the same order);
+  cEsp48 skips sinf for |x| < 2^-27 (fdlibm returns x there: 2 of its 3 axes on every call in the
+  square; sinf calls 985 -> 439 a tick, 0.435 -> 0.302); cEsp15 memoises its camera axes on the 9
+  camera words. CommonMove + ColorUpdate 0.666 -> 0.597. AnmMove (+0.03) and cEsp48 (+0.04) lost to
+  I-cache layout: the order file needs regenerating (~0.08 ms; ESP_IsActive, its first entry, is no
+  longer called from EspMove).
+- **fx9 (both =1): G 29.55 (-1.11).** Gate fx8 (both =2): tr56 STRICT over 7074 frames, tr42 over 7073;
+  dtcmp must-match rows identical, drift 0; FXS map errors 0, FXM 2.9M calls / FX48 1.93M / FX15 275k,
+  0 mismatches.
+- Dropped: GAME_FX_PREF, the next live effect's 11 lines prefetched: 30.25 (v1) / 29.96 (v2) against
+  29.55 without it (the model's one fill bus: demand misses wait behind the burst).
+- Left: ~2.1 ms of effect work a tick, mostly each effect's own update and misses on its object; 439
+  sinf calls (cEsp48 273, C_QUATSlerp 94, PenClothMove 66) are the sk lane's, bit-identical only.
 
 #### Skeleton operations (user's order, item 1; 2026-09-25)
 
@@ -1290,3 +1317,5 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | cl28 | cl21 + the losslessly fitted meshes (private-fast-v1; v2 fixes the hair order) | W 56.41 (-0.72) | - | cl29 STRICT vs tr56 / tr42 / tr84 | kept |
 | 09-25 | cl42 | cl28 (fast-v2) + COARSE_SKIN_FTRV=1 (FTRV palette matrices) | W 50.55 (R 19.89; characters 15.84 over stick figures) | - | cl31 / cl33 / cl43 (=2: max 1.8e-7 rotation, 0.0022 units) STRICT vs tr56 / tr42 / tr84, zero drift | kept: 4.0 fps paced |
 | 09-25 | land9 | the coarse character adapters landed (9df764b): COARSE_LEON, COARSE_GANADO, COARSE_SKIN_FTRV, ACTOR_SWAP, COARSE_FREEZE_AT | - | - | knob-off identity (default, canonical); cl42 carry-over 446 / 457 objects identical (the rest tree5-only) | landed, default off; the meshes stay private |
+| 09-25 | fx9 | sq97 + GAME_FX_SCAN=1 (r3) + GAME_FX_MOVE=1 (r2), lane fx | 29.55 (-1.11) | - | fx8 (both =2): tr56 / tr42 STRICT, must-match rows identical, 0 mismatches | kept |
+| 09-25 | land10 | GAME_FX_SCAN + GAME_FX_MOVE landed (1d3dc4d) | - | - | knob-off identity (default, canonical); fx9 carry-over 443 / 453 objects identical (the rest tree5-only) | landed, default off: **G_q 29.55** |

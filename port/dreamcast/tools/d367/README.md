@@ -52,6 +52,10 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   matrices with FTRV (coarse_skin_sh4.S; =2 runs the C path too and logs COARSE_SKIN_CHK).
   `ACTOR_SWAP=1` (benchmark, COARSE=0) draws the same meshes through the source renderer; `COARSE_FREEZE_AT=N`
   (diagnostic) stops in frame N's actor pass for matched captures.
+- The effect pools' scans and moves (1d3dc4d; exact, room-independent; not in LH yet): the coarse-square arms add
+  `GAME_FX_SCAN=1 GAME_FX_MOVE=1` (FX_SCAN needs `GAME_ESP_OWNER=1`; its EfmDelete list path needs
+  `GAME_ATCHK_LIST=1 GAME_WORKAT_INLINE=1`). Header knobs (include/esp.h): fresh builds only. =2 check builds
+  log "FXS", "FXM", "FX48" and "FX15" lines.
 
 ## Default recipe (LFV: LF + UI_VRAM + 2 MiB TA buffer + VQ UI/model textures + resident textures)
 
