@@ -192,6 +192,35 @@ Steps, in order, each measured in full:
 Next checkpoint delivers: a measured retained cost G, the rendering allowance it leaves, and the
 quantified remaining gap.
 
+### Step 1 result: GAME_ATCHK_LIST (2026-09-24)
+
+EmAtCheck walked the EmMgr and ObjMgr alive lists 46.5 times per tick (~150 nodes each, 6975 node
+visits, 651 candidates), stalled on each pNext load. The replacement keeps each list's order in an
+array and rebuilds it only when the list changes: cManager.h bumps a generation on every list or
+work-array change (deleteList, addListFront/Back, roomInit, arrayAlloc/Free, arrayPush/Pop, and the
+demand-backed array_alloc/array_free in parts_bridge.cpp; a source search found no other pNext or
+pAlive writer for these lists). Each call still tests every body's live m_flag / m_radius2 in list
+order, with the next bodies prefetched, so the candidates and their order are unchanged. Caching the
+candidate set itself is not exact: m_flag has 281 write sites (some through union views) and em10
+rewrites m_radius2 every tick.
+
+Complete cost, never-draw arms (PACE_FORCE=A), paired baseline sq17 (= sq16, 39.54):
+- sq19 (kept): **38.42 hw ms/tick (-1.12)**. atchkCollect 1.92 -> 1.16 (walk incl. syncs), atchkPasses
+  0.30 -> 0.18 (candidates now cached), EmAtCheck +0.02 (sync/rebuild), bumps not visible.
+- Maintenance measured in the check build (tr5, =2): 30 rebuilds in ~197k list uses over the run,
+  longest list 248 (array 320, no overflow), **0 mismatches** between the cached order and a list walk.
+- Variants that did not beat it (the SH-4 has one fill in flight, so extra prefetches wait): radius
+  pointers + array-line prefetch every entry (sq20, 38.85), unrolled blocks (sq21, 39.16: loads stall
+  on lines still filling), array-line prefetch once per 8 (sq22, 38.79; prefetched the radius line,
+  not the flag's), the same prefetching the flag line (sq23, 38.45 = sq19, more code). What remains of
+  the walk is one body line per node per call: 7000 line touches per tick.
+- Memory: 2.6 KB of data (two 320-entry arrays).
+
+Checkpoint after step 1: **G = 38.4 hw ms/tick.** 30 x G alone is 1153 ms per second of game time, so
+even with no drawing the square still runs slower than real time; the rendering allowance at 15 or
+30 fps is negative. Remaining gap: G must fall another 13.4 ms (to 25, leaving R 16.7 at 15 fps) to
+18.4 ms (to 20, leaving R 26.7 at 15 fps or 13.3 at 30 fps), and R from 65 to that allowance.
+
 ## 30 fps proposal adopted into this plan (2026-09-24, C:\Game Dev\Emulators\RE4_30FPS_PLAN_2026-09-24.md)
 
 (Superseded in part by the revised approach above: the 14 ms allocation is retired.)
@@ -287,5 +316,8 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-24 | sq15 | sq13 stack, every tick drawn (normal baseline) | 104.5 | - | render only | the 30 fps baseline |
 | 09-24 | sq16 | sq13 stack + PACE_FORCE=A (never draw) | 39.5 retained/tick | - | STRICT tr2 vs tr3, 3277 ticks | retained-work baseline |
 | 09-24 | tr4 | GAME_SKEL_AUDIT counter build | - | - | STRICT tr2 vs tr4, 3035 ticks | exact repeats 4% of parts; structural candidates ~2 ms |
+| 09-24 | sq17 | sq16 rebuilt (paired never-draw baseline) | 39.54 retained/tick | - | - | baseline for step 1 |
+| 09-24 | sq19 | sq17 + GAME_ATCHK_LIST=1 (alive-list arrays, generation-tracked) | 38.42 (-1.12) | - | tr5 (=2 check build): STRICT tr2 vs tr5, 3277 ticks, 0 list mismatches; tr6 (=1) STRICT 3277 ticks | committed 1a3c91d, in LH |
+| 09-24 | sq20-sq23 | walk variants (radius pointers, array-line prefetch, unrolled blocks, flag-line prefetch) | 38.85 / 39.16 / 38.79 / 38.45 | - | - | dropped: none beats sq19 |
 | 09-24 | sq9 | sq5 + NATIVE_ACTOR_LOD_PX=4 | 111.6 (-1.9, actors) | - | render only | candidate (coarser runtime levels for Leon too; superseded by v4 blobs) |
 | 09-24 | sq8 | sq5 + FOG_FAR=18000 | 107.2 (-6.3: scenery -2.2, actors -2.5, ui -1.0) | - | render only | candidate for the nearer-fog + backdrop item (needs the review disc) |
