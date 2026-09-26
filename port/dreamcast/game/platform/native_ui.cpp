@@ -2741,6 +2741,43 @@ extern "C" std::uint32_t* re4dc_coarse_begin(int fog){
     ++frame_pvr_calls;frame_pvr_bytes+=32;stream_model_bytes+=32;
     return sq+8;
 }
+#if RE4DC_COARSE_WORLD
+// COARSE_WORLD (coarse_world.cpp, lane wd test): as re4dc_coarse_begin, with a prepared package texture
+// bound by key and pinned for this frame; the vertices carry their UVs (texture x vertex colour).
+// mode: 1 fog table, 2 repeat UVs (tiled materials; else clamped), 4 offset colour (vertex word 7 is
+// added: the sky's fade into the fog colour), 8 / 16 PVR back-face cull of positive / negative screen
+// area, 32 16-bit UVs (vertex word 4). nullptr: no frame, or the package cannot be loaded.
+extern "C" std::uint32_t* re4dc_coarse_begin_mode(unsigned crc,unsigned fnv,unsigned width,unsigned height,unsigned mode){
+    if(!frame_ready || stream_aborted || direct_open)return nullptr;
+    const Key key{crc,fnv};
+    const Re4dcUiImage image{&key,nullptr,width,height,5,0,0}; // size checks only: pixels are never read
+    Entry* handle=load(image,false,&key);if(!handle){++model_texture_rejects;return nullptr;}
+    handle->frame=frame; // the header goes to the TA now: pinned for this scene
+    const auto& t=handle->package.textures()[0];
+    pvr_poly_cxt_t c;pvr_poly_cxt_txr(&c,PVR_LIST_OP_POLY,re4dc::texture::pvr_format(t),t.width,t.height,handle->package.pvr_texture(0),PVR_FILTER_BILINEAR);
+    c.gen.culling=PVR_CULLING_NONE;c.depth.comparison=PVR_DEPTHCMP_GEQUAL;c.depth.write=PVR_DEPTHWRITE_ENABLE;
+    c.txr.env=PVR_TXRENV_MODULATE;c.txr.uv_clamp=(mode&2)?PVR_UVCLAMP_NONE:PVR_UVCLAMP_UV;
+    if(mode&4)c.gen.specular=PVR_SPECULAR_ENABLE;
+    if(mode&8)c.gen.culling=PVR_CULLING_CW;        // rejects positive screen area (pvr_geometry.hpp convention)
+    if(mode&16)c.gen.culling=PVR_CULLING_CCW;      // rejects negative screen area
+    if(mode&32)c.fmt.uv=PVR_UVFMT_16BIT;           // vertex word 4 = PVR_PACK_16BIT_UV
+#if RE4DC_NATIVE_FOG
+    c.gen.fog_type=(mode&1)?PVR_FOG_TABLE:PVR_FOG_DISABLE;
+#endif
+    pvr_poly_hdr_t header;pvr_poly_compile(&header,&c);++model_header_builds;
+    stream_select(PVR_LIST_OP_POLY);
+    auto* sq=static_cast<std::uint32_t*>(static_cast<void*>(sq_lock((void*)PVR_TA_INPUT)));
+    const auto* h=reinterpret_cast<const std::uint32_t*>(&header);
+    for(unsigned i=0;i<8;++i)sq[i]=h[i];
+#if RE4DC_TA_HASH
+    re4dc_ta_hash(h,32);
+#endif
+    sq_flush(sq);
+    direct_open=true;
+    ++frame_pvr_calls;frame_pvr_bytes+=32;stream_model_bytes+=32;
+    return sq+8;
+}
+#endif
 extern "C" void re4dc_coarse_end(unsigned vertices){
     if(!direct_open)return;
     sq_unlock();direct_open=false;
@@ -2993,10 +3030,16 @@ extern "C" int re4dc_effect_sprite(const Re4dcEffectSprite* s){
     return 1;
 }
 #endif
+#if RE4DC_COARSE_WORLD & 8
+extern "C" void re4dc_coarse_world_flush();
+#endif
 extern "C" void re4dc_model_finish_source_draws(){
     RE4DC_PROFILE_SCOPE(TranslucentDrain);
 #if RE4DC_TREE_IMPOSTOR
     re4dc_static_flush_impostors(); // PT list, between the OP pass and the TR drain
+#if RE4DC_COARSE_WORLD & 8
+    re4dc_coarse_world_flush();     // COARSE_WORLD trees (coarse_world.cpp): the same PT window
+#endif
 #endif
 #if RE4DC_D349_RENDERER_STACK
     if(!deferred_first){source_draws_finished=true;return;}

@@ -38,6 +38,13 @@ extern "C" void re4dc_log(const char* fmt, ...);
 extern "C" void* re4dc_ui_movie_texture() __attribute__((weak));   // ROUTE_MOVIES builds
 extern "C" void re4dc_fog_note_far(float far) __attribute__((weak));   // NATIVE_FOG builds
 extern "C" int ESP_IsActive(cEsp* esp);                             // esp.cpp (C linkage)
+#if RE4DC_COARSE_WORLD
+// COARSE_WORLD (game30.mk, lane wd test): the world beyond the flat collision (coarse_world.cpp; data in
+// the generated private coarse_world.h). Supersedes the one-house test (COARSE_HOUSE, never landed).
+#include "coarse_scene.h"
+#include "coarse_world.h"
+extern "C" float re4dc_fog_gate_far() __attribute__((weak));   // ACTOR_FOG_GATE builds (native_static.cpp)
+#endif
 
 // Global scope: an extern "C" name defined inside the unnamed namespace links to a silent stub.
 extern "C" {
@@ -73,7 +80,13 @@ constexpr u32 kSeeThrough = 0x800000u | 0x1C2810u | 0x400u;
 struct Stats {
     unsigned frames, pieces, blocks, polys, backs, hidden, tris, verts, clipped, actors, segments, effects, us;
     unsigned maxVerts, maxUs;
+#if RE4DC_COARSE_WORLD
+    unsigned replaced;   // collision polygons drawn by coarse_world.cpp instead
+#endif
 } g_st;
+#if RE4DC_COARSE_WORLD
+bool g_world;   // COARSE_WORLD: this image is in the data's room and its piece 0 matches
+#endif
 
 // ------------------------------------------------------------------ store-queue output
 struct Out {
@@ -406,6 +419,21 @@ void draw_block_polys(Out& o, cSat* sat, const cSatBlock* b, const PieceView& pv
             continue;
         }
         g_seen[no >> 3] |= bit;
+#if RE4DC_COARSE_WORLD & 3
+        if (g_world && g_piece == 0 && no < coarse_world::kPolys) {
+            unsigned char skip = 0;
+#if RE4DC_COARSE_WORLD & 1
+            skip |= coarse_world::kSkip[no >> 3];   // drawn as a house shell (coarse_world.cpp)
+#endif
+#if RE4DC_COARSE_WORLD & 2
+            skip |= coarse_world::kSkipGround[no >> 3];   // drawn as the ground (coarse_world.cpp)
+#endif
+            if (skip & bit) {
+                g_st.replaced++;
+                continue;
+            }
+        }
+#endif
         const AtPoly& p = sat->poly_p[no];
         // the world normal (rotation part of the piece matrix): the class and the flat light
         const Vec& pn = sat->norm_p[p.n];
@@ -750,7 +778,49 @@ extern "C" void re4dc_coarse_draw(void)
     }
     ++dbg;
 #endif
+#if RE4DC_COARSE_WORLD
+    {
+        const cSat* s0 = (const cSat*) SatMgr.pArray;
+        g_world = G_ROOM_ID == coarse_world::kRoom && SatMgr.nArray > 0 && s0->isAlive() &&
+                  s0->polygon_num == coarse_world::kPolys;
+    }
+#endif
     draw_world(o);
+#if RE4DC_COARSE_WORLD
+    if (g_world) {
+        CoarseView v;
+        for (unsigned r = 0; r < 3; ++r) {
+            for (unsigned c = 0; c < 4; ++c) {
+                v.S[r][c] = g_S[r][c];
+            }
+        }
+        v.eye[0] = g_eye.x;
+        v.eye[1] = g_eye.y;
+        v.eye[2] = g_eye.z;
+        v.dir[0] = g_dir.x;
+        v.dir[1] = g_dir.z;
+        v.n0[0] = g_n0x;
+        v.n0[1] = g_n0z;
+        v.n1[0] = g_n1x;
+        v.n1[1] = g_n1z;
+        v.focal = g_focal;
+        const float fog_far = re4dc_fog_gate_far ? re4dc_fog_gate_far() : 0.0f;
+        v.far = fog_far > 1000.0f && fog_far < kFar ? fog_far : kFar;
+        v.det = g_S[0][0] * (g_S[1][1] * g_S[2][2] - g_S[1][2] * g_S[2][1]) -
+                g_S[0][1] * (g_S[1][0] * g_S[2][2] - g_S[1][2] * g_S[2][0]) +
+                g_S[0][2] * (g_S[1][0] * g_S[2][1] - g_S[1][1] * g_S[2][0]);
+        v.fog_rgb[0] = 113.0f;   // r101's fog table colour 716C5A (the sky's horizon, later bits)
+        v.fog_rgb[1] = 108.0f;
+        v.fog_rgb[2] = 90.0f;
+        if (o.sq) {
+            re4dc_coarse_end(o.n);
+            o.total += o.n;
+            o.n = 0;
+        }
+        o.total += re4dc_coarse_world_draw(&v);
+        o.sq = re4dc_coarse_begin(1);
+    }
+#endif
     draw_actors(o);
     draw_effects(o);
     if (o.sq) {
@@ -794,6 +864,10 @@ extern "C" void re4dc_coarse_draw(void)
                   (unsigned) pG->Frame_cnt, f, g_st.pieces / f, g_st.blocks / f, g_st.polys / f, g_st.backs / f,
                   g_st.hidden / f, g_st.tris / f, g_st.verts / f, g_st.maxVerts, g_st.clipped / f,
                   g_st.actors / f, g_st.segments / f, g_st.effects / f, g_st.us / f, g_st.maxUs);
+#if RE4DC_COARSE_WORLD
+        re4dc_log("COARSE world replaced=%u\n", g_st.replaced / f);
+        re4dc_coarse_world_log(f);
+#endif
         g_st = Stats();
     }
 }

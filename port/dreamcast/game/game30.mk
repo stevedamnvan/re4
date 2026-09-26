@@ -461,6 +461,34 @@ $(OBJDIR)/coarse.o: coarse.cpp
 	@mkdir -p $(dir $@)
 	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -DRE4DC_COARSE=$(COARSE) -MMD -MP -c $< -o $@
 endif
+# COARSE_WORLD=bits (lane wd, test; needs COARSE=1): the coarse view's world beyond
+#   the flat collision (coarse_world.cpp; data in the generated private coarse_world.h, textures staged with
+#   EXTRA_TEXDIRS). 1: house shells (every house BIN of the room as its baked 128 VQ render shell, the
+#   face light in the texture, in place of the collision polygons of its outer surfaces). 2: ground (the
+#   floors under the source ground as 3.2 m cells coloured from it with a grey detail texture, in place of
+#   those floors). 4: sky (the room's dome, unfogged, fading into the fog colour at the horizon; the PVR
+#   background takes the fog colour, native_static FOG_BACKGROUND). 8: trees (the Standard impostor records
+#   as their atlas quads in the punch-through list; needs TREE_IMPOSTOR=1).
+COARSE_WORLD ?= 0
+ifneq ($(COARSE_WORLD),0)
+ifeq ($(COARSE),0)
+$(error COARSE_WORLD needs COARSE=1)
+endif
+PLATFORM_OBJS += $(OBJDIR)/coarse_world.o
+$(OBJDIR)/coarse.o: GAME_CPPFLAGS += -DRE4DC_COARSE_WORLD=$(COARSE_WORLD)
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -DRE4DC_COARSE_WORLD=$(COARSE_WORLD)
+$(OBJDIR)/coarse_world.o: coarse_world.cpp
+	@mkdir -p $(dir $@)
+	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -DRE4DC_COARSE=$(COARSE) -DRE4DC_COARSE_WORLD=$(COARSE_WORLD) -MMD -MP -c $< -o $@
+ifneq ($(shell echo $$(( $(COARSE_WORLD) & 4 ))),0)
+$(OBJDIR)/platform/native_static.o: PLATFORM_CPPFLAGS += -DRE4DC_FOG_BACKGROUND=1
+endif
+ifneq ($(shell echo $$(( $(COARSE_WORLD) & 8 ))),0)
+ifneq ($(TREE_IMPOSTOR),1)
+$(error COARSE_WORLD bit 8 (trees) needs TREE_IMPOSTOR=1 (the punch-through list, re4dc_model_pt_begin))
+endif
+endif
+endif
 ifneq ($(GAME_ROTVEC_MEMO),0)
 $(OBJDIR)/src/game/sub2.o: GAME_CPPFLAGS += -DRE4DC_ROTVEC_MEMO=$(GAME_ROTVEC_MEMO) $(if $(RVM_BITS),-DRE4DC_RVM_BITS=$(RVM_BITS))
 endif
