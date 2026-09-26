@@ -239,11 +239,12 @@ Status, uncapped, same stack, hw ms:
   tree under /root/probe/d367-agents): cl characters (coarse-actors-4k/stack-tree: meshes fitted to the
   character code losslessly, a cheaper adapter, then integrating new cast models), vl vertex loop
   (lane-vloop/tree: ACTOR_VTX_KERNEL; rev 1b landed 42afaa1), gc collision (lane-gcol/tree: sphere walk, em-em rows; stack landed 7caa2f7), fx effects
-  (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
-  gameplay-reader map; landed ee7d080), wd world (lane-world/tree: textured coarse world <= ~3 ms), bg route bugs
+  (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree; GAME_OB_SCAN landed 0862e7c), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
+  gameplay-reader map; landed ee7d080), wd world (lane-world/tree: textured coarse world <= ~3 ms; landed 6f4c91c, R +0.68), bg route bugs
   (lane-bugs: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough; paused). Per change: one
   cost arm and one STRICT gate, no series. The main session lands every patch via warp/tree7 (knob-off
-  identity, carry-over), keeps the docs current and owns the coarse HUD fix. An external, user-launched
+  identity, carry-over), keeps the docs current. (The coarse HUD's "88" was the light coarse floor behind the translucent gauge;
+  the coarse world's ground, 6f4c91c, fixes it.) An external, user-launched
   agent builds and reduces the first level's cast models (private `cast-20260925/`); no in-session agent
   builds models. Lane map and owners: the plan doc, "Current order and status".
 - Characters (2026-09-25): the reduced models (3,989-triangle Leon, 874-triangle Ganado) draw through the

@@ -67,6 +67,12 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   GAME_TRIG_LEAN=1 GAME_ACOS_LEAN=1` (HF_* need GAME_HERMITE_FAST, PWC_SCHED needs GAME_PWC_KERNEL, PWC_PF needs
   PWC_SCHED; TRIG_LEAN acts with GAME_TRIG=1, ACOS_LEAN with GAME_FDLIBM=1). LIGHT_LAZY=2 is its check build.
   `tools/game30/trig_lean_exhaustive.sh` runs TRIG_LEAN's host test over all 2^32 inputs.
+- The object scans (0862e7c; exact, room-independent; not in LH yet): the coarse-square arms add `GAME_OB_SCAN=1`
+  (its GetEmPtrFromList part needs `GAME_WORKAT_INLINE=1`). =2 check builds log "OBS" lines.
+- The coarse world (6f4c91c; render-only; default off): `COARSE_WORLD=15` (bits: 1 house shells, 2 ground, 4 sky,
+  8 trees; needs COARSE=1, bit 8 needs TREE_IMPOSTOR=1). It includes the generated private coarse_world.h
+  (never committed: copy it into port/dreamcast/game for the build, untracked) and needs the world textures
+  staged with `EXTRA_TEXDIRS`.
 - The effect pools' scans and moves (1d3dc4d; exact, room-independent; not in LH yet): the coarse-square arms add
   `GAME_FX_SCAN=1 GAME_FX_MOVE=1` (FX_SCAN needs `GAME_ESP_OWNER=1`; its EfmDelete list path needs
   `GAME_ATCHK_LIST=1 GAME_WORKAT_INLINE=1`). Header knobs (include/esp.h): fresh builds only. =2 check builds

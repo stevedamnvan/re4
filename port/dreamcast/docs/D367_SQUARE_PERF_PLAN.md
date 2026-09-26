@@ -314,7 +314,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
 | ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN r1 delivered (ob3 29.36 vs fx9 29.55); batch 2 (OB_MAT, OB_PATH, OB_ROUTE, OB_OLDPOS) queued |
 | sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map. Landed ee7d080: LIGHT_LAZY, FP_SCHED, HF_INLINE / HF_PF, PWC_SCHED / PWC_PF, TRIG_LEAN, ACOS_LEAN, sk10 29.14 alone (-1.52). Next: pass-C partial recompute, pass-A on the kernel, PSVECNormalize inline |
-| wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky |
+| wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky. Landed 6f4c91c (COARSE_WORLD): R +0.68 (wd12), STRICT (wdG4); next: the user's look review (sky, trees, the 128 VQ walls) |
 | bg route bugs | lane-bugs | the pre-pivot backlog: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough (paused: its agent was stopped; relaunch on the user's word) |
 
 - **The main session** coordinates, lands every patch through warp/tree7 (knob-off identity, a carry-over
@@ -382,7 +382,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
 | 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), and the collision stack (7caa2f7, -1.63 alone), all exact: the landed-stack control sq99 **G_q 28.29**, gap 3.32 to 24.97; the skeleton lane (ee7d080, -1.52 alone, sk10 29.14) not combined yet; in lanes: gc line kernels / area array, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
-| 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); in lanes: cl fitted meshes, vl vertex loop, wd textured coarse world <= ~3 ms; the external agent: the first level's cast models; the main session: the coarse HUD fix |
+| 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); the vertex kernel (42afaa1: 12.87 over stick figures, vl7) and the coarse world (6f4c91c: R +0.68, section "Coarse world"); in lanes: vl vertex loop rev 2, the world's look review; the external agent: the first level's cast models; the main session: the coarse HUD fix |
 
 **What remains on the coarse renderer** (answer to the user, 2026-09-25):
 1. Landing (order item 1): done, f4da5fd.
@@ -479,8 +479,33 @@ Paced to full speed = (1000 - 30 x 30.66) / R images a second.
     ~8 ms over stick figures. Below that needs fewer vertices / palettes: the external agent's meshes.
 - New models for the rest of the first level's cast come from the external agent (section "Current order
   and status"); the cl lane integrates them.
-- Coarse-path bug seen in C: the HUD shows unlit "88" ammo digits and a flat lens. The main session owns
-  the fix.
+- The coarse-path HUD in C ("88" ammo digits, a flat lens) was not a HUD bug: the gauge's lens and ring are
+  translucent, and the coarse floor behind them was the light collision colour (~(90,80,65) against the
+  source's dark grass ~(16-40)). The coarse world's ground (COARSE_WORLD bit 2, the source's tones; 6f4c91c)
+  fixes it: the gauge reads "10" in all 8 gate shots (wdG4).
+
+#### Coarse world (lane wd, 2026-09-25; landed 6f4c91c, default off)
+
+COARSE_WORLD=bits (needs COARSE=1; render-only): the coarse view's world beyond the flat collision pieces from
+read-only room data prepared offline (coarse_world.cpp + the generated private coarse_world.h; textures staged
+with EXTRA_TEXDIRS). 1 house shells (each house BIN as its baked 128 VQ render shell in place of its outer
+collision polygons; r101's well BIN 45 never shelled), 2 ground (3.2 m cells coloured from the source ground,
+one grey detail texture), 4 sky (the dome fading into the fog colour; the PVR background takes the fog colour),
+8 trees (the Standard impostor records as atlas quads in the punch-through list; needs TREE_IMPOSTOR=1).
+- Cost (r101 fight view, coarse world + stick figures, FOG_FAR 18000; R added over the control wd1, work
+  34.48): v6 +2.38 (wd9: the sky cost ~0.9 with no sky on screen), v8 +1.34 (wd11), **v9 +0.68 (wd12)**:
+  shells 0.82, ground 0.24, sky 0.10, box tests 0.06; 786 shell triangles, 35 groups culled a frame, no near
+  clips. v9 transforms the sky once a frame, drops a triangle wholly off one side before clipping, and tests a
+  group's bounding sphere against the view's sides first.
+- Gate wdG4 (v9, bits 15, ACT_CAP=0, FOG_FAR 25000): STRICT vs tr56 (8295 frames) and tr42 (8144).
+- VRAM at frame 960: 1,513,728 bytes in use (coarse without the world 1,524,896); peak 1,578,368 in both
+  against 2,444,032. World textures 84 KB. coarse_world.o 138 KB text + 16.5 KB bss, linked only with the knob.
+- Look (the lane's flags for the user): 128 VQ walls with baked light look blotchy up close (the source reads
+  as smooth plaster with a dark base); the ground has the source's dark tones; tree colour is 0.75 x the house
+  tint; the sky fades between 4 and 22 m. Sky and trees are not in the fight view: the lane's review captures
+  (south view: houses + sky; west edge: trees) are next, then the user's review.
+- Landing: ported from the lane's tree5 base (COARSE_HOUSE, the never-landed one-house test it supersedes, and
+  SS_UI_ORDER stripped; a 3-way merge onto the files carrying the character adapters).
 
 #### Effect pools (lane fx, 2026-09-25; landed 1d3dc4d, default off)
 
@@ -1410,3 +1435,7 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | land13 | the vertex kernel landed (42afaa1) | - | - | knob-off identity (default, canonical); vl7 carry-over 451 / 460 objects identical (the rest tree5-only); the generator regenerates avk_sh4.S byte for byte | landed, default off |
 | 09-25 | sk10 | sk kernels' control + LIGHT_LAZY, FP_SCHED, HF_INLINE, HF_PF, PWC_SCHED, PWC_PF, TRIG_LEAN, ACOS_LEAN | 29.14 (-1.52 vs sq97) | - | skM1 / skM5 / skM6 STRICT, must-match rows identical, drift 0 | kept |
 | 09-25 | land14 | the skeleton lane landed (ee7d080; pwc_sh4.S ported: tree5's GAME_SKEL_PF stripped) | - | - | knob-off identity (default, canonical); sk10 carry-over 447 / 455 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | wd12 | wd1 + COARSE_WORLD=15 (v9: shells, ground, sky, trees), coarse world + stick figures | R +0.68 over wd1 | - | wdG4 STRICT vs tr56 / tr42; the gauge reads "10" | kept |
+| 09-25 | land15 | the coarse world landed (6f4c91c; ported: COARSE_HOUSE stripped, 3-way merge) | - | - | knob-off identity (default, canonical); wd12 carry-over 448 / 457 objects identical, coarse_world.o included (coarse.o: only tree5's Stats layout) | landed, default off |
+| 09-25 | ob3 | fx9 + GAME_OB_SCAN=1 (damage volumes, GetEmPtrFromList, IDSystem::move levels) | 29.36 (-0.19 vs fx9) | - | ob4 (=2) STRICT vs tr56 / tr42, 0 mismatches | kept |
+| 09-25 | land16 | the object scans landed (0862e7c) | - | - | knob-off identity (default, canonical); ob3 carry-over 447 / 455 objects identical (the rest tree5-only) | landed, default off |
