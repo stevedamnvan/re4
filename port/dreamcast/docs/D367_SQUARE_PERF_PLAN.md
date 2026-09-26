@@ -313,7 +313,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Batch 7 landed ca229cf: GAME_LINE_LEAF2, GAME_LINE_WALK_PF, GAME_LINE_TAIL, GAME_SCEAT_LIST, -0.62 (gc17 28.41 vs gc13). Batch 8: GAME_SCEAT_LIST rev 2 kept (ff32da9, about -0.04), three items measured and dropped. Batch 9 (prefetch / inline items, est. -0.10..-0.15) is the last: the lane parks after it (ROI, user 2026-09-26) |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
 | ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN landed 0862e7c (ob3 29.36 vs fx9 29.55); batch 2 landed 9f66533: GAME_OB_MAT + GAME_OB_PATH, -0.64 (ob7 28.72); GAME_OB_ROUTE dropped (+0.11: its static data moved the layout); batch 3 landed 97874b5: GAME_OB_NEAR + GAME_OB_DECODE, -0.36 (ob14 28.36); GAME_OB_OLDPOS dropped (+0.01). Parked (ROI, user 2026-09-26: the remaining rows sit in other lanes' files). Section "Object bookkeeping" |
-| sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map. Landed ee7d080: LIGHT_LAZY, FP_SCHED, HF_INLINE / HF_PF, PWC_SCHED / PWC_PF, TRIG_LEAN, ACOS_LEAN, sk10 29.14 alone (-1.52). Next: pass-C partial recompute, pass-A on the kernel, PSVECNormalize inline |
+| sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map. Landed ee7d080: LIGHT_LAZY, FP_SCHED, HF_INLINE / HF_PF, PWC_SCHED / PWC_PF, TRIG_LEAN, ACOS_LEAN, sk10 29.14 alone (-1.52). Batch 3 landed 4f81bbd: GAME_VEC_NORM_INLINE + GAME_MTXINV_SCHED, sk12 28.94 (-0.20). Dropped: pass-A on the kernel (+0.17), HF_V3 / PMC_PF (+0.22), HF_TYPED (+0.04). Parked: G is under the target (sq104) |
 | wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky. Landed 6f4c91c (COARSE_WORLD): R +0.68 (wd12), STRICT (wdG4); v10 ground tones 05e402a (private data): the gauge's "88" fixed. Idle until the user's look review (unreplaced collision walls and base floor, the missing hill, the 128 VQ walls) |
 | bg route bugs | lane-bugs | the pre-pivot backlog: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough (stopped 2026-09-25 before its first checkpoint; relaunched 2026-09-26 at the user's question: triage from the docs, the user's play logs and a fresh route check on today's code, then the top three fixes, each audited) |
 
@@ -379,7 +379,12 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    +0.07 here, dropped in the lane's batch 8).
    Since then GAME_SCEAT_LIST rev 2 (ff32da9, about -0.04) and the object batch 3 GAME_OB_NEAR + GAME_OB_DECODE
    (97874b5, -0.36 alone) landed: sq103's 25.22 less those estimates ~24.8, under 24.97; the next landed-stack
-   control measures it together with the skeleton lane's batches 3-4.
+   control measures it together with the skeleton lane's batch 3.
+   The skeleton lane's batch 3 (4f81bbd: GAME_VEC_NORM_INLINE + GAME_MTXINV_SCHED, -0.20 alone) landed next. The
+   landed stack with everything, **sq104** (tree8 land24, the landed order file): **G_q 24.57** (-0.65 vs sq103;
+   never drawn, uncapped; estimate -0.60: PSVECNormalize -0.25, PSMTXInverse -0.22, the object batch 3 rows -0.27 (L_cleanup_loop, memmove, word, decode, memcpy), EspMove +0.11 and hitCheck2 +0.09 with unchanged code (layout)), **under the 24.97 target by 0.40**: G is closed on the never-drawn control; the lanes that were
+   carrying G park. At 30 fps that leaves R <= 8.76 (33.33 - G, no margin): version C's R 13.29 is 4.53 over,
+   which the characters carry (cl: the external cast refit, then its integration).
    **Lanes by return (user decision 2026-09-26).** Small G items now sit under the 0.3-0.4 ms layout noise, the
    hardware model is uncalibrated (calibration disc c8 waits for a console run), and once G is under the target
    each G ms buys one R ms while version C's R (13.3) is ~5 ms over the 30 fps allowance. So: gc parks after
@@ -680,6 +685,20 @@ Never-draw uncapped arms on tree5 (with the skeleton kernels), against sq97 (30.
 - Dropped: IK_KPASS (+0.14), PARTS_FAST (~0.03 for +908 bytes), HF_V2 (+0.145).
 - Next (estimates): pass-C partial recompute (addRot subtrees only, ~0.2, needs a writer audit), pass-A on
   the kernel with the IK part set (~0.1-0.15), PSVECNormalize inline at the hot callers (~0.05-0.1).
+
+- Batch 3 (landed 4f81bbd): GAME_VEC_NORM_INLINE (include/vec.h, src/lib/mtx.c, platform/mtx.cpp): C_VECNormalize's
+  contract-off body inline at the callers (PSVECNormalize 1,309 -> 527 calls a tick; =2 compares, "VNRM" 6.99M
+  calls, 0 mismatches) and GAME_MTXINV_SCHED (platform/mtx_sh4.S): PSMTXInverse scheduled statically (~83
+  cycles) by tools/game30/mtx_inverse_sched.py, proven EQUIVALENT to the old body by
+  tools/game30/prove_mtxinv_sched.sh (fpsym2 --strict; both alias partitions and determinant branches). **sk12
+  28.94 (-0.20 vs sk10)**: PSMTXInverse 0.560 -> 0.287, VEC_NORM_INLINE ~-0.06 net (the inlining callers +0.15).
+  Gate skM8 STRICT vs skM0 (9,273 frames), dtcmp identical, drift 0. Both need GAME_FP_CONTRACT=off, and
+  GAME_MTXINV_SCHED also GAME_SH4_MATH=1: game30.mk stops the build otherwise (added at landing).
+  Dropped after measuring: GAME_PASSA_IK (pass A on the kernel, +0.17: the C walk costs more than the FTRV run
+  saves), GAME_HF_V3 + HF_PF=2 + PMC_PF (+0.22: the prefetches' fills are charged to the demand loads under the
+  one-fill model), GAME_HF_TYPED (+0.04: hermiteFast specialised by key layout removed only the dispatch).
+  The lane's lesson: exact instruction-count cuts keep winning (TRIG_LEAN, FP_SCHED, MTXINV_SCHED); prefetch and
+  specialisation do not.
 
 #### Skeleton operations (user's order, item 1; 2026-09-25)
 
@@ -1555,3 +1574,9 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-26 | land22 | the object batch 3 landed (97874b5; make blocks re-anchored after GAME_OB_PATH's) | - | - | knob-off identity; ob14 carry-over 447 / 455 objects identical (the rest tree5-only) | landed, default off |
 | 09-26 | wd16 | wd12 with the v10 ground data (coarse world + stick figures, every tick drawn) | W 35.16 (= wd12) | - | wdG5 STRICT vs tr56 / tr42; the gauge reads "10" in v1e, v3, fight view | kept |
 | 09-26 | land23 | the coarse world v10 landed (05e402a; comment only, the data is the private header) | - | - | knob-off identity; wd16 carry-over with the v10 header: coarse_world.o identical, 448 / 457 objects | landed |
+| 09-26 | sk11 | sk10 + GAME_PASSA_IK + GAME_VEC_NORM_INLINE | 29.34 (+0.20) | - | skM7 STRICT, VNRM 0 mismatches | PASSA_IK dropped (+0.17), VEC_NORM_INLINE kept (-0.05) |
+| 09-26 | sk12 | sk10 + GAME_VEC_NORM_INLINE + GAME_MTXINV_SCHED | 28.94 (-0.20 vs sk10) | - | skM8 STRICT vs skM0, dtcmp identical, drift 0 | kept |
+| 09-26 | sk13 | sk12 + GAME_HF_PF=2 + GAME_HF_V3 + GAME_PMC_PF | 29.16 (+0.22) | - | skM9 STRICT | dropped |
+| 09-26 | sk14 | sk12 + GAME_HF_TYPED + its order file | 28.98 (+0.04) | - | skM10 STRICT, HERMF 0 mismatches | dropped |
+| 09-26 | land24 | the skeleton lane's batch 3 landed (4f81bbd; + the prerequisite guards) | - | - | knob-off identity (default, canonical); sk12 carry-over 447 / 455 objects identical (the rest tree5-only) | landed, default off |
+| 09-26 | sq104 | landed-stack control: sq103 + GAME_OB_NEAR / GAME_OB_DECODE + GAME_VEC_NORM_INLINE / GAME_MTXINV_SCHED (SCEAT_LIST rev 2 under its knob), tree8 land24 | G_q 24.57 (-0.65 vs sq103) | - | (the knobs' own gates) | G under 24.97 |

@@ -62,6 +62,9 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   Ganados' pass, exact; =3 every model's pass, last-bit FP policy, decisions identical); PMC_KERNEL needs
   `GAME_ROT_CACHE=1`. The order file places platform/pwc_sh4.o, pmc_sh4.o and hermiteFast. =2 check builds
   log "PWCK" and "HERMF" lines.
+- The skeleton lane's batch 3 (4f81bbd; exact; not in LH yet): the coarse-square arms add `GAME_VEC_NORM_INLINE=1
+  GAME_MTXINV_SCHED=1` (both need `GAME_FP_CONTRACT=off`; MTXINV_SCHED also `GAME_SH4_MATH=1`, which GAME_CPU=1
+  sets; game30.mk stops the build otherwise).
 - The skeleton lane (ee7d080; exact, room-independent; not in LH yet): the coarse-square arms add
   `GAME_LIGHT_LAZY=1 GAME_FP_SCHED=1 GAME_HF_INLINE=1 GAME_HF_PF=1 GAME_PWC_SCHED=1 GAME_PWC_PF=1
   GAME_TRIG_LEAN=1 GAME_ACOS_LEAN=1` (HF_* need GAME_HERMITE_FAST, PWC_SCHED needs GAME_PWC_KERNEL, PWC_PF needs
