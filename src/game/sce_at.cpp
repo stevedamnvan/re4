@@ -105,31 +105,131 @@ static inline int bitOff(u32 v)
 }
 
 #if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
-// GAME_SCEAT_LIST (game30.mk; G, trigger areas; exact): sceAtCheck_main walks every record of the ordering
-// table and skips those whose checkType lacks the caller's type bit (806 of 855 enabled visits a tick in the
-// square). Per type, the records with a checkType bit of it are kept in a list in table order, built by the
-// table walk and kept until the table changes: every AddPrim / DelPrim / ClearOTagR in this file (the only
-// writers of the table and the records' links) bumps sceAtOtGen, and checkType is written only by the
-// SceAtCreate* functions before their AddPrim. The loop takes the list while the generation is the one it
-// started with; after a handler changes the table it walks the table on from the current record, as the
-// original does. flag and checkType are still read per record. =2 (check build): every list step also walks
-// the table and the two records are compared ("SAL" lines).
+// GAME_SCEAT_LIST (game30.mk; G, trigger areas; exact): the per-frame area walks go over every record of the
+// ordering table and skip those failing a filter on fields fixed while a record is linked: sceAtCheck_main
+// (checkType & its caller's type: 806 of 855 enabled visits a tick in the square), sceAtDataLoopInit (type 0),
+// sceAtItemFindCheck (3), sceAtCamCtrlCheck (0xC), SceAtCheckFieldInfo (0xD), SceAtCheckMoveScrAt (0xB);
+// sceAtLink_check reads every record. Each walk takes a list of the records passing its filter, in table
+// order, built from the table walk and kept until the table changes: every AddPrim / DelPrim / ClearOTagR in
+// this file (the only writers of the table and the records' links) bumps sceAtOtGen, and type / checkType
+// are written only by the SceAtCreate* functions before their AddPrim. A walk takes its list while the
+// generation is the one it started with; after its body changes the table it walks the table on from the
+// current record, as the original does. The bodies still read flag, type and checkType per record. Storage:
+// the table's records (at most SAL_MAX, else every walk takes the table) and per walk the indices of the
+// passing ones. =2 (check build): every list step also walks the table with the filter and the two records
+// are compared ("SAL" lines).
 static u32 sceAtOtGen = 1;
 #define AddPrim(ot, prim) (sceAtOtGen++, AddPrim(ot, prim))
 #define DelPrim(ot, prim) (sceAtOtGen++, DelPrim(ot, prim))
 #define ClearOTagR(ot, n) (sceAtOtGen++, ClearOTagR(ot, n))
-#define SAL_MAX 255
+#define SAL_MAX 128
+#define SAL_CHECK 0x100 // key: checkType & value
+#define SAL_TYPE 0x200  // key: type == value
+#define SAL_ALL 0x300   // key: every record
+#define SAL_SLOTS 10
 struct SceAtList {
     u32 gen;    // sceAtOtGen when built (0: never)
-    int type;
-    int n;      // -1: more than SAL_MAX records (walk the table)
-    SceAtWork* w[SAL_MAX];
+    u32 key;
+    int n;      // -1: the table has more than SAL_MAX records (walk it)
+    u8 ix[SAL_MAX];
 };
-static SceAtList sceAtList[4];
+struct SalIt {
+    SceAtList* l;
+    u32 key;
+    u32 gen;
+    int i;      // -1: walking the table
+};
+static u32 salAllGen;
+static int salAllN;
+static SceAtWork* salAll[SAL_MAX];
+static SceAtList sceAtList[SAL_SLOTS];
 #if RE4DC_SCEAT_LIST == 2
 extern "C" void re4dc_log(const char* fmt, ...);
 static u32 salSteps, salList, salMis, salBuild;
 #endif
+static inline int salPred(u32 key, SceAtWork* w)
+{
+    switch (key & 0xF00) {
+    case SAL_CHECK:
+        return (w->checkType & key & 0xFF) != 0;
+    case SAL_TYPE:
+        return w->type == (key & 0xFF);
+    }
+    return 1;
+}
+// The list of walk `slot` for filter `key`, for the current table generation.
+static SceAtList* salGet(int slot, u32 key)
+{
+    SceAtList* l = &sceAtList[slot];
+
+    if (l->gen != sceAtOtGen || l->key != key) {
+        int n = 0;
+        if (salAllGen != sceAtOtGen) {
+            SceAtWork* w = sceAtSetOtStart();
+            while ((w = sceAtGetOtAddr(w)) != 0) {
+                if (n == SAL_MAX) {
+                    n = -1;
+                    break;
+                }
+                salAll[n++] = w;
+            }
+            salAllN = n;
+            salAllGen = sceAtOtGen;
+            n = 0;
+        }
+        if (salAllN < 0) {
+            n = -1;
+        } else {
+            for (int k = 0; k < salAllN; k++) {
+                if (salPred(key, salAll[k])) {
+                    l->ix[n++] = (u8) k;
+                }
+            }
+        }
+        l->gen = sceAtOtGen;
+        l->key = key;
+        l->n = n;
+#if RE4DC_SCEAT_LIST == 2
+        ++salBuild;
+#endif
+    }
+    return l;
+}
+static inline void salBegin(SalIt* it, int slot, u32 key)
+{
+    it->l = salGet(slot, key);
+    it->key = key;
+    it->gen = sceAtOtGen;
+    it->i = it->l->n >= 0 ? 0 : -1;
+}
+// The walk's next record after w: from the list while the table (and the list) are unchanged, else from
+// the table walk.
+static inline SceAtWork* salNext(SalIt* it, SceAtWork* w)
+{
+    SceAtWork* n;
+
+    if (it->i >= 0 && sceAtOtGen == it->gen && it->l->key == it->key) {
+#if RE4DC_SCEAT_LIST == 2
+        SceAtWork* r = w;
+        while ((r = sceAtGetOtAddr(r)) != 0 && !salPred(it->key, r)) {
+        }
+#endif
+        n = it->i < it->l->n ? salAll[it->l->ix[it->i++]] : 0;
+#if RE4DC_SCEAT_LIST == 2
+        salMis += r != n;
+        ++salList;
+#endif
+    } else {
+        it->i = -1;
+        n = sceAtGetOtAddr(w);
+    }
+#if RE4DC_SCEAT_LIST == 2
+    if (++salSteps % 4096 == 0) {
+        re4dc_log("SAL steps=%u list=%u mismatch=%u builds=%u\n", salSteps, salList, salMis, salBuild);
+    }
+#endif
+    return n;
+}
 #endif
 
 static inline void U8Set(u8& d, u8 v) { d = v; }
@@ -448,7 +548,13 @@ static void sceAtDataLoopInit()
 {
     SceAtWork* w = sceAtSetOtStart();
 
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+    SalIt salIt;
+    salBegin(&salIt, 4, SAL_TYPE | 0);
+    while ((w = salNext(&salIt, w)) != 0) {
+#else
     while ((w = sceAtGetOtAddr(w)) != 0) {
+#endif
         if (bitOff(w->flag)) {
             continue;
         }
@@ -556,35 +662,6 @@ void SceAtCheck()
     BitOff(pG->Status_flg[0], 0x20000000);
 }
 
-#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
-// The records with a checkType bit of `type`, in table order, for the current table generation.
-static SceAtList* sceAtListGet(int type)
-{
-    SceAtList* l = &sceAtList[type & 3];
-
-    if (l->gen != sceAtOtGen || l->type != type) {
-        SceAtWork* w = sceAtSetOtStart();
-        int n = 0;
-        while ((w = sceAtGetOtAddr(w)) != 0) {
-            if (w->checkType & type) {
-                if (n == SAL_MAX) {
-                    n = -1;
-                    break;
-                }
-                l->w[n++] = w;
-            }
-        }
-        l->gen = sceAtOtGen;
-        l->type = type;
-        l->n = n;
-#if RE4DC_SCEAT_LIST == 2
-        ++salBuild;
-#endif
-    }
-    return l;
-}
-#endif
-
 // Area test for one model: position + 250 and a point 550 ahead (wall-clipped for the player) are
 // tested against every enabled area whose checkType matches `type`; a hit sets the hit flag and,
 // for trigger bit3 areas, registers the action button (door / hide / stoop / item rules), else
@@ -626,33 +703,9 @@ int sceAtCheck_main(cEm* em, int type)
     hit = 0;
     w = sceAtSetOtStart();
 #if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
-    SceAtList* sl = sceAtListGet(type);
-    const u32 slGen = sceAtOtGen;
-    int si = sl->n >= 0 ? 0 : -1;
-    for (;;) {
-        if (si >= 0 && sceAtOtGen == slGen) {
-#if RE4DC_SCEAT_LIST == 2
-            SceAtWork* r = w;
-            while ((r = sceAtGetOtAddr(r)) != 0 && !(r->checkType & type)) {
-            }
-#endif
-            w = si < sl->n ? sl->w[si++] : 0;
-#if RE4DC_SCEAT_LIST == 2
-            salMis += r != w;
-            ++salList;
-#endif
-        } else {
-            si = -1;
-            w = sceAtGetOtAddr(w);
-        }
-#if RE4DC_SCEAT_LIST == 2
-        if (++salSteps % 4096 == 0) {
-            re4dc_log("SAL steps=%u list=%u mismatch=%u builds=%u\n", salSteps, salList, salMis, salBuild);
-        }
-#endif
-        if (w == 0) {
-            break;
-        }
+    SalIt salIt;
+    salBegin(&salIt, type == 1 ? 0 : type == 2 ? 1 : type == 8 ? 2 : 3, SAL_CHECK | (type & 0xFF));
+    while ((w = salNext(&salIt, w)) != 0) {
 #else
     while ((w = sceAtGetOtAddr(w)) != 0) {
 #endif
@@ -2402,7 +2455,13 @@ void SceAtCheckMoveScrAt()
 {
     SceAtWork* w = sceAtSetOtStart();
 
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+    SalIt salIt;
+    salBegin(&salIt, 8, SAL_TYPE | 0xB);
+    while ((w = salNext(&salIt, w)) != 0) {
+#else
     while ((w = sceAtGetOtAddr(w)) != 0) {
+#endif
         if (bitOff(w->flag)) {
             continue;
         }
@@ -2794,7 +2853,13 @@ SceAtField* SceAtCheckFieldInfo(Vec* pos)
         return 0;
     }
     w = sceAtSetOtStart();
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+    SalIt salIt;
+    salBegin(&salIt, 7, SAL_TYPE | 0xD);
+    while ((w = salNext(&salIt, w)) != 0) {
+#else
     while ((w = sceAtGetOtAddr(w)) != 0) {
+#endif
         if (bitOff(w->flag)) {
             continue;
         }
@@ -2904,7 +2969,13 @@ static void sceAtCamCtrlCheck()
     int ret;
 
     w = sceAtSetOtStart();
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+    SalIt salIt;
+    salBegin(&salIt, 6, SAL_TYPE | 0xC);
+    while ((w = salNext(&salIt, w)) != 0) {
+#else
     while ((w = sceAtGetOtAddr(w)) != 0) {
+#endif
         if (bitOff(w->flag)) {
             continue;
         }
@@ -3075,7 +3146,13 @@ static void sceAtItemFindCheck()
     int off;
     cModel* pm;
 
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+    SalIt salIt;
+    salBegin(&salIt, 5, SAL_TYPE | 3);
+    while ((w = salNext(&salIt, w)) != 0) {
+#else
     while ((w = sceAtGetOtAddr(w)) != 0) {
+#endif
         off = !(w->flag & 1);
         if (off) {
             continue;
@@ -3653,7 +3730,13 @@ void sceAtLink_check()
     SceAtWork* w = sceAtSetOtStart();
     int flag;
 
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+    SalIt salIt;
+    salBegin(&salIt, 9, SAL_ALL);
+    while ((w = salNext(&salIt, w)) != 0) {
+#else
     while ((w = sceAtGetOtAddr(w)) != 0) {
+#endif
         switch (w->linkType) {
         case 0:
             break;

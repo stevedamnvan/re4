@@ -316,11 +316,13 @@ endif
 $(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_TAIL=$(GAME_LINE_TAIL)
 $(OBJDIR)/src/game/at_sub.o: GAME_CPPFLAGS += -DRE4DC_LINE_TAIL=$(GAME_LINE_TAIL)
 endif
-# GAME_SCEAT_LIST=1 (G, trigger areas; exact): sceAtCheck_main takes, per caller type, the list of the
-#                   ordering table's records with that checkType bit (table order), rebuilt when the table
-#                   changes (every AddPrim / DelPrim / ClearOTagR in sce_at.cpp bumps a generation); a
-#                   handler that changes the table sends the loop back to the table walk (sce_at.cpp).
-#                   =2 (check build): every list step compared with the table walk ("SAL" lines).
+# GAME_SCEAT_LIST=1 (G, trigger areas; exact): the per-frame area walks (sceAtCheck_main per caller type,
+#                   sceAtDataLoopInit, sceAtItemFindCheck, sceAtCamCtrlCheck, SceAtCheckFieldInfo,
+#                   SceAtCheckMoveScrAt, sceAtLink_check) take a list of the ordering table's records passing
+#                   their checkType / type filter (table order), rebuilt when the table changes (every AddPrim /
+#                   DelPrim / ClearOTagR in sce_at.cpp bumps a generation); a body that changes the table sends
+#                   its walk back to the table (sce_at.cpp). =2 (check build): every list step compared with
+#                   the table walk ("SAL" lines).
 GAME_SCEAT_LIST ?= 0
 ifneq ($(GAME_SCEAT_LIST),0)
 $(OBJDIR)/src/game/sce_at.o: GAME_CPPFLAGS += -DRE4DC_SCEAT_LIST=$(GAME_SCEAT_LIST)
