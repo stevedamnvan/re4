@@ -1256,6 +1256,9 @@ struct Frame {  // per (info, matrices) per frame
     u8* skin_ready = nullptr;         // per entry: skin_positions entry built this frame
     u8* dirs_ready = nullptr;         // per entry: skin_dirs entry built for dirs_fold
     float dirs_fold[12]{};            // the light directions skin_dirs were built from
+#if RE4DC_AVK
+    bool avk_all = false;             // ACTOR_VTX_KERNEL: every skin_positions entry built (avk_build_all)
+#endif
 #if RE4DC_ACTOR_FOG_GATE
     bool gate_ready = false; float gate_T = 0.0f, gate_G = 0.0f;  // ACTOR_FOG_GATE skinned depth bound
 #endif
@@ -1343,6 +1346,9 @@ Frame* prepare_frame(const Re4dcModelPart& p, float near_distance, float far_dis
                 f.skin_ready = reinterpret_cast<u8*>(f.skin_dirs + entries * 12U);
                 f.dirs_ready = f.skin_ready + entries;
                 std::memset(f.skin_ready, 0, entries * 2U);
+#if RE4DC_AVK
+                f.avk_all = false;
+#endif
                 f.dirs_fold[0] = NAN;  // no directions built yet
             }
             ++stats.skinned_parts;
@@ -2349,84 +2355,76 @@ void skin_check_vertices(Part& e, const u8* at, unsigned rs, unsigned n, int pal
 #if RE4DC_AVK
 // ACTOR_VTX_KERNEL: pass 1 / pass 2 of a meshlet on avk_sh4.S. A kernel call returns the records
 // it did not process: a skinned kernel switches palette entries itself and stops only at an entry
-// whose matrix / directions are not built yet. The C side then builds every entry the rest of the
-// meshlet still needs (avk_build_*: the same values position_matrix / skin_light_dirs give) and
-// calls once more, which runs to the end. Returns the records done from 0 (0: the kernel does not
-// apply; the path below finishes whatever is left).
+// whose matrix / directions are not built yet. Positions: every entry of the Frame is built before
+// its first skinned meshlet (avk_build_all), so one call runs to the end. Lights (directions follow
+// each part's light fold): at a stop the C side builds the directions the rest of the meshlet needs
+// (avk_build_dirs) and calls once more. Both give the values position_matrix / skin_light_dirs
+// give. Returns the records done from 0 (0: the kernel does not apply; the path below finishes
+// whatever is left).
 //
 #if RE4DC_AVK == 2
-void avk_check_build(const Frame& f, const unsigned short* todo, unsigned m);
+void avk_check_build(const Frame& f);
 #endif
-// Skinned position entries used by records [i, n) and not built yet: collected (palette lines
-// prefetched), then built with XMTRX = the screen matrix loaded once (skin_position_matrix's float
-// operations, statement for statement).
-void avk_build_positions(Frame& f, const Records& r, unsigned i, unsigned n) {
-    unsigned short todo[kMaxVertices];
-    unsigned m = 0;
+// Every position entry of a skinned Frame, built at its first skinned meshlet: one linear walk over
+// the palette (48 bytes an entry) and the skin table (64), both prefetched two entries ahead, with
+// XMTRX = the screen matrix loaded once; each entry not built yet gets skin_position_matrix's
+// operations (FTRV form: columns 0-2 x q by fmul with w = 0, the translation with w = 1, each by
+// ftrv). The kernels then never stop on a missing entry. (Rev 2 collected the entries a meshlet's
+// records use after each stop instead: a scan of every remaining record, 1.49 ms a tick in vl13.)
+// A few entries no drawn record uses get built too (vl13: ~1630 used of <= ~1820 a tick).
+void avk_build_all(Frame& f) {
+    f.avk_all = true;
     const unsigned entries = f.palette_entries;
-    int last = 0x10000;  // no s16 palette index
-    for (; i < n; ++i) {
-        const int palette = reinterpret_cast<const short*>(f.positions + r.vi(i) * 8U)[3];
-        if (palette == last) continue;
-        last = palette;
-        const unsigned j = unsigned(palette) < entries ? unsigned(palette) : 0U;
-        if (f.skin_ready[j]) continue;
-        f.skin_ready[j] = 1;
-        __builtin_prefetch(f.palette + j * 12U);
-        __builtin_prefetch(f.palette + j * 12U + 11U);
-        todo[m++] = static_cast<unsigned short>(j);
-    }
-    if (!m) return;
+    if (!entries) return;
 #if RE4DC_ACTOR_SKIN_FTRV == 1 && defined(__sh__) && !defined(ACTOR_TEST_XMTRX)
-    // skin_position_matrix's operations per entry: columns 0-2 x q (fmul) with w = 0 and the
-    // translation with w = 1, each through XMTRX (= the screen matrix, loaded once) by ftrv, the 16
-    // results stored from the end. q travels in FPUL (all 16 registers hold the entry).
     load_xmtrx(f.screen);
     const union { float f; u32 u; } qu{f.q};  // (memcpy here is a library call)
-    const u32 qb = qu.u;
-    const unsigned short* t = todo;
-    const float* pal = f.palette;
-    float* sp = f.skin_positions;
-    unsigned left = m;
-    u32 p, o, x;
+    const u32 qb = qu.u, one = 1;
+    const float* P = f.palette;
+    float* O = f.skin_positions + 16;  // the end of entry 0 (stored from the end)
+    u8* R = f.skin_ready;
+    unsigned left = entries;
+    u32 b, x, p2, o2;
     __asm__ __volatile__(
         "lds     %[qb],fpul\n"
         "1:\n\t"
-        "mov.w   @%[t]+,%[p]\n\t"   /* entry j (< 32768) */
+        "mov     %[P],%[x]\n\t"
+        "mov.b   @%[R],%[b]\n\t"
+        "add     #96,%[x]\n\t"      /* palette entry k+2 */
+        "pref    @%[x]\n\t"
+        "add     #32,%[x]\n\t"
+        "pref    @%[x]\n\t"
+        "mov     %[O],%[x]\n\t"
+        "add     #64,%[x]\n\t"      /* skin table entry k+2 */
+        "pref    @%[x]\n\t"
+        "add     #32,%[x]\n\t"
+        "pref    @%[x]\n\t"
+        "tst     %[b],%[b]\n\t"
+        "bf      2f\n\t"            /* built already (position_matrix) */
+        "mov     %[P],%[p2]\n\t"
+        "mov     %[O],%[o2]\n\t"
         "fsts    fpul,fr15\n\t"     /* q */
-        "mov     %[p],%[o]\n\t"
-        "shll2   %[p]\n\t"
-        "shll2   %[p]\n\t"          /* j * 16 */
-        "shll2   %[o]\n\t"
-        "shll2   %[o]\n\t"
-        "shll2   %[o]\n\t"          /* j * 64 */
-        "mov     %[p],%[x]\n\t"
-        "add     %[p],%[p]\n\t"
-        "add     %[x],%[p]\n\t"     /* j * 48 */
-        "add     %[pal],%[p]\n\t"   /* P = palette + j * 12 floats */
-        "add     %[sp],%[o]\n\t"
-        "add     #64,%[o]\n\t"      /* the end of out = skin_positions + j * 16 floats */
-        "fmov.s  @%[p]+,fr0\n\t"
-        "fmov.s  @%[p]+,fr1\n\t"
-        "fmov.s  @%[p]+,fr2\n\t"
+        "fmov.s  @%[p2]+,fr0\n\t"
+        "fmov.s  @%[p2]+,fr1\n\t"
+        "fmov.s  @%[p2]+,fr2\n\t"
         "fmul    fr15,fr0\n\t"
-        "fmov.s  @%[p]+,fr4\n\t"
+        "fmov.s  @%[p2]+,fr4\n\t"
         "fmul    fr15,fr1\n\t"
-        "fmov.s  @%[p]+,fr5\n\t"
+        "fmov.s  @%[p2]+,fr5\n\t"
         "fmul    fr15,fr2\n\t"
-        "fmov.s  @%[p]+,fr6\n\t"
+        "fmov.s  @%[p2]+,fr6\n\t"
         "fmul    fr15,fr4\n\t"
-        "fmov.s  @%[p]+,fr8\n\t"
+        "fmov.s  @%[p2]+,fr8\n\t"
         "fmul    fr15,fr5\n\t"
-        "fmov.s  @%[p]+,fr9\n\t"
+        "fmov.s  @%[p2]+,fr9\n\t"
         "fmul    fr15,fr6\n\t"
-        "fmov.s  @%[p]+,fr10\n\t"
+        "fmov.s  @%[p2]+,fr10\n\t"
         "fmul    fr15,fr8\n\t"
-        "fmov.s  @%[p]+,fr12\n\t"
+        "fmov.s  @%[p2]+,fr12\n\t"
         "fmul    fr15,fr9\n\t"
-        "fmov.s  @%[p]+,fr13\n\t"
+        "fmov.s  @%[p2]+,fr13\n\t"
         "fmul    fr15,fr10\n\t"
-        "fmov.s  @%[p],fr14\n\t"
+        "fmov.s  @%[p2],fr14\n\t"
         "fldi0   fr3\n\t"
         "fldi0   fr7\n\t"
         "fldi0   fr11\n\t"
@@ -2435,33 +2433,40 @@ void avk_build_positions(Frame& f, const Records& r, unsigned i, unsigned n) {
         "ftrv    xmtrx,fv8\n\t"
         "ftrv    xmtrx,fv4\n\t"
         "ftrv    xmtrx,fv0\n\t"
-        "fmov.s  fr15,@-%[o]\n\t"
-        "fmov.s  fr14,@-%[o]\n\t"
-        "fmov.s  fr13,@-%[o]\n\t"
-        "fmov.s  fr12,@-%[o]\n\t"
-        "fmov.s  fr11,@-%[o]\n\t"
-        "fmov.s  fr10,@-%[o]\n\t"
-        "fmov.s  fr9,@-%[o]\n\t"
-        "fmov.s  fr8,@-%[o]\n\t"
-        "fmov.s  fr7,@-%[o]\n\t"
-        "fmov.s  fr6,@-%[o]\n\t"
-        "fmov.s  fr5,@-%[o]\n\t"
-        "fmov.s  fr4,@-%[o]\n\t"
-        "fmov.s  fr3,@-%[o]\n\t"
-        "fmov.s  fr2,@-%[o]\n\t"
-        "fmov.s  fr1,@-%[o]\n\t"
+        "fmov.s  fr15,@-%[o2]\n\t"
+        "fmov.s  fr14,@-%[o2]\n\t"
+        "fmov.s  fr13,@-%[o2]\n\t"
+        "fmov.s  fr12,@-%[o2]\n\t"
+        "fmov.s  fr11,@-%[o2]\n\t"
+        "fmov.s  fr10,@-%[o2]\n\t"
+        "fmov.s  fr9,@-%[o2]\n\t"
+        "fmov.s  fr8,@-%[o2]\n\t"
+        "fmov.s  fr7,@-%[o2]\n\t"
+        "fmov.s  fr6,@-%[o2]\n\t"
+        "fmov.s  fr5,@-%[o2]\n\t"
+        "fmov.s  fr4,@-%[o2]\n\t"
+        "fmov.s  fr3,@-%[o2]\n\t"
+        "fmov.s  fr2,@-%[o2]\n\t"
+        "fmov.s  fr1,@-%[o2]\n\t"
+        "fmov.s  fr0,@-%[o2]\n"
+        "2:\n\t"
+        "mov.b   %[one],@%[R]\n\t"
+        "add     #1,%[R]\n\t"
+        "add     #48,%[P]\n\t"
         "dt      %[left]\n\t"
         "bf/s    1b\n\t"
-        "fmov.s  fr0,@-%[o]\n"
-        : [t] "+r"(t), [left] "+r"(left), [p] "=&r"(p), [o] "=&r"(o), [x] "=&r"(x)
-        : [qb] "r"(qb), [pal] "r"(pal), [sp] "r"(sp)
+        "add     #64,%[O]\n"
+        : [P] "+r"(P), [O] "+r"(O), [R] "+r"(R), [left] "+r"(left), [b] "=&r"(b), [x] "=&r"(x), [p2] "=&r"(p2),
+          [o2] "=&r"(o2)
+        : [qb] "r"(qb), [one] "r"(one)
         : "fpul", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10", "fr11", "fr12",
           "fr13", "fr14", "fr15", "t", "memory");
 #if RE4DC_AVK == 2
-    avk_check_build(f, todo, m);
+    avk_check_build(f);
 #endif
 #else
-    for (unsigned t = 0; t < m; ++t) skin_position_matrix(f, todo[t], f.skin_positions + todo[t] * 16U);
+    for (unsigned j = 0; j < entries; ++j)
+        if (!f.skin_ready[j]) { skin_position_matrix(f, j, f.skin_positions + j * 16U); f.skin_ready[j] = 1; }
 #endif
 }
 // Skinned light directions used by records [i, n) and not built yet (skin_light_dirs).
@@ -2488,20 +2493,10 @@ unsigned avk_positions(Part& e, const Records& r, unsigned n, const PosConst& k,
     unsigned (*const kernel)(const AvkPos*) = skin ? (s16_uv ? re4dc_avk_pos_skin_s16 : re4dc_avk_pos_skin_u16)
                                                    : (s16_uv ? re4dc_avk_pos_rigid_s16 : re4dc_avk_pos_rigid_u16);
     const u8* rec = reinterpret_cast<const u8*>(r.r);
-    if (skin) {  // first record's entry missing: build the meshlet's entries before the first call
-        const int palette = reinterpret_cast<const short*>(f.positions + r.vi(0) * 8U)[3];
-        if (!f.skin_ready[unsigned(palette) < f.palette_entries ? unsigned(palette) : 0U])
-            avk_build_positions(f, r, 0, n);
-    }
-    unsigned i = 0;
-    for (unsigned pass = 0;; ++pass) {
-        a.rec = rec + i * a.rs; a.n = n - i; a.dst = e.cache.v + i; a.oc = e.cache.oc + i;
-        const unsigned left = kernel(&a);
-        i = n - left;
-        // A second stop is not reached (every entry was just built): the C path finishes.
-        if (!left || !skin || pass) return i;
-        avk_build_positions(f, r, i, n);
-    }
+    if (skin && !f.avk_all) avk_build_all(f);
+    a.rec = rec; a.n = n; a.dst = e.cache.v; a.oc = e.cache.oc;
+    // A stop is not reached (every entry is built); if one were, the C path would finish the rest.
+    return n - kernel(&a);
 }
 // all / any of the outcode bytes [0, n) (the cache's, 32-byte aligned), a word at a time.
 inline void avk_fold(const u8* oc, unsigned n, unsigned& all, unsigned& any) {
@@ -2559,13 +2554,13 @@ void avk_gate_check(float T, float G, float T2, float G2) {
     ++avk_chk.gate;
     if (avk_bits(T) != avk_bits(T2) || avk_bits(G) != avk_bits(G2)) ++avk_chk.gate_mismatch;
 }
-// Entries built by avk_build_positions' loop against skin_position_matrix, all 16 words.
-void avk_check_build(const Frame& f, const unsigned short* todo, unsigned m) {
+// Every entry after avk_build_all against skin_position_matrix: ready byte set, all 16 words equal.
+void avk_check_build(const Frame& f) {
     alignas(8) float ref[16];
-    for (unsigned t = 0; t < m; ++t) {
-        skin_position_matrix(f, todo[t], ref);
+    for (unsigned j = 0; j < f.palette_entries; ++j) {
+        skin_position_matrix(f, j, ref);
         ++avk_chk.builds;
-        if (std::memcmp(ref, f.skin_positions + todo[t] * 16U, sizeof(ref))) ++avk_chk.build_mismatch;
+        if (!f.skin_ready[j] || std::memcmp(ref, f.skin_positions + j * 16U, sizeof(ref))) ++avk_chk.build_mismatch;
     }
 }
 // A store-queue meshlet copied by the pipelined loop and by the previous one into RAM, 64 corners at
