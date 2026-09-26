@@ -8,7 +8,11 @@
 //          collision polygons of its outer surfaces (coarse.cpp skips those by coarse_world.h kSkip).
 //   bit 2  ground: the collision floors that have the source ground over them, in 6.4 m chunks cut at
 //          3.2 m cells, a colour per vertex from the source ground there and one grey detail texture
-//          repeating per cell, in place of those floors (kSkipGround).
+//          repeating per cell, in place of those floors (kSkipGround). The vertex colour is the source's
+//          rendered tone before fog: its ground layers' textures, each times the lit vertex colour the
+//          Standard mesh gives that part (native_static light_part: the source light evaluation at the
+//          part's first draw), Gouraud over the covering source triangle (coarse_world.h v10; v9 took the
+//          unlit textures, ~5x too light: the HUD gauge read "88" over it).
 //   bit 4  sky: the room's sky dome (BIN 0, tex 1 clouds), unfogged, fading into the fog colour towards
 //          the horizon (vertex offset colour); game30.mk makes the PVR background the fog colour.
 //   bit 8  trees: every tree of the Standard impostor records as its atlas quad (camera-facing, the cell
