@@ -476,7 +476,7 @@ Debug traps (L+Start, Z item-maker) are blocked unless DEBUG_PAD=1.
 
 0a33d0c fixes stick aiming on little-endian targets. Before it, only the D-pad aimed.
 
-The glyph swap for Z/C-stick prompts is still to do. No Z or C-stick glyph textures exist; wording is spelled out in the message tables. The A/B/X/L/R/stick glyphs are in core.das #25 and the ss_map/ss_cmmn/ss_cap hint strips.
+The glyph swap is still to do. The 2026-09-26 glyph survey (private catalog `/root/probe/d367-agents/ui-glyphs/CATALOG.md`, mockups in `re4-assets-private/ui-glyphs-20260926`) corrected this line: no Z glyph or Z wording exists, but ONE C-stick glyph is on the route: r101_035.EFF tex 0x89, the binocular ZOOM hint of r101_Event00 (first r101 pass), packaged in every warp fixture set but not in d354v7-fixtures. The C-stick is also named in ss_file #1 msg 4 (Playing Manual 1, camera page) and drawn in the f01e manual picture. The A/B/X/L/R/stick glyphs are in core.das #25 and the ss_map/ss_cmmn/ss_cap hint strips; the map strips and the manual pictures are not packaged on the port today. File-reader text is drawn in one frame (attr 0x40: no typing time), so rewording it cannot move a trace. The look (GC art recoloured vs DC-style buttons), the binocular glyph (D-pad + dual-pad zoom change vs per-pad-kind switch) and the wording are user decisions.
 
 ## Route plan (frontier units)
 
