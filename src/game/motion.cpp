@@ -723,6 +723,11 @@ void MotionMoveCore(cModel* m, MotionWork* w, int flag)
         pLog->err(0, 0, "MotionMoveCore():%d Flip Info Error!", __LINE__);
     }
     do {
+#if defined(RE4DC_HF_PF) && RE4DC_HF_PF
+        if (i + 1 < n) {
+            __builtin_prefetch((const void*) MOTION_KEY(w, i + 1));   // GAME_HF_PF: the next joint's first key header
+        }
+#endif
         int kind = w->pJoint_kind[i] & 0xFF;
         u16 info = w->pJoint_kind[i];
         int ch = (info >> 8) & 0xF;
@@ -1448,6 +1453,11 @@ inline f32 hfF32(const u8* d)
     __builtin_memcpy(&f, &w, 4);
     return f;
 }
+// GAME_HF_INLINE (game30.mk; lane gskel; exact): hfGet inline at its three sites (GCC kept it out of
+// line: ~1,000 calls per square tick through the stack-resident val / tan arrays).
+#if defined(RE4DC_HF_INLINE) && RE4DC_HF_INLINE
+__attribute__((always_inline))
+#endif
 inline void hfGet(int type, u8* d, int i0, int i1, f32* v, f32* t)
 {
     if (!((u32) d & 1)) {
@@ -1517,6 +1527,11 @@ int hermiteFast(HermitePrm* prm, Vec* out, u16* hist)
         u8* data = p + n * 2 + 2;
         hp++;
         p = data + (stride < 0 ? -1 : n * stride);
+#if defined(RE4DC_HF_PF) && RE4DC_HF_PF
+        if (axis < 2 && stride >= 0) {
+            __builtin_prefetch(p);   // GAME_HF_PF: the next axis' header (its demand load missed on nearly every axis)
+        }
+#endif
         int cnt = n;
         int found = 0;
         if (maxFrame <= frame) {

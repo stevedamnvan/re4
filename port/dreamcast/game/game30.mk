@@ -525,6 +525,82 @@ GAME_HERMITE_FAST ?= 0
 ifneq ($(GAME_HERMITE_FAST),0)
 $(OBJDIR)/src/game/motion.o: GAME_CPPFLAGS += -DRE4DC_HERMITE_FAST=$(GAME_HERMITE_FAST)
 endif
+# ---- lane gskel (skeleton / animation / cloth / math library; arm prefix sk) ----
+# GAME_LIGHT_LAZY=1 (G -> drawn frames; exact): cLightInfo::updateMatrix keeps its inputs in imat and
+#                   marks the info; imat's only reader (lightHitCheckBBox: light selection for drawing)
+#                   materializes it with the original arithmetic (lightInfo.cpp, light.cpp).
+#                   =2: check build, the original also runs into a side table at every call and every
+#                   materialization is compared word for word ("LLZ" log line).
+GAME_LIGHT_LAZY ?= 0
+ifneq ($(GAME_LIGHT_LAZY),0)
+$(OBJDIR)/src/game/lightInfo.o $(OBJDIR)/src/game/light.o: GAME_CPPFLAGS += -DRE4DC_LIGHT_LAZY=$(GAME_LIGHT_LAZY)
+endif
+# GAME_FP_SCHED=1 (exact): GCC's pre-register-allocation scheduler (sched1, register-pressure aware) on
+#                 this lane's FP code (motion, math_sub, IK, cloth, RotVector, the SDK matrix / quaternion /
+#                 vector units, the trig file and the fdlibm cores). sched1 runs after combine and only
+#                 orders instructions (independent chains interleave, e.g. sinf's and cosf's Horner
+#                 polynomials), so every FP operation is the reference build's.
+GAME_FP_SCHED ?= 0
+SK_SCHED_FLAGS = -fschedule-insns -fsched-pressure
+ifneq ($(GAME_FP_SCHED),0)
+$(OBJDIR)/src/game/motion.o $(OBJDIR)/src/game/math_sub.o $(OBJDIR)/src/game/ik.o $(OBJDIR)/src/game/pendulum.o \
+	$(OBJDIR)/src/game/pl_cloth.o $(OBJDIR)/src/game/sub2.o: GAME_CPPFLAGS += $(SK_SCHED_FLAGS)
+$(OBJDIR)/platform/mtx.o: PLATFORM_CPPFLAGS += $(SK_SCHED_FLAGS)
+$(OBJDIR)/sdk/mtx.o $(OBJDIR)/sdk/quat.o $(OBJDIR)/sdk/vec.o: SDK_CFLAGS += $(SK_SCHED_FLAGS)
+$(OBJDIR)/game30_trig.o: KOS_CFLAGS += $(SK_SCHED_FLAGS)
+$(OBJDIR)/fdlibm/%.o: KOS_CFLAGS += $(SK_SCHED_FLAGS)
+endif
+# GAME_HF_INLINE=1 (exact; with GAME_HERMITE_FAST): hfGet inline at its three sites in hermiteFast.
+GAME_HF_INLINE ?= 0
+ifneq ($(GAME_HF_INLINE),0)
+$(OBJDIR)/src/game/motion.o: GAME_CPPFLAGS += -DRE4DC_HF_INLINE=$(GAME_HF_INLINE)
+endif
+# GAME_HF_PF=1 (exact; with GAME_HERMITE_FAST): PREFs of the next axis' key header (hermiteFast) and of the next
+#              joint's first key header (MotionMoveCore): those demand loads missed on nearly every axis.
+GAME_HF_PF ?= 0
+ifneq ($(GAME_HF_PF),0)
+ifeq ($(GAME_HERMITE_FAST),0)
+$(error GAME_HF_PF needs GAME_HERMITE_FAST)
+endif
+$(OBJDIR)/src/game/motion.o: GAME_CPPFLAGS += -DRE4DC_HF_PF=$(GAME_HF_PF)
+endif
+# GAME_PWC_SCHED=1 (exact; with GAME_PWC_KERNEL): pwc_sh4.S's part-world loop rescheduled for the SH-4
+#                  pipeline (r_scale first in the back bank, loads ahead of their fmuls, FTRV rows stored as
+#                  they arrive); every FP operation and operand role is the original's.
+# GAME_PWC_PF=1 (exact; with GAME_PWC_SCHED): each part prefetches the next part's lines at exact field
+#                  addresses (flags, pList, mat / l_mat / pParent / world, scale / r_scale).
+GAME_PWC_SCHED ?= 0
+GAME_PWC_PF ?= 0
+ifneq ($(GAME_PWC_SCHED),0)
+ifeq ($(GAME_PWC_KERNEL),0)
+$(error GAME_PWC_SCHED needs GAME_PWC_KERNEL)
+endif
+$(OBJDIR)/platform/pwc_sh4.o: KOS_CFLAGS += -DRE4DC_PWC_SCHED=$(GAME_PWC_SCHED)
+endif
+ifneq ($(GAME_PWC_PF),0)
+ifeq ($(GAME_PWC_SCHED),0)
+$(error GAME_PWC_PF needs GAME_PWC_SCHED)
+endif
+$(OBJDIR)/platform/pwc_sh4.o: KOS_CFLAGS += -DRE4DC_PWC_PF=$(GAME_PWC_PF)
+endif
+# GAME_TRIG_LEAN=1 (exact; acts with GAME_TRIG=1): game30_trig.c's sinf / cosf / re4dc_sincosf as leaf
+#                  functions of the same operations (word moves through FPUL, large / non-finite arguments
+#                  in separate functions, one kernel pick per quadrant); all 2^32 inputs checked on the host
+#                  (tools/game30/trig_lean_exhaustive.sh).
+GAME_TRIG_LEAN ?= 0
+ifneq ($(GAME_TRIG_LEAN),0)
+$(OBJDIR)/game30_trig.o: KOS_CFLAGS += -DRE4DC_TRIG_LEAN=$(GAME_TRIG_LEAN)
+endif
+# GAME_ACOS_LEAN=1 (exact; acts with GAME_FDLIBM=1): acosf / asinf (ef_acos.c, ef_asin.c) built
+#                  -fno-math-errno, so their sqrtf is the bare fsqrt without the errno guard (a libgcc
+#                  __unordsf2 call per acosf, ~0.1 ms / tick, mostly I-cache misses). The guard's other
+#                  path is unreachable there: both square roots take (1 -/+ x) * 0.5 with 0.5 <= |x| < 1,
+#                  so the argument lies in (0, 0.25] and the result is fsqrt's either way.
+GAME_ACOS_LEAN ?= 0
+ifneq ($(GAME_ACOS_LEAN),0)
+$(OBJDIR)/fdlibm/ef_acos.o $(OBJDIR)/fdlibm/ef_asin.o: KOS_CFLAGS += -fno-math-errno
+endif
+# ---- end lane gskel ----
 # GAME_COL_PREFETCH=1: the scenery collision walks (block chains, block polygon lists) prefetch the next
 #                    block and the next polygon's record, vertex and normal. Loads only: same answers.
 GAME_COL_PREFETCH ?= 0

@@ -15,6 +15,8 @@
  * and the argument reduction done once. Each output is the same kernel call on the same reduced
  * argument (rem_pio2f is a pure function of x) that sinf / cosf make, so both are bit-identical by
  * construction; checked for all 2^32 inputs on the host (tools/game30/sincos_exhaustive.sh).
+ * GAME_TRIG_LEAN=1 (lane gskel, at the end of the file) replaces the three public functions with
+ * leaf versions of the same operations (see there).
  */
 #include "fdlibm.h"
 
@@ -168,6 +170,7 @@ static inline __attribute__((always_inline)) __int32_t rem_pio2f(float x, float 
 	return __ieee754_rem_pio2f(x,y);
 }
 
+#if !(defined(RE4DC_TRIG_LEAN) && RE4DC_TRIG_LEAN)
 /* sf_sin.c */
 float sinf(float x)
 {
@@ -241,4 +244,266 @@ void re4dc_sincosf(float x, float *s, float *c)
 	    }
 	}
 }
+#endif /* RE4DC_SINCOS */
+#endif /* !RE4DC_TRIG_LEAN */
+
+#if defined(RE4DC_TRIG_LEAN) && RE4DC_TRIG_LEAN
+/* GAME_TRIG_LEAN (game30.mk, lane gskel; exact): sinf, cosf and re4dc_sincosf above, reshaped for the
+ * SH-4 without changing any float operation or its operands:
+ *  - x's word (and the reduced argument's) goes through FPUL (flds / sts), not a store and a reload;
+ *  - |x| > 2^7*pi/2 and non-finite x take separate functions holding the original code (tail calls), so
+ *    the common paths are leaf functions with the reduced argument in registers (no PR save, no frame);
+ *  - a kernel's |x| < 2^-27 case returns x (sin) or one (cos) as the original does: its "(int)x == 0"
+ *    test is always true there and only raised the inexact flag;
+ *  - the quadrant switch takes one kernel value and negates it (sinf, cosf) or swaps and negates the two
+ *    (re4dc_sincosf), instead of inlining each kernel once per case (re4dc_sincosf was 2.4 KB).
+ * Checked for all 2^32 inputs of all three functions against the recovered fdlibm on the host
+ * (tools/game30/trig_lean_exhaustive.sh, FTZ/DAZ like FPSCR.DN=1).
+ */
+static inline __attribute__((always_inline)) __int32_t lfbits(float x)
+{
+	__int32_t i;
+#if defined(__sh__)
+	__asm__("flds\t%1,fpul\n\tsts\tfpul,%0" : "=r"(i) : "f"(x) : "fpul");
+#else
+	GET_FLOAT_WORD(i,x);
 #endif
+	return i;
+}
+
+/* __kernel_sinf(x,y,0) for 2^-27 <= |x| */
+static inline __attribute__((always_inline)) float lk_sin0(float x)
+{
+	float z,r,v;
+	z	=  x*x;
+	v	=  z*x;
+	r	=  S2+z*(S3+z*(S4+z*(S5+z*S6)));
+	return x+v*(S1+z*r);
+}
+
+/* __kernel_sinf(x,y,1); ix = |x|'s word */
+static inline __attribute__((always_inline)) float lk_sin1(float x, float y, __int32_t ix)
+{
+	float z,r,v;
+	if(ix<0x32000000) return x;		/* |x| < 2**-27 */
+	z	=  x*x;
+	v	=  z*x;
+	r	=  S2+z*(S3+z*(S4+z*(S5+z*S6)));
+	return x-((z*(k_half*y-v*r)-y)-v*S1);
+}
+
+/* __kernel_cosf(x,y); ix = |x|'s word */
+static inline __attribute__((always_inline)) float lk_cos(float x, float y, __int32_t ix)
+{
+	float a,hz,z,r,qx;
+	if(ix<0x32000000) return one;		/* |x| < 2**-27 */
+	z  = x*x;
+	r  = z*(C1+z*(C2+z*(C3+z*(C4+z*(C5+z*C6)))));
+	if(ix < 0x3e99999a) 			/* if |x| < 0.3 */
+	    return one - ((float)0.5*z - (z*r - x*y));
+	else {
+	    if(ix > 0x3f480000) {		/* x > 0.78125 */
+		qx = (float)0.28125;
+	    } else {
+	        SET_FLOAT_WORD(qx,ix-0x01000000);	/* x/4 */
+	    }
+	    hz = (float)0.5*z-qx;
+	    a  = one-qx;
+	    return a - (hz - (z*r-x*y));
+	}
+}
+
+/* rem_pio2f above for pi/4 < |x| <= 2^7*pi/2; hx = x's word, ix = |x|'s; y[0] / y[1] in registers */
+static inline __attribute__((always_inline)) __int32_t lrem_pio2f(float x, __int32_t hx, __int32_t ix, float *y0, float *y1)
+{
+	float z,w,t,r,fn,u;
+	__int32_t i,j,n;
+	if(ix<0x4016cbe4) {  /* |x| < 3pi/4, special case with n=+-1 */
+	    if(hx>0) {
+		z = x - pio2_1;
+		if((ix&0xfffffff0)!=0x3fc90fd0) { /* 24+24 bit pi OK */
+		    u = z - pio2_1t;
+		    *y1 = (z-u)-pio2_1t;
+		} else {		/* near pi/2, use 24+24+24 bit pi */
+		    z -= pio2_2;
+		    u = z - pio2_2t;
+		    *y1 = (z-u)-pio2_2t;
+		}
+		*y0 = u;
+		return 1;
+	    } else {	/* negative x */
+		z = x + pio2_1;
+		if((ix&0xfffffff0)!=0x3fc90fd0) { /* 24+24 bit pi OK */
+		    u = z + pio2_1t;
+		    *y1 = (z-u)+pio2_1t;
+		} else {		/* near pi/2, use 24+24+24 bit pi */
+		    z += pio2_2;
+		    u = z + pio2_2t;
+		    *y1 = (z-u)+pio2_2t;
+		}
+		*y0 = u;
+		return -1;
+	    }
+	}
+	/* medium size */
+	t  = fabsf(x);
+	n  = (__int32_t) (t*invpio2+r_half);
+	fn = (float)n;
+	r  = t-fn*pio2_1;
+	w  = fn*pio2_1t;	/* 1st round good to 40 bit */
+	if(n<32&&(ix&0xffffff00)!=npio2_hw[n-1]) {
+	    u = r-w;	/* quick check no cancellation */
+	} else {
+	    __uint32_t high;
+	    j  = ix>>23;
+	    u = r-w;
+	    high = lfbits(u);
+	    i = j-((high>>23)&0xff);
+	    if(i>8) {  /* 2nd iteration needed, good to 57 */
+		t  = r;
+		w  = fn*pio2_2;
+		r  = t-w;
+		w  = fn*pio2_2t-((t-r)-w);
+		u = r-w;
+		high = lfbits(u);
+		i = j-((high>>23)&0xff);
+		if(i>25)  {	/* 3rd iteration need, 74 bits acc */
+		    t  = r;	/* will cover all possible cases */
+		    w  = fn*pio2_3;
+		    r  = t-w;
+		    w  = fn*pio2_3t-((t-r)-w);
+		    u = r-w;
+		}
+	    }
+	}
+	t = (r-u)-w;
+	if(hx<0) {*y0 = -u; *y1 = -t; return -n;}
+	*y0 = u;
+	*y1 = t;
+	return n;
+}
+
+/* |x| > 2^7*pi/2, inf or NaN: the original sf_sin.c path (rem_pio2f above hands these to
+   __ieee754_rem_pio2f) */
+static __attribute__((noinline)) float sinf_big(float x)
+{
+	float y[2];
+	__int32_t n,ix;
+	GET_FLOAT_WORD(ix,x);
+	ix &= 0x7fffffff;
+	if (ix>=0x7f800000) return x-x;
+	n = __ieee754_rem_pio2f(x,y);
+	switch(n&3) {
+		case 0: return  k_sinf(y[0],y[1],1);
+		case 1: return  k_cosf(y[0],y[1]);
+		case 2: return -k_sinf(y[0],y[1],1);
+		default:
+			return -k_cosf(y[0],y[1]);
+	}
+}
+
+static __attribute__((noinline)) float cosf_big(float x)
+{
+	float y[2];
+	__int32_t n,ix;
+	GET_FLOAT_WORD(ix,x);
+	ix &= 0x7fffffff;
+	if (ix>=0x7f800000) return x-x;
+	n = __ieee754_rem_pio2f(x,y);
+	switch(n&3) {
+		case 0: return  k_cosf(y[0],y[1]);
+		case 1: return -k_sinf(y[0],y[1],1);
+		case 2: return -k_cosf(y[0],y[1]);
+		default:
+		        return  k_sinf(y[0],y[1],1);
+	}
+}
+
+float sinf(float x)
+{
+	float y0,y1,v;
+	__int32_t n,hx,ix;
+	hx = lfbits(x);
+	ix = hx&0x7fffffff;
+	if(ix <= 0x3f490fd8) {			/* |x| ~< pi/4 */
+	    if(ix<0x32000000) return x;		/* __kernel_sinf: |x| < 2**-27 */
+	    return lk_sin0(x);
+	}
+	if(ix > 0x43490f80) return sinf_big(x);	/* large, inf or NaN */
+	n = lrem_pio2f(x,hx,ix,&y0,&y1);
+	ix = lfbits(y0)&0x7fffffff;
+	/* n&3: 0 sin, 1 cos, 2 -sin, 3 -cos */
+	v = (n&1) ? lk_cos(y0,y1,ix) : lk_sin1(y0,y1,ix);
+	return (n&2) ? -v : v;
+}
+
+float cosf(float x)
+{
+	float y0,y1,v;
+	__int32_t n,hx,ix;
+	hx = lfbits(x);
+	ix = hx&0x7fffffff;
+	if(ix <= 0x3f490fd8)			/* |x| ~< pi/4 */
+	    return lk_cos(x,0.0f,ix);
+	if(ix > 0x43490f80) return cosf_big(x);	/* large, inf or NaN */
+	n = lrem_pio2f(x,hx,ix,&y0,&y1);
+	ix = lfbits(y0)&0x7fffffff;
+	/* n&3: 0 cos, 1 -sin, 2 -cos, 3 sin */
+	v = (n&1) ? lk_sin1(y0,y1,ix) : lk_cos(y0,y1,ix);
+	return ((n+1)&2) ? -v : v;
+}
+
+#if defined(RE4DC_SINCOS) && RE4DC_SINCOS
+static __attribute__((noinline)) void sincosf_big(float x, float *s, float *c)
+{
+	float y[2];
+	__int32_t n,ix;
+	GET_FLOAT_WORD(ix,x);
+	ix &= 0x7fffffff;
+	if (ix>=0x7f800000) {
+	    *s = x-x;
+	    *c = x-x;
+	    return;
+	}
+	n = __ieee754_rem_pio2f(x,y);
+	switch(n&3) {
+		case 0: *s =  k_sinf(y[0],y[1],1); *c =  k_cosf(y[0],y[1]); break;
+		case 1: *s =  k_cosf(y[0],y[1]);   *c = -k_sinf(y[0],y[1],1); break;
+		case 2: *s = -k_sinf(y[0],y[1],1); *c = -k_cosf(y[0],y[1]); break;
+		default:
+			*s = -k_cosf(y[0],y[1]);   *c =  k_sinf(y[0],y[1],1); break;
+	}
+}
+
+void re4dc_sincosf(float x, float *s, float *c)
+{
+	float y0,y1,ks,kc,a,b;
+	__int32_t n,hx,ix;
+	hx = lfbits(x);
+	ix = hx&0x7fffffff;
+	if(ix <= 0x3f490fd8) {			/* |x| ~< pi/4 */
+	    if(ix<0x32000000) {			/* both kernels: |x| < 2**-27 */
+		*s = x;
+		*c = one;
+		return;
+	    }
+	    *s = lk_sin0(x);
+	    *c = lk_cos(x,0.0f,ix);
+	    return;
+	}
+	if(ix > 0x43490f80) {			/* large, inf or NaN */
+	    sincosf_big(x,s,c);
+	    return;
+	}
+	n = lrem_pio2f(x,hx,ix,&y0,&y1);
+	ix = lfbits(y0)&0x7fffffff;
+	ks = lk_sin1(y0,y1,ix);
+	kc = lk_cos(y0,y1,ix);
+	/* n&3: (s, c) = 0 (ks, kc), 1 (kc, -ks), 2 (-ks, -kc), 3 (-kc, ks) */
+	a = (n&1) ? kc : ks;
+	b = (n&1) ? ks : kc;
+	*s = (n&2) ? -a : a;
+	*c = ((n+1)&2) ? -b : b;
+}
+#endif /* RE4DC_SINCOS */
+#endif /* RE4DC_TRIG_LEAN */

@@ -688,6 +688,10 @@ int lightHitCheckCylinder(cModel* m, cLight* l)
 }
 
 // Box volume: the light position in the volume's local space against Size * model scale + radius.
+#if defined(RE4DC_LIGHT_LAZY) && RE4DC_LIGHT_LAZY
+// GAME_LIGHT_LAZY (lightInfo.cpp): imat's only reader materializes a pending updateMatrix first.
+extern "C" void re4dc_light_materialize(cLightInfo* li);
+#endif
 int lightHitCheckBBox(cModel* m, cLight* l)
 {
     Vec p;
@@ -699,6 +703,11 @@ int lightHitCheckBBox(cModel* m, cLight* l)
     if (l->Radius == 0.0f) {
         return 1;
     }
+#if defined(RE4DC_LIGHT_LAZY) && RE4DC_LIGHT_LAZY
+    if (m->LightInfo.x53) {
+        re4dc_light_materialize(&m->LightInfo);
+    }
+#endif
     p = l->World;
     PSMTXMultVec(m->LightInfo.imat, &p, &p);
     size = &m->LightInfo.Size;
