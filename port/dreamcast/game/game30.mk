@@ -496,6 +496,23 @@ $(OBJDIR)/actor_swap.o: actor_swap.cpp
 	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -MMD -MP -c $< -o $@
 $(OBJDIR)/src/game/trans.o: GAME_CPPFLAGS += -DRE4DC_ACTOR_SWAP=1
 endif
+# COARSE_GANADO_CAST=1 (needs COARSE_GANADO=1; render only): the Ganados draw the external cast's
+#                      per-appearance meshes (coarse_ganado_cast.cpp replaces coarse_ganado.cpp in the link):
+#                      COARSE_ACTOR_ASSET_DIR is then a private bundle with ganado_cast_runtime.h (four chunks
+#                      per appearance in the source info order, the appearance's inverse bind, the source
+#                      infos' signatures, the atlas key), made outside the repository from the cast packs.
+#                      An actor draws the appearance its body and head signatures name; any cast hand pose
+#                      draws that appearance's default hand. =2: check build, the 874 matcher runs beside
+#                      each attempt ("GCAST" lines: both / cast only / 874 only / neither, role mismatches).
+COARSE_GANADO_CAST ?= 0
+COARSE_GANADO_SRC := coarse_ganado.cpp
+ifneq ($(COARSE_GANADO_CAST),0)
+ifneq ($(COARSE_GANADO),1)
+$(error COARSE_GANADO_CAST needs COARSE_GANADO=1)
+endif
+COARSE_GANADO_SRC := coarse_ganado_cast.cpp $(COARSE_ACTOR_ASSET_DIR)/ganado_cast_runtime.h
+$(OBJDIR)/coarse_ganado.o: GAME_CPPFLAGS += -DRE4DC_COARSE_GANADO_CAST=$(COARSE_GANADO_CAST)
+endif
 # Private live-Ganado experiment. Limit affects mesh presentation only; ACT_CAP remains 0.
 COARSE_GANADO ?= 0
 COARSE_GANADO_LIMIT ?= -1
@@ -510,7 +527,7 @@ COARSE_FREEZE_AT ?= 0
 ifneq ($(COARSE_FREEZE_AT),0)
 $(OBJDIR)/coarse_ganado.o: GAME_CPPFLAGS += -DRE4DC_COARSE_FREEZE_AT=$(COARSE_FREEZE_AT)
 endif
-$(OBJDIR)/coarse_ganado.o: coarse_ganado.cpp $(COARSE_ACTOR_ASSET_DIR)/ganado874_runtime.h
+$(OBJDIR)/coarse_ganado.o: $(COARSE_GANADO_SRC) $(COARSE_ACTOR_ASSET_DIR)/ganado874_runtime.h
 	@mkdir -p $(dir $@)
 	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -DRE4DC_COARSE_GANADO_LIMIT=$(COARSE_GANADO_LIMIT) -I$(COARSE_ACTOR_ASSET_DIR) -MMD -MP -c $< -o $@
 endif
