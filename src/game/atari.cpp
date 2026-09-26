@@ -1298,6 +1298,31 @@ static_assert(__builtin_offsetof(cSatBlock, m_Flag) == 0x1E && __builtin_offseto
               "platform/lnw_sh4.S reads these offsets");
 extern "C" int re4dc_line_walk(const LineWalkQ* q, cSatBlock* blk, cSatBlock** out, int max);
 #define LNW_MAX 64
+#if defined(RE4DC_LINE_WALK_PF) && RE4DC_LINE_WALK_PF
+// GAME_LINE_WALK_PF (game30.mk; G, collision traversal; exact; needs GAME_LINE_WALK=1): the walk and piece
+// entry of platform/lnw2_sh4.S, lnw_sh4.S's with three prefetches added (the next block's `next` line, an
+// overlapped node's child's `next` line, the root block's lines at a piece's start); nothing else changes.
+// =2 (check build): lnw_sh4.S's entries also run and the leaves (and the piece's ends) are compared ("LWP").
+extern "C" int re4dc_line_walk2(const LineWalkQ* q, cSatBlock* blk, cSatBlock** out, int max);
+#if RE4DC_LINE_WALK_PF == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 lwpCalls, lwpLeaves, lwpMis;
+static void lwpCheck(int nl, const cSatBlock* const* leaf, int nr, const cSatBlock* const* ref, int endsMis)
+{
+    int m = endsMis || nr != nl;
+    for (int i = 0; !m && i < nl; i++) {
+        m = ref[i] != leaf[i];
+    }
+    lwpMis += m;
+    if (nl > 0) {
+        lwpLeaves += nl;
+    }
+    if (++lwpCalls % 8192 == 0) {
+        re4dc_log("LWP calls=%u leaves=%u mismatch=%u\n", lwpCalls, lwpLeaves, lwpMis);
+    }
+}
+#endif
+#endif
 #if RE4DC_LINE_WALK == 2
 extern "C" void re4dc_log(const char* fmt, ...);
 static u32 lnwCalls, lnwLeaves, lnwMis, lnwFull;
@@ -1331,7 +1356,18 @@ static int lineWalkLeaves(cSatBlock* blk, Vec* mid, Vec* dir, Vec* adir, cSatBlo
     q.dz = dir->z;
     q.ax = adir->x;
     q.az = adir->z;
+#if defined(RE4DC_LINE_WALK_PF) && RE4DC_LINE_WALK_PF
+    const int nl = re4dc_line_walk2(&q, blk, leaf, LNW_MAX);
+#if RE4DC_LINE_WALK_PF == 2
+    {
+        cSatBlock* ref[LNW_MAX];
+        const int nr = re4dc_line_walk(&q, blk, ref, LNW_MAX);
+        lwpCheck(nl, leaf, nr, ref, 0);
+    }
+#endif
+#else
     const int nl = re4dc_line_walk(&q, blk, leaf, LNW_MAX);
+#endif
 #if RE4DC_LINE_WALK == 2
     {
         cSatBlock* ref[LNW_MAX];
@@ -1393,6 +1429,9 @@ struct LinePieceQ {
 static_assert(__builtin_offsetof(LinePieceQ, lax) == 0x0C && __builtin_offsetof(LinePieceQ, lbz) == 0x18,
               "platform/lnw_sh4.S writes these offsets");
 extern "C" int re4dc_line_piece(LinePieceQ* q, cSatBlock* blk, cSatBlock** out, int max);
+#if defined(RE4DC_LINE_WALK_PF) && RE4DC_LINE_WALK_PF
+extern "C" int re4dc_line_piece2(LinePieceQ* q, cSatBlock* blk, cSatBlock** out, int max);
+#endif
 #if RE4DC_LINE_PIECE == 2
 extern "C" void re4dc_log(const char* fmt, ...);
 static u32 lnpCalls, lnpMis, lnpLeafMis;
@@ -1424,7 +1463,21 @@ static u32 lyrCalls, lyrMis, lyrCurMis, lyrTmpMis;
 #endif
 static int linePieceWalk(LinePieceQ* q, cSatBlock* blk, cSatBlock** leaf)
 {
+#if defined(RE4DC_LINE_WALK_PF) && RE4DC_LINE_WALK_PF
+    const int nl = re4dc_line_piece2(q, blk, leaf, LNW_MAX);
+#if RE4DC_LINE_WALK_PF == 2
+    {
+        LinePieceQ c = *q;
+        cSatBlock* ref[LNW_MAX];
+        const int nr = re4dc_line_piece(&c, blk, ref, LNW_MAX);
+        lwpCheck(nl, leaf, nr, ref,
+                 __builtin_memcmp(&c.lax, &q->lax, 4) || __builtin_memcmp(&c.laz, &q->laz, 4) ||
+                     __builtin_memcmp(&c.lbx, &q->lbx, 4) || __builtin_memcmp(&c.lbz, &q->lbz, 4));
+    }
+#endif
+#else
     const int nl = re4dc_line_piece(q, blk, leaf, LNW_MAX);
+#endif
 #if RE4DC_LINE_PIECE == 2
     {
         Vec ra;
@@ -1734,6 +1787,26 @@ static_assert(__builtin_offsetof(LineLeafQ, vtx) == 0x24 && __builtin_offsetof(L
               "platform/lnk_sh4.S reads these offsets");
 extern "C" int re4dc_line_leaf(const LineLeafQ* q, const u16* idx, int n, u16* out);
 #define LNK_CHUNK 64
+#if defined(RE4DC_LINE_LEAF2) && RE4DC_LINE_LEAF2
+// GAME_LINE_LEAF2 (game30.mk; G, collision traversal; exact; needs GAME_LINE_LEAF=1): platform/lnk2_sh4.S's
+// re4dc_line_leaf2, lnk_sh4.S's passes software-pipelined (the vertex and normal lines of the polygon two
+// ahead prefetched during a plane test, the next polygon's and the next edge's lines during an edge test)
+// with every float operation and compare of lnk_sh4.S; the survivor list gets one sentinel entry, so surv
+// holds LNK_CHUNK + 1. =2 (check build): lnk_sh4.S runs first on the chunk (polyBit put back), then
+// lnk2_sh4.S; survivors and polyBit compared ("LK2" lines).
+extern "C" int re4dc_line_leaf2(const LineLeafQ* q, const u16* idx, int n, u16* out);
+#if RE4DC_LINE_LEAF2 == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 lk2Calls, lk2Tested, lk2Surv, lk2Mis, lk2Bits;
+#endif
+#endif
+#if defined(RE4DC_LINE_TAIL) && RE4DC_LINE_TAIL
+// GAME_LINE_TAIL (game30.mk; G, collision traversal; exact; needs GAME_LINE_LEAF=1): a leaf kernel survivor
+// has passed At_poly_line_ck's plane test and three edge tests with the same operations, so the loop calls
+// At_poly_line_tail (at_sub.cpp): At_poly_line_ck from t on (dp0 and a recomputed as there), with the same
+// decision-trace note. =2 (check build): each call compared with At_poly_line_ck ("LTL" lines).
+extern "C" u32 At_poly_line_tail(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* vert1, u32 flag, u32 mask);
+#endif
 #if RE4DC_LINE_LEAF == 2
 extern "C" void re4dc_log(const char* fmt, ...);
 static u32 lnkCalls, lnkTested, lnkSurv, lnkBad, lnkLoose, lnkLost, lnkOrder;
@@ -1790,7 +1863,11 @@ static int lnkPass4(AtPolyData* pd, AtPoly* poly, Vec* vert0, Vec* vert1)
 static int lineLeaf(cSat* sat, u16* idx, int n, Vec* pos0, Vec* pos1, int flag, int mask, Vec* hit, u32* pn)
 {
     LineLeafQ q;
+#if defined(RE4DC_LINE_LEAF2) && RE4DC_LINE_LEAF2
+    u16 surv[LNK_CHUNK + 1];
+#else
     u16 surv[LNK_CHUNK];
+#endif
     Vec h;
     int ret = 0;
 
@@ -1819,7 +1896,52 @@ static int lineLeaf(cSat* sat, u16* idx, int n, Vec* pos0, Vec* pos1, int flag, 
             polyBit[cand[j] >> 3] &= ~(1 << (cand[j] & 7));
         }
 #endif
+#if defined(RE4DC_LINE_LEAF2) && RE4DC_LINE_LEAF2
+#if RE4DC_LINE_LEAF2 == 2
+        u16 lk2c[LNK_CHUNK];
+        u16 lk2s[LNK_CHUNK + 1];
+        int lk2n = 0;
+        for (int i = 0; i < c; i++) {
+            const u32 no = idx[i];
+            const u32 bit = 1 << (no & 7);
+            if ((polyBit[no >> 3] & bit) == 0) {
+                polyBit[no >> 3] |= bit;
+                lk2c[lk2n++] = no;
+            }
+        }
+        for (int j = 0; j < lk2n; j++) {
+            polyBit[lk2c[j] >> 3] &= ~(1 << (lk2c[j] & 7));
+        }
+        const int lk2k = re4dc_line_leaf(&q, idx, c, lk2s);
+        for (int j = 0; j < lk2n; j++) {
+            polyBit[lk2c[j] >> 3] &= ~(1 << (lk2c[j] & 7));
+        }
+#endif
+        const int k = re4dc_line_leaf2(&q, idx, c, surv);
+#if RE4DC_LINE_LEAF2 == 2
+        {
+            int m = k != lk2k;
+            for (int i = 0; !m && i < k; i++) {
+                m = surv[i] != lk2s[i];
+            }
+            lk2Mis += m;
+            for (int i = 0; i < c; i++) {
+                if ((polyBit[idx[i] >> 3] & (1 << (idx[i] & 7))) == 0) {
+                    ++lk2Bits;
+                    break;
+                }
+            }
+            lk2Tested += lk2n;
+            lk2Surv += k;
+            if (++lk2Calls % 8192 == 0) {
+                re4dc_log("LK2 calls=%u tested=%u surv=%u mismatch=%u bits=%u\n", lk2Calls, lk2Tested, lk2Surv,
+                          lk2Mis, lk2Bits);
+            }
+        }
+#endif
+#else
         const int k = re4dc_line_leaf(&q, idx, c, surv);
+#endif
 #if RE4DC_LINE_LEAF == 2
         {
             int s = 0;
@@ -1856,7 +1978,11 @@ static int lineLeaf(cSat* sat, u16* idx, int n, Vec* pos0, Vec* pos1, int flag, 
 #endif
         for (int i = 0; i < k; i++) {
             AtPoly* poly = &sat->poly_p[surv[i]];
+#if defined(RE4DC_LINE_TAIL) && RE4DC_LINE_TAIL
+            const u32 attr = At_poly_line_tail((AtPolyData*) sat, &h, poly, pos0, pos1, flag, mask);
+#else
             const u32 attr = At_poly_line_ck((AtPolyData*) sat, &h, poly, pos0, pos1, flag, mask);
+#endif
             if (attr) {
                 if (GetDistance(pos0, &h) < GetDistance(pos0, hit)) {
                     *hit = h;

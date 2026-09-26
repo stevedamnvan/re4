@@ -270,6 +270,61 @@ $(error GAME_EMHIT_LIST needs GAME_ATCHK_LIST=1)
 endif
 $(OBJDIR)/src/game/at_mod.o: GAME_CPPFLAGS += -DRE4DC_EMHIT_LIST=$(GAME_EMHIT_LIST)
 endif
+# GAME_LINE_LEAF2=1 (G, collision traversal; exact; needs GAME_LINE_LEAF=1): the leaf kernel as platform/
+#                   lnk2_sh4.S's re4dc_line_leaf2: lnk_sh4.S's passes software-pipelined (the polygon two
+#                   ahead's vertex / normal lines prefetched during a plane test, the next edge's lines during
+#                   an edge test), every float operation and compare kept. =2 (check build): lnk_sh4.S runs
+#                   first on each chunk (polyBit put back); survivors and polyBit compared ("LK2" lines).
+GAME_LINE_LEAF2 ?= 0
+ifneq ($(GAME_LINE_LEAF2),0)
+ifeq ($(GAME_LINE_LEAF),0)
+$(error GAME_LINE_LEAF2 needs GAME_LINE_LEAF=1)
+endif
+PLATFORM_OBJS += $(OBJDIR)/platform/lnk2_sh4.o
+$(OBJDIR)/platform/lnk2_sh4.o: platform/lnk2_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_LEAF2=$(GAME_LINE_LEAF2)
+endif
+# GAME_LINE_WALK_PF=1 (G, collision traversal; exact; needs GAME_LINE_WALK=1): the line walk and piece entry
+#                     from platform/lnw2_sh4.S: lnw_sh4.S's with three prefetches added (the next block's
+#                     `next` line, an overlapped node's child's `next` line, the root's lines at a piece's
+#                     start). =2 (check build): lnw_sh4.S also runs; leaves and ends compared ("LWP" lines).
+GAME_LINE_WALK_PF ?= 0
+ifneq ($(GAME_LINE_WALK_PF),0)
+ifeq ($(GAME_LINE_WALK),0)
+$(error GAME_LINE_WALK_PF needs GAME_LINE_WALK=1)
+endif
+PLATFORM_OBJS += $(OBJDIR)/platform/lnw2_sh4.o
+$(OBJDIR)/platform/lnw2_sh4.o: platform/lnw2_sh4.S
+	@mkdir -p $(dir $@)
+	kos-cc $(KOS_CFLAGS) -c $< -o $@
+ifneq ($(GAME_LINE_PIECE),0)
+$(OBJDIR)/platform/lnw2_sh4.o: KOS_CFLAGS += -DRE4DC_LINE_PIECE=1
+endif
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_WALK_PF=$(GAME_LINE_WALK_PF)
+endif
+# GAME_LINE_TAIL=1 (G, collision traversal; exact; needs GAME_LINE_LEAF=1): a leaf kernel survivor (it passed
+#                  At_poly_line_ck's plane and edge tests with the same operations) runs At_poly_line_tail
+#                  (at_sub.cpp): At_poly_line_ck from t on, dp0 and a recomputed as there, the same decision
+#                  trace note. =2 (check build): At_poly_line_ck also runs and is compared ("LTL" lines).
+GAME_LINE_TAIL ?= 0
+ifneq ($(GAME_LINE_TAIL),0)
+ifeq ($(GAME_LINE_LEAF),0)
+$(error GAME_LINE_TAIL needs GAME_LINE_LEAF=1)
+endif
+$(OBJDIR)/src/game/atari.o: GAME_CPPFLAGS += -DRE4DC_LINE_TAIL=$(GAME_LINE_TAIL)
+$(OBJDIR)/src/game/at_sub.o: GAME_CPPFLAGS += -DRE4DC_LINE_TAIL=$(GAME_LINE_TAIL)
+endif
+# GAME_SCEAT_LIST=1 (G, trigger areas; exact): sceAtCheck_main takes, per caller type, the list of the
+#                   ordering table's records with that checkType bit (table order), rebuilt when the table
+#                   changes (every AddPrim / DelPrim / ClearOTagR in sce_at.cpp bumps a generation); a
+#                   handler that changes the table sends the loop back to the table walk (sce_at.cpp).
+#                   =2 (check build): every list step compared with the table walk ("SAL" lines).
+GAME_SCEAT_LIST ?= 0
+ifneq ($(GAME_SCEAT_LIST),0)
+$(OBJDIR)/src/game/sce_at.o: GAME_CPPFLAGS += -DRE4DC_SCEAT_LIST=$(GAME_SCEAT_LIST)
+endif
 # GAME_WORKAT_INLINE=1 (the 30 fps rethink; port overhead, exact; needs OBJECT_DEMAND=1 ENEMY_DEMAND=1):
 #                    the demand-backed cObj / cEm managers' workAt (parts_bridge.cpp: two out-of-line
 #                    calls per lookup, ~3,700 lookups per square tick from EfmDelete, GetEmPtrFromList,

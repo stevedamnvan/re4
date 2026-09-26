@@ -104,6 +104,34 @@ static inline int bitOff(u32 v)
     return !(v & 1);
 }
 
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+// GAME_SCEAT_LIST (game30.mk; G, trigger areas; exact): sceAtCheck_main walks every record of the ordering
+// table and skips those whose checkType lacks the caller's type bit (806 of 855 enabled visits a tick in the
+// square). Per type, the records with a checkType bit of it are kept in a list in table order, built by the
+// table walk and kept until the table changes: every AddPrim / DelPrim / ClearOTagR in this file (the only
+// writers of the table and the records' links) bumps sceAtOtGen, and checkType is written only by the
+// SceAtCreate* functions before their AddPrim. The loop takes the list while the generation is the one it
+// started with; after a handler changes the table it walks the table on from the current record, as the
+// original does. flag and checkType are still read per record. =2 (check build): every list step also walks
+// the table and the two records are compared ("SAL" lines).
+static u32 sceAtOtGen = 1;
+#define AddPrim(ot, prim) (sceAtOtGen++, AddPrim(ot, prim))
+#define DelPrim(ot, prim) (sceAtOtGen++, DelPrim(ot, prim))
+#define ClearOTagR(ot, n) (sceAtOtGen++, ClearOTagR(ot, n))
+#define SAL_MAX 255
+struct SceAtList {
+    u32 gen;    // sceAtOtGen when built (0: never)
+    int type;
+    int n;      // -1: more than SAL_MAX records (walk the table)
+    SceAtWork* w[SAL_MAX];
+};
+static SceAtList sceAtList[4];
+#if RE4DC_SCEAT_LIST == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 salSteps, salList, salMis, salBuild;
+#endif
+#endif
+
 static inline void U8Set(u8& d, u8 v) { d = v; }
 static inline void U16Set(u16& d, u16 v) { d = v; }
 static inline void U32Set(u32& d, u32 v) { d = v; }
@@ -528,6 +556,35 @@ void SceAtCheck()
     BitOff(pG->Status_flg[0], 0x20000000);
 }
 
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+// The records with a checkType bit of `type`, in table order, for the current table generation.
+static SceAtList* sceAtListGet(int type)
+{
+    SceAtList* l = &sceAtList[type & 3];
+
+    if (l->gen != sceAtOtGen || l->type != type) {
+        SceAtWork* w = sceAtSetOtStart();
+        int n = 0;
+        while ((w = sceAtGetOtAddr(w)) != 0) {
+            if (w->checkType & type) {
+                if (n == SAL_MAX) {
+                    n = -1;
+                    break;
+                }
+                l->w[n++] = w;
+            }
+        }
+        l->gen = sceAtOtGen;
+        l->type = type;
+        l->n = n;
+#if RE4DC_SCEAT_LIST == 2
+        ++salBuild;
+#endif
+    }
+    return l;
+}
+#endif
+
 // Area test for one model: position + 250 and a point 550 ahead (wall-clipped for the player) are
 // tested against every enabled area whose checkType matches `type`; a hit sets the hit flag and,
 // for trigger bit3 areas, registers the action button (door / hide / stoop / item rules), else
@@ -568,7 +625,37 @@ int sceAtCheck_main(cEm* em, int type)
     }
     hit = 0;
     w = sceAtSetOtStart();
+#if defined(RE4DC_SCEAT_LIST) && RE4DC_SCEAT_LIST
+    SceAtList* sl = sceAtListGet(type);
+    const u32 slGen = sceAtOtGen;
+    int si = sl->n >= 0 ? 0 : -1;
+    for (;;) {
+        if (si >= 0 && sceAtOtGen == slGen) {
+#if RE4DC_SCEAT_LIST == 2
+            SceAtWork* r = w;
+            while ((r = sceAtGetOtAddr(r)) != 0 && !(r->checkType & type)) {
+            }
+#endif
+            w = si < sl->n ? sl->w[si++] : 0;
+#if RE4DC_SCEAT_LIST == 2
+            salMis += r != w;
+            ++salList;
+#endif
+        } else {
+            si = -1;
+            w = sceAtGetOtAddr(w);
+        }
+#if RE4DC_SCEAT_LIST == 2
+        if (++salSteps % 4096 == 0) {
+            re4dc_log("SAL steps=%u list=%u mismatch=%u builds=%u\n", salSteps, salList, salMis, salBuild);
+        }
+#endif
+        if (w == 0) {
+            break;
+        }
+#else
     while ((w = sceAtGetOtAddr(w)) != 0) {
+#endif
         if (bitOff(w->flag)) {
             continue;
         }

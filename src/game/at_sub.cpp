@@ -375,6 +375,111 @@ u32 At_poly_line_ck(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* ver
 #undef At_poly_line_ck
 #endif
 
+#if defined(RE4DC_LINE_TAIL) && RE4DC_LINE_TAIL
+// GAME_LINE_TAIL (game30.mk; G, collision traversal; exact): At_poly_line_ck from its t test on, for a
+// polygon that passed its plane test and three edge tests (the survivors of platform/lnk_sh4.S /
+// lnk2_sh4.S, which run those tests with the same float operations). dp0 and a are recomputed with
+// At_poly_line_ck's expressions (contract off), the rest is its code; the call is noted in the decision
+// trace as At_poly_line_ck's is. =2 (check build): At_poly_line_ck's body also runs; the results and hit
+// points are compared ("LTL" lines).
+static u32 lineTail(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* vert1, u32 flag, u32 mask)
+{
+    Vec d0;
+    Vec a;
+    Vec* v0 = &pd->vtx[poly->v[0]];
+    Vec* nrm = &pd->nrm[poly->n];
+    f32 dp0;
+    f32 t;
+    f32 s0;
+    f32 s1;
+    u32 attr;
+
+    d0.x = vert0->x - v0->x;
+    d0.y = vert0->y - v0->y;
+    d0.z = vert0->z - v0->z;
+    dp0 = d0.x * nrm->x + d0.y * nrm->y;
+    dp0 += d0.z * nrm->z;
+    PSVECSubtract(vert1, vert0, &a);
+    t = -dp0 / PSVECDotProduct(&a, nrm);
+    if (t >= 1.0f || t < 0.0f) {
+        return 0;
+    }
+    s0 = PSVECDotProduct(nrm, vert0) - PSVECDotProduct(nrm, v0);
+    s1 = PSVECDotProduct(nrm, vert1) - PSVECDotProduct(nrm, v0);
+    if (s0 * s1 < 0.0f) {
+        f32 a0 = fabsf(s0);
+        f32 a1 = fabsf(s1);
+        InterVectorXYZ(out, vert0, vert1, a1 / (a0 + a1));
+    } else if (out) {
+        *out = *vert1;
+    }
+    attr = Get_poly_attr(poly);
+    if (SEck == 0) {
+        if ((flag & 0x1000) && (attr & 0x400000)) {
+            return 0;
+        }
+        if ((flag & 0x2000) && (attr & 0x4000)) {
+            return 0;
+        }
+        if ((flag & 0x4000) && (attr & 0x40)) {
+            return 0;
+        }
+        if ((attr & 0x400) && !(flag & 0x8000)) {
+            return 0;
+        }
+        if ((flag & 0x800) && (attr & 0x8000)) {
+            return 0;
+        }
+        if ((flag & 0x8000) && (attr & 0x800000)) {
+            return 0;
+        }
+    } else {
+        if ((flag & 0x400) && (attr & 0x4000)) {
+            return 0;
+        }
+        if ((flag & 0x800) && (attr & 0x400000)) {
+            return 0;
+        }
+    }
+    if (mask & attr) {
+        return 0;
+    }
+    return attr | 0x01000000;
+}
+#if RE4DC_LINE_TAIL == 2
+extern "C" void re4dc_log(const char* fmt, ...);
+static u32 ltlCalls, ltlHits, ltlMis;
+#endif
+extern "C" u32 At_poly_line_tail(AtPolyData* pd, Vec* out, AtPoly* poly, Vec* vert0, Vec* vert1, u32 flag, u32 mask)
+{
+#if RE4DC_LINE_TAIL == 2
+    Vec ro = *out;
+    Vec to = *out;
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+    const u32 rr = At_poly_line_ck_dt(pd, &ro, poly, vert0, vert1, flag, mask);
+#else
+    const u32 rr = At_poly_line_ck(pd, &ro, poly, vert0, vert1, flag, mask);
+#endif
+    const u32 r = lineTail(pd, &to, poly, vert0, vert1, flag, mask);
+    if (r != rr || __builtin_memcmp(&ro, &to, sizeof(Vec)) != 0) {
+        ++ltlMis;
+    }
+    ltlHits += r != 0;
+    *out = to;
+    if (++ltlCalls % 1024 == 0) {
+        re4dc_log("LTL calls=%u hits=%u mismatch=%u\n", ltlCalls, ltlHits, ltlMis);
+    }
+#else
+    const u32 r = lineTail(pd, out, poly, vert0, vert1, flag, mask);
+#endif
+#if defined(RE4DC_DECISION_TRACE) && RE4DC_DECISION_TRACE
+    return re4dc_dt_note(1, flag, r);
+#else
+    return r;
+#endif
+}
+#endif
+
 // Dead-stripped by the original linker (only its constant pool survives in .rodata).
 static f32 At_line_rate(f32 a, f32 b)
 {
