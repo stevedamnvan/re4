@@ -234,7 +234,8 @@ Status, uncapped, same stack, hw ms:
   skeleton lane, ee7d080, exact: sk10 29.14 alone, -1.52; then the object scans GAME_OB_SCAN, 0862e7c; all of
   it on one build, sq100: **G_q 26.34**, gap 1.37; the vertex kernel ACTOR_VTX_KERNEL, 42afaa1, rev 2 7726caa and rev 3 d938501:
   the reduced characters 15.84 -> 9.24 ms over stick figures; then collision batch 7, ca229cf, -0.62 alone, and the
-  object batch 2 GAME_OB_MAT + GAME_OB_PATH, 9f66533, -0.64 alone; a regenerated order file lost +0.38, sq102). Since the evening of 2026-09-25 the rest runs in parallel lanes
+  object batch 2 GAME_OB_MAT + GAME_OB_PATH, 9f66533, -0.64 alone; on one build, sq103: **G_q 25.22**, gap 0.25;
+  a regenerated order file lost +0.38, sq102). Since the evening of 2026-09-25 the rest runs in parallel lanes
   (next bullet).
 - **Parallel lanes (user, 2026-09-25: "I don't want to spend more time benchmarking. I want to focus on the
   remaining optimization that can be parallelized").** One agent per non-overlapping lane (arm prefix,
