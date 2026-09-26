@@ -45,7 +45,7 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
 - The pieces' transforms in the walk kernel (4e394ea; exact, room-independent; not in LH yet): the coarse-square
   arms add `GAME_LINE_PIECE=1` (needs `GAME_LINE_WALK=1`); the entry lives in platform/lnw_sh4.S, so the
   order file is unchanged.
-- The actor vertex kernel (42afaa1; render-only, exact): `ACTOR_VTX_KERNEL=1` runs the fast actor path's
+- The actor vertex kernel (42afaa1, rev 2 7726caa; render-only, exact): `ACTOR_VTX_KERNEL=1` runs the fast actor path's
   position / skin / light passes on platform/avk_sh4.S (with NATIVE_ACTOR_FAST=1; the version C square arms add
   it). `python3 tools/game30/avk/mkavk.py <out.S>` regenerates the kernels from the templates and the fixed
   schedules (sched-*.txt; delete one to reschedule). =2 check builds log "VTXK" lines. Version C discs need
