@@ -309,7 +309,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | lane (arm prefix) | tree (under /root/probe/d367-agents) | owns |
 |---|---|---|
 | cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
-| vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: generated SH-4 vertex kernels for the fast actor path. Rev 1b landed 42afaa1: characters -2.97 (vl7); rev 2 landed 7726caa: a further -1.92 (vl13, characters 10.95 over stick figures); rev 3 landed d938501: a further -1.71 (vl17, characters 9.24 over stick figures); rev 4 (the fog-gate loop, the constant colour unrolled, the build loop scheduled; gates STRICT) being costed; the lane stops after rev 4 (ROI, user 2026-09-26: the rest is the meshes) |
+| vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: generated SH-4 vertex kernels for the fast actor path. Rev 1b landed 42afaa1: characters -2.97 (vl7); rev 2 landed 7726caa: a further -1.92 (vl13, characters 10.95 over stick figures); rev 3 landed d938501: a further -1.71 (vl17, characters 9.24 over stick figures); rev 4 + rev 5 landed e4fb8e8: a further -0.59 (vl26, characters 8.65 over stick figures; rev 5: movca.l skin entries, the fog gate in asm). Stopped (ROI, user 2026-09-26: the rest is the meshes); ideas left in lane-vloop/STATE.md: meshlet records sorted by palette entry (-0.2..-0.3, overlaps the cast agent's palette work), movca.l on the kernel's output lines (-0.1), the fog gate two entries in flight (-0.1) |
 | gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Batch 7 landed ca229cf: GAME_LINE_LEAF2, GAME_LINE_WALK_PF, GAME_LINE_TAIL, GAME_SCEAT_LIST, -0.62 (gc17 28.41 vs gc13). Batch 8: GAME_SCEAT_LIST rev 2 kept (ff32da9, about -0.04), three items measured and dropped. Batch 9 (prefetch / inline items, est. -0.10..-0.15) is the last: the lane parks after it (ROI, user 2026-09-26) |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
 | ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN landed 0862e7c (ob3 29.36 vs fx9 29.55); batch 2 landed 9f66533: GAME_OB_MAT + GAME_OB_PATH, -0.64 (ob7 28.72); GAME_OB_ROUTE dropped (+0.11: its static data moved the layout); batch 3 landed 97874b5: GAME_OB_NEAR + GAME_OB_DECODE, -0.36 (ob14 28.36); GAME_OB_OLDPOS dropped (+0.01). Parked (ROI, user 2026-09-26: the remaining rows sit in other lanes' files). Section "Object bookkeeping" |
@@ -383,8 +383,8 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    The skeleton lane's batch 3 (4f81bbd: GAME_VEC_NORM_INLINE + GAME_MTXINV_SCHED, -0.20 alone) landed next. The
    landed stack with everything, **sq104** (tree8 land24, the landed order file): **G_q 24.57** (-0.65 vs sq103;
    never drawn, uncapped; estimate -0.60: PSVECNormalize -0.25, PSMTXInverse -0.22, the object batch 3 rows -0.27 (L_cleanup_loop, memmove, word, decode, memcpy), EspMove +0.11 and hitCheck2 +0.09 with unchanged code (layout)), **under the 24.97 target by 0.40**: G is closed on the never-drawn control; the lanes that were
-   carrying G park. At 30 fps that leaves R <= 8.76 (33.33 - G, no margin): version C's R 13.29 is 4.53 over,
-   which the characters carry (cl: the external cast refit, then its integration).
+   carrying G park. At 30 fps that leaves R <= 8.76 (33.33 - G, no margin): version C's R 13.29 was 4.53 over (12.70 and 3.94
+   after the vertex kernel rev 4 + rev 5, e4fb8e8), which the characters carry (cl: the external cast refit, then its integration).
    **Lanes by return (user decision 2026-09-26).** Small G items now sit under the 0.3-0.4 ms layout noise, the
    hardware model is uncalibrated (calibration disc c8 waits for a console run), and once G is under the target
    each G ms buys one R ms while version C's R (13.3) is ~5 ms over the 30 fps allowance. So: gc parks after
@@ -437,11 +437,15 @@ Ganados costs more.
 | C, + vertex kernel (vl7) | the same image: + ACTOR_VTX_KERNEL=1 (rev 1b) | 47.58 | 16.92 | 21.0 fps at 70% speed | 4.7 fps |
 | C, + vertex kernel rev 2 (vl13) | the same image: + ACTOR_VTX_KERNEL=1 (rev 2) | 45.66 | 15.00 | 21.9 fps at 73% speed | 5.3 fps |
 | C, + vertex kernel rev 3 (vl17) | the same image: + ACTOR_VTX_KERNEL=1 (rev 3) | 43.95 | 13.29 | 22.8 fps at 76% speed | 6.0 fps |
+| C, + vertex kernel rev 5 (vl26) | the same image: + ACTOR_VTX_KERNEL=1 (rev 4 + rev 5) | 43.36 | 12.70 | 23.1 fps at 77% speed | 6.2 fps |
 | B (cl22) | coarse world, stick figures | 34.71 | 4.05 | 28.8 fps at 96% speed | 19.8 fps |
 
 Paced to full speed = (1000 - 30 x 30.66) / R images a second. On the landed stack's G (sq100, 26.34) the
 same R would pace to (1000 - 30 x 26.34) / R: vl13 14.0 fps, vl17 15.8 fps, B 30 fps (an estimate: R was measured on the
 older G base, never on one build with sq100's stack).
+On sq104's G (24.57, everything landed through 4f81bbd; G closed) the same estimate gives (1000 - 30 x 24.57) / R:
+vl26 20.7 fps, B 30 fps (capped). 30 fps needs R <= 8.76 (no margin) or <= 5.43 (the 3.33 margin): vl26 is 3.94
+over without margin; the rest is the characters' meshes (the external cast refit).
 
 - The new renderer against the old with the same characters (cl26 - cl21): -36.55 ms a drawn tick (-39%),
   whole frame: mostly the world (scenery meshes ~13 ms), the game's draw preparation, effects and
@@ -489,7 +493,7 @@ older G base, never on one build with sq100's stack).
     maths with logic STRICT is a standing user decision.
   - Next: the vl lane's vertex loop (re4dc_actor_submit ~11.4 ms of the 15.84); the 6-8 ms estimate
     assumed ~0.6-0.7 transformed vertices a triangle, which needs the external agent's meshes.
-- **Vertex kernel (lane vl; rev 1b landed 42afaa1, rev 2 7726caa, rev 3 d938501; default off).** ACTOR_VTX_KERNEL: the fast actor path's
+- **Vertex kernel (lane vl; rev 1b landed 42afaa1, rev 2 7726caa, rev 3 d938501, rev 4 + rev 5 e4fb8e8; default off).** ACTOR_VTX_KERNEL: the fast actor path's
   position + skin transform and light pass as generated SH-4 kernels (platform/avk_sh4.S, made by
   tools/game30/avk/mkavk.py from templates and fixed schedules; six variants), the same FP operations on the
   same operands; the kernel returns to C at each palette change.
@@ -521,8 +525,21 @@ older G base, never on one build with sq100's stack).
     avk_build_positions 2.241 -> avk_build_all 0.760 (1823 entries, ~83 cycles each); the kernel +0.16 (its
     switch stub's matrix loads now miss). Gates vl18 (C, =2) / vl19 (A, =2) STRICT vs tr56 / tr42, every check
     0 mismatches.
-  - Rev 4 (in the lane): the fog gate's palette loop with the column sums written out, the constant colour
-    unrolled x4, the build loop list-scheduled with pair stores; gates vl24 (C) / vl25 (A) STRICT; cost pending.
+  - Rev 4 (landed with rev 5 as e4fb8e8): the fog gate's palette loop with one pointer per column (the same fmac
+    shape), the constant colour unrolled x4, the build loop in asm with pair stores. vl23: W 43.66 (-0.29 vs
+    vl17): fog gate 0.904 -> 0.556, constant colour 0.129 -> 0.074, but the build loop only 0.760 -> 0.706: it
+    waited on the skin table's write-allocate fills (issue 54.4K + prefetch waits 62.7K + D-miss 17.5K cycles a
+    tick). Gates vl24 (C) / vl25 (A) STRICT vs tr56 / tr42, every check 0 mismatches.
+  - Rev 5: the build loop allocates each 64-byte skin entry's two lines with movca.l (no fill, no skin prefetch;
+    32-byte-aligned tables only, every allocated line overwritten; the ready bytes set with one memset after the
+    loop): 86 -> 48 cycles an entry; the fog gate in hand-written asm repeating rev 4's compiled operations
+    (T kept negated): 61 -> 45 cycles an entry. **vl26: W 43.36 (-0.30 vs vl23), R 12.70; the characters 8.65 ms
+    over stick figures** (actor area 3.83 -> 3.29; about +0.2 of unchanged logic rows is layout). Gates vl27 (C)
+    / vl28 (A) STRICT vs tr56 / tr42, every check 0 mismatches (movca_frames logged; Flycast has no operand
+    cache, so movca.l runs there as a plain store). The asm repeats contracted (fmac) code: game30.mk stops an
+    ACTOR_VTX_KERNEL build under GAME_FP_CONTRACT=off without the GAME_FP_RENDER=fast exemption.
+  - The kernel loop itself runs at ~48 cycles a vertex over ~9,580 vertices a tick (2.3 ms): fewer vertices
+    and palette entries in the cast meshes is the lever left.
 - New models for the rest of the first level's cast come from the external agent (section "Current order
   and status"); the cl lane integrates them.
 - The coarse-path HUD in C ("88" ammo digits, a flat lens) was not a HUD bug: the gauge's lens and ring are
@@ -1580,3 +1597,6 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-26 | sk14 | sk12 + GAME_HF_TYPED + its order file | 28.98 (+0.04) | - | skM10 STRICT, HERMF 0 mismatches | dropped |
 | 09-26 | land24 | the skeleton lane's batch 3 landed (4f81bbd; + the prerequisite guards) | - | - | knob-off identity (default, canonical); sk12 carry-over 447 / 455 objects identical (the rest tree5-only) | landed, default off |
 | 09-26 | sq104 | landed-stack control: sq103 + GAME_OB_NEAR / GAME_OB_DECODE + GAME_VEC_NORM_INLINE / GAME_MTXINV_SCHED (SCEAT_LIST rev 2 under its knob), tree8 land24 | G_q 24.57 (-0.65 vs sq103) | - | (the knobs' own gates) | G under 24.97 |
+| 09-26 | vl23 | cl42 + ACTOR_VTX_KERNEL=1 (rev 4), version C | W 43.66 (R 13.00; -0.29 vs vl17) | - | vl24 (C, =2) / vl25 (A, =2) STRICT, 0 mismatches | kept |
+| 09-26 | vl26 | cl42 + ACTOR_VTX_KERNEL=1 (rev 5), version C | W 43.36 (R 12.70; -0.30 vs vl23; characters 8.65 over stick figures) | - | vl27 (C, =2) / vl28 (A, =2) STRICT, 0 mismatches | kept |
+| 09-26 | land25 | the vertex kernel rev 4 + rev 5 landed (e4fb8e8; + the contraction guard) | - | - | knob-off identity (default, canonical); vl26 carry-over 451 / 460 objects identical (the rest tree5-only) | landed, default off |
