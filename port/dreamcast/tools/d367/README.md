@@ -45,6 +45,11 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
 - The pieces' transforms in the walk kernel (4e394ea; exact, room-independent; not in LH yet): the coarse-square
   arms add `GAME_LINE_PIECE=1` (needs `GAME_LINE_WALK=1`); the entry lives in platform/lnw_sh4.S, so the
   order file is unchanged.
+- The actor vertex kernel (42afaa1; render-only, exact): `ACTOR_VTX_KERNEL=1` runs the fast actor path's
+  position / skin / light passes on platform/avk_sh4.S (with NATIVE_ACTOR_FAST=1; the version C square arms add
+  it). `python3 tools/game30/avk/mkavk.py <out.S>` regenerates the kernels from the templates and the fixed
+  schedules (sched-*.txt; delete one to reschedule). =2 check builds log "VTXK" lines. Version C discs need
+  `EXTRA_TEXDIRS` with the private hair texture dir or COARSE_LEON draws nothing.
 - The coarse character adapters (9df764b; default off; render-only; the meshes are private and stay out of Git):
   `COARSE_LEON=1 COARSE_GANADO=1 COARSE_ACTOR_ASSET_DIR=<private bundle dir>` draw Leon and the Ganados from
   the reduced meshes on the coarse path (needs COARSE=1, NATIVE_ACTOR_FAST=1, NATIVE_ACTOR_SKIN_LAZY=1;
@@ -57,6 +62,11 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   Ganados' pass, exact; =3 every model's pass, last-bit FP policy, decisions identical); PMC_KERNEL needs
   `GAME_ROT_CACHE=1`. The order file places platform/pwc_sh4.o, pmc_sh4.o and hermiteFast. =2 check builds
   log "PWCK" and "HERMF" lines.
+- The skeleton lane (ee7d080; exact, room-independent; not in LH yet): the coarse-square arms add
+  `GAME_LIGHT_LAZY=1 GAME_FP_SCHED=1 GAME_HF_INLINE=1 GAME_HF_PF=1 GAME_PWC_SCHED=1 GAME_PWC_PF=1
+  GAME_TRIG_LEAN=1 GAME_ACOS_LEAN=1` (HF_* need GAME_HERMITE_FAST, PWC_SCHED needs GAME_PWC_KERNEL, PWC_PF needs
+  PWC_SCHED; TRIG_LEAN acts with GAME_TRIG=1, ACOS_LEAN with GAME_FDLIBM=1). LIGHT_LAZY=2 is its check build.
+  `tools/game30/trig_lean_exhaustive.sh` runs TRIG_LEAN's host test over all 2^32 inputs.
 - The effect pools' scans and moves (1d3dc4d; exact, room-independent; not in LH yet): the coarse-square arms add
   `GAME_FX_SCAN=1 GAME_FX_MOVE=1` (FX_SCAN needs `GAME_ESP_OWNER=1`; its EfmDelete list path needs
   `GAME_ATCHK_LIST=1 GAME_WORKAT_INLINE=1`). Header knobs (include/esp.h): fresh builds only. =2 check builds

@@ -309,11 +309,11 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | lane (arm prefix) | tree (under /root/probe/d367-agents) | owns |
 |---|---|---|
 | cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
-| vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: a hand-written SH-4 vertex loop in platform/native_actor_fast.cpp |
-| gc collision | lane-gcol/tree | the resumable sphere walk, the em-em rows. Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03); next increments on the lane's 7cb13bc (batch 6: GAME_EM10_SCANPF) |
+| vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: generated SH-4 vertex kernels for the fast actor path. Rev 1b landed 42afaa1: characters -2.97 (vl7); rev 2 (in-kernel palette switch, entry builds, fog-gate loop, two-vertex emit) being measured |
+| gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Next: the line leaf kernel v2 (prefetch pass, two polygons pipelined), the walk's next-node prefetch, sceAtCheck_main's enabled-area array |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
-| ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp, dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit) |
-| sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map for deferring draw-only work |
+| ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN r1 delivered (ob3 29.36 vs fx9 29.55); batch 2 (OB_MAT, OB_PATH, OB_ROUTE, OB_OLDPOS) queued |
+| sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map. Landed ee7d080: LIGHT_LAZY, FP_SCHED, HF_INLINE / HF_PF, PWC_SCHED / PWC_PF, TRIG_LEAN, ACOS_LEAN, sk10 29.14 alone (-1.52). Next: pass-C partial recompute, pass-A on the kernel, PSVECNormalize inline |
 | wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky |
 | bg route bugs | lane-bugs | the pre-pivot backlog: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough (paused: its agent was stopped; relaunch on the user's word) |
 
@@ -363,9 +363,13 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    add, G ~27.9 (gap ~2.9), not measured on one build yet.
    **Measurement base:** the lanes measure on warp/tree5, which carries the skeleton kernels (GAME_PWC_KERNEL=3,
    GAME_PMC_KERNEL=1, GAME_HERMITE_FAST=1; step "skeleton", 37.52 -> 34.40), so every G_q above includes them.
-   They landed default off as ddea9bf, so the landed tree reproduces that base. Next: one combined never-draw
-   control on the landed stack (every landed G knob, the kernels, the effect pools, the collision stack and
-   the landed order file; arm sq99), the lanes' new reference.
+   They landed default off as ddea9bf, so the landed tree reproduces that base. The combined never-draw
+   control on the landed stack, **sq99** (the effect pools, the collision stack without SPHERE_BACKFACE, the
+   kernels and the landed order file, built from warp/tree7): **G_q 28.29**, gap **3.32**. The naive sum is
+   27.92; the +0.31 residual is code layout, mostly EspMove 0.23 -> 0.57 with identical code, so the order
+   file (generated from sq67 / sq68, before these landings) is regenerated after the next landings. Then the
+   skeleton lane (ee7d080, section "Skeleton lane"): sk10 29.14 alone (-1.52), not on one build with sq99's
+   stack yet.
    The rest of G runs in the lanes above: gc the em-em rows, ob enemy / object bookkeeping, sk skeleton /
    motion / cloth / maths. The reduced characters (appearance, step 5): section "Reduced characters and the
    character path" below.
@@ -376,7 +380,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), all exact: G_q 29.55 (fx9); gap 4.58 to 24.97; the collision stack (7caa2f7, -1.63 alone, gc13 29.03; combined with fx unmeasured); in lanes: gc em-em rows, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), and the collision stack (7caa2f7, -1.63 alone), all exact: the landed-stack control sq99 **G_q 28.29**, gap 3.32 to 24.97; the skeleton lane (ee7d080, -1.52 alone, sk10 29.14) not combined yet; in lanes: gc line kernels / area array, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
 | 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); in lanes: cl fitted meshes, vl vertex loop, wd textured coarse world <= ~3 ms; the external agent: the first level's cast models; the main session: the coarse HUD fix |
 
@@ -409,6 +413,7 @@ Ganados costs more.
 | A' (cl26, benchmark only) | source renderer, the reduced characters (ACTOR_SWAP) | 93.68 | 63.02 | - | 1.27 fps |
 | C (cl21) | coarse world, reduced Leon and Ganados | 57.13 | 26.47 | 17.5 fps at 58% speed | 3.0 fps |
 | C, fast path so far (cl42) | the same image: meshes fitted losslessly + FTRV adapters | 50.55 | 19.89 | 19.8 fps at 66% speed | 4.0 fps |
+| C, + vertex kernel (vl7) | the same image: + ACTOR_VTX_KERNEL=1 (rev 1b) | 47.58 | 16.92 | 21.0 fps at 70% speed | 4.7 fps |
 | B (cl22) | coarse world, stick figures | 34.71 | 4.05 | 28.8 fps at 96% speed | 19.8 fps |
 
 Paced to full speed = (1000 - 30 x 30.66) / R images a second.
@@ -459,6 +464,19 @@ Paced to full speed = (1000 - 30 x 30.66) / R images a second.
     maths with logic STRICT is a standing user decision.
   - Next: the vl lane's vertex loop (re4dc_actor_submit ~11.4 ms of the 15.84); the 6-8 ms estimate
     assumed ~0.6-0.7 transformed vertices a triangle, which needs the external agent's meshes.
+- **Vertex kernel (lane vl; rev 1b landed 42afaa1, default off).** ACTOR_VTX_KERNEL: the fast actor path's
+  position + skin transform and light pass as generated SH-4 kernels (platform/avk_sh4.S, made by
+  tools/game30/avk/mkavk.py from templates and fixed schedules; six variants), the same FP operations on the
+  same operands; the kernel returns to C at each palette change.
+  - vl7 (cl42's flags + ACTOR_VTX_KERNEL=1): **W 47.58 (-2.97), R 16.92; the characters 12.87 ms over stick
+    figures** (was 15.84). re4dc_actor_submit 11.38 -> 4.19 plus the kernel 3.74; the loop 70 instructions /
+    44.7 cycles a vertex (C 138.5 / ~142).
+  - Gates: vl8 (C, =2) STRICT vs tr56 / tr42, 62.56M vertices, 0 mismatched words, max screen error
+    0.000 px; vl9 (A, =2) STRICT, 58.55M vertices and 24.54M lit vertices, 0 mismatches.
+  - Left in rev 1: a palette entry changes every ~6 vertices in C, so 1687 calls a tick cost ~330K of the
+    kernel's 747K cycles. Rev 2 (in-kernel palette switch, entry builds, the fog-gate loop with one sqrt,
+    emit_meshlet two vertices at a time, constant-colour parts): estimated a further -4 to -5 ms, characters
+    ~8 ms over stick figures. Below that needs fewer vertices / palettes: the external agent's meshes.
 - New models for the rest of the first level's cast come from the external agent (section "Current order
   and status"); the cl lane integrates them.
 - Coarse-path bug seen in C: the HUD shows unlit "88" ammo digits and a flat lens. The main session owns
@@ -515,6 +533,31 @@ exact (GAME_ATRECT_FAR decision-exact by a bound); each knob's =2 check build ru
   memo table misses ate the gain; ARM superseded by ATRECT_FAR).
 - Layout noise: the effect rows (EspMove, AnmMove, sinf, ColorUpdate) swing by up to +0.4 between builds with
   identical call and instruction counts; the lane judged each knob by its own rows.
+
+#### Skeleton lane (lane sk, 2026-09-25; landed ee7d080, default off)
+
+Never-draw uncapped arms on tree5 (with the skeleton kernels), against sq97 (30.66). All exact.
+- GAME_LIGHT_LAZY: cLightInfo::updateMatrix keeps its inputs and builds imat only when read
+  (lightHitCheckBBox). The lane's reader map (lane-gskel/STATE.md, design note 1): imat is the only
+  skeleton / light output that is draw-only and a pure function of current state; everything else (part
+  mat / world / r_scale, motion outputs, matBlend / QUATSlerp state, IK, cloth, pendulums, updateOldPos, the
+  neck / waist passes) is read by gameplay or carries history. Drawn every tick: 0 of 235,520 updates
+  materialized. ~-0.1.
+- GAME_FP_SCHED: GCC's pressure-aware pre-allocation scheduler on the skeleton / maths objects: -0.24.
+- GAME_HF_INLINE, GAME_HF_PF (with GAME_HERMITE_FAST): ~-0.05; hermiteFast -0.08 (dmiss 47.5k -> 30.4k).
+- GAME_PWC_SCHED + GAME_PWC_PF (with GAME_PWC_KERNEL): the part-world loop rescheduled, the next part's
+  lines prefetched at exact field addresses: kernel 1.96 -> 1.47, sk6 29.50. The kernel is now bound by the
+  memory bus (~169 cycles a part); PREFs are spread out because real SH-4 may stall on a second miss.
+- GAME_TRIG_LEAN: sinf / cosf / re4dc_sincosf restructured around the same float operations (exhaustive
+  host test: 0 mismatches over 2^32 inputs); GAME_ACOS_LEAN: ef_acos / ef_asin with -fno-math-errno (the
+  sqrtf guard's other path is unreachable there; it cost a __unordsf2 call per acosf). sincosf 0.858 ->
+  0.631, sinf 0.392 -> 0.295, __unordsf2 0.104 -> 0.007, acosf 0.256 -> 0.193.
+- **sk10 (all): 29.14 (-1.52).** Gates: skM1 STRICT vs tr56 / tr42; skM5 / skM6 (coarse drawn every tick,
+  every knob, =2 where available) STRICT vs the kernels' control skM0 over 8943 / 8998 frames, dtcmp
+  must-match rows identical, drift 0.
+- Dropped: IK_KPASS (+0.14), PARTS_FAST (~0.03 for +908 bytes), HF_V2 (+0.145).
+- Next (estimates): pass-C partial recompute (addRot subtrees only, ~0.2, needs a writer audit), pass-A on
+  the kernel with the IK part set (~0.1-0.15), PSVECNormalize inline at the hot callers (~0.05-0.1).
 
 #### Skeleton operations (user's order, item 1; 2026-09-25)
 
@@ -1362,3 +1405,8 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | gc13 | gc11 + OBJHIT_LIST + OBJHIT_IDFIRST + EMHIT_LIST | 29.03 (-1.63 vs sq97) | - | gc14 (=2): tr56 / tr42 STRICT, must-match rows identical, 0 mismatches | kept |
 | 09-25 | land11 | the collision stack landed (7caa2f7; without SPHERE_BACKFACE) | - | - | knob-off identity (default, canonical); gc13 carry-over 443 / 454 objects identical (the rest tree5-only; atari.o = gc9's) | landed, default off: gc13 29.03 alone; with fx unmeasured |
 | 09-25 | land12 | the skeleton kernels landed (ddea9bf; GAME_PWC_KERNEL / GAME_PMC_KERNEL / GAME_HERMITE_FAST, measured as sq53-sq57) | - | - | knob-off identity (default, canonical); gc13 carry-over 447 / 456 objects identical, model.o the same instructions (a switch table's local name differs), the rest tree5-only | landed, default off: the landed tree carries the lanes' base |
+| 09-25 | sq99 | landed-stack control (tree7 land12): effect pools + collision stack (no SPHERE_BACKFACE) + skeleton kernels + the landed order file | **28.29** | - | - (every knob gated in its lane) | **G_q 28.29**, gap 3.32; residual vs the naive sum +0.31 (EspMove layout) |
+| 09-25 | vl7 | cl42 + ACTOR_VTX_KERNEL=1 (rev 1b), version C | W 47.58 (R 16.92; -2.97; characters 12.87 over stick figures) | - | vl8 (C, =2) / vl9 (A, =2) STRICT, 0 mismatches, max screen error 0.000 px | kept |
+| 09-25 | land13 | the vertex kernel landed (42afaa1) | - | - | knob-off identity (default, canonical); vl7 carry-over 451 / 460 objects identical (the rest tree5-only); the generator regenerates avk_sh4.S byte for byte | landed, default off |
+| 09-25 | sk10 | sk kernels' control + LIGHT_LAZY, FP_SCHED, HF_INLINE, HF_PF, PWC_SCHED, PWC_PF, TRIG_LEAN, ACOS_LEAN | 29.14 (-1.52 vs sq97) | - | skM1 / skM5 / skM6 STRICT, must-match rows identical, drift 0 | kept |
+| 09-25 | land14 | the skeleton lane landed (ee7d080; pwc_sh4.S ported: tree5's GAME_SKEL_PF stripped) | - | - | knob-off identity (default, canonical); sk10 carry-over 447 / 455 objects identical (the rest tree5-only) | landed, default off |
