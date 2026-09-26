@@ -1,8 +1,16 @@
-T mov r4,r0
-T or r8,r0
-T or r9,r0
-T cmp/hi r12,r0
-T bt @slow
+switch r0 fr0 fr1 fr2 fr8 fr9 fr10 fr12 fr13 fr14
+T cmp/gt r12,r4
+T subc r0,r0
+T or r0,r4
+T extu.b r4,r4
+T cmp/gt r12,r8
+T subc r1,r1
+T or r1,r8
+T extu.b r8,r8
+T cmp/gt r12,r9
+T subc r2,r2
+T or r2,r9
+T extu.b r9,r9
 T shll16 r4
 T shll8 r8
 T or r8,r4
@@ -50,4 +58,4 @@ T add #32,r7
   dt r6
   bt @end
 ==
-31.50 12 0 14 1 13 2 3 4 15 49 21 5 16 17 22 18 23 19 20 6 24 29 32 7 25 31 33 34 8 9 35 10 26 43 36 11 37 44 38 27 45 28 39 40 46 47 50 41 30 42 48
+33.50 0 21 1 20 2 19 36 28 4 29 5 6 25 22 30 23 3 8 26 38 27 24 12 9 31 37 7 32 10 56 39 57 40 13 14 41 34 11 33 42 43 15 44 50 16 35 45 17 51 52 46 47 18 53 54 48 49 55

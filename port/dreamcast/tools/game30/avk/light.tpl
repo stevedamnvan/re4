@@ -1,13 +1,21 @@
-! Light kernel iteration k: tail of vertex k-1 (colour ints in r4/r8/r9, argb at r7); vertex k
-! (normal floats in fv4, fr7 = 0): three fipr, m = d + |d|, colour ftrv, colour copied into the
-! w slots (fr11 / fr15 / fr3, free once the m are built) and truncated into r4/r8/r9; PRE(k+1):
-! its normal bytes through the s8 -> float table (r3 = table + 512) into fv4, palette byte in r2.
+! Light kernel iteration k: tail of vertex k-1 (colour ints in r4/r8/r9: each clamped to 255 without a
+! branch, x | -(x > 255) then its low byte, packed with alpha, stored at r7); vertex k (normal floats in
+! fv4, fr7 = 0): three fipr, m = d + |d|, colour ftrv, colour copied into the w slots (fr11 / fr15 / fr3,
+! free once the m are built) and truncated into r4/r8/r9; PRE(k+1): its normal bytes through the s8 ->
+! float table (r3 = table + 512) into fv4, palette byte in r2.
 ! Entry state: fv4 = normal(k), fr7 = 0; r5 = record k+1; r6 = n - k; r7 = &entry[k-1].argb.
-@tail mov r4,r0
-@tail or r8,r0
-@tail or r9,r0
-@tail cmp/hi r12,r0
-@tail bt @slow
+@tail cmp/gt r12,r4
+@tail subc r0,r0
+@tail or r0,r4
+@tail extu.b r4,r4
+@tail cmp/gt r12,r8
+@tail subc r1,r1
+@tail or r1,r8
+@tail extu.b r8,r8
+@tail cmp/gt r12,r9
+@tail subc r2,r2
+@tail or r2,r9
+@tail extu.b r9,r9
 @tail shll16 r4
 @tail shll8 r8
 @tail or r8,r4

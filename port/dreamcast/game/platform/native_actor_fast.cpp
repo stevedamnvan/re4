@@ -1880,8 +1880,84 @@ inline pvr_vertex_t* emit(pvr_vertex_t* dst, const pvr_vertex_t* cache, const u8
 // beyond far or in front of near): every index copied in one loop, the flags
 // word derived from index bit 7 (sign of the loaded byte: >> 3 keeps bit 28).
 // SQ = true: into the TA store queues, one burst per vertex.
+#if RE4DC_AVK == 2
+bool avk_emit_ref = false;  // the check's reference copy: the loop below
+void avk_check_emit(const pvr_vertex_t* cache, const u8* index, unsigned n);
+#elif RE4DC_AVK
+constexpr bool avk_emit_ref = false;
+#endif
 template <bool SQ>
 inline void* emit_meshlet(void* dst, const pvr_vertex_t* cache, const u8* index, unsigned n) {
+#if RE4DC_AVK
+    // ACTOR_VTX_KERNEL: the same copy two vertices at a time, software-pipelined: vertex k's four
+    // stores, flags word and burst go out while vertex k+1's index, offset and four loads come in
+    // (fv0-fv7 / fv8-fv15 alternate). The last half reads one index byte and one cache entry past
+    // the list (both inside their buffers) and drops them. =2: each store-queue meshlet is also
+    // copied by both loops into RAM and compared (avk_check_emit).
+    if (!avk_emit_ref) {
+#if RE4DC_AVK == 2
+        if constexpr (SQ) avk_check_emit(cache, index, n);
+#endif
+        const u32 vertex = PVR_CMD_VERTEX, eol_bit = PVR_CMD_VERTEX_EOL ^ PVR_CMD_VERTEX, mask = 127U << 5;
+        auto* d = static_cast<u32*>(dst);
+        u32 ra, fa, rb, fb;
+#define AVK_EMIT_HALF(RN, FN, D0, D2, D4, D6, RM, FM, E0, E2, E4, E6, PREF) \
+        "mov.b   @%[index]+," RN "\n\t" \
+        "add     #32,%[dst]\n\t" \
+        "fmov    " D6 ",@-%[dst]\n\t" \
+        "mov     " RN "," FN "\n\t" \
+        "fmov    " D4 ",@-%[dst]\n\t" \
+        "shld    %[five]," RN "\n\t" \
+        "fmov    " D2 ",@-%[dst]\n\t" \
+        "and     %[mask]," RN "\n\t" \
+        "fmov    " D0 ",@-%[dst]\n\t" \
+        "add     %[cache]," RN "\n\t" \
+        "mov.l   " FM ",@%[dst]\n\t" \
+        "shlr2   " FN "\n\t" \
+        PREF \
+        "shlr    " FN "\n\t" \
+        "fmov    @" RN "+," E0 "\n\t" \
+        "and     %[eol]," FN "\n\t" \
+        "fmov    @" RN "+," E2 "\n\t" \
+        "or      %[vertex]," FN "\n\t" \
+        "fmov    @" RN "+," E4 "\n\t" \
+        "add     #32,%[dst]\n\t" \
+        "fmov    @" RN "+," E6 "\n\t" \
+        "dt      %[n]\n\t"
+#define AVK_EMIT_MESHLET(PREF) \
+        "fschg\n\t" \
+        "mov.b   @%[index]+,%[ra]\n\t" \
+        "mov     %[ra],%[fa]\n\t" \
+        "shld    %[five],%[ra]\n\t" \
+        "and     %[mask],%[ra]\n\t" \
+        "add     %[cache],%[ra]\n\t" \
+        "fmov    @%[ra]+,dr0\n\t" \
+        "shlr2   %[fa]\n\t" \
+        "fmov    @%[ra]+,dr2\n\t" \
+        "shlr    %[fa]\n\t" \
+        "fmov    @%[ra]+,dr4\n\t" \
+        "and     %[eol],%[fa]\n\t" \
+        "fmov    @%[ra]+,dr6\n\t" \
+        "or      %[vertex],%[fa]\n" \
+        "1:\n\t" \
+        AVK_EMIT_HALF("%[rb]", "%[fb]", "dr0", "dr2", "dr4", "dr6", "%[ra]", "%[fa]", "dr8", "dr10", "dr12", "dr14", PREF) \
+        "bt      2f\n\t" \
+        AVK_EMIT_HALF("%[ra]", "%[fa]", "dr8", "dr10", "dr12", "dr14", "%[rb]", "%[fb]", "dr0", "dr2", "dr4", "dr6", PREF) \
+        "bf      1b\n" \
+        "2:\n\t" \
+        "fschg\n" \
+        : [dst] "+r"(d), [index] "+r"(index), [n] "+r"(n), [ra] "=&r"(ra), [fa] "=&r"(fa), [rb] "=&r"(rb), \
+          [fb] "=&r"(fb) \
+        : [cache] "r"(cache), [five] "r"(5), [mask] "r"(mask), [eol] "r"(eol_bit), [vertex] "r"(vertex) \
+        : "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10", "fr11", "fr12", "fr13", \
+          "fr14", "fr15", "t", "memory"
+        if constexpr (SQ) __asm__ __volatile__(AVK_EMIT_MESHLET("pref    @%[dst]\n\t"));
+        else __asm__ __volatile__(AVK_EMIT_MESHLET(""));
+#undef AVK_EMIT_MESHLET
+#undef AVK_EMIT_HALF
+        return d;
+    }
+#endif
 #if defined(__sh__) && RE4DC_ACTOR_ASM
     const u32 vertex = PVR_CMD_VERTEX, eol_bit = PVR_CMD_VERTEX_EOL ^ PVR_CMD_VERTEX;
     auto* d = static_cast<u32*>(dst);
@@ -2272,15 +2348,138 @@ void skin_check_vertices(Part& e, const u8* at, unsigned rs, unsigned n, int pal
 
 #if RE4DC_AVK
 // ACTOR_VTX_KERNEL: pass 1 / pass 2 of a meshlet on avk_sh4.S. A kernel call returns the records
-// it did not process: a skinned kernel stops at a palette entry whose matrix / directions are not
-// built yet, which the C side builds (position_matrix / skin_light_dirs, as the paths below do)
-// before calling again. Returns the records done from 0 (0: the kernel does not apply; the path
-// below finishes whatever is left).
+// it did not process: a skinned kernel switches palette entries itself and stops only at an entry
+// whose matrix / directions are not built yet. The C side then builds every entry the rest of the
+// meshlet still needs (avk_build_*: the same values position_matrix / skin_light_dirs give) and
+// calls once more, which runs to the end. Returns the records done from 0 (0: the kernel does not
+// apply; the path below finishes whatever is left).
+//
+#if RE4DC_AVK == 2
+void avk_check_build(const Frame& f, const unsigned short* todo, unsigned m);
+#endif
+// Skinned position entries used by records [i, n) and not built yet: collected (palette lines
+// prefetched), then built with XMTRX = the screen matrix loaded once (skin_position_matrix's float
+// operations, statement for statement).
+void avk_build_positions(Frame& f, const Records& r, unsigned i, unsigned n) {
+    unsigned short todo[kMaxVertices];
+    unsigned m = 0;
+    const unsigned entries = f.palette_entries;
+    int last = 0x10000;  // no s16 palette index
+    for (; i < n; ++i) {
+        const int palette = reinterpret_cast<const short*>(f.positions + r.vi(i) * 8U)[3];
+        if (palette == last) continue;
+        last = palette;
+        const unsigned j = unsigned(palette) < entries ? unsigned(palette) : 0U;
+        if (f.skin_ready[j]) continue;
+        f.skin_ready[j] = 1;
+        __builtin_prefetch(f.palette + j * 12U);
+        __builtin_prefetch(f.palette + j * 12U + 11U);
+        todo[m++] = static_cast<unsigned short>(j);
+    }
+    if (!m) return;
+#if RE4DC_ACTOR_SKIN_FTRV == 1 && defined(__sh__) && !defined(ACTOR_TEST_XMTRX)
+    // skin_position_matrix's operations per entry: columns 0-2 x q (fmul) with w = 0 and the
+    // translation with w = 1, each through XMTRX (= the screen matrix, loaded once) by ftrv, the 16
+    // results stored from the end. q travels in FPUL (all 16 registers hold the entry).
+    load_xmtrx(f.screen);
+    const union { float f; u32 u; } qu{f.q};  // (memcpy here is a library call)
+    const u32 qb = qu.u;
+    const unsigned short* t = todo;
+    const float* pal = f.palette;
+    float* sp = f.skin_positions;
+    unsigned left = m;
+    u32 p, o, x;
+    __asm__ __volatile__(
+        "lds     %[qb],fpul\n"
+        "1:\n\t"
+        "mov.w   @%[t]+,%[p]\n\t"   /* entry j (< 32768) */
+        "fsts    fpul,fr15\n\t"     /* q */
+        "mov     %[p],%[o]\n\t"
+        "shll2   %[p]\n\t"
+        "shll2   %[p]\n\t"          /* j * 16 */
+        "shll2   %[o]\n\t"
+        "shll2   %[o]\n\t"
+        "shll2   %[o]\n\t"          /* j * 64 */
+        "mov     %[p],%[x]\n\t"
+        "add     %[p],%[p]\n\t"
+        "add     %[x],%[p]\n\t"     /* j * 48 */
+        "add     %[pal],%[p]\n\t"   /* P = palette + j * 12 floats */
+        "add     %[sp],%[o]\n\t"
+        "add     #64,%[o]\n\t"      /* the end of out = skin_positions + j * 16 floats */
+        "fmov.s  @%[p]+,fr0\n\t"
+        "fmov.s  @%[p]+,fr1\n\t"
+        "fmov.s  @%[p]+,fr2\n\t"
+        "fmul    fr15,fr0\n\t"
+        "fmov.s  @%[p]+,fr4\n\t"
+        "fmul    fr15,fr1\n\t"
+        "fmov.s  @%[p]+,fr5\n\t"
+        "fmul    fr15,fr2\n\t"
+        "fmov.s  @%[p]+,fr6\n\t"
+        "fmul    fr15,fr4\n\t"
+        "fmov.s  @%[p]+,fr8\n\t"
+        "fmul    fr15,fr5\n\t"
+        "fmov.s  @%[p]+,fr9\n\t"
+        "fmul    fr15,fr6\n\t"
+        "fmov.s  @%[p]+,fr10\n\t"
+        "fmul    fr15,fr8\n\t"
+        "fmov.s  @%[p]+,fr12\n\t"
+        "fmul    fr15,fr9\n\t"
+        "fmov.s  @%[p]+,fr13\n\t"
+        "fmul    fr15,fr10\n\t"
+        "fmov.s  @%[p],fr14\n\t"
+        "fldi0   fr3\n\t"
+        "fldi0   fr7\n\t"
+        "fldi0   fr11\n\t"
+        "fldi1   fr15\n\t"
+        "ftrv    xmtrx,fv12\n\t"
+        "ftrv    xmtrx,fv8\n\t"
+        "ftrv    xmtrx,fv4\n\t"
+        "ftrv    xmtrx,fv0\n\t"
+        "fmov.s  fr15,@-%[o]\n\t"
+        "fmov.s  fr14,@-%[o]\n\t"
+        "fmov.s  fr13,@-%[o]\n\t"
+        "fmov.s  fr12,@-%[o]\n\t"
+        "fmov.s  fr11,@-%[o]\n\t"
+        "fmov.s  fr10,@-%[o]\n\t"
+        "fmov.s  fr9,@-%[o]\n\t"
+        "fmov.s  fr8,@-%[o]\n\t"
+        "fmov.s  fr7,@-%[o]\n\t"
+        "fmov.s  fr6,@-%[o]\n\t"
+        "fmov.s  fr5,@-%[o]\n\t"
+        "fmov.s  fr4,@-%[o]\n\t"
+        "fmov.s  fr3,@-%[o]\n\t"
+        "fmov.s  fr2,@-%[o]\n\t"
+        "fmov.s  fr1,@-%[o]\n\t"
+        "dt      %[left]\n\t"
+        "bf/s    1b\n\t"
+        "fmov.s  fr0,@-%[o]\n"
+        : [t] "+r"(t), [left] "+r"(left), [p] "=&r"(p), [o] "=&r"(o), [x] "=&r"(x)
+        : [qb] "r"(qb), [pal] "r"(pal), [sp] "r"(sp)
+        : "fpul", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10", "fr11", "fr12",
+          "fr13", "fr14", "fr15", "t", "memory");
+#if RE4DC_AVK == 2
+    avk_check_build(f, todo, m);
+#endif
+#else
+    for (unsigned t = 0; t < m; ++t) skin_position_matrix(f, todo[t], f.skin_positions + todo[t] * 16U);
+#endif
+}
+// Skinned light directions used by records [i, n) and not built yet (skin_light_dirs).
+void avk_build_dirs(Frame& f, const Lights& L, const Records& r, unsigned i, unsigned n) {
+    alignas(8) float temp[12];
+    int last = -1;
+    for (; i < n; ++i) {
+        const unsigned palette = f.normals[r.ni(i) * 4U + 3];
+        if (int(palette) == last) continue;
+        last = int(palette);
+        if (!f.dirs_ready[palette < f.palette_entries ? palette : 0U]) skin_light_dirs(f, L, palette, temp);
+    }
+}
 unsigned avk_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bool s16_uv) {
     Frame& f = e.f;
     const bool skin = f.mode == kSkin;
     // The kernels sign-extend the u16 record fields (mov.w), as ACTOR_POS_ASM does.
-    if (f.position_stride != 8 || f.position_count > 32768U || (skin && !f.skin_positions)) return 0;
+    if (!n || f.position_stride != 8 || f.position_count > 32768U || (skin && !f.skin_positions)) return 0;
     AvkPos a;
     a.pos = f.positions; a.uv = e.p.uv; a.rs = r.stride * 2U;
     a.matrix = skin ? f.skin_positions : f.screen; a.ready = f.skin_ready; a.entries = f.palette_entries;
@@ -2289,19 +2488,20 @@ unsigned avk_positions(Part& e, const Records& r, unsigned n, const PosConst& k,
     unsigned (*const kernel)(const AvkPos*) = skin ? (s16_uv ? re4dc_avk_pos_skin_s16 : re4dc_avk_pos_skin_u16)
                                                    : (s16_uv ? re4dc_avk_pos_rigid_s16 : re4dc_avk_pos_rigid_u16);
     const u8* rec = reinterpret_cast<const u8*>(r.r);
-    alignas(8) float temp[16];
+    if (skin) {  // first record's entry missing: build the meshlet's entries before the first call
+        const int palette = reinterpret_cast<const short*>(f.positions + r.vi(0) * 8U)[3];
+        if (!f.skin_ready[unsigned(palette) < f.palette_entries ? unsigned(palette) : 0U])
+            avk_build_positions(f, r, 0, n);
+    }
     unsigned i = 0;
-    while (i < n) {
-        if (skin) {
-            const int palette = reinterpret_cast<const short*>(f.positions + r.vi(i) * 8U)[3];
-            position_matrix(f, unsigned(palette) < f.palette_entries ? unsigned(palette) : 0U, temp);
-        }
+    for (unsigned pass = 0;; ++pass) {
         a.rec = rec + i * a.rs; a.n = n - i; a.dst = e.cache.v + i; a.oc = e.cache.oc + i;
         const unsigned left = kernel(&a);
-        if (left >= a.n) break;  // not reached (entry i was just built): the C path finishes
         i = n - left;
+        // A second stop is not reached (every entry was just built): the C path finishes.
+        if (!left || !skin || pass) return i;
+        avk_build_positions(f, r, i, n);
     }
-    return i;
 }
 // all / any of the outcode bytes [0, n) (the cache's, 32-byte aligned), a word at a time.
 inline void avk_fold(const u8* oc, unsigned n, unsigned& all, unsigned& any) {
@@ -2317,23 +2517,25 @@ inline void avk_fold(const u8* oc, unsigned n, unsigned& all, unsigned& any) {
 unsigned avk_lights(Part& e, const Lights& L, const Records& r, unsigned n) {
     Frame& f = e.f;
     const bool skin = f.mode == kSkin;
-    if (!f.small_normals || e.colors || f.normal_stride != 4 || f.normal_count > 32768U || (skin && !f.skin_dirs))
+    if (!n || !f.small_normals || e.colors || f.normal_stride != 4 || f.normal_count > 32768U || (skin && !f.skin_dirs))
         return 0;
     AvkLight a;
     a.nrm = f.normals; a.rs = r.stride * 2U; a.color = L.color; a.alpha = e.alpha;
     a.dirs = skin ? f.skin_dirs : &L.dir[0][0]; a.ready = f.dirs_ready; a.entries = f.palette_entries;
     unsigned (*const kernel)(const AvkLight*) = skin ? re4dc_avk_light_skin : re4dc_avk_light_rigid;
     const u8* rec = reinterpret_cast<const u8*>(r.r);
-    alignas(8) float temp[12];
+    if (skin) {
+        const unsigned palette = f.normals[r.ni(0) * 4U + 3];
+        if (!f.dirs_ready[palette < f.palette_entries ? palette : 0U]) avk_build_dirs(f, L, r, 0, n);
+    }
     unsigned i = 0;
-    while (i < n) {
-        if (skin) skin_light_dirs(f, L, f.normals[r.ni(i) * 4U + 3], temp);
+    for (unsigned pass = 0;; ++pass) {
         a.rec = rec + i * a.rs; a.n = n - i; a.argb = &e.cache.v[i].argb;
         const unsigned left = kernel(&a);
-        if (left >= a.n) break;  // not reached (entry i was just built): the C path finishes
         i = n - left;
+        if (!left || !skin || pass) return i;
+        avk_build_dirs(f, L, r, i, n);
     }
-    return i;
 }
 #if RE4DC_AVK == 2
 // Check build: the kernels run first, then the previous path (positions_asm / positions_c,
@@ -2342,7 +2544,8 @@ unsigned avk_lights(Part& e, const Lights& L, const Records& r, unsigned n) {
 struct AvkCheck {
     unsigned meshlets, pos_kernel, pos_other, pos_partial, verts, x, y, invw, u, v, oc, oc_near, oc_screen, oc_far,
         allany, nonfinite, near_verts, px_q, px_1;
-    unsigned light_kernel, light_other, light_partial, lit, argb, argb_max;
+    unsigned light_kernel, light_other, light_partial, lit, argb, argb_max, gate, gate_mismatch, emits, emit_verts,
+        emit_mismatch, builds, build_mismatch;
     float px_front, px_screen, rel_invw, uv;
 };
 AvkCheck avk_chk;
@@ -2351,6 +2554,36 @@ alignas(32) pvr_vertex_t avk_ref_v[kMaxVertices];
 alignas(32) u8 avk_ref_oc[kMaxVertices];
 inline u32 avk_bits(float x) { u32 b; std::memcpy(&b, &x, 4); return b; }
 inline bool avk_finite(float x) { return ((avk_bits(x) >> 23) & 255U) != 255U; }
+// The fog gate's hoisted square root (re4dc_actor_submit) against the per-entry loop, bit for bit.
+void avk_gate_check(float T, float G, float T2, float G2) {
+    ++avk_chk.gate;
+    if (avk_bits(T) != avk_bits(T2) || avk_bits(G) != avk_bits(G2)) ++avk_chk.gate_mismatch;
+}
+// Entries built by avk_build_positions' loop against skin_position_matrix, all 16 words.
+void avk_check_build(const Frame& f, const unsigned short* todo, unsigned m) {
+    alignas(8) float ref[16];
+    for (unsigned t = 0; t < m; ++t) {
+        skin_position_matrix(f, todo[t], ref);
+        ++avk_chk.builds;
+        if (std::memcmp(ref, f.skin_positions + todo[t] * 16U, sizeof(ref))) ++avk_chk.build_mismatch;
+    }
+}
+// A store-queue meshlet copied by the pipelined loop and by the previous one into RAM, 64 corners at
+// a time, every byte and the returned end compared.
+alignas(32) pvr_vertex_t avk_emit_a[64], avk_emit_b[64];
+void avk_check_emit(const pvr_vertex_t* cache, const u8* index, unsigned n) {
+    for (unsigned at = 0; at < n; at += 64) {
+        const unsigned m = n - at < 64U ? n - at : 64U;
+        void* ea = emit_meshlet<false>(avk_emit_a, cache, index + at, m);
+        avk_emit_ref = true;
+        void* eb = emit_meshlet<false>(avk_emit_b, cache, index + at, m);
+        avk_emit_ref = false;
+        ++avk_chk.emits; avk_chk.emit_verts += m;
+        if (ea != static_cast<void*>(avk_emit_a + m) || eb != static_cast<void*>(avk_emit_b + m) ||
+            std::memcmp(avk_emit_a, avk_emit_b, m * sizeof(pvr_vertex_t)))
+            ++avk_chk.emit_mismatch;
+    }
+}
 void pass_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bool s16_uv, unsigned& all,
                     unsigned& any);
 void pass_lights(Part& e, const Lights& L, const Records& r, unsigned n);
@@ -2415,6 +2648,8 @@ void avk_check_positions(Part& e, const Records& r, unsigned n, unsigned done, c
                   double(c.px_screen), c.px_q, c.px_1, double(c.rel_invw), double(c.uv));
         re4dc_log("VTXK light kernel=%u other=%u partial=%u lit=%u argb_mismatch=%u max_channel=%u\n",
                   c.light_kernel, c.light_other, c.light_partial, c.lit, c.argb, c.argb_max);
+        re4dc_log("VTXK gate=%u gate_mismatch=%u emit=%u emit_verts=%u emit_mismatch=%u builds=%u build_mismatch=%u\n",
+                  c.gate, c.gate_mismatch, c.emits, c.emit_verts, c.emit_mismatch, c.builds, c.build_mismatch);
     }
 }
 void avk_check_lights(Part& e, const Lights& L, const Records& r, unsigned n, unsigned done) {
@@ -3168,6 +3403,40 @@ extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
             if (!f.gate_ready) {
                 const float mz = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
                 float T = 3.0e38f, G = 0.0f;
+#if RE4DC_AVK
+                // ACTOR_VTX_KERNEL: the same T and G with one square root after the loop (mz * sqrt(s)
+                // does not decrease as s grows, so the largest s gives the largest product; a NaN or
+                // 0 x inf product is dropped by std::max in both forms) and the palette lines
+                // prefetched three entries ahead (the loop reads each entry once per frame).
+                {
+                    float S = 0.0f;
+                    for (unsigned i = 0; i < f.palette_entries; ++i) {
+                        const float* P = f.palette + i * 12;
+                        __builtin_prefetch(P + 36);
+                        __builtin_prefetch(P + 47);
+                        const float d = -(m[8] * P[9] + m[9] * P[10] + m[10] * P[11] + m[11]);
+                        float s = 0.0f;
+                        for (unsigned k = 0; k < 3; ++k)
+                            s = std::max(s, P[k * 3] * P[k * 3] + P[k * 3 + 1] * P[k * 3 + 1] + P[k * 3 + 2] * P[k * 3 + 2]);
+                        T = std::min(T, d); S = std::max(S, s);
+                    }
+                    G = std::max(G, mz * std::sqrt(S));
+                }
+#if RE4DC_AVK == 2
+                {
+                    float T2 = 3.0e38f, G2 = 0.0f;
+                    for (unsigned i = 0; i < f.palette_entries; ++i) {
+                        const float* P = f.palette + i * 12;
+                        const float d = -(m[8] * P[9] + m[9] * P[10] + m[10] * P[11] + m[11]);
+                        float s = 0.0f;
+                        for (unsigned k = 0; k < 3; ++k)
+                            s = std::max(s, P[k * 3] * P[k * 3] + P[k * 3 + 1] * P[k * 3 + 1] + P[k * 3 + 2] * P[k * 3 + 2]);
+                        T2 = std::min(T2, d); G2 = std::max(G2, mz * std::sqrt(s));
+                    }
+                    avk_gate_check(T, G, T2, G2);
+                }
+#endif
+#else
                 for (unsigned i = 0; i < f.palette_entries; ++i) {
                     const float* P = f.palette + i * 12;  // columns R0, R1, R2, t
                     const float d = -(m[8] * P[9] + m[9] * P[10] + m[10] * P[11] + m[11]);
@@ -3176,6 +3445,7 @@ extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
                         s = std::max(s, P[k * 3] * P[k * 3] + P[k * 3 + 1] * P[k * 3 + 1] + P[k * 3 + 2] * P[k * 3 + 2]);
                     T = std::min(T, d); G = std::max(G, mz * std::sqrt(s));
                 }
+#endif
                 f.gate_ready = true; f.gate_T = T; f.gate_G = G;
             }
             depth = f.gate_T - f.gate_G * (std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]) + blob->radius);
@@ -3294,6 +3564,15 @@ extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
         e.prime(nv);
         if (e.uv16) pack_uv16(e.cache.v, nv, true);
         if (lights.constant) {
+#if RE4DC_AVK
+            // ACTOR_VTX_KERNEL: without per-vertex alpha every vertex gets the same word; one store each
+            // (the loop below reloads e.colors after every store: the stores may alias it).
+            if (!e.colors) {
+                const u32 argb = e.alpha | lights.constant_rgb;
+                pvr_vertex_t* v = e.cache.v;
+                for (unsigned i = 0; i < nv; ++i) v[i].argb = argb;
+            } else
+#endif
             for (unsigned i = 0; i < nv; ++i)
                 e.cache.v[i].argb = (e.colors ? u32(e.colors[r.ci(i) * 4 + 3]) << 24 : e.alpha) | lights.constant_rgb;
         } else if (bake != kBakeNone) {

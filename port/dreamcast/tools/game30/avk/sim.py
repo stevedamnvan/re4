@@ -33,7 +33,13 @@ def decode(ins):
     kind = set()
     d2 = []
     def regs_in(x):
-        return re.findall(r"\b(r\d+|fr\d+)\b", x)
+        out = []
+        for r in re.findall(r"\b(r\d+|fr\d+|dr\d+)\b", x):
+            if r.startswith("dr"):
+                out += ["fr%d" % int(r[2:]), "fr%d" % (int(r[2:]) + 1)]
+            else:
+                out.append(r)
+        return out
     if op in ("mov.w", "mov.b", "mov.l", "fmov.s", "fmov", "mov") and a:
         src, dst = a[0], a[1]
         if src.startswith("@"):  # load
@@ -67,6 +73,8 @@ def decode(ins):
         if op == "and" and a[1] == "r0" and a[0].startswith("#"):
             pass
         defs = [a[1]] + (["T"] if op in ("addc", "subc") else [])
+        if op in ("addc", "subc"):
+            uses = uses + ["T"]
         return (EX, 1, defs, uses, set(), [])
     if op in ("shll2", "shll8", "shll16", "shlr2", "shlr8", "shlr16"):
         return (EX, 1, [a[0]], [a[0]], set(), [])

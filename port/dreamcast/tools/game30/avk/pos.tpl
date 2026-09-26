@@ -1,4 +1,5 @@
-! Position kernel half-body: vertex k in fvV, vertex k+1 prepared into fvN.
+! Position kernel half-body: vertex k in fvV, vertex k+1 prepared into fvN; record k+2's position / uv lines
+! and the record line 64 bytes past it prefetched.
 ! Entry state: fvV = (x, y, z, 1) of k; r9/r10 = tu/tv(k); r5 = record k+1; r6 = n - k;
 ! r7 = entry k + 24; r8 = oc[k-1] (tail stores it); r4 = code of k-1 (tail).
 @tail mov.b r4,@r8
@@ -47,6 +48,9 @@ bt @end
 @pf mov.w @(4,r5),r0
 @pf shll2 r0
 @pf add r13,r0
+@pf pref @r0
+@pf mov #64,r0
+@pf add r5,r0
 @pf pref @r0
 fmul V3,V3
 fsrra V3
