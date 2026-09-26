@@ -81,6 +81,197 @@ bool skin_init(unsigned a) {
     return true;
 }
 #endif
+#if RE4DC_COARSE_PREGATE
+bool visible(const cModelInfo* info);
+extern "C" unsigned re4dc_model_output_count();
+// COARSE_PREGATE (render only; game30.mk): an actor-level cull ahead of the skin work. A visible chunk is
+// skipped (no bones, palettes or submission, so no TA header either: re4dc_actor_submit writes the header in
+// re4dc_model_direct_begin, after its fog gate) when every position it can draw is provably outside one
+// plane that the actor path's outcodes cull on (native_actor_fast.cpp pass_positions: x < 0, y < 0,
+// x > 640, y > 480 with x = X'/|W|, y = Y'/|W|; W > far), so that re4dc_actor_submit would emit nothing.
+// Bound, built once per appearance from the chunk's own positions and weights (no mesh change): per chunk
+// and bone b, a ball in b's bind-local frame (B_b x, B_b the appearance's inverse bind) around every
+// position that b moves (weight > 0). A drawn position is sum_k w_k R^-1 P_k B_k x with w_k >= 0 and
+// sum_k w_k = 1 (checked here; otherwise the appearance is never culled), so its world point lies in the
+// convex hull of the world balls P_k(ball_k) (radius r ||P_k||, a Gershgorin bound on P_k's 3x3), and a
+// half-space that holds every ball holds the hull. X', Y' and W (screen_rows) are affine in the world
+// point, g.w + g3, so a ball (c, r) clears a plane when g.c + g3 -+ r|g| does (right and bottom also need
+// W > 0 over the ball, where |W| = W). Margins: radius x 1.002 + 4 units. The palette (fog) gate remains
+// the final arbiter for every chunk that is kept. The crowd table (crowd_tier) no longer sees a wholly
+// culled actor; harmless here: a cast chunk draws with lighting off (constant colour) and a blob without
+// LOD levels, the only two things a crowd tier changes, and only cast chunks are crowd-classed (Leon is 0).
+// =2 (check build): nothing is skipped; each chunk the gate would skip is submitted as before and must
+// add 0 to the frame owner's emitted-triangle count (model_output): "COARSE_PREGATE" lines.
+struct GateBall { float c[3], r; };
+constexpr unsigned kGatePool = kApps * kBones * 2;
+constexpr float kGateQ = 1.0f / 16.0f;  // the chunks' shift 4: a position is its s16 x 2^-4 (Frame::q)
+GateBall gate_ball[kGatePool];
+unsigned char gate_bone[kGatePool];
+unsigned short gate_first[kApps][4];
+unsigned char gate_count[kApps][4], gate_state[kApps];  // state: 0 not built, 1 ready, 2 never culled
+unsigned gate_next, gate_visible;
+unsigned gate_actors, gate_culled_actors, gate_chunks, gate_culled_chunks, gate_ungated;
+#if RE4DC_COARSE_PREGATE == 2
+unsigned gate_violations, gate_confirmed, gate_missed, gate_emitted, gate_logs;
+#endif
+inline void gate_local(const float* B, const float x[3], float y[3]) {
+    for (unsigned r = 0; r < 3; ++r) y[r] = B[r * 4] * x[0] + B[r * 4 + 1] * x[1] + B[r * 4 + 2] * x[2] + B[r * 4 + 3];
+}
+bool gate_build(unsigned a) {
+    unsigned next = gate_next;
+    for (unsigned i = 0; i < 4; ++i) {
+        const auto& c = gc::chunks[a][i];
+        if (!c.palette_count || !c.positions) return false;
+        float lo[kBones][3], hi[kBones][3], rr[kBones];
+        bool use[kBones] = {};
+        for (unsigned pass = 0; pass < 2; ++pass)
+            for (unsigned v = 0; v < c.position_count; ++v) {
+                const short* s = reinterpret_cast<const short*>(c.positions + v * 8);
+                unsigned e = (unsigned short)s[3];
+                if (e >= c.palette_count) e = 0;  // position_matrix's clamp
+                const auto& w = c.weights[e];
+                if (!w.count || w.count > 3) return false;
+                float sum = 0.0f;
+                for (unsigned k = 0; k < w.count; ++k) {
+                    if (w.bone[k] >= kBones || !(w.value[k] >= 0.0f)) return false;
+                    sum += w.value[k];
+                }
+                if (!(__builtin_fabsf(sum - 1.0f) <= 1e-4f)) return false;
+                const float x[3] = {float(s[0]) * kGateQ, float(s[1]) * kGateQ, float(s[2]) * kGateQ};
+                for (unsigned k = 0; k < w.count; ++k) {
+                    if (!(w.value[k] > 0.0f)) continue;
+                    const unsigned b = w.bone[k];
+                    float y[3];
+                    gate_local(gc::bind[a][b], x, y);
+                    if (pass) {
+                        float d2 = 0.0f;
+                        for (unsigned j = 0; j < 3; ++j) { const float d = y[j] - 0.5f * (lo[b][j] + hi[b][j]); d2 += d * d; }
+                        if (d2 > rr[b]) rr[b] = d2;
+                    } else if (!use[b]) {
+                        use[b] = true; rr[b] = 0.0f;
+                        for (unsigned j = 0; j < 3; ++j) lo[b][j] = hi[b][j] = y[j];
+                    } else {
+                        for (unsigned j = 0; j < 3; ++j) { if (y[j] < lo[b][j]) lo[b][j] = y[j]; if (y[j] > hi[b][j]) hi[b][j] = y[j]; }
+                    }
+                }
+            }
+        gate_first[a][i] = (unsigned short)next; gate_count[a][i] = 0;
+        for (unsigned b = 0; b < kBones; ++b) {
+            if (!use[b]) continue;
+            if (next == kGatePool) return false;
+            gate_ball[next] = GateBall{{0.5f * (lo[b][0] + hi[b][0]), 0.5f * (lo[b][1] + hi[b][1]), 0.5f * (lo[b][2] + hi[b][2])},
+                                       __builtin_sqrtf(rr[b])};
+            gate_bone[next++] = (unsigned char)b; ++gate_count[a][i];
+        }
+    }
+    gate_next = next;
+    return true;
+}
+bool gate_init(unsigned a) {
+    if (!gate_state[a]) {
+        gate_state[a] = gate_build(a) ? 1 : 2;
+        unsigned flat = 1;  // the crowd-tier argument above: lighting off, no LOD levels / pending build / bake
+        for (unsigned i = 0; i < 4; ++i) {
+            const unsigned char* h = gc::chunks[a][i].stream;
+            if (h[0] != 0xFE || h[3] || (h[2] & 0x82)) flat = 0;
+        }
+        if (light.enable) flat = 0;
+        re4dc_log("COARSE_PREGATE=%d %s state=%u balls=%u/%u/%u/%u pool=%u/%u flat=%u\n", RE4DC_COARSE_PREGATE,
+                  gc::appearance_names[a], gate_state[a], gate_count[a][0], gate_count[a][1], gate_count[a][2],
+                  gate_count[a][3], gate_next, kGatePool, flat);
+    }
+    return gate_state[a] == 1;
+}
+// ||A|| (spectral) <= sqrt(max row sum of |A^T A|): exact for orthogonal columns (rotation x scale).
+inline float gate_scale(const float (*A)[4]) {
+    float s = 0.0f;
+    for (unsigned i = 0; i < 3; ++i) {
+        float row = 0.0f;
+        for (unsigned j = 0; j < 3; ++j) row += __builtin_fabsf(A[0][i] * A[0][j] + A[1][i] * A[1][j] + A[2][i] * A[2][j]);
+        if (row > s) s = row;
+    }
+    return __builtin_sqrtf(s);
+}
+// The visible chunks' modelviews into mv (the loop reuses them; gate_visible = their mask) and the mask
+// of visible chunks the gate skips.
+unsigned gate_cull(cModel* m, unsigned app, cModelInfo* const* infos, cParts* const* parts, const Mtx inv, Mtx* mv) {
+    gate_visible = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        if (!visible(infos[i])) continue;
+        Mtx pm;
+        PSMTXConcat(m->pParts->mat, infos[i]->mat, pm);
+        PSMTXConcat(pG->Cam.v_mat, pm, mv[i]);
+        gate_visible |= 1U << i;
+    }
+    ++gate_actors;
+    if (!gate_init(app) || stress_layout) { ++gate_ungated; return 0; }
+    float P[7], V[6];
+    GXGetProjectionv(P); GXGetViewportv(V);
+    if (P[0] != 0.0f || !(V[2] > 0.0f) || !(V[3] > 0.0f)) return 0;
+    const float far = P[6] / P[5], near = P[6] / (P[5] - 1.0f);
+    if (!(near > 0.0f) || !(far > near) || !(far < 3.0e38f)) return 0;
+    const float cx = (V[0] + V[2] * 0.5f) * 640.0f / V[2], cy = (V[1] + V[3] * 0.5f) * 480.0f / V[3];
+    const float rows[3][3] = {{320.0f * P[1], 0.0f, 320.0f * P[2] - cx}, {0.0f, -240.0f * P[3], -240.0f * P[4] - cy},
+                              {0.0f, 0.0f, -1.0f}};
+    float scale[kBones];
+    unsigned have[2] = {0, 0};
+    unsigned culled = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        if (!((gate_visible >> i) & 1U)) continue;
+        ++gate_chunks;
+        const unsigned n = gate_count[app][i], first = gate_first[app][i];
+        if (!n) continue;
+        // G: X', Y', W, X' - 640 W, Y' - 480 W of a world point (screen rows x modelview x root inverse).
+        float M[3][4], G[5][4], norm[5];
+        for (unsigned r = 0; r < 3; ++r)
+            for (unsigned c = 0; c < 4; ++c) M[r][c] = rows[r][0] * mv[i][0][c] + rows[r][1] * mv[i][1][c] + rows[r][2] * mv[i][2][c];
+        for (unsigned r = 0; r < 3; ++r) {
+            for (unsigned c = 0; c < 3; ++c) G[r][c] = M[r][0] * inv[0][c] + M[r][1] * inv[1][c] + M[r][2] * inv[2][c];
+            G[r][3] = M[r][0] * inv[0][3] + M[r][1] * inv[1][3] + M[r][2] * inv[2][3] + M[r][3];
+        }
+        for (unsigned c = 0; c < 4; ++c) { G[3][c] = G[0][c] - 640.0f * G[2][c]; G[4][c] = G[1][c] - 480.0f * G[2][c]; }
+        for (unsigned f = 0; f < 5; ++f) norm[f] = __builtin_sqrtf(G[f][0] * G[f][0] + G[f][1] * G[f][1] + G[f][2] * G[f][2]);
+        unsigned planes = 31;  // left, top, right, bottom, far
+        for (unsigned j = 0; j < n && planes; ++j) {
+            const GateBall& g = gate_ball[first + j];
+            const unsigned b = gate_bone[first + j];
+            const float (*A)[4] = parts[b]->mat;
+            if (!((have[b >> 5] >> (b & 31)) & 1U)) { scale[b] = gate_scale(A); have[b >> 5] |= 1U << (b & 31); }
+            float w[3];
+            for (unsigned r = 0; r < 3; ++r) w[r] = A[r][0] * g.c[0] + A[r][1] * g.c[1] + A[r][2] * g.c[2] + A[r][3];
+            const float rho = g.r * scale[b] * 1.002f + 4.0f;
+            float d[5];
+            for (unsigned f = 0; f < 5; ++f) d[f] = G[f][0] * w[0] + G[f][1] * w[1] + G[f][2] * w[2] + G[f][3];
+            const float wmin = d[2] - rho * norm[2];
+            unsigned out = 0;
+            if (d[0] + rho * norm[0] < 0.0f) out |= 1;
+            if (d[1] + rho * norm[1] < 0.0f) out |= 2;
+            if (wmin > 0.0f && d[3] - rho * norm[3] > 0.0f) out |= 4;
+            if (wmin > 0.0f && d[4] - rho * norm[4] > 0.0f) out |= 8;
+            if (wmin > far) out |= 16;
+            planes &= out;
+        }
+        if (planes) { culled |= 1U << i; ++gate_culled_chunks; }
+    }
+    if (gate_visible && culled == gate_visible) ++gate_culled_actors;
+    return culled;
+}
+#if RE4DC_COARSE_PREGATE == 2
+void gate_note(unsigned app, unsigned i, bool skipped, unsigned emitted) {
+    if (skipped) {
+        if (emitted) {
+            ++gate_violations; gate_emitted += emitted;
+            if (++gate_logs <= 12)
+                re4dc_log("COARSE_PREGATE VIOLATION t=%u %s chunk=%u emitted=%u\n", pG->Frame_cnt, gc::appearance_names[app], i, emitted);
+        } else {
+            ++gate_confirmed;
+        }
+    } else if (!emitted) {
+        ++gate_missed;
+    }
+}
+#endif
+#endif
 
 unsigned fingerprint(const void* data) {
     const auto* p=(const unsigned char*)data;unsigned h=2166136261U;
@@ -256,6 +447,16 @@ extern "C" int re4dc_coarse_ganado(cModel* m) {
     const float (*bind)[12]=gc::bind[app];
 #if RE4DC_COARSE_SKIN_FTRV
     if(!skin_init(app))return 0;
+#endif
+#if RE4DC_COARSE_PREGATE
+    Mtx gate_mv[4];
+    const unsigned gate_skip=gate_cull(m,app,infos,parts,inv,gate_mv);
+#if RE4DC_COARSE_PREGATE == 1
+    // Every visible chunk skipped: no bones either (the chunk loop below skips each of them).
+    if(!gate_visible || gate_skip!=gate_visible){
+#endif
+#endif
+#if RE4DC_COARSE_SKIN_FTRV
     {
         alignas(32) float invx[16];coarse_inv_xmtrx(inv,invx);
         for(unsigned u=0;u<skin_used[app];++u){
@@ -271,12 +472,18 @@ extern "C" int re4dc_coarse_ganado(cModel* m) {
         PSMTXConcat(relative,(const float (*)[4])bind[i],local_skin[i]);
     }
 #endif
+#if RE4DC_COARSE_PREGATE == 1
+    }
+#endif
     unsigned triangles=0,mask=0;
     const unsigned emitted_before=re4dc_actor_stats()->triangles;
     for(unsigned i=0;i<4;++i){
         auto& c=gc::chunks[app][i];cModelInfo* src=infos[i];
         if(!visible(src))continue;
         if(c.palette_count>256)return 0;
+#if RE4DC_COARSE_PREGATE == 1
+        if((gate_skip>>i)&1U)continue;
+#endif
 #if RE4DC_COARSE_SKIN_FTRV
         re4dc_coarse_skin_groups(skin_stream+skin_first[app][i],skin_groups[app][i],&bone_T[0][0],&palette[0][0],c.palette_count);
 #if RE4DC_COARSE_SKIN_FTRV == 2
@@ -295,8 +502,13 @@ extern "C" int re4dc_coarse_ganado(cModel* m) {
         if(!re4dc_actor_skin_register(pG->Frame_cnt,&c,nullptr,&palette[0][0],c.palette_count)){
             ++rejected;continue;
         }
+#if RE4DC_COARSE_PREGATE
+        std::memcpy(mv,gate_mv[i],sizeof(mv));  // gate_cull's PSMTXConcat pair on the same matrices
+        (void)pm;
+#else
         PSMTXConcat(m->pParts->mat,src->mat,pm);
         PSMTXConcat(pG->Cam.v_mat,pm,mv);
+#endif
         if(stress_layout){
             // Arrange the existing live poses in camera space for a bounded
             // renderer stress test. Source positions, bones, AI and camera
@@ -314,7 +526,14 @@ extern "C" int re4dc_coarse_ganado(cModel* m) {
         p.lighting=&light;p.image=image;p.source_key[2]=1;
         p.depth_mode=m->z_mode;p.cull=0;p.alpha_state=255;
         std::memcpy(p.modelview,mv,sizeof(mv));GXGetProjectionv(p.projection);GXGetViewportv(p.viewport);
+#if RE4DC_COARSE_PREGATE == 2
+        const unsigned output_before=re4dc_model_output_count();
+        const int submitted=re4dc_actor_submit(&p);
+        gate_note(app,i,(gate_skip>>i)&1U,re4dc_model_output_count()-output_before);
+        if(!submitted){++rejected;continue;}
+#else
         if(!re4dc_actor_submit(&p)){++rejected;continue;}
+#endif
         triangles+=c.triangles;mask|=1U<<i;
     }
     ++drawn;++frame_meshes;frame_triangles+=triangles;
@@ -357,6 +576,18 @@ extern "C" void re4dc_coarse_ganado_end(){
 #endif
     if(pG->Frame_cnt%120==0)re4dc_log("COARSE_CROWD t=%u limit=%d layout=%d candidates=%u meshes=%u emitted=%u tris=%u unsupported=%u rejected=%u texture_miss=%u\n",
         pG->Frame_cnt,mesh_limit,stress_layout,frame_candidates,frame_meshes,frame_emitted,frame_triangles,frame_fallback,rejected,missing_texture);
+#if RE4DC_COARSE_PREGATE
+    // Totals since boot: actors / wholly culled actors / visible chunks / culled chunks (=2: culled chunks that
+    // emitted triangles anyway (must stay 0), culled chunks confirmed empty, kept chunks that emitted nothing).
+    if(pG->Frame_cnt%120==0)
+#if RE4DC_COARSE_PREGATE == 2
+        re4dc_log("COARSE_PREGATE t=%u actors=%u culled_actors=%u chunks=%u culled_chunks=%u ungated=%u violations=%u violation_tris=%u confirmed=%u kept_empty=%u\n",
+            pG->Frame_cnt,gate_actors,gate_culled_actors,gate_chunks,gate_culled_chunks,gate_ungated,gate_violations,gate_emitted,gate_confirmed,gate_missed);
+#else
+        re4dc_log("COARSE_PREGATE t=%u actors=%u culled_actors=%u chunks=%u culled_chunks=%u ungated=%u\n",
+            pG->Frame_cnt,gate_actors,gate_culled_actors,gate_chunks,gate_culled_chunks,gate_ungated);
+#endif
+#endif
 #if RE4DC_COARSE_GANADO_CAST == 2
     if(pG->Frame_cnt%120==0){
         char apps[64];unsigned n=0;

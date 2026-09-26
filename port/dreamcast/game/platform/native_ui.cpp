@@ -2629,6 +2629,10 @@ extern "C" void re4dc_model_result(unsigned reason,unsigned input,unsigned outpu
     if(reason==0){++model_parts;if(!output)++model_empty_parts;}else if(reason==1)++model_invalid;else if(reason==2)++model_resource;else ++model_overflow;
     model_input+=input;model_output+=output;
 }
+#if defined(RE4DC_COARSE_PREGATE) && RE4DC_COARSE_PREGATE == 2
+// COARSE_PREGATE=2 (check build): the emitted-triangle total, read around each cast Ganado chunk's submission.
+extern "C" unsigned re4dc_model_output_count(){return model_output;}
+#endif
 
 extern "C" int re4dc_model_packet_streaming(){return RE4DC_PVR_STREAM;}
 extern "C" void re4dc_model_packet_abort(){

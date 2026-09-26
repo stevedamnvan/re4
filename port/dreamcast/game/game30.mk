@@ -513,6 +513,29 @@ endif
 COARSE_GANADO_SRC := coarse_ganado_cast.cpp $(COARSE_ACTOR_ASSET_DIR)/ganado_cast_runtime.h
 $(OBJDIR)/coarse_ganado.o: GAME_CPPFLAGS += -DRE4DC_COARSE_GANADO_CAST=$(COARSE_GANADO_CAST)
 endif
+# COARSE_PREGATE=1 (needs COARSE_GANADO_CAST; render only): an actor-level cull ahead of the cast Ganado adapter's
+#                  skin work (coarse_ganado_cast.cpp): a visible chunk whose every drawable position is provably
+#                  outside one of the actor path's culling planes (a screen edge or far) is skipped before its
+#                  bones, palettes and submission (so it sends no TA header). The bound: per chunk and bone, a
+#                  ball around the positions the bone moves, from the chunk's own positions and weights at first
+#                  use (no mesh change). The palette (fog) gate stays the final arbiter of every kept chunk.
+#                  =2: check build, nothing is skipped and each chunk the gate would skip must emit no triangle
+#                  (the frame owner's model_output; "COARSE_PREGATE" lines count violations, which must be 0).
+COARSE_PREGATE ?= 0
+ifneq ($(COARSE_PREGATE),0)
+ifeq ($(COARSE_GANADO_CAST),0)
+$(error COARSE_PREGATE needs COARSE_GANADO_CAST)
+endif
+# Only cast chunks are crowd-classed with COARSE=1 (a declined Ganado is drawn as coarse segments), so a wholly
+# culled cast actor cannot change another actor's crowd tier; with ACTOR_SWAP / COARSE=0 it could.
+ifneq ($(COARSE),1)
+$(error COARSE_PREGATE needs COARSE=1: with ACTOR_SWAP / COARSE=0 a culled actor would change declined Ganados' crowd tiers)
+endif
+$(OBJDIR)/coarse_ganado.o: GAME_CPPFLAGS += -DRE4DC_COARSE_PREGATE=$(COARSE_PREGATE)
+ifeq ($(COARSE_PREGATE),2)
+$(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -DRE4DC_COARSE_PREGATE=2
+endif
+endif
 # Private live-Ganado experiment. Limit affects mesh presentation only; ACT_CAP remains 0.
 COARSE_GANADO ?= 0
 COARSE_GANADO_LIMIT ?= -1
@@ -549,6 +572,19 @@ $(OBJDIR)/platform/native_ui.o: PLATFORM_CPPFLAGS += -DRE4DC_COARSE_LEON=1
 $(OBJDIR)/coarse_actor.o: coarse_actor.cpp $(COARSE_ACTOR_ASSET_DIR)/leon4k_runtime.h
 	@mkdir -p $(dir $@)
 	kos-c++ $(KOS_CFLAGS) $(GAME_CPPFLAGS) -I$(COARSE_ACTOR_ASSET_DIR) -MMD -MP -c $< -o $@
+endif
+# CHAR_DATA_BLOCK=1 (needs COARSE_LEON=1; layout only): the character adapters' data (every .rodata, .data and
+#                   .bss input section of coarse_actor.o and coarse_ganado.o: the private meshes, palettes,
+#                   weights and bind tables and the adapters' own state) is linked as one block after .data,
+#                   padded so that what follows moves by whole 16 KiB (platform/char_data_block.ld). The game's
+#                   .rodata and .data keep the addresses they have without character data, and its .bss the
+#                   same operand-cache sets, whatever the cast's size. Costs up to 16 KiB of image (heap 4).
+CHAR_DATA_BLOCK ?= 0
+ifneq ($(CHAR_DATA_BLOCK),0)
+ifneq ($(COARSE_LEON),1)
+$(error CHAR_DATA_BLOCK needs COARSE_LEON=1)
+endif
+GAME_LDFLAGS += -Wl,-T,platform/char_data_block.ld
 endif
 # COARSE_SKIN_FTRV=1 (coarse actor adapters, render-only): palette matrices with FTRV (coarse_skin_sh4.S):
 #                    T = root^-1 x part x bind^-1 for the bones the palettes use (two FTRV passes), each
