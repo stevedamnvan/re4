@@ -309,10 +309,10 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 | lane (arm prefix) | tree (under /root/probe/d367-agents) | owns |
 |---|---|---|
 | cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
-| vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: generated SH-4 vertex kernels for the fast actor path. Rev 1b landed 42afaa1: characters -2.97 (vl7); rev 2 landed 7726caa: a further -1.92 (vl13, characters 10.95 over stick figures); rev 3 (every palette entry built at the Frame's first skinned meshlet; est. -1.3 to -1.5) in progress |
-| gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Next: the line leaf kernel v2 (prefetch pass, two polygons pipelined), the walk's next-node prefetch, sceAtCheck_main's enabled-area array |
+| vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: generated SH-4 vertex kernels for the fast actor path. Rev 1b landed 42afaa1: characters -2.97 (vl7); rev 2 landed 7726caa: a further -1.92 (vl13, characters 10.95 over stick figures); rev 3 landed d938501: a further -1.71 (vl17, characters 9.24 over stick figures); rev 4 (the fog-gate loop, the constant colour unrolled, the build loop scheduled; gates STRICT) being costed |
+| gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Batch 7 landed ca229cf: GAME_LINE_LEAF2, GAME_LINE_WALK_PF, GAME_LINE_TAIL, GAME_SCEAT_LIST, -0.62 (gc17 28.41 vs gc13). Next (batch 8): the piece-entry prefetch dropped, the dedup folded into leaf2's pass A, the area list for the other sceAt walks, hitCheck2's hot / cold split |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
-| ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN r1 delivered (ob3 29.36 vs fx9 29.55); batch 2 (OB_MAT, OB_PATH, OB_ROUTE, OB_OLDPOS) queued |
+| ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN landed 0862e7c (ob3 29.36 vs fx9 29.55); batch 2 landed 9f66533: GAME_OB_MAT + GAME_OB_PATH, -0.64 (ob7 28.72); GAME_OB_ROUTE dropped (+0.11: its static data moved the layout); GAME_OB_OLDPOS gated STRICT, being costed. Section "Object bookkeeping" |
 | sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map. Landed ee7d080: LIGHT_LAZY, FP_SCHED, HF_INLINE / HF_PF, PWC_SCHED / PWC_PF, TRIG_LEAN, ACOS_LEAN, sk10 29.14 alone (-1.52). Next: pass-C partial recompute, pass-A on the kernel, PSVECNormalize inline |
 | wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky. Landed 6f4c91c (COARSE_WORLD): R +0.68 (wd12), STRICT (wdG4); next: the user's look review (sky, trees, the 128 VQ walls) |
 | bg route bugs | lane-bugs | the pre-pivot backlog: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough (paused: its agent was stopped; relaunch on the user's word) |
@@ -371,8 +371,10 @@ develops in its own tree with its own arm prefix and hands its patch to the main
    skeleton lane (ee7d080, section "Skeleton lane"): sk10 29.14 alone (-1.52), and the object scans
    (GAME_OB_SCAN, 0862e7c, lane ob): ob3 29.36 on fx9 (-0.19). Everything landed, on one build: **sq100**
    (tree7 land16, the old order file): **G_q 26.34**, gap **1.37** (-1.95 vs sq99, where the two lanes measured
-   -1.71 alone). The order file is regenerated from sq100 and a drawn run of the same build (sq101); sq102
-   measures it.
+   -1.71 alone). The order file regenerated from sq100 and a drawn run of the same build (sq101) lost: sq102
+   26.72 (+0.38; re4dc_sincosf +0.11, PSMTXRotAxisRad +0.07, RotMatrix +0.06: placement, not code), so the
+   landed order file stays. Then collision batch 7 (ca229cf, -0.62 on gc13) and the object batch 2 (9f66533,
+   -0.64 on ob3) landed; sq103, the landed stack with both, is being measured.
    The rest of G runs in the lanes above: gc the em-em rows, ob enemy / object bookkeeping, sk skeleton /
    motion / cloth / maths. The reduced characters (appearance, step 5): section "Reduced characters and the
    character path" below.
@@ -383,9 +385,9 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 |---|---|
 | 1. Qualified no-draw boundary | done: PACE_TRANS_SKIP=4063, STRICT; G_q 37.52 uncapped. Calibration disc c8 awaits the user's console run |
 | 2. Coarse complete square | done: landed f4da5fd; R headroom landed 801d72d: source work ~2.1 -> ~0.8 ms, R ~4, STRICT every decision |
-| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), and the collision stack (7caa2f7, -1.63 alone), all exact: the skeleton lane (ee7d080, -1.52 alone) and the object scans (0862e7c, -0.19): the landed-stack control sq100 **G_q 26.34**, gap 1.37 to 24.97 (sq99 28.29 before the last two); in lanes: gc line kernels / area array, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
+| 3. Close G <= 24 | skeleton step (37.52 -> 34.40), code placement (801d72d, -1.25), the em-em candidate cache (aeefd26, -1.16), the workAt inline (3eaa868, -0.48), the line queries' leaf kernel (cf46edc, -0.44), block walk kernel (ba73027, -0.37) and the pieces' transforms in it (4e394ea, -0.28) and the effect pools (1d3dc4d, -1.11), and the collision stack (7caa2f7, -1.63 alone), all exact: the skeleton lane (ee7d080, -1.52 alone) and the object scans (0862e7c, -0.19): the landed-stack control sq100 **G_q 26.34**, gap 1.37 to 24.97 (sq99 28.29 before the last two); since then collision batch 7 (ca229cf, -0.62 alone) and the object batch 2 (9f66533, -0.64 alone), sq103 measuring; in lanes: gc line kernels / area array, ob enemy / object bookkeeping, sk skeleton / motion / cloth / maths and the gameplay-reader map |
 | 4. 30 fps on hardware | waits for 3 and the calibration run |
-| 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); the vertex kernel (42afaa1 + rev 2 7726caa: 10.95 over stick figures, vl13) and the coarse world (6f4c91c: R +0.68, section "Coarse world"); in lanes: vl vertex loop rev 3; the world's look review is with the user; the external agent: the first level's cast models; the main session: the coarse HUD (fixed by the world's ground except in one view, section "Coarse world") |
+| 5. Restore appearance | one-house test measured (below); version C measured (cl21: R 26.47 with the reduced characters, 22.42 over stick figures; section "Reduced characters and the character path"); the cl lane's fitted meshes + FTRV adapters (landed 9df764b): 15.84 over stick figures, R 19.89 (cl42); the vertex kernel (42afaa1, rev 2 7726caa, rev 3 d938501: 9.24 over stick figures, vl17) and the coarse world (6f4c91c: R +0.68, section "Coarse world"); in lanes: vl vertex loop rev 4, the world's near-ground tone (the gauge's "88" in one view); the world's look review is with the user; the external agent: the first level's cast models; the main session: the coarse HUD (fixed by the world's ground except in one view, section "Coarse world") |
 
 **What remains on the coarse renderer** (answer to the user, 2026-09-25):
 1. Landing (order item 1): done, f4da5fd.
@@ -418,10 +420,11 @@ Ganados costs more.
 | C, fast path so far (cl42) | the same image: meshes fitted losslessly + FTRV adapters | 50.55 | 19.89 | 19.8 fps at 66% speed | 4.0 fps |
 | C, + vertex kernel (vl7) | the same image: + ACTOR_VTX_KERNEL=1 (rev 1b) | 47.58 | 16.92 | 21.0 fps at 70% speed | 4.7 fps |
 | C, + vertex kernel rev 2 (vl13) | the same image: + ACTOR_VTX_KERNEL=1 (rev 2) | 45.66 | 15.00 | 21.9 fps at 73% speed | 5.3 fps |
+| C, + vertex kernel rev 3 (vl17) | the same image: + ACTOR_VTX_KERNEL=1 (rev 3) | 43.95 | 13.29 | 22.8 fps at 76% speed | 6.0 fps |
 | B (cl22) | coarse world, stick figures | 34.71 | 4.05 | 28.8 fps at 96% speed | 19.8 fps |
 
 Paced to full speed = (1000 - 30 x 30.66) / R images a second. On the landed stack's G (sq100, 26.34) the
-same R would pace to (1000 - 30 x 26.34) / R: vl13 14.0 fps, B 30 fps (an estimate: R was measured on the
+same R would pace to (1000 - 30 x 26.34) / R: vl13 14.0 fps, vl17 15.8 fps, B 30 fps (an estimate: R was measured on the
 older G base, never on one build with sq100's stack).
 
 - The new renderer against the old with the same characters (cl26 - cl21): -36.55 ms a drawn tick (-39%),
@@ -470,7 +473,7 @@ older G base, never on one build with sq100's stack).
     maths with logic STRICT is a standing user decision.
   - Next: the vl lane's vertex loop (re4dc_actor_submit ~11.4 ms of the 15.84); the 6-8 ms estimate
     assumed ~0.6-0.7 transformed vertices a triangle, which needs the external agent's meshes.
-- **Vertex kernel (lane vl; rev 1b landed 42afaa1, rev 2 7726caa; default off).** ACTOR_VTX_KERNEL: the fast actor path's
+- **Vertex kernel (lane vl; rev 1b landed 42afaa1, rev 2 7726caa, rev 3 d938501; default off).** ACTOR_VTX_KERNEL: the fast actor path's
   position + skin transform and light pass as generated SH-4 kernels (platform/avk_sh4.S, made by
   tools/game30/avk/mkavk.py from templates and fixed schedules; six variants), the same FP operations on the
   same operands; the kernel returns to C at each palette change.
@@ -495,6 +498,15 @@ older G base, never on one build with sq100's stack).
     vertices and 22.7M lit vertices, 0 mismatches.
   - Left: the batch palette build scans every remaining record after a stop (~7200 records a tick, 1.49 ms);
     rev 3 builds every entry at the Frame's first skinned meshlet, est. a further -1.3 to -1.5.
+  - Rev 3 (d938501): no scan. avk_build_all builds every position entry of a skinned Frame once, at its first
+    skinned meshlet (Frame::avk_all, reset where skin_ready is cleared), as a linear asm walk over the palette
+    and the skin table with both prefetched two entries ahead (9,331,281 builds against rev 2's 9,331,201 on
+    demand). **vl17: W 43.95 (-1.71 vs vl13), R 13.29; the characters 9.24 ms over stick figures.**
+    avk_build_positions 2.241 -> avk_build_all 0.760 (1823 entries, ~83 cycles each); the kernel +0.16 (its
+    switch stub's matrix loads now miss). Gates vl18 (C, =2) / vl19 (A, =2) STRICT vs tr56 / tr42, every check
+    0 mismatches.
+  - Rev 4 (in the lane): the fog gate's palette loop with the column sums written out, the constant colour
+    unrolled x4, the build loop list-scheduled with pair stores; gates vl24 (C) / vl25 (A) STRICT; cost pending.
 - New models for the rest of the first level's cast come from the external agent (section "Current order
   and status"); the cl lane integrates them.
 - The coarse-path HUD in C ("88" ammo digits, a flat lens) was not a HUD bug: the gauge's lens and ring are
@@ -556,6 +568,25 @@ Never-draw uncapped arms against sq97 (30.66), exact, the RNG sequence kept:
 - Left: ~2.1 ms of effect work a tick, mostly each effect's own update and misses on its object; 439
   sinf calls (cEsp48 273, C_QUATSlerp 94, PenClothMove 66) are the sk lane's, bit-identical only.
 
+#### Object bookkeeping (lane ob, 2026-09-25 / 26; landed 0862e7c and 9f66533, default off)
+
+Never-draw uncapped arms on the lane's stack (the effect pools on). All exact; no static data at =1.
+- GAME_OB_SCAN (0862e7c): cDmgMgr::hitCheck over the alive list, cDmgMgr::move without the dieCheck calls that
+  can't change a work, GetEmPtrFromList from EmMgr's alive list (needs GAME_WORKAT_INLINE=1), IDSystem::move's
+  deeper levels from a list built in pass 0. ob3 29.36 vs fx9 29.55 (-0.19); gate ob4 STRICT.
+- GAME_OB_MAT (9f66533): idSysMove03 keeps l_mat / mat while the unit's rotation, position and group parent's
+  matrix version are unchanged (versions in IdUnit pad_D8). ob5 29.16 (-0.20 vs ob3): RotMatrix 0.446 ->
+  0.373, PSMTXConcat 0.591 -> 0.532. Gate ob6 STRICT; OBM 507,905 calls, 0 mismatches.
+- GAME_OB_PATH (9f66533): idSysMove00's path points from the same de_Boor_Cox arithmetic in stack arrays instead
+  of 3 + n + m heap blocks per call (the heap's lists end each source call as they started, so no later
+  allocation moves). ob7 28.72 (-0.44 vs ob5): mem_alloc, strchr, OSAllocFromHeap gone. Gate ob8 STRICT; OBP
+  53,249 calls, 0 fallbacks, 0 mismatches.
+- Dropped: GAME_OB_ROUTE (getNearPoint's sorted list kept for the last four positions): +0.11 (ob9), 104 bytes
+  of static data moved every later bss object and the heap; hit rate 32%.
+- Audited, not pursued: moving idSysMove00-04's values to draw time. Next-tick readers (the binoculars, the
+  item / map subscreens) read them on the following drawn tick, so it isn't exact for the image and would move
+  the cost into R. ~0.25 ms of HUD unit work is left.
+
 #### Collision stack (lane gc, 2026-09-25; landed 7caa2f7, default off)
 
 Never-draw uncapped arms against sq97 (30.66), order file hot-c3-8k-sw.ld (the landed
@@ -583,6 +614,14 @@ exact (GAME_ATRECT_FAR decision-exact by a bound); each knob's =2 check build ru
   memo table misses ate the gain; ARM superseded by ATRECT_FAR).
 - Layout noise: the effect rows (EspMove, AnmMove, sinf, ColorUpdate) swing by up to +0.4 between builds with
   identical call and instruction counts; the lane judged each knob by its own rows.
+- Batch 7 (landed ca229cf): GAME_LINE_LEAF2 (platform/lnk2_sh4.S: the leaf kernel software-pipelined, the
+  polygon two ahead prefetched), GAME_LINE_WALK_PF (platform/lnw2_sh4.S: three prefetches), GAME_LINE_TAIL
+  (At_poly_line_tail: At_poly_line_ck from the t test on for leaf survivors), GAME_SCEAT_LIST (sceAtCheck_main
+  over per-type lists of the area records, rebuilt when a generation counter changes). **gc17 28.41 (-0.62
+  vs gc13)**: line leaf 1.509 -> 1.243, walk 0.872 -> 0.757, At_poly_line_ck 0.229 -> tail 0.105,
+  sceAtCheck_main 0.180 -> 0.040; the piece +0.03 (its root prefetch, dropped next). Gate gc18 STRICT, dtcmp
+  identical, 0 mismatches in LK2 (15.4M polygons), LWP, LTL, SAL. The order file places lnk2 / lnw2 /
+  At_poly_line_tail after their counterparts.
 
 #### Skeleton lane (lane sk, 2026-09-25; landed ee7d080, default off)
 
@@ -1467,3 +1506,11 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-25 | sq100 | landed-stack control (tree7 land16): sq99 + the skeleton lane + GAME_OB_SCAN, the old order file | **26.34** (-1.95 vs sq99) | - | - (every knob gated in its lane) | **G_q 26.34**, gap 1.37 |
 | 09-25 | vl13 | cl42 + ACTOR_VTX_KERNEL=1 (rev 2), version C | W 45.66 (R 15.00; -1.92 vs vl7; characters 10.95 over stick figures) | - | vl14 (C, =2) / vl16 (A, =2) STRICT, 0 mismatches, max screen error 0.000 px | kept |
 | 09-25 | land17 | the vertex kernel rev 2 landed (7726caa; the lane's increment as is) | - | - | knob-off identity (default, canonical); vl13 carry-over 451 / 460 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | gc17 | gc13 + GAME_LINE_LEAF2 + GAME_LINE_WALK_PF + GAME_LINE_TAIL + GAME_SCEAT_LIST | 28.41 (-0.62 vs gc13) | - | gc18 (=2) STRICT vs tr56 / tr42, dtcmp identical, 0 mismatches | kept |
+| 09-25 | land18 | collision batch 7 landed (ca229cf; the lane's increment as is, COL_STATS stripped from atari.cpp) | - | - | knob-off identity (default, canonical); gc17 carry-over 450 / 458 objects identical (the rest tree5-only) | landed, default off |
+| 09-26 | sq102 | sq100 + the order file regenerated from sq100 + sq101 (hot-c3-8k-l16.ld) | 26.72 (+0.38 vs sq100) | - | - (layout only) | lost: the landed order file stays |
+| 09-25 | ob7 | ob3 + GAME_OB_MAT (ob5 29.16) + GAME_OB_PATH | 28.72 (-0.64 vs ob3) | - | ob6 / ob8 (=2) STRICT vs tr56 / tr42, dtcmp identical, 0 mismatches | kept |
+| 09-25 | ob9 | ob7 + GAME_OB_ROUTE | 28.83 (+0.11) | - | ob10 STRICT | dropped (static data moved the layout) |
+| 09-26 | land19 | the object batch 2 landed (9f66533; make blocks re-anchored after GAME_OB_SCAN's) | - | - | knob-off identity (default, canonical); ob7 carry-over 447 / 455 objects identical (the rest tree5-only) | landed, default off |
+| 09-25 | vl17 | cl42 + ACTOR_VTX_KERNEL=1 (rev 3), version C | W 43.95 (R 13.29; -1.71 vs vl13; characters 9.24 over stick figures) | - | vl18 (C, =2) / vl19 (A, =2) STRICT, 0 mismatches | kept |
+| 09-26 | land20 | the vertex kernel rev 3 landed (d938501; the lane's increment as is) | - | - | knob-off identity (default, canonical); vl17 carry-over 451 / 460 objects identical (the rest tree5-only) | landed, default off |

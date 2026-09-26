@@ -45,7 +45,7 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
 - The pieces' transforms in the walk kernel (4e394ea; exact, room-independent; not in LH yet): the coarse-square
   arms add `GAME_LINE_PIECE=1` (needs `GAME_LINE_WALK=1`); the entry lives in platform/lnw_sh4.S, so the
   order file is unchanged.
-- The actor vertex kernel (42afaa1, rev 2 7726caa; render-only, exact): `ACTOR_VTX_KERNEL=1` runs the fast actor path's
+- The actor vertex kernel (42afaa1, rev 2 7726caa, rev 3 d938501; render-only, exact): `ACTOR_VTX_KERNEL=1` runs the fast actor path's
   position / skin / light passes on platform/avk_sh4.S (with NATIVE_ACTOR_FAST=1; the version C square arms add
   it). `python3 tools/game30/avk/mkavk.py <out.S>` regenerates the kernels from the templates and the fixed
   schedules (sched-*.txt; delete one to reschedule). =2 check builds log "VTXK" lines. Version C discs need
@@ -69,6 +69,11 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   `tools/game30/trig_lean_exhaustive.sh` runs TRIG_LEAN's host test over all 2^32 inputs.
 - The object scans (0862e7c; exact, room-independent; not in LH yet): the coarse-square arms add `GAME_OB_SCAN=1`
   (its GetEmPtrFromList part needs `GAME_WORKAT_INLINE=1`). =2 check builds log "OBS" lines.
+- The object batch 2 (9f66533; exact; not in LH yet): the coarse-square arms add `GAME_OB_MAT=1 GAME_OB_PATH=1`
+  (independent of each other and of GAME_OB_SCAN). =2 check builds log "OBM" / "OBP" lines.
+- Collision batch 7 (ca229cf; exact; not in LH yet): the coarse-square arms add `GAME_LINE_LEAF2=1 GAME_LINE_WALK_PF=1
+  GAME_LINE_TAIL=1 GAME_SCEAT_LIST=1` (LEAF2 / TAIL need GAME_LINE_LEAF=1, WALK_PF needs GAME_LINE_WALK=1); the
+  landed order file places the new kernels. =2 check builds log "LK2" / "LWP" / "LTL" / "SAL" lines.
 - The coarse world (6f4c91c; render-only; default off): `COARSE_WORLD=15` (bits: 1 house shells, 2 ground, 4 sky,
   8 trees; needs COARSE=1, bit 8 needs TREE_IMPOSTOR=1). It includes the generated private coarse_world.h
   (never committed: copy it into port/dreamcast/game for the build, untracked) and needs the world textures

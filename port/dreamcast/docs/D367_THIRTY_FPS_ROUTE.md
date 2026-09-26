@@ -232,15 +232,16 @@ Status, uncapped, same stack, hw ms:
   lane fx, exact: **G_q 29.55**, gap 4.58; then the collision stack, 7caa2f7, lane gc, exact: gc13 29.03 alone, -1.63;
   together on the landed stack with the skeleton kernels (ddea9bf): sq99 **G_q 28.29**, gap 3.32; then the
   skeleton lane, ee7d080, exact: sk10 29.14 alone, -1.52; then the object scans GAME_OB_SCAN, 0862e7c; all of
-  it on one build, sq100: **G_q 26.34**, gap 1.37; the vertex kernel ACTOR_VTX_KERNEL, 42afaa1 and rev 2 7726caa:
-  the reduced characters 15.84 -> 10.95 ms over stick figures). Since the evening of 2026-09-25 the rest runs in parallel lanes
+  it on one build, sq100: **G_q 26.34**, gap 1.37; the vertex kernel ACTOR_VTX_KERNEL, 42afaa1, rev 2 7726caa and rev 3 d938501:
+  the reduced characters 15.84 -> 9.24 ms over stick figures; then collision batch 7, ca229cf, -0.62 alone, and the
+  object batch 2 GAME_OB_MAT + GAME_OB_PATH, 9f66533, -0.64 alone; a regenerated order file lost +0.38, sq102). Since the evening of 2026-09-25 the rest runs in parallel lanes
   (next bullet).
 - **Parallel lanes (user, 2026-09-25: "I don't want to spend more time benchmarking. I want to focus on the
   remaining optimization that can be parallelized").** One agent per non-overlapping lane (arm prefix,
   tree under /root/probe/d367-agents): cl characters (coarse-actors-4k/stack-tree: meshes fitted to the
   character code losslessly, a cheaper adapter, then integrating new cast models), vl vertex loop
-  (lane-vloop/tree: ACTOR_VTX_KERNEL; rev 1b landed 42afaa1, rev 2 7726caa), gc collision (lane-gcol/tree: sphere walk, em-em rows; stack landed 7caa2f7), fx effects
-  (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree; GAME_OB_SCAN landed 0862e7c), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
+  (lane-vloop/tree: ACTOR_VTX_KERNEL; rev 1b landed 42afaa1, rev 2 7726caa, rev 3 d938501), gc collision (lane-gcol/tree: sphere walk, em-em rows; stack landed 7caa2f7, batch 7 ca229cf), fx effects
+  (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree; GAME_OB_SCAN landed 0862e7c, GAME_OB_MAT + GAME_OB_PATH 9f66533), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
   gameplay-reader map; landed ee7d080), wd world (lane-world/tree: textured coarse world <= ~3 ms; landed 6f4c91c, R +0.68), bg route bugs
   (lane-bugs: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough; paused). Per change: one
   cost arm and one STRICT gate, no series. The main session lands every patch via warp/tree7 (knob-off
