@@ -310,7 +310,7 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 |---|---|---|
 | cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
 | vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: generated SH-4 vertex kernels for the fast actor path. Rev 1b landed 42afaa1: characters -2.97 (vl7); rev 2 landed 7726caa: a further -1.92 (vl13, characters 10.95 over stick figures); rev 3 landed d938501: a further -1.71 (vl17, characters 9.24 over stick figures); rev 4 + rev 5 landed e4fb8e8: a further -0.59 (vl26, characters 8.65 over stick figures; rev 5: movca.l skin entries, the fog gate in asm). Stopped (ROI, user 2026-09-26: the rest is the meshes); ideas left in lane-vloop/STATE.md: meshlet records sorted by palette entry (-0.2..-0.3, overlaps the cast agent's palette work), movca.l on the kernel's output lines (-0.1), the fog gate two entries in flight (-0.1) |
-| gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Batch 7 landed ca229cf: GAME_LINE_LEAF2, GAME_LINE_WALK_PF, GAME_LINE_TAIL, GAME_SCEAT_LIST, -0.62 (gc17 28.41 vs gc13). Batch 8: GAME_SCEAT_LIST rev 2 kept (ff32da9, about -0.04), three items measured and dropped. Batch 9 (prefetch / inline items, est. -0.10..-0.15) is the last: the lane parks after it (ROI, user 2026-09-26) |
+| gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Batch 7 landed ca229cf: GAME_LINE_LEAF2, GAME_LINE_WALK_PF, GAME_LINE_TAIL, GAME_SCEAT_LIST, -0.62 (gc17 28.41 vs gc13). Batch 8: GAME_SCEAT_LIST rev 2 kept (ff32da9, about -0.04), three items measured and dropped. Batch 9 (GAME_LINE_LEAF2 rev 2: record-address lists + lineLeaf inline; GAME_LINE_WALK_PF rev 2: the root prefetch after the matrix rows; GAME_HC2_PF dropped) gained -0.096 on its own rows but ~0 in total (gc24 28.36 vs gc17 28.41, which lacks the area lists rev 2's -0.05; hitCheck2 +0.065 on identical code): not landed, parked with the lane's patch. **Parked** (ROI, user 2026-09-26; G closed at sq104) |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
 | ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN landed 0862e7c (ob3 29.36 vs fx9 29.55); batch 2 landed 9f66533: GAME_OB_MAT + GAME_OB_PATH, -0.64 (ob7 28.72); GAME_OB_ROUTE dropped (+0.11: its static data moved the layout); batch 3 landed 97874b5: GAME_OB_NEAR + GAME_OB_DECODE, -0.36 (ob14 28.36); GAME_OB_OLDPOS dropped (+0.01). Parked (ROI, user 2026-09-26: the remaining rows sit in other lanes' files). Section "Object bookkeeping" |
 | sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map. Landed ee7d080: LIGHT_LAZY, FP_SCHED, HF_INLINE / HF_PF, PWC_SCHED / PWC_PF, TRIG_LEAN, ACOS_LEAN, sk10 29.14 alone (-1.52). Batch 3 landed 4f81bbd: GAME_VEC_NORM_INLINE + GAME_MTXINV_SCHED, sk12 28.94 (-0.20). Dropped: pass-A on the kernel (+0.17), HF_V3 / PMC_PF (+0.22), HF_TYPED (+0.04). Parked: G is under the target (sq104) |
@@ -663,6 +663,18 @@ exact (GAME_ATRECT_FAR decision-exact by a bound); each knob's =2 check build ru
   memo table misses ate the gain; ARM superseded by ATRECT_FAR).
 - Layout noise: the effect rows (EspMove, AnmMove, sinf, ColorUpdate) swing by up to +0.4 between builds with
   identical call and instruction counts; the lane judged each knob by its own rows.
+- Batch 9 (not landed; parked): GAME_LINE_LEAF2 rev 2 (lnk2_sh4.S lists carry polygon record addresses, the
+  AtPoly survivors written in place, the chunk's second index line prefetched at entry; lineLeaf always_inline
+  into blkPolyLineCkCore) and GAME_LINE_WALK_PF rev 2 (re4dc_line_piece2 issues the root block's prefetches
+  after the matrix row loads). Own rows: re4dc_line_piece2 0.350 -> 0.309, leaf2 1.243 -> 1.214,
+  blkPolyLineCkCore 0.225 -> 0.186 (-0.096 together). But gc24 28.36 vs gc17 28.41 includes the area lists
+  rev 2 (gc17 predates them, about -0.05), and hitCheck2 lost +0.065 on disassembly-identical code (its
+  literal-pool loads: layout; gc21 showed the same), so the batch is ~0 in total. Gate gc23 (=2 + decision
+  trace) STRICT vs tr56 (8296) / tr42 (8145), dtcmp identical, drift 0, LK2 / LWP / HCP 0 mismatches. Dropped:
+  GAME_HC2_PF (hitCheck2 one piece ahead, +0.024 on its rows). Patch lane-gcol/patches/
+  leaf2-lists-inline-rootpf-on-728545d.patch (sha256 fa82c232...) for a later landed-stack try; ideas left:
+  hitCheck2's literal-pool loads out of the piece loop (-0.03..-0.05), a two-deep piece lookahead
+  (-0.04..-0.07).
 - Batch 8: GAME_SCEAT_LIST rev 2 (landed ff32da9): the generation-keyed area list serves every walk of the area table
   (SceAtCheck, SceAtCheckFieldInfo, SceAtCheckMoveScrAt, the camera / item checks, sceAtLink_check), up to 128
   records a table (r101 68, r100 64). About -0.04 from its own rows (measured inside gc21, 28.29 vs gc17 28.41,
@@ -1600,3 +1612,5 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-26 | vl23 | cl42 + ACTOR_VTX_KERNEL=1 (rev 4), version C | W 43.66 (R 13.00; -0.29 vs vl17) | - | vl24 (C, =2) / vl25 (A, =2) STRICT, 0 mismatches | kept |
 | 09-26 | vl26 | cl42 + ACTOR_VTX_KERNEL=1 (rev 5), version C | W 43.36 (R 12.70; -0.30 vs vl23; characters 8.65 over stick figures) | - | vl27 (C, =2) / vl28 (A, =2) STRICT, 0 mismatches | kept |
 | 09-26 | land25 | the vertex kernel rev 4 + rev 5 landed (e4fb8e8; + the contraction guard) | - | - | knob-off identity (default, canonical); vl26 carry-over 451 / 460 objects identical (the rest tree5-only) | landed, default off |
+| 09-26 | gc22 | gc17 + batch 9 items 1-3 (GAME_HC2_PF, LEAF2 rev 2, WALK_PF rev 2) | 28.39 (-0.02 vs gc17) | - | gc23 (=2) STRICT vs tr56 / tr42, dtcmp identical, 0 mismatches | HC2_PF dropped (+0.024 on its rows) |
+| 09-26 | gc24 | gc17 + LEAF2 rev 2 + WALK_PF rev 2 (on the area lists rev 2) | 28.36 (-0.05 vs gc17, which lacks the area lists' ~-0.05; own rows -0.096, hitCheck2 +0.065 layout) | - | gc23 | ~0 in total: not landed, parked |
