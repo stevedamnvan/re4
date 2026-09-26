@@ -65,6 +65,44 @@
 #endif
 #endif
 
+// ACTOR_VTX_KERNEL (game30.mk; render only): a meshlet's vertex passes (pass_positions,
+// pass_lights) on the software-pipelined loops of platform/avk_sh4.S. =2: check build, the
+// previous path recomputes every kernel vertex and the words are compared ("VTXK" log lines).
+#ifndef RE4DC_ACTOR_VTX_KERNEL
+#define RE4DC_ACTOR_VTX_KERNEL 0
+#endif
+#if RE4DC_ACTOR_VTX_KERNEL && defined(__sh__) && RE4DC_ACTOR_ASM && !defined(ACTOR_TEST_XMTRX)
+#define RE4DC_AVK RE4DC_ACTOR_VTX_KERNEL
+// The kernels' argument blocks (offsets fixed by avk_sh4.S). At file scope: an extern "C" name
+// declared inside the unnamed namespace would not bind to the assembler symbol.
+struct AvkPos {
+    const std::uint8_t* rec; unsigned n; const std::uint8_t* pos; const std::uint8_t* uv;  // 0 4 8 12
+    void* dst; std::uint8_t* oc; unsigned rs;                                             // 16 20 24
+    const float* matrix; const std::uint8_t* ready; unsigned entries;                     // 28 32 36
+    float width, height, near_distance, far_distance, au, bu, av, bv;                     // 40 .. 68
+};
+struct AvkLight {
+    const std::uint8_t* rec; unsigned n; const std::uint8_t* nrm; std::uint32_t* argb;    // 0 4 8 12
+    unsigned rs; const float* color; const float* dirs;                                   // 16 20 24
+    const std::uint8_t* ready; unsigned entries; std::uint32_t alpha;                     // 28 32 36
+};
+static_assert(__builtin_offsetof(AvkPos, matrix) == 28 && __builtin_offsetof(AvkPos, width) == 40 &&
+              __builtin_offsetof(AvkPos, bv) == 68, "avk_sh4.S AvkPos");
+static_assert(__builtin_offsetof(AvkLight, dirs) == 24 && __builtin_offsetof(AvkLight, alpha) == 36,
+              "avk_sh4.S AvkLight");
+extern "C" {
+unsigned re4dc_avk_pos_skin_s16(const AvkPos*);
+unsigned re4dc_avk_pos_skin_u16(const AvkPos*);
+unsigned re4dc_avk_pos_rigid_s16(const AvkPos*);
+unsigned re4dc_avk_pos_rigid_u16(const AvkPos*);
+unsigned re4dc_avk_light_skin(const AvkLight*);
+unsigned re4dc_avk_light_rigid(const AvkLight*);
+void re4dc_log(const char* fmt, ...);
+}
+#else
+#define RE4DC_AVK 0
+#endif
+
 namespace {
 using u8 = std::uint8_t;
 using u16 = std::uint16_t;
@@ -1504,8 +1542,13 @@ const float* skin_light_dirs(Frame& f, const Lights& L, unsigned i, float* fallb
 }
 
 // ----------------------------------------------------------- the meshlet --
-// Outcode bits, built MSB-first by the SH4 kernel's rotcl chain.
+// Outcode bits, built MSB-first by the SH4 kernel's rotcl chain (ACTOR_VTX_KERNEL: the order of
+// avk_sh4.S's chain, near first; ACTOR_POS_ASM combines its two chains to match).
+#if RE4DC_AVK
+constexpr unsigned kOcBottom = 1, kOcTop = 2, kOcRight = 4, kOcLeft = 8, kOcFar = 16, kOcNear = 32;
+#else
 constexpr unsigned kOcFar = 1, kOcNear = 2, kOcBottom = 4, kOcTop = 8, kOcRight = 16, kOcLeft = 32;
+#endif
 // Near is the only clipped plane; far and the screen edges only cull (whole
 // meshlets / strips), the PVR scissors the rest. Bits above 5 are don't-care.
 constexpr unsigned kOcScreen = kOcBottom | kOcTop | kOcRight | kOcLeft, kOcCull = kOcScreen | kOcFar;
@@ -1599,6 +1642,11 @@ unsigned lights_c(const u8* rec, unsigned rs, unsigned n, const u8* nrm, unsigne
 #define ACTOR_POS_ADDR8 "shll2   r1\n\t" "shll    r1\n\t"
 #define ACTOR_POS_ADDR6 "mov     r1,r2\n\t" "shll    r1\n\t" "add     r2,r1\n\t" "shll    r1\n\t"
 #define ACTOR_POS_CHECK "mov.w   @(6,r1),r0\n\t" "cmp/eq  %[pal],r0\n\t" "bf      9f\n\t"
+#if RE4DC_AVK
+#define ACTOR_POS_OC "shll2   r2\n\t" "shll2   r2\n\t" "or      r2,r1\n\t"  /* near far left right top bottom */
+#else
+#define ACTOR_POS_OC "shll2   r1\n\t" "or      r2,r1\n\t"                  /* left right top bottom near far */
+#endif
 // Scheduled for the SH4 pipes (one LS unit): the position loads and FTRV go
 // first; the u/v conversion (fmul + fadd, FE) fills FTRV's latency; w's
 // near/far bits are taken before w is squared in place for FSRRA; the u/v
@@ -1653,8 +1701,7 @@ unsigned lights_c(const u8* rec, unsigned rs, unsigned n, const u8* nrm, unsigne
     "fcmp/gt fr1,fr7\n\t"  "rotcl   r1\n\t"     /* y<0    */ \
     "fcmp/gt fr13,fr1\n\t" "rotcl   r1\n\t"     /* y>480  */ \
     "fmov.s  fr0,@-%[dst]\n\t"      /* x @4  */ \
-    "shll2   r1\n\t" \
-    "or      r2,r1\n\t" \
+    ACTOR_POS_OC \
     "mov.b   r1,@%[oc]\n\t" \
     "add     #1,%[oc]\n\t" \
     "and     r1,%[all]\n\t" \
@@ -2223,6 +2270,179 @@ void skin_check_vertices(Part& e, const u8* at, unsigned rs, unsigned n, int pal
 }
 #endif
 
+#if RE4DC_AVK
+// ACTOR_VTX_KERNEL: pass 1 / pass 2 of a meshlet on avk_sh4.S. A kernel call returns the records
+// it did not process: a skinned kernel stops at a palette entry whose matrix / directions are not
+// built yet, which the C side builds (position_matrix / skin_light_dirs, as the paths below do)
+// before calling again. Returns the records done from 0 (0: the kernel does not apply; the path
+// below finishes whatever is left).
+unsigned avk_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bool s16_uv) {
+    Frame& f = e.f;
+    const bool skin = f.mode == kSkin;
+    // The kernels sign-extend the u16 record fields (mov.w), as ACTOR_POS_ASM does.
+    if (f.position_stride != 8 || f.position_count > 32768U || (skin && !f.skin_positions)) return 0;
+    AvkPos a;
+    a.pos = f.positions; a.uv = e.p.uv; a.rs = r.stride * 2U;
+    a.matrix = skin ? f.skin_positions : f.screen; a.ready = f.skin_ready; a.entries = f.palette_entries;
+    a.width = k.width; a.height = k.height; a.near_distance = k.near_distance; a.far_distance = k.far_distance;
+    a.au = k.au; a.bu = k.bu; a.av = k.av; a.bv = k.bv;
+    unsigned (*const kernel)(const AvkPos*) = skin ? (s16_uv ? re4dc_avk_pos_skin_s16 : re4dc_avk_pos_skin_u16)
+                                                   : (s16_uv ? re4dc_avk_pos_rigid_s16 : re4dc_avk_pos_rigid_u16);
+    const u8* rec = reinterpret_cast<const u8*>(r.r);
+    alignas(8) float temp[16];
+    unsigned i = 0;
+    while (i < n) {
+        if (skin) {
+            const int palette = reinterpret_cast<const short*>(f.positions + r.vi(i) * 8U)[3];
+            position_matrix(f, unsigned(palette) < f.palette_entries ? unsigned(palette) : 0U, temp);
+        }
+        a.rec = rec + i * a.rs; a.n = n - i; a.dst = e.cache.v + i; a.oc = e.cache.oc + i;
+        const unsigned left = kernel(&a);
+        if (left >= a.n) break;  // not reached (entry i was just built): the C path finishes
+        i = n - left;
+    }
+    return i;
+}
+// all / any of the outcode bytes [0, n) (the cache's, 32-byte aligned), a word at a time.
+inline void avk_fold(const u8* oc, unsigned n, unsigned& all, unsigned& any) {
+    typedef u32 __attribute__((may_alias)) word;
+    const word* w = static_cast<const word*>(__builtin_assume_aligned(oc, 4));
+    u32 a = ~0U, o = 0;
+    unsigned j = 0;
+    for (; j + 4 <= n; j += 4) { const u32 x = w[j / 4]; a &= x; o |= x; }
+    a &= a >> 16; a &= a >> 8; o |= o >> 16; o |= o >> 8;
+    for (; j < n; ++j) { a &= oc[j]; o |= oc[j]; }
+    all &= a & 255U; any |= o & 255U;
+}
+unsigned avk_lights(Part& e, const Lights& L, const Records& r, unsigned n) {
+    Frame& f = e.f;
+    const bool skin = f.mode == kSkin;
+    if (!f.small_normals || e.colors || f.normal_stride != 4 || f.normal_count > 32768U || (skin && !f.skin_dirs))
+        return 0;
+    AvkLight a;
+    a.nrm = f.normals; a.rs = r.stride * 2U; a.color = L.color; a.alpha = e.alpha;
+    a.dirs = skin ? f.skin_dirs : &L.dir[0][0]; a.ready = f.dirs_ready; a.entries = f.palette_entries;
+    unsigned (*const kernel)(const AvkLight*) = skin ? re4dc_avk_light_skin : re4dc_avk_light_rigid;
+    const u8* rec = reinterpret_cast<const u8*>(r.r);
+    alignas(8) float temp[12];
+    unsigned i = 0;
+    while (i < n) {
+        if (skin) skin_light_dirs(f, L, f.normals[r.ni(i) * 4U + 3], temp);
+        a.rec = rec + i * a.rs; a.n = n - i; a.argb = &e.cache.v[i].argb;
+        const unsigned left = kernel(&a);
+        if (left >= a.n) break;  // not reached (entry i was just built): the C path finishes
+        i = n - left;
+    }
+    return i;
+}
+#if RE4DC_AVK == 2
+// Check build: the kernels run first, then the previous path (positions_asm / positions_c,
+// lights_asm) recomputes the same records into the arrays below and every word is compared before
+// any filtering. "VTXK" line every 4096 position meshlets.
+struct AvkCheck {
+    unsigned meshlets, pos_kernel, pos_other, pos_partial, verts, x, y, invw, u, v, oc, oc_near, oc_screen, oc_far,
+        allany, nonfinite, near_verts, px_q, px_1;
+    unsigned light_kernel, light_other, light_partial, lit, argb, argb_max;
+    float px_front, px_screen, rel_invw, uv;
+};
+AvkCheck avk_chk;
+bool avk_ref = false;  // inside the reference pass: the kernels are skipped
+alignas(32) pvr_vertex_t avk_ref_v[kMaxVertices];
+alignas(32) u8 avk_ref_oc[kMaxVertices];
+inline u32 avk_bits(float x) { u32 b; std::memcpy(&b, &x, 4); return b; }
+inline bool avk_finite(float x) { return ((avk_bits(x) >> 23) & 255U) != 255U; }
+void pass_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bool s16_uv, unsigned& all,
+                    unsigned& any);
+void pass_lights(Part& e, const Lights& L, const Records& r, unsigned n);
+void avk_check_positions(Part& e, const Records& r, unsigned n, unsigned done, const PosConst& k, bool s16_uv,
+                         unsigned all, unsigned any) {
+    AvkCheck& c = avk_chk;
+    ++c.meshlets;
+    if (!done) ++c.pos_other;
+    else {
+        ++c.pos_kernel;
+        if (done < n) ++c.pos_partial;
+        const Cache saved = e.cache;
+        e.cache.v = avk_ref_v; e.cache.oc = avk_ref_oc;
+        unsigned ra, ro;
+        avk_ref = true;
+        pass_positions(e, r, done, k, s16_uv, ra, ro);
+        avk_ref = false;
+        e.cache = saved;
+        stats.position_transforms -= done;
+        if (((all ^ ra) | (any ^ ro)) & 63U) ++c.allany;
+        for (unsigned j = 0; j < done; ++j) {
+            const pvr_vertex_t& a = e.cache.v[j];
+            const pvr_vertex_t& b = avk_ref_v[j];
+            const unsigned oa = e.cache.oc[j] & 63U, ob = avk_ref_oc[j] & 63U;
+            ++c.verts;
+            c.x += avk_bits(a.x) != avk_bits(b.x); c.y += avk_bits(a.y) != avk_bits(b.y);
+            c.invw += avk_bits(a.z) != avk_bits(b.z);
+            c.u += avk_bits(a.u) != avk_bits(b.u); c.v += avk_bits(a.v) != avk_bits(b.v);
+            if (avk_finite(a.x) != avk_finite(b.x) || avk_finite(a.y) != avk_finite(b.y) ||
+                avk_finite(a.z) != avk_finite(b.z))
+                ++c.nonfinite;
+            if (oa != ob) {
+                ++c.oc;
+                if ((oa ^ ob) & kOcNear) ++c.oc_near;
+                if ((oa ^ ob) & kOcScreen) ++c.oc_screen;
+                if ((oa ^ ob) & kOcFar) ++c.oc_far;
+            }
+            const float du = __builtin_fabsf(a.u - b.u), dv = __builtin_fabsf(a.v - b.v);
+            if (du > c.uv) c.uv = du;
+            if (dv > c.uv) c.uv = dv;
+            // Near-plane corners are clipped from world_of + project: their x / y / 1/w are unused.
+            if ((oa | ob) & kOcNear) { ++c.near_verts; continue; }
+            float d = __builtin_fabsf(a.x - b.x);
+            const float dy = __builtin_fabsf(a.y - b.y);
+            if (dy > d) d = dy;
+            if (d > c.px_front) c.px_front = d;
+            if (!((oa | ob) & kOcCull)) {
+                if (d > c.px_screen) c.px_screen = d;
+                if (d > 0.25f) ++c.px_q;
+                if (d > 1.0f) ++c.px_1;
+            }
+            const float rel = __builtin_fabsf(a.z - b.z) / b.z;
+            if (rel > c.rel_invw) c.rel_invw = rel;
+        }
+    }
+    if ((c.meshlets & 4095U) == 0) {  // three short lines (the log ring cuts long ones)
+        re4dc_log("VTXK pos meshlets=%u kernel=%u other=%u partial=%u verts=%u bits x=%u y=%u invw=%u u=%u v=%u\n",
+                  c.meshlets, c.pos_kernel, c.pos_other, c.pos_partial, c.verts, c.x, c.y, c.invw, c.u, c.v);
+        re4dc_log("VTXK oc mismatch=%u near=%u screen=%u far=%u allany=%u nonfinite=%u near_verts=%u px_front=%.6f "
+                  "px_screen=%.6f over_0.25px=%u over_1px=%u rel_invw=%.3g uv=%.3g\n",
+                  c.oc, c.oc_near, c.oc_screen, c.oc_far, c.allany, c.nonfinite, c.near_verts, double(c.px_front),
+                  double(c.px_screen), c.px_q, c.px_1, double(c.rel_invw), double(c.uv));
+        re4dc_log("VTXK light kernel=%u other=%u partial=%u lit=%u argb_mismatch=%u max_channel=%u\n",
+                  c.light_kernel, c.light_other, c.light_partial, c.lit, c.argb, c.argb_max);
+    }
+}
+void avk_check_lights(Part& e, const Lights& L, const Records& r, unsigned n, unsigned done) {
+    AvkCheck& c = avk_chk;
+    if (!done) { ++c.light_other; return; }
+    ++c.light_kernel;
+    if (done < n) ++c.light_partial;
+    const Cache saved = e.cache;
+    e.cache.v = avk_ref_v;
+    avk_ref = true;
+    pass_lights(e, L, r, done);
+    avk_ref = false;
+    e.cache = saved;
+    for (unsigned j = 0; j < done; ++j) {
+        const u32 a = e.cache.v[j].argb, b = avk_ref_v[j].argb;
+        ++c.lit;
+        if (a == b) continue;
+        ++c.argb;
+        for (unsigned s = 0; s < 32; s += 8) {
+            const int d = int((a >> s) & 255U) - int((b >> s) & 255U);
+            const unsigned m = unsigned(d < 0 ? -d : d);
+            if (m > c.argb_max) c.argb_max = m;
+        }
+    }
+}
+#endif
+#endif
+
 // Pass 1 over a meshlet: every record's position/uv/outcode into the cache.
 void pass_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bool s16_uv, unsigned& all,
                     unsigned& any) {
@@ -2231,8 +2451,20 @@ void pass_positions(Part& e, const Records& r, unsigned n, const PosConst& k, bo
     const unsigned rs = r.stride * 2U;
     all = ~0U; any = 0;
     alignas(8) float temp[16];
-    if (f.mode != kSkin) load_xmtrx(f.screen);
     unsigned i = 0;
+#if RE4DC_AVK
+#if RE4DC_AVK == 2
+    if (!avk_ref) {
+#endif
+        i = avk_positions(e, r, n, k, s16_uv);
+        if (i) avk_fold(e.cache.oc, i, all, any);
+#if RE4DC_AVK == 2
+        avk_check_positions(e, r, n, i, k, s16_uv, all, any);
+    }
+#endif
+    if (i == n) { stats.position_transforms += n; return; }
+#endif
+    if (f.mode != kSkin) load_xmtrx(f.screen);
     while (i < n) {
         int palette = 0;
         if (f.mode == kSkin) {
@@ -2266,6 +2498,18 @@ void pass_lights(Part& e, const Lights& L, const Records& r, unsigned n) {
     Frame& f = e.f;
     const u8* rec = reinterpret_cast<const u8*>(r.r);
     const unsigned rs = r.stride * 2U;
+    unsigned done = 0;  // records lit by ACTOR_VTX_KERNEL
+#if RE4DC_AVK
+#if RE4DC_AVK == 2
+    if (!avk_ref) {
+#endif
+        done = avk_lights(e, L, r, n);
+#if RE4DC_AVK == 2
+        avk_check_lights(e, L, r, n, done);
+    }
+#endif
+    if (done == n) return;
+#endif
     LightConst k{};
     k.cap = 255.0f;
     load_xmtrx(L.color);
@@ -2293,7 +2537,7 @@ void pass_lights(Part& e, const Lights& L, const Records& r, unsigned n) {
         }
         return;
     }
-    unsigned i = 0;
+    unsigned i = done;
     while (i < n) {
         unsigned palette = 0;
         alignas(8) float temp[12];
