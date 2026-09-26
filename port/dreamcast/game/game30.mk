@@ -1161,6 +1161,15 @@ endif
 else ifneq ($(GAME_FP_CONTRACT),fast)
 $(error GAME_FP_CONTRACT must be fast or off)
 endif
+# ACTOR_VTX_KERNEL's asm repeats the contracted (fmac) render code of native_actor_fast.cpp: it needs that object
+# built with contraction on (GAME_FP_CONTRACT=fast, or =off with the GAME_FP_RENDER=fast exemption).
+ifneq ($(ACTOR_VTX_KERNEL),0)
+ifeq ($(GAME_FP_CONTRACT),off)
+ifneq ($(GAME_FP_RENDER),fast)
+$(error ACTOR_VTX_KERNEL repeats native_actor_fast.o's contracted render code: needs GAME_FP_RENDER=fast with GAME_FP_CONTRACT=off)
+endif
+endif
+endif
 # Per-object flags: recursive, so target/pattern-specific values below reach each compile (and each
 # member compile of a REL module) at recipe time. Placed after GAME_OPT, so -O2 wins over -O1.
 GAME30_OBJ_FLAGS =

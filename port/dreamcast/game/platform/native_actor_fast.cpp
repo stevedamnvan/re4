@@ -2364,110 +2364,178 @@ void skin_check_vertices(Part& e, const u8* at, unsigned rs, unsigned n, int pal
 //
 #if RE4DC_AVK == 2
 void avk_check_build(const Frame& f);
+unsigned avk_build_mc = 0;  // builds that took the movca.l loop (32-byte aligned skin table)
 #endif
 // Every position entry of a skinned Frame, built at its first skinned meshlet: one linear walk over
 // the palette (48 bytes an entry) and the skin table (64), both prefetched two entries ahead, with
-// XMTRX = the screen matrix loaded once; each entry not built yet gets skin_position_matrix's
-// operations (FTRV form: columns 0-2 x q by fmul with w = 0, the translation with w = 1, each by
-// ftrv). The kernels then never stop on a missing entry. (Rev 2 collected the entries a meshlet's
-// records use after each stop instead: a scan of every remaining record, 1.49 ms a tick in vl13.)
-// A few entries no drawn record uses get built too (vl13: ~1630 used of <= ~1820 a tick).
+// XMTRX = the screen matrix loaded once; each entry gets skin_position_matrix's operations (FTRV
+// form: columns 0-2 x q by fmul with w = 0, the translation with w = 1, each by ftrv). An entry
+// position_matrix built already is rebuilt with the same operations, so the same bits. The kernels
+// then never stop on a missing entry. (Rev 2 collected the entries a meshlet's records use after
+// each stop instead: a scan of every remaining record, 1.49 ms a tick in vl13.) The loop body is
+// list-scheduled on the hwsim issue rules (33 model cycles an entry, was 58 as rev 3 compiled it):
+// single loads, 64-bit stores (FPSCR.SZ toggled around them; the skin table must be 8-byte aligned,
+// else the C loop runs), all 16 FP registers hold the entry, q travels in FPUL.
+// Rev 5: with the table 32-byte aligned (an entry = two whole cache lines) each line is allocated by
+// movca.l (no fill: every word of it is stored right after, the r0 word first overwritten) and the
+// table is not prefetched; vl23 spent 63K cycles a tick waiting on those fills (one fill in flight
+// behind the palette's). The ready bytes are set after the loop (the loop's byte store missed on
+// ~45% of entries). 31 model cycles an entry.
 void avk_build_all(Frame& f) {
     f.avk_all = true;
     const unsigned entries = f.palette_entries;
     if (!entries) return;
 #if RE4DC_ACTOR_SKIN_FTRV == 1 && defined(__sh__) && !defined(ACTOR_TEST_XMTRX)
-    load_xmtrx(f.screen);
-    const union { float f; u32 u; } qu{f.q};  // (memcpy here is a library call)
-    const u32 qb = qu.u, one = 1;
-    const float* P = f.palette;
-    float* O = f.skin_positions + 16;  // the end of entry 0 (stored from the end)
-    u8* R = f.skin_ready;
-    unsigned left = entries;
-    u32 b, x, p2, o2;
-    __asm__ __volatile__(
-        "lds     %[qb],fpul\n"
-        "1:\n\t"
-        "mov     %[P],%[x]\n\t"
-        "mov.b   @%[R],%[b]\n\t"
-        "add     #96,%[x]\n\t"      /* palette entry k+2 */
-        "pref    @%[x]\n\t"
-        "add     #32,%[x]\n\t"
-        "pref    @%[x]\n\t"
-        "mov     %[O],%[x]\n\t"
-        "add     #64,%[x]\n\t"      /* skin table entry k+2 */
-        "pref    @%[x]\n\t"
-        "add     #32,%[x]\n\t"
-        "pref    @%[x]\n\t"
-        "tst     %[b],%[b]\n\t"
-        "bf      2f\n\t"            /* built already (position_matrix) */
-        "mov     %[P],%[p2]\n\t"
-        "mov     %[O],%[o2]\n\t"
-        "fsts    fpul,fr15\n\t"     /* q */
-        "fmov.s  @%[p2]+,fr0\n\t"
-        "fmov.s  @%[p2]+,fr1\n\t"
-        "fmov.s  @%[p2]+,fr2\n\t"
-        "fmul    fr15,fr0\n\t"
-        "fmov.s  @%[p2]+,fr4\n\t"
-        "fmul    fr15,fr1\n\t"
-        "fmov.s  @%[p2]+,fr5\n\t"
-        "fmul    fr15,fr2\n\t"
-        "fmov.s  @%[p2]+,fr6\n\t"
-        "fmul    fr15,fr4\n\t"
-        "fmov.s  @%[p2]+,fr8\n\t"
-        "fmul    fr15,fr5\n\t"
-        "fmov.s  @%[p2]+,fr9\n\t"
-        "fmul    fr15,fr6\n\t"
-        "fmov.s  @%[p2]+,fr10\n\t"
-        "fmul    fr15,fr8\n\t"
-        "fmov.s  @%[p2]+,fr12\n\t"
-        "fmul    fr15,fr9\n\t"
-        "fmov.s  @%[p2]+,fr13\n\t"
-        "fmul    fr15,fr10\n\t"
-        "fmov.s  @%[p2],fr14\n\t"
-        "fldi0   fr3\n\t"
-        "fldi0   fr7\n\t"
-        "fldi0   fr11\n\t"
-        "fldi1   fr15\n\t"
-        "ftrv    xmtrx,fv12\n\t"
-        "ftrv    xmtrx,fv8\n\t"
-        "ftrv    xmtrx,fv4\n\t"
-        "ftrv    xmtrx,fv0\n\t"
-        "fmov.s  fr15,@-%[o2]\n\t"
-        "fmov.s  fr14,@-%[o2]\n\t"
-        "fmov.s  fr13,@-%[o2]\n\t"
-        "fmov.s  fr12,@-%[o2]\n\t"
-        "fmov.s  fr11,@-%[o2]\n\t"
-        "fmov.s  fr10,@-%[o2]\n\t"
-        "fmov.s  fr9,@-%[o2]\n\t"
-        "fmov.s  fr8,@-%[o2]\n\t"
-        "fmov.s  fr7,@-%[o2]\n\t"
-        "fmov.s  fr6,@-%[o2]\n\t"
-        "fmov.s  fr5,@-%[o2]\n\t"
-        "fmov.s  fr4,@-%[o2]\n\t"
-        "fmov.s  fr3,@-%[o2]\n\t"
-        "fmov.s  fr2,@-%[o2]\n\t"
-        "fmov.s  fr1,@-%[o2]\n\t"
-        "fmov.s  fr0,@-%[o2]\n"
-        "2:\n\t"
-        "mov.b   %[one],@%[R]\n\t"
-        "add     #1,%[R]\n\t"
-        "add     #48,%[P]\n\t"
-        "dt      %[left]\n\t"
-        "bf/s    1b\n\t"
-        "add     #64,%[O]\n"
-        : [P] "+r"(P), [O] "+r"(O), [R] "+r"(R), [left] "+r"(left), [b] "=&r"(b), [x] "=&r"(x), [p2] "=&r"(p2),
-          [o2] "=&r"(o2)
-        : [qb] "r"(qb), [one] "r"(one)
-        : "fpul", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10", "fr11", "fr12",
-          "fr13", "fr14", "fr15", "t", "memory");
+    if (!(reinterpret_cast<std::uintptr_t>(f.skin_positions) & 7U)) {
+        load_xmtrx(f.screen);
+        const union { float f; u32 u; } qu{f.q};  // (memcpy here is a library call)
+        const u32 qb = qu.u, one = 1;
+        const float* P = f.palette;
+        float* O = f.skin_positions + 4;  // entry 0's column 0 end (each column stored from its end)
+        u8* R = f.skin_ready;
+        unsigned left = entries;
+        u32 x;
+        if (!(reinterpret_cast<std::uintptr_t>(f.skin_positions) & 31U)) {
+            __asm__ __volatile__(
+                "lds     %[qb],fpul\n"
+                "1:\n\t"
+                "fsts    fpul,fr15\n\t"     /* q */
+                "mov     %[P],%[x]\n\t"
+                "fmov.s  @%[P]+,fr0\n\t"
+                "fmov.s  @%[P]+,fr1\n\t"
+                "add     #96,%[x]\n\t"      /* palette entry k+2 */
+                "fmov.s  @%[P]+,fr2\n\t"
+                "fmul    fr15,fr0\n\t"
+                "fmov.s  @%[P]+,fr4\n\t"
+                "dt      %[left]\n\t"
+                "fmul    fr15,fr2\n\t"
+                "fmov.s  @%[P]+,fr5\n\t"
+                "fmul    fr15,fr1\n\t"
+                "fmov.s  @%[P]+,fr6\n\t"
+                "fmov.s  @%[P]+,fr8\n\t"
+                "fmul    fr15,fr4\n\t"
+                "fmul    fr15,fr5\n\t"
+                "fldi0   fr3\n\t"
+                "ftrv    xmtrx,fv0\n\t"
+                "fmov.s  @%[P]+,fr9\n\t"
+                "fmul    fr15,fr8\n\t"
+                "fmov.s  @%[P]+,fr10\n\t"
+                "fmul    fr15,fr6\n\t"
+                "fldi0   fr7\n\t"
+                "fmov.s  @%[P]+,fr12\n\t"
+                "fmul    fr15,fr9\n\t"
+                "fmov.s  @%[P]+,fr13\n\t"
+                "ftrv    xmtrx,fv4\n\t"
+                "fldi0   fr11\n\t"
+                "fmov.s  @%[P]+,fr14\n\t"
+                "fmul    fr15,fr10\n\t"
+                "pref    @%[x]\n\t"
+                "movca.l r0,@%[O]\n\t"      /* line 0 of the entry (O = entry + 16) */
+                "fschg\n\t"
+                "fmov    dr2,@-%[O]\n\t"
+                "ftrv    xmtrx,fv8\n\t"
+                "fmov    dr0,@-%[O]\n\t"
+                "add     #32,%[O]\n\t"
+                "fldi1   fr15\n\t"
+                "add     #32,%[x]\n\t"
+                "fmov    dr6,@-%[O]\n\t"
+                "fmov    dr4,@-%[O]\n\t"
+                "ftrv    xmtrx,fv12\n\t"
+                "add     #32,%[O]\n\t"
+                "pref    @%[x]\n\t"
+                "movca.l r0,@%[O]\n\t"      /* line 1 (O = entry + 48) */
+                "fmov    dr10,@-%[O]\n\t"
+                "fmov    dr8,@-%[O]\n\t"
+                "add     #32,%[O]\n\t"
+                "fmov    dr14,@-%[O]\n\t"
+                "fmov    dr12,@-%[O]\n\t"
+                "fschg\n\t"
+                "bf/s    1b\n\t"
+                "add     #32,%[O]\n"
+                : [P] "+r"(P), [O] "+r"(O), [left] "+r"(left), [x] "=&r"(x)
+                : [qb] "r"(qb)
+                : "r0", "fpul", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10", "fr11",
+                  "fr12", "fr13", "fr14", "fr15", "t", "memory");
+            std::memset(R, 1, entries);
 #if RE4DC_AVK == 2
-    avk_check_build(f);
+            ++avk_build_mc;
+            avk_check_build(f);
 #endif
-#else
+            return;
+        }
+        __asm__ __volatile__(
+            "lds     %[qb],fpul\n"
+            "1:\n\t"
+            "fsts    fpul,fr15\n\t"     /* q */
+            "mov     %[P],%[x]\n\t"
+            "fmov.s  @%[P]+,fr0\n\t"
+            "fmov.s  @%[P]+,fr1\n\t"
+            "fmul    fr15,fr0\n\t"
+            "fmov.s  @%[P]+,fr2\n\t"
+            "fmul    fr15,fr1\n\t"
+            "fmov.s  @%[P]+,fr4\n\t"
+            "fmov.s  @%[P]+,fr5\n\t"
+            "fmov.s  @%[P]+,fr6\n\t"
+            "fmul    fr15,fr4\n\t"
+            "fldi0   fr7\n\t"
+            "add     #96,%[x]\n\t"      /* palette entry k+2 */
+            "fldi0   fr3\n\t"
+            "fmul    fr15,fr2\n\t"
+            "fmov.s  @%[P]+,fr8\n\t"
+            "fmul    fr15,fr5\n\t"
+            "fmov.s  @%[P]+,fr9\n\t"
+            "fmul    fr15,fr6\n\t"
+            "fmov.s  @%[P]+,fr10\n\t"
+            "ftrv    xmtrx,fv0\n\t"
+            "pref    @%[x]\n\t"
+            "add     #32,%[x]\n\t"
+            "pref    @%[x]\n\t"
+            "fmul    fr15,fr9\n\t"
+            "fmul    fr15,fr8\n\t"
+            "fldi0   fr11\n\t"
+            "ftrv    xmtrx,fv4\n\t"
+            "fmov.s  @%[P]+,fr12\n\t"
+            "fmov.s  @%[P]+,fr13\n\t"
+            "fmul    fr15,fr10\n\t"
+            "mov     %[O],%[x]\n\t"
+            "fmov.s  @%[P]+,fr14\n\t"
+            "fschg\n\t"
+            "fmov    dr2,@-%[O]\n\t"
+            "ftrv    xmtrx,fv8\n\t"
+            "fldi1   fr15\n\t"
+            "dt      %[left]\n\t"
+            "add     #112,%[x]\n\t"     /* skin table entry k+2 */
+            "fmov    dr0,@-%[O]\n\t"
+            "pref    @%[x]\n\t"
+            "add     #32,%[O]\n\t"
+            "fmov    dr6,@-%[O]\n\t"
+            "ftrv    xmtrx,fv12\n\t"
+            "add     #32,%[x]\n\t"
+            "fmov    dr4,@-%[O]\n\t"
+            "add     #32,%[O]\n\t"
+            "fmov    dr10,@-%[O]\n\t"
+            "fmov    dr8,@-%[O]\n\t"
+            "add     #32,%[O]\n\t"
+            "pref    @%[x]\n\t"
+            "fmov    dr14,@-%[O]\n\t"
+            "fmov    dr12,@-%[O]\n\t"
+            "fschg\n\t"
+            "mov.b   %[one],@%[R]\n\t"
+            "add     #32,%[O]\n\t"
+            "bf/s    1b\n\t"
+            "add     #1,%[R]\n"
+            : [P] "+r"(P), [O] "+r"(O), [R] "+r"(R), [left] "+r"(left), [x] "=&r"(x)
+            : [qb] "r"(qb), [one] "r"(one)
+            : "fpul", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10", "fr11", "fr12",
+              "fr13", "fr14", "fr15", "t", "memory");
+#if RE4DC_AVK == 2
+        avk_check_build(f);
+#endif
+        return;
+    }
+#endif
     for (unsigned j = 0; j < entries; ++j)
         if (!f.skin_ready[j]) { skin_position_matrix(f, j, f.skin_positions + j * 16U); f.skin_ready[j] = 1; }
-#endif
 }
 // Skinned light directions used by records [i, n) and not built yet (skin_light_dirs).
 void avk_build_dirs(Frame& f, const Lights& L, const Records& r, unsigned i, unsigned n) {
@@ -2643,8 +2711,10 @@ void avk_check_positions(Part& e, const Records& r, unsigned n, unsigned done, c
                   double(c.px_screen), c.px_q, c.px_1, double(c.rel_invw), double(c.uv));
         re4dc_log("VTXK light kernel=%u other=%u partial=%u lit=%u argb_mismatch=%u max_channel=%u\n",
                   c.light_kernel, c.light_other, c.light_partial, c.lit, c.argb, c.argb_max);
-        re4dc_log("VTXK gate=%u gate_mismatch=%u emit=%u emit_verts=%u emit_mismatch=%u builds=%u build_mismatch=%u\n",
-                  c.gate, c.gate_mismatch, c.emits, c.emit_verts, c.emit_mismatch, c.builds, c.build_mismatch);
+        re4dc_log("VTXK gate=%u gate_mismatch=%u emit=%u emit_verts=%u emit_mismatch=%u builds=%u build_mismatch=%u "
+                  "movca_frames=%u\n",
+                  c.gate, c.gate_mismatch, c.emits, c.emit_verts, c.emit_mismatch, c.builds, c.build_mismatch,
+                  avk_build_mc);
     }
 }
 void avk_check_lights(Part& e, const Lights& L, const Records& r, unsigned n, unsigned done) {
@@ -3403,18 +3473,122 @@ extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
                 // does not decrease as s grows, so the largest s gives the largest product; a NaN or
                 // 0 x inf product is dropped by std::max in both forms) and the palette lines
                 // prefetched three entries ahead (the loop reads each entry once per frame).
+                // The three column sums are written out (the same expression per column, so the same
+                // contraction) and folded into S directly: max(S, max(max(max(0, s0), s1), s2)) =
+                // max(max(max(S, s0), s1), s2) for S >= 0, NaN skipped either way; m's row in locals.
                 {
                     float S = 0.0f;
-                    for (unsigned i = 0; i < f.palette_entries; ++i) {
-                        const float* P = f.palette + i * 12;
+#if defined(__sh__)
+                    // Rev 5: the loop below as rev 4 compiled it, operation for operation (d = fmac(m10,
+                    // P11, fmac(m8, P9, P10 x m9)) + m11; s0 = fmac(P2, P2, fmac(P0, P0, P1 x P1), s1 and
+                    // s2 likewise; T and S by fcmp/gt in the same order), hand-scheduled on the issue model
+                    // (33 model cycles an entry; vl23 as compiled: 61 measured, 46 of them issue: ten
+                    // pointers, T through the integer registers, a taken branch per compare). One pointer
+                    // per column (post-increment + @(r0,Rn) with r0 = 4, so each fmac's multiplier loads
+                    // straight into fr0); T is kept negated (T' = -T: T > d exactly when y > T' for
+                    // y = -d, NaN and signed zeros included; T = -T' after the loop, exact); the rare
+                    // updates run out of line.
+                    alignas(8) float io[6] = {m[8], m[9], m[10], m[11], -3.0e38f, 0.0f};
+                    const float* pa = f.palette;
+                    const float* pb = pa + 3;
+                    const float* pc = pa + 6;
+                    const float* pd = pa + 9;
+                    const float* px = pa + 36;  // prefetch: entry k+3 (both of its lines)
+                    unsigned n = f.palette_entries;
+                    float* iop = io;
+                    __asm__ __volatile__(
+                        "mov     #4,r0\n\t"
+                        "fmov.s  @%[io]+,fr12\n\t"  /* m8 */
+                        "fmov.s  @%[io]+,fr13\n\t"  /* m9 */
+                        "fmov.s  @%[io]+,fr14\n\t"  /* m10 */
+                        "fmov.s  @%[io]+,fr15\n\t"  /* m11 */
+                        "fmov.s  @%[io]+,fr10\n\t"  /* T' */
+                        "fmov.s  @%[io]+,fr11\n"    /* S */
+                        "1:\n\t"
+                        "fmov.s  @(r0,%[d]),fr4\n\t"  /* P10 */
+                        "fmov.s  @%[d]+,fr0\n\t"      /* P9 */
+                        "fmul    fr13,fr4\n\t"
+                        "fmov.s  @(r0,%[a]),fr9\n\t"  /* P1 */
+                        "fmov.s  @(r0,%[b]),fr8\n\t"  /* P4 */
+                        "fmul    fr9,fr9\n\t"
+                        "fmov.s  @(r0,%[c]),fr6\n\t"  /* P7 */
+                        "fmac    fr0,fr12,fr4\n\t"
+                        "fmov.s  @(r0,%[d]),fr0\n\t"  /* P11 */
+                        "fmul    fr8,fr8\n\t"
+                        "pref    @%[x]\n\t"
+                        "fmul    fr6,fr6\n\t"
+                        "add     #44,%[x]\n\t"
+                        "fmac    fr0,fr14,fr4\n\t"
+                        "fmov.s  @%[a]+,fr0\n\t"      /* P0 */
+                        "pref    @%[x]\n\t"
+                        "add     #44,%[d]\n\t"
+                        "fmac    fr0,fr0,fr9\n\t"
+                        "fmov.s  @(r0,%[a]),fr0\n\t"  /* P2 */
+                        "fadd    fr15,fr4\n\t"         /* y = -d */
+                        "add     #44,%[a]\n\t"
+                        "add     #4,%[x]\n\t"
+                        "fmac    fr0,fr0,fr9\n\t"      /* s0 */
+                        "fmov.s  @%[b]+,fr0\n\t"      /* P3 */
+                        "fmac    fr0,fr0,fr8\n\t"
+                        "fmov.s  @(r0,%[b]),fr0\n\t"  /* P5 */
+                        "fcmp/gt fr11,fr9\n\t"
+                        "add     #44,%[b]\n\t"
+                        "fmac    fr0,fr0,fr8\n\t"      /* s1 */
+                        "fmov.s  @%[c]+,fr0\n\t"      /* P6 */
+                        "bt      2f\n"
+                        "6:\n\t"
+                        "fmac    fr0,fr0,fr6\n\t"
+                        "fmov.s  @(r0,%[c]),fr0\n\t"  /* P8 */
+                        "fcmp/gt fr11,fr8\n\t"
+                        "add     #44,%[c]\n\t"
+                        "fmac    fr0,fr0,fr6\n\t"      /* s2 */
+                        "bt      3f\n"
+                        "7:\n\t"
+                        "fcmp/gt fr11,fr6\n\t"
+                        "bt      4f\n"
+                        "8:\n\t"
+                        "fcmp/gt fr10,fr4\n\t"
+                        "bt      5f\n"
+                        "9:\n\t"
+                        "dt      %[n]\n\t"
+                        "bf      1b\n\t"
+                        "bra     0f\n\t"
+                        "nop\n"
+                        "2:\n\t"
+                        "bra     6b\n\t"
+                        "fmov    fr9,fr11\n"
+                        "3:\n\t"
+                        "bra     7b\n\t"
+                        "fmov    fr8,fr11\n"
+                        "4:\n\t"
+                        "bra     8b\n\t"
+                        "fmov    fr6,fr11\n"
+                        "5:\n\t"
+                        "bra     9b\n\t"
+                        "fmov    fr4,fr10\n"
+                        "0:\n\t"
+                        "fmov.s  fr11,@-%[io]\n\t"
+                        "fmov.s  fr10,@-%[io]\n"
+                        : [a] "+r"(pa), [b] "+r"(pb), [c] "+r"(pc), [d] "+r"(pd), [x] "+r"(px), [n] "+r"(n),
+                          [io] "+r"(iop)
+                        :
+                        : "r0", "fr0", "fr4", "fr6", "fr8", "fr9", "fr10", "fr11", "fr12", "fr13", "fr14", "fr15", "t",
+                          "memory");
+                    T = -io[4]; S = io[5];
+#else
+                    const float m8 = m[8], m9 = m[9], m10 = m[10], m11 = m[11];
+                    const float* P = f.palette;
+                    for (unsigned i = f.palette_entries; i; --i, P += 12) {
                         __builtin_prefetch(P + 36);
                         __builtin_prefetch(P + 47);
-                        const float d = -(m[8] * P[9] + m[9] * P[10] + m[10] * P[11] + m[11]);
-                        float s = 0.0f;
-                        for (unsigned k = 0; k < 3; ++k)
-                            s = std::max(s, P[k * 3] * P[k * 3] + P[k * 3 + 1] * P[k * 3 + 1] + P[k * 3 + 2] * P[k * 3 + 2]);
-                        T = std::min(T, d); S = std::max(S, s);
+                        const float d = -(m8 * P[9] + m9 * P[10] + m10 * P[11] + m11);
+                        const float s0 = P[0] * P[0] + P[1] * P[1] + P[2] * P[2];
+                        const float s1 = P[3] * P[3] + P[4] * P[4] + P[5] * P[5];
+                        const float s2 = P[6] * P[6] + P[7] * P[7] + P[8] * P[8];
+                        T = std::min(T, d);
+                        S = std::max(S, s0); S = std::max(S, s1); S = std::max(S, s2);
                     }
+#endif
                     G = std::max(G, mz * std::sqrt(S));
                 }
 #if RE4DC_AVK == 2
@@ -3565,7 +3739,11 @@ extern "C" int re4dc_actor_submit(const Re4dcModelPart* part) {
             if (!e.colors) {
                 const u32 argb = e.alpha | lights.constant_rgb;
                 pvr_vertex_t* v = e.cache.v;
-                for (unsigned i = 0; i < nv; ++i) v[i].argb = argb;
+                unsigned i = 0;
+                for (; i + 4 <= nv; i += 4, v += 4) {
+                    v[0].argb = argb; v[1].argb = argb; v[2].argb = argb; v[3].argb = argb;
+                }
+                for (; i < nv; ++i, ++v) v->argb = argb;
             } else
 #endif
             for (unsigned i = 0; i < nv; ++i)
