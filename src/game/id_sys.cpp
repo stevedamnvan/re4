@@ -783,6 +783,108 @@ void IDSystem::movePos(IdUnit* u)
         }                                                                                     \
     }
 
+#if defined(RE4DC_OB_PATH) && RE4DC_OB_PATH
+// GAME_OB_PATH (game30.mk; exact): FuncPathCalc (path.cpp) evaluates the unit's B-spline path through
+// de_Boor_Cox (math_sub.cpp), which takes 3 + n + m heap blocks from mem_alloc and frees them all
+// before it returns: 44 allocations per tick for the square's 8 path calls, 0.09 ms of mem_alloc.
+// obPathCalc does the same arithmetic in the same order (uniform knots, the basis table zeroed and
+// filled row by row, the sums over the control points in index order; every object is built with
+// -ffp-contract=off) in stack arrays. The source's blocks are all freed before it returns and the
+// heap's free / allocated lists come back to the same state (first-fit split, address-ordered
+// coalescing free), so leaving them out changes no later allocation. Sizes beyond the arrays, or
+// n / k the source would fail on, run FuncPathCalc. =2: both run on every call and the results are
+// compared bit for bit ("OBP"), the source's result is used.
+#include "path.h"
+enum { kObPathN = 32, kObPathM = 8 };
+static int obPathCalc(void* path, void* data, Vec* out, f32 t)
+{
+    FuncPathWork* w = (FuncPathWork*) data;
+    const int n = w->n;
+    const int m = w->k + 1;
+    f32 tb[(kObPathN + kObPathM) * kObPathM];   // de_Boor_Cox's tmp_B[i][j] = tb[i * m + j]
+    f32 q[kObPathN + kObPathM];
+    int i;
+    int j;
+
+    if (n <= 0 || m <= 0 || n > kObPathN || m > kObPathM) {
+        return FuncPathCalc(path, data, out, t);
+    }
+    for (i = 0; i < n + m; i++) {
+        for (j = 0; j < m; j++) {
+            tb[i * m + j] = 0.0f;
+        }
+    }
+    for (j = 0; j < m; j++) {
+        q[j] = 0.0f;
+    }
+    for (j = m; j < n; j++) {
+        q[j] = (f32) (j - m) + (f32) m * 0.5f;
+    }
+    for (j = n; j < n + m; j++) {
+        q[j] = (f32) (n - 1);
+    }
+    for (i = 0; i < n; i++) {
+        if (q[i] <= t && t < q[i + 1]) {
+            tb[i * m] = 1.0f;
+        }
+    }
+    if (q[n + m - 2] <= t && t <= q[n + m - 1] + 0.00001f) {
+        tb[(n - 1) * m] = 1.0f;
+    }
+    for (j = 1; j < m; j++) {
+        for (i = 0; i < n; i++) {
+            tb[i * m + j] = 0.0f;
+            if (q[i + 1] != q[i + j + 1]) {
+                tb[i * m + j] += (q[i + j + 1] - t) * tb[(i + 1) * m + j - 1] / (q[i + j + 1] - q[i + 1]);
+            }
+            if (q[i] != q[i + j]) {
+                tb[i * m + j] += (t - q[i]) * tb[i * m + j - 1] / (q[i + j] - q[i]);
+            }
+        }
+    }
+    out->x = out->y = out->z = 0.0f;
+    for (i = 0; i < n; i++) {
+        out->x += tb[i * m + m - 1] * w->alpha[i].x;
+        out->y += tb[i * m + m - 1] * w->alpha[i].y;
+        out->z += tb[i * m + m - 1] * w->alpha[i].z;
+    }
+    return 1;
+}
+#if RE4DC_OB_PATH == 2
+static unsigned long obPathChk[4];   // calls, fallbacks (sizes), mismatches, max n + m
+extern "C" void re4dc_log(const char* fmt, ...);
+static int obPathCheck(void* path, void* data, Vec* out, f32 t)
+{
+    FuncPathWork* w = (FuncPathWork*) data;
+    Vec f;
+    int rf = obPathCalc(path, data, &f, t);
+    int rs = FuncPathCalc(path, data, out, t);
+    const u32* a = (const u32*) &f;
+    const u32* b = (const u32*) out;
+
+    obPathChk[0]++;
+    if (w->n <= 0 || w->k + 1 <= 0 || w->n > kObPathN || w->k + 1 > kObPathM) {
+        obPathChk[1]++;
+    }
+    if ((unsigned long) (w->n + w->k + 1) > obPathChk[3]) {
+        obPathChk[3] = w->n + w->k + 1;
+    }
+    if (rf != rs || (rs != 0 && (a[0] != b[0] || a[1] != b[1] || a[2] != b[2]))) {
+        obPathChk[2]++;
+    }
+    if (obPathChk[0] % 2048 == 1) {
+        re4dc_log("OBP calls=%lu fallback=%lu mis=%lu max_nm=%lu\n", obPathChk[0], obPathChk[1], obPathChk[2],
+                  obPathChk[3]);
+    }
+    return rs;
+}
+#define OB_PATH_CALC obPathCheck
+#else
+#define OB_PATH_CALC obPathCalc
+#endif
+#else
+#define OB_PATH_CALC FuncPathCalc
+#endif
 // Mover 0: position = scr + path point at the curve-0 parameter (timer[0] stepped forward/back
 // with loop/end flags), then rebuilds the quad vertices from sizeX/size_H and vtxType (anchor).
 void idSysMove00(IdUnit* u)
@@ -820,8 +922,8 @@ void idSysMove00(IdUnit* u)
         } else {
             t = 0.0f;
         }
-        if (FuncPathCalc(u->path0, u->path1, &u->pos, t) == 0 ||
-            FuncPathCalc(u->path0, u->path1, &tmp, 0.0f) == 0) {
+        if (OB_PATH_CALC(u->path0, u->path1, &u->pos, t) == 0 ||
+            OB_PATH_CALC(u->path0, u->path1, &tmp, 0.0f) == 0) {
             memclr_asm(&u->pos, sizeof(Vec));
         } else {
             u->pos.x -= tmp.x;
@@ -1040,11 +1142,35 @@ void idSysMove02(IdUnit* u)
 
 // Mover 3: rotation = rot0 plus the curve-3 angle on the axis selected by rot_flag (degrees),
 // builds l_mat and, under a group parent, concatenates the parent matrix.
+#if defined(RE4DC_OB_MAT) && RE4DC_OB_MAT
+// GAME_OB_MAT (game30.mk; exact): l_mat and mat are written only here (and cleared with the unit by
+// unitPull / roomInit; they are read at draw and by the children's Move03). l_mat is a function of
+// the rotation (degrees, after the curve) and pos; mat of l_mat and, under a group parent, the parent's
+// mat. So a unit whose rotation, position and parent matrix are unchanged keeps both matrices as they
+// are. Keys: the rotation the matrices were built from is the unit's own rot field (written only
+// here); the position is l_mat's translation column (0 + pos: the bits of pos, -0 just rebuilds);
+// pad_D8 holds the version of the unit's mat (0: not built since the unit was cleared) and the parent
+// mat version it was built from (a type-1 parent is freed only with its children, unitPush).
+struct ObMatKey {
+    u32 ver;    // version of this unit's mat; 0 = not built since the unit was cleared
+    u32 pver;   // the group parent's mat version it was built from; OB_MAT_COPY = built as a copy
+};
+static_assert(sizeof(ObMatKey) == sizeof(((IdUnit*) 0)->pad_D8), "IdUnit pad_D8");
+#define OB_MAT_KEY(w) ((ObMatKey*) (w)->pad_D8)
+#define OB_MAT_COPY 0xFFFFFFFFu
+#if RE4DC_OB_MAT == 2
+static unsigned long obMatChk[4];   // calls, l_mat kept, mat kept, mismatches ("OBM")
+extern "C" void re4dc_log(const char* fmt, ...);
+#endif
+#endif
 void idSysMove03(IdUnit* u)
 {
     Vec rot;
     f32 a;
     int num;
+#if defined(RE4DC_OB_MAT) && RE4DC_OB_MAT
+    const Vec built = u->rot;   // the rotation l_mat was built from
+#endif
 
     u->rot = u->rot0;
     if (u->curve[3] != 0 && (num = u->curve[3]->num) != 0) {
@@ -1084,6 +1210,86 @@ void idSysMove03(IdUnit* u)
             break;
         }
     }
+#if defined(RE4DC_OB_MAT) && RE4DC_OB_MAT
+    {
+        ObMatKey* key = OB_MAT_KEY(u);
+        const u32* nk = (const u32*) &u->rot;
+        const u32* ok = (const u32*) &built;
+        const u32* lt = (const u32*) u->l_mat;
+        const u32* pp = (const u32*) &u->pos;
+        IdUnit* par = u->pParent;
+        const u32 pv = (par != 0 && par->type == 1) ? OB_MAT_KEY(par)->ver : OB_MAT_COPY;
+        const int keep = key->ver != 0 && nk[0] == ok[0] && nk[1] == ok[1] && nk[2] == ok[2] && lt[3] == pp[0] &&
+                         lt[7] == pp[1] && lt[11] == pp[2];
+#if RE4DC_OB_MAT == 2
+        // the source matrices first (a unit can be its own parent), then the memo; compared bit for bit
+        Mtx sl;
+        Mtx sm;
+        rot.x = u->rot.x * PI / 180.0f;
+        rot.y = u->rot.y * PI / 180.0f;
+        rot.z = u->rot.z * PI / 180.0f;
+        RotMatrix(sl, &rot);
+        PSMTXTransApply(sl, sl, u->pos.x, u->pos.y, u->pos.z);
+        if (u->pParent != 0 && u->pParent->type == 1) {
+            PSMTXConcat(u->pParent->mat, sl, sm);
+        } else {
+            PSMTXCopy(sl, sm);
+        }
+        obMatChk[0]++;
+        if (keep) {
+            obMatChk[1]++;
+        }
+#endif
+        if (!keep) {
+            rot.x = u->rot.x * PI / 180.0f;
+            rot.y = u->rot.y * PI / 180.0f;
+            rot.z = u->rot.z * PI / 180.0f;
+            RotMatrix(u->l_mat, &rot);
+            PSMTXTransApply(u->l_mat, u->l_mat, u->pos.x, u->pos.y, u->pos.z);
+        }
+        if (!keep || pv != key->pver) {
+            u32 v = key->ver + 1;
+            if (pv != OB_MAT_COPY) {
+                PSMTXConcat(par->mat, u->l_mat, u->mat);
+            } else {
+                PSMTXCopy(u->l_mat, u->mat);
+            }
+            if (v == 0 || v == OB_MAT_COPY) {
+                v = 1;
+            }
+            key->ver = v;
+            key->pver = pv;
+        }
+#if RE4DC_OB_MAT == 2
+        else {
+            obMatChk[2]++;
+        }
+        {
+            const u32* a0 = (const u32*) sl;
+            const u32* a1 = (const u32*) sm;
+            u32* b0 = (u32*) u->l_mat;
+            u32* b1 = (u32*) u->mat;
+            int i;
+            int bad = 0;
+            for (i = 0; i < 12; i++) {
+                bad |= (a0[i] != b0[i]) | (a1[i] != b1[i]);
+            }
+            if (bad) {
+                obMatChk[3]++;
+                for (i = 0; i < 12; i++) {
+                    b0[i] = a0[i];
+                    b1[i] = a1[i];
+                }
+            }
+        }
+        if (obMatChk[0] % 16384 == 1) {
+            re4dc_log("OBM calls=%lu lkeep=%lu mkeep=%lu mis=%lu\n", obMatChk[0], obMatChk[1], obMatChk[2],
+                      obMatChk[3]);
+        }
+#endif
+        return;
+    }
+#endif
     rot.x = u->rot.x * PI / 180.0f;
     rot.y = u->rot.y * PI / 180.0f;
     rot.z = u->rot.z * PI / 180.0f;

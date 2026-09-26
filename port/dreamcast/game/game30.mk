@@ -388,6 +388,20 @@ $(OBJDIR)/src/game/dmg.o: GAME_CPPFLAGS += -DRE4DC_OB_SCAN=$(GAME_OB_SCAN)
 $(OBJDIR)/src/game/em_set.o: GAME_CPPFLAGS += -DRE4DC_OB_SCAN=$(GAME_OB_SCAN)
 $(OBJDIR)/src/game/id_sys.o: GAME_CPPFLAGS += -DRE4DC_OB_SCAN=$(GAME_OB_SCAN)
 endif
+# GAME_OB_MAT=1 (30 fps rethink, lane ob; exact): idSysMove03 keeps l_mat / mat when the unit's rotation,
+#               position and group parent's matrix are unchanged (versions in IdUnit pad_D8; no static
+#               data at =1). =2: the source matrices are built beside every call and compared ("OBM").
+GAME_OB_MAT ?= 0
+ifneq ($(GAME_OB_MAT),0)
+$(OBJDIR)/src/game/id_sys.o: GAME_CPPFLAGS += -DRE4DC_OB_MAT=$(GAME_OB_MAT)
+endif
+# GAME_OB_PATH=1 (30 fps rethink, lane ob; exact): idSysMove00's path points (FuncPathCalc) computed with
+#                the same de_Boor_Cox arithmetic in stack arrays instead of 3 + n + m heap blocks per call
+#                (the heap lists end each call as they started; id_sys.cpp). =2: both run, compared ("OBP").
+GAME_OB_PATH ?= 0
+ifneq ($(GAME_OB_PATH),0)
+$(OBJDIR)/src/game/id_sys.o: GAME_CPPFLAGS += -DRE4DC_OB_PATH=$(GAME_OB_PATH)
+endif
 # GAME_ROTVEC_MEMO=1 (square plan: collision body positions; exact): RotVector (sub2.cpp) keeps yaw-only
 #                    results in 256 one-line entries keyed by the input bits (RVM_BITS=n: 2^n entries);
 #                    cAtariInfo::getPos repeats it for every candidate body on each EmAtCheck call.
