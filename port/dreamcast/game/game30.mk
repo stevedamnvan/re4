@@ -404,6 +404,23 @@ GAME_OB_PATH ?= 0
 ifneq ($(GAME_OB_PATH),0)
 $(OBJDIR)/src/game/id_sys.o: GAME_CPPFLAGS += -DRE4DC_OB_PATH=$(GAME_OB_PATH)
 endif
+# GAME_OB_NEAR=1 (30 fps rethink, lane ob; exact): getNearPoint's ten-nearest insertion as one test-and-shift
+#                loop (the source's tests in the same order) instead of the two memmove calls GCC made of
+#                the shift per inserted point (route_ck.cpp). =2: the source selection runs beside it and
+#                its answer is used; differences counted ("OBN").
+GAME_OB_NEAR ?= 0
+ifneq ($(GAME_OB_NEAR),0)
+$(OBJDIR)/src/game/route_ck.o: GAME_CPPFLAGS += -DRE4DC_OB_NEAR=$(GAME_OB_NEAR)
+endif
+# GAME_OB_DECODE=1 (30 fps rethink, lane ob; exact): the effect record reader (platform/native_effect.cpp,
+#                  built at -O1) read every word through a 4-byte memcpy library call: an aligned word is
+#                  read in place, and decode() expands an aligned record with the three mask words held
+#                  in registers (the same 75 output words in the same order). =2: the source expansion
+#                  runs beside it into a second buffer and its output is used; differences counted ("OBD").
+GAME_OB_DECODE ?= 0
+ifneq ($(GAME_OB_DECODE),0)
+$(OBJDIR)/platform/native_effect.o: PLATFORM_CPPFLAGS += -DRE4DC_OB_DECODE=$(GAME_OB_DECODE)
+endif
 # GAME_ROTVEC_MEMO=1 (square plan: collision body positions; exact): RotVector (sub2.cpp) keeps yaw-only
 #                    results in 256 one-line entries keyed by the input bits (RVM_BITS=n: 2^n entries);
 #                    cAtariInfo::getPos repeats it for every candidate body on each EmAtCheck call.

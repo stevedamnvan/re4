@@ -6,11 +6,29 @@
 #include <kos/net.h>
 #include <cstring>
 #include <cstdint>
+#ifndef RE4DC_OB_DECODE
+#define RE4DC_OB_DECODE 0
+#endif
 namespace {
 struct Binding { unsigned char* archive; unsigned bytes; const unsigned char* entries; unsigned count; };
 Binding bindings[6]{}; // four module owners, persistent core, current room
 Re4dcEffectStats stats{};
+#if RE4DC_OB_DECODE
+// GAME_OB_DECODE (game30.mk; exact): this unit builds at -O1, where each 4-byte memcpy of word() and
+// decode() was a library call (~1,260 per square tick). A 4-aligned word is read in place (the same
+// four bytes memcpy copies); any other address keeps memcpy.
+typedef std::uint32_t __attribute__((may_alias)) ObWord;
+static_assert(sizeof(unsigned) == sizeof(ObWord), "word size");
+inline unsigned word(const unsigned char* p) {
+    if(!(reinterpret_cast<std::uintptr_t>(p)&3))return *reinterpret_cast<const ObWord*>(p);
+    unsigned v;std::memcpy(&v,p,4);return v;
+}
+#if RE4DC_OB_DECODE == 2
+unsigned long obDecChk[3]; // calls, fast-path calls, mismatching calls ("OBD")
+#endif
+#else
 unsigned word(const unsigned char* p) { unsigned v;std::memcpy(&v,p,4);return v; }
+#endif
 unsigned half(const unsigned char* p) { unsigned short v;std::memcpy(&v,p,2);return v; }
 const unsigned char* entry(const Binding& b,unsigned i) { return b.entries+12*i; }
 [[noreturn]] void fail(const char* why) { ++stats.failures;re4dc_missing(why);__builtin_trap(); }
@@ -25,11 +43,45 @@ bool decode(const unsigned char* p,unsigned bytes,void* out) {
     unsigned count=0;for(unsigned i=0;i<3;++i)count+=__builtin_popcount(word(p+4*i));
     if(bytes!=12+4*count)return false;
     auto* dst=static_cast<unsigned char*>(out);unsigned at=12;
+#if RE4DC_OB_DECODE
+    // Aligned record and output that do not overlap: the three mask words are read once and each
+    // output word is stored in place. For every i the source reads the same mask bit and, when it is
+    // set, the next value word, so the 75 words written are the same (the byte-count test above keeps
+    // the value reads inside the record).
+    const auto pa=reinterpret_cast<std::uintptr_t>(p),da=reinterpret_cast<std::uintptr_t>(out);
+    bool fast=!((pa|da)&3) && (da+300<=pa || pa+bytes<=da);
+#if RE4DC_OB_DECODE == 2
+    alignas(4) unsigned char mine[300];
+    ++obDecChk[0];
+#endif
+    if(fast) {
+#if RE4DC_OB_DECODE == 2
+        auto* d=reinterpret_cast<ObWord*>(mine);
+#else
+        auto* d=static_cast<ObWord*>(out);
+#endif
+        const auto* s=reinterpret_cast<const ObWord*>(p);
+        const ObWord* v=s+3;
+        for(unsigned k=0;k<3;++k) {
+            unsigned m=s[k];
+            for(unsigned b=k<2?32:11;b;--b,m>>=1)*d++=(m&1)?*v++:0;
+        }
+#if RE4DC_OB_DECODE != 2
+        return true;
+#else
+        ++obDecChk[1];
+#endif
+    }
+#endif
     for(unsigned i=0;i<75;++i) {
         unsigned value=0;
         if(word(p+4*(i/32))&(1U<<(i%32))) { value=word(p+at);at+=4; }
         std::memcpy(dst+4*i,&value,4);
     }
+#if RE4DC_OB_DECODE == 2
+    if(fast && std::memcmp(mine,dst,300))++obDecChk[2];
+    if(obDecChk[0]%1024==1)re4dc_log("OBD calls=%lu fast=%lu mis=%lu\n",obDecChk[0],obDecChk[1],obDecChk[2]);
+#endif
     return true;
 }
 // Last sequence whose head is <= offset. Packed heads are sorted by converter.

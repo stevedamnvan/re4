@@ -582,6 +582,19 @@ int getNearInfo(cEm* em, int mode, int mask)
 
 // Nearest route point to `pos`: the ten closest are sorted; mode != 0 returns the closest, else
 // the first with a clear line from 500 above pos. -1 when none.
+#if defined(RE4DC_OB_NEAR) && RE4DC_OB_NEAR
+// GAME_OB_NEAR (game30.mk; exact): GCC turns the source's shift loop into two memmove calls per
+// insertion (loop distribution: ~35 per call, 606 calls per square tick). Here one loop runs the
+// source's tests from the top (`d > dist[k - 1]`, the same operands in the same order; it stops
+// where the source's j loop stops) and moves each element as it passes it, then stores the point:
+// the same list after every point. Its early exit keeps GCC from making a library call of it.
+// =2: the source selection runs beside it into its own arrays; the lists are compared after every
+// call and the source's answer is used ("OBN" lines).
+#if RE4DC_OB_NEAR == 2
+static unsigned long obNearChk[3];   // calls, insertions, mismatching calls
+extern "C" void re4dc_log(const char* fmt, ...);
+#endif
+#endif
 s8 getNearPoint(Vec* pos, int mode, int mask)
 {
     f32 dist[10];
@@ -593,9 +606,15 @@ s8 getNearPoint(Vec* pos, int mode, int mask)
     int n;
     int m;
     int i;
+#if !(defined(RE4DC_OB_NEAR) && RE4DC_OB_NEAR == 1)
     int j;
+#endif
     int k;
     f32 d;
+#if defined(RE4DC_OB_NEAR) && RE4DC_OB_NEAR == 2
+    f32 sdist[10];
+    int sidx[10];
+#endif
 
     rtp = rtpData();
     if (rtp == NULL) {
@@ -612,10 +631,48 @@ s8 getNearPoint(Vec* pos, int mode, int mask)
     for (i = 0; i < m; i++) {
         dist[i] = 1.0e16f;
     }
+#if defined(RE4DC_OB_NEAR) && RE4DC_OB_NEAR == 2
+    for (i = 0; i < 10; i++) {
+        sdist[i] = 1.0e16f;
+        idx[i] = -1;
+        sidx[i] = -1;
+    }
+#endif
     pt = rtpPoint(rtpData());
     for (i = 0; i < n; i++) {
         d = (pos->x - pt->pos.x) * (pos->x - pt->pos.x) + (pos->y - pt->pos.y) * (pos->y - pt->pos.y) +
             (pos->z - pt->pos.z) * (pos->z - pt->pos.z);
+#if defined(RE4DC_OB_NEAR) && RE4DC_OB_NEAR
+        // the source's first test (j == m) fails exactly when the point goes into the list
+        if (!(d > dist[m - 1])) {
+            k = m - 1;
+            while (k > 0 && !(d > dist[k - 1])) {
+                dist[k] = dist[k - 1];
+                idx[k] = idx[k - 1];
+                k--;
+            }
+            idx[k] = i;
+            dist[k] = d;
+#if RE4DC_OB_NEAR == 2
+            obNearChk[1]++;
+#endif
+        }
+#if RE4DC_OB_NEAR == 2
+        for (j = m; j > 0; j--) {
+            if (d > sdist[j - 1]) {
+                break;
+            }
+        }
+        if (j < m) {
+            for (k = m - 1; k > j; k--) {
+                sidx[k] = sidx[k - 1];
+                sdist[k] = sdist[k - 1];
+            }
+            sidx[j] = i;
+            sdist[j] = d;
+        }
+#endif
+#else
         for (j = m; j > 0; j--) {
             if (d > dist[j - 1]) {
                 break;
@@ -629,8 +686,26 @@ s8 getNearPoint(Vec* pos, int mode, int mask)
             idx[j] = i;
             dist[j] = d;
         }
+#endif
         pt++;
     }
+#if defined(RE4DC_OB_NEAR) && RE4DC_OB_NEAR == 2
+    {
+        int bad = 0;
+
+        for (i = 0; i < m; i++) {
+            if (idx[i] != sidx[i] || __builtin_memcmp(&dist[i], &sdist[i], sizeof(f32)) != 0) {
+                bad = 1;
+            }
+            idx[i] = sidx[i];   // the source's answer stays live
+            dist[i] = sdist[i];
+        }
+        obNearChk[2] += bad;
+        if (++obNearChk[0] % 4096 == 1) {
+            re4dc_log("OBN calls=%lu ins=%lu mis=%lu\n", obNearChk[0], obNearChk[1], obNearChk[2]);
+        }
+    }
+#endif
     if (mode != 0) {
         return idx[0];
     }
