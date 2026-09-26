@@ -308,13 +308,13 @@ develops in its own tree with its own arm prefix and hands its patch to the main
 
 | lane (arm prefix) | tree (under /root/probe/d367-agents) | owns |
 |---|---|---|
-| cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms); next: the external agent's models |
+| cl characters | coarse-actors-4k/stack-tree | fitting the approved Leon and Ganado meshes to the character code, losslessly (look unchanged); then a cheaper adapter; then integrating the external agent's cast models. No model building. Fitting and the FTRV adapters landed 9df764b (characters 22.42 -> 15.84 ms). The cast integration COARSE_GANADO_CAST landed 08d2216 (cast v3: character rows -0.22, W +0.39 with layout, cl45); the external agent's refit v4-fit (palettes -18.5..-27.4%, the same geometry; records / strips still over target) is measured on the landed kernel next, with the worst view and the R levers left |
 | vl vertex loop | lane-vloop/tree | ACTOR_VTX_KERNEL: generated SH-4 vertex kernels for the fast actor path. Rev 1b landed 42afaa1: characters -2.97 (vl7); rev 2 landed 7726caa: a further -1.92 (vl13, characters 10.95 over stick figures); rev 3 landed d938501: a further -1.71 (vl17, characters 9.24 over stick figures); rev 4 + rev 5 landed e4fb8e8: a further -0.59 (vl26, characters 8.65 over stick figures; rev 5: movca.l skin entries, the fog gate in asm). Stopped (ROI, user 2026-09-26: the rest is the meshes); ideas left in lane-vloop/STATE.md: meshlet records sorted by palette entry (-0.2..-0.3, overlaps the cast agent's palette work), movca.l on the kernel's output lines (-0.1), the fog gate two entries in flight (-0.1) |
 | gc collision | lane-gcol/tree | Landed 7caa2f7: the collision stack (8 knobs), G -1.63 alone (gc13 29.03). Batch 6 (GAME_EM10_SCANPF) lost (+0.08). Batch 7 landed ca229cf: GAME_LINE_LEAF2, GAME_LINE_WALK_PF, GAME_LINE_TAIL, GAME_SCEAT_LIST, -0.62 (gc17 28.41 vs gc13). Batch 8: GAME_SCEAT_LIST rev 2 kept (ff32da9, about -0.04), three items measured and dropped. Batch 9 (GAME_LINE_LEAF2 rev 2: record-address lists + lineLeaf inline; GAME_LINE_WALK_PF rev 2: the root prefetch after the matrix rows; GAME_HC2_PF dropped) gained -0.096 on its own rows but ~0 in total (gc24 28.36 vs gc17 28.41, which lacks the area lists rev 2's -0.05; hitCheck2 +0.065 on identical code): not landed, parked with the lane's patch. **Parked** (ROI, user 2026-09-26; G closed at sq104) |
 | fx effects | lane-gfx/tree | Esp / Efm bookkeeping and moves, exact (the RNG sequence kept). Landed 1d3dc4d: GAME_FX_SCAN + GAME_FX_MOVE, G -1.11 (fx9 29.55); the agent moved on to lane ob |
 | ob enemy / object bookkeeping | lane-gfx/tree | exact cuts in model.cpp (getPartsPtr, updateOldPos), em.cpp, em_set.cpp (GetEmPtrFromList), dmg.cpp, route_ck.cpp and id_sys.cpp (the HUD units' idSysMove, after a reader audit). GAME_OB_SCAN landed 0862e7c (ob3 29.36 vs fx9 29.55); batch 2 landed 9f66533: GAME_OB_MAT + GAME_OB_PATH, -0.64 (ob7 28.72); GAME_OB_ROUTE dropped (+0.11: its static data moved the layout); batch 3 landed 97874b5: GAME_OB_NEAR + GAME_OB_DECODE, -0.36 (ob14 28.36); GAME_OB_OLDPOS dropped (+0.01). Parked (ROI, user 2026-09-26: the remaining rows sit in other lanes' files). Section "Object bookkeeping" |
 | sk skeleton | lane-gskel/tree | skeleton, motion, cloth, maths: exact speedups, and the gameplay-reader map. Landed ee7d080: LIGHT_LAZY, FP_SCHED, HF_INLINE / HF_PF, PWC_SCHED / PWC_PF, TRIG_LEAN, ACOS_LEAN, sk10 29.14 alone (-1.52). Batch 3 landed 4f81bbd: GAME_VEC_NORM_INLINE + GAME_MTXINV_SCHED, sk12 28.94 (-0.20). Dropped: pass-A on the kernel (+0.17), HF_V3 / PMC_PF (+0.22), HF_TYPED (+0.04). Parked: G is under the target (sq104) |
-| wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky. Landed 6f4c91c (COARSE_WORLD): R +0.68 (wd12), STRICT (wdG4); v10 ground tones 05e402a (private data): the gauge's "88" fixed. Idle until the user's look review (unreplaced collision walls and base floor, the missing hill, the 128 VQ walls) |
+| wd world | lane-world/tree | the textured coarse world, <= ~3 ms: house shells, ground, trees, sky. Landed 6f4c91c (COARSE_WORLD): R +0.68 (wd12), STRICT (wdG4); v10 ground tones 05e402a (private data): the gauge's "88" fixed. **The user rejected the look (2026-09-26: "the world looks terrible").** The world's assets go to a specialized external agent the user launches, from a prompt the main session writes (`re4-assets-private/world-agent-20260926/`: as close to the original as the render budget allows); the wd lane idles until it delivers, then integrates, measures and captures |
 | bg route bugs | lane-bugs | the pre-pivot backlog: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough (stopped 2026-09-25 before its first checkpoint; relaunched 2026-09-26 at the user's question: triage from the docs, the user's play logs and a fresh route check on today's code, then the top three fixes, each audited) |
 
 - **The main session** coordinates, lands every patch through warp/tree7 (knob-off identity, a carry-over
@@ -542,6 +542,24 @@ over without margin; the rest is the characters' meshes (the external cast refit
     and palette entries in the cast meshes is the lever left.
 - New models for the rest of the first level's cast come from the external agent (section "Current order
   and status"); the cl lane integrates them.
+- The cast integration (landed 08d2216, default off): COARSE_GANADO_CAST=1 (needs COARSE_GANADO=1) links
+  coarse_ganado_cast.cpp in place of coarse_ganado.cpp; COARSE_ACTOR_ASSET_DIR is then a private bundle
+  (ganado_cast_runtime.h: four chunks per appearance, its inverse bind, the source infos' signatures, the atlas
+  key) made by the lane's private converter (tools/cast_bundle.py; REVISION=revision-20260926 picks the refit
+  overlay). An actor draws the appearance its body and head signatures name. =2 runs the 874 matcher beside it
+  (GCAST). cl45 (cast v3, ~898 tris; on the lane stack with the rev 3 kernel): W 44.338 vs vl17 43.949 (+0.39);
+  the character rows -0.22 (transformed vertices 9,734 -> 7,924, switches 2,137 -> 1,956), the rest layout
+  (PenClothMove3 +0.249 on the same instructions) and a G2 upload row (+0.101). Gate cl46 STRICT vs tr56 / tr42,
+  dtcmp identical, GCAST both 26,421 and every other counter 0. Memory: ELF +111,808 B, heap 4 -114,688, VRAM
+  +65,536 (349,792 free). Follow-ups: the per-frame skin table holds 64 keys (the cast uses up to 28) and a full
+  table skips a part silently (0 in the square; check the worst views); a per-room bundle (em12-01 never appears
+  in r101) and a regenerated order file may recover part of the layout rows.
+- The external agent's refit (2026-09-26, `cast-20260925/revision-20260926/`): v4-fit Ganados (palettes
+  197 -> 151 etc., -18.5..-27.4%; geometry, UVs and textures unchanged; records 0.91-1.05 / tri and strip
+  vertices ~1.55 / tri unchanged, so the fit targets are still missed; the agent reports that lower records need
+  a new topology / UV layout or a renderer that shares transforms across attribute seams) and eight animal sets
+  (r103). The cl lane predicted v4-fit at ~-0.28 ms vs cl45 from the unit costs (0.25 us per transformed
+  vertex, 0.30 us per switch, 0.93 us per palette entry, 0.07 us per emitted strip vertex).
 - The coarse-path HUD in C ("88" ammo digits, a flat lens) was not a HUD bug: the gauge's lens and ring are
   translucent, and the coarse floor behind them was the light collision colour (~(90,80,65) against the
   source's dark grass ~(16-40)). The coarse world's ground (COARSE_WORLD bit 2, the source's tones; 6f4c91c)
@@ -1614,3 +1632,5 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-26 | land25 | the vertex kernel rev 4 + rev 5 landed (e4fb8e8; + the contraction guard) | - | - | knob-off identity (default, canonical); vl26 carry-over 451 / 460 objects identical (the rest tree5-only) | landed, default off |
 | 09-26 | gc22 | gc17 + batch 9 items 1-3 (GAME_HC2_PF, LEAF2 rev 2, WALK_PF rev 2) | 28.39 (-0.02 vs gc17) | - | gc23 (=2) STRICT vs tr56 / tr42, dtcmp identical, 0 mismatches | HC2_PF dropped (+0.024 on its rows) |
 | 09-26 | gc24 | gc17 + LEAF2 rev 2 + WALK_PF rev 2 (on the area lists rev 2) | 28.36 (-0.05 vs gc17, which lacks the area lists' ~-0.05; own rows -0.096, hitCheck2 +0.065 layout) | - | gc23 | ~0 in total: not landed, parked |
+| 09-26 | cl45 | vl17 + COARSE_GANADO_CAST=1 (cast v3 Ganados), version C | W 44.338 (+0.39 vs vl17; character rows -0.22, the rest layout / G2) | - | cl46 (=2) STRICT vs tr56 / tr42, dtcmp identical, GCAST 0 | integration kept (default off) |
+| 09-26 | land26 | COARSE_GANADO_CAST landed (08d2216; the lane's patch as is) | - | - | knob-off identity (default, canonical); cl45 carry-over 450 / 460 objects identical (native_actor_fast.o: rev 5 landed vs rev 3; the rest tree5-only) | landed, default off |

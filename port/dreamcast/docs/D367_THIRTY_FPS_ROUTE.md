@@ -243,13 +243,14 @@ Status, uncapped, same stack, hw ms:
   character code losslessly, a cheaper adapter, then integrating new cast models), vl vertex loop
   (lane-vloop/tree: ACTOR_VTX_KERNEL; rev 1b landed 42afaa1, rev 2 7726caa, rev 3 d938501, rev 4 + 5 e4fb8e8; stopped), gc collision (lane-gcol/tree: sphere walk, em-em rows; stack landed 7caa2f7, batch 7 ca229cf, area lists rev 2 ff32da9; batch 9 ~0, not landed; parked), fx effects
   (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree; GAME_OB_SCAN landed 0862e7c, GAME_OB_MAT + GAME_OB_PATH 9f66533, GAME_OB_NEAR + GAME_OB_DECODE 97874b5; parked), sk skeleton / motion / cloth / maths (lane-gskel/tree; batch 3 GAME_VEC_NORM_INLINE + GAME_MTXINV_SCHED 4f81bbd; exact, plus the
-  gameplay-reader map; landed ee7d080), wd world (lane-world/tree: textured coarse world <= ~3 ms; landed 6f4c91c, R +0.68; v10 ground tones 05e402a), bg route bugs
+  gameplay-reader map; landed ee7d080), wd world (lane-world/tree: textured coarse world <= ~3 ms; landed 6f4c91c, R +0.68; v10 ground tones 05e402a; the user rejected the look 2026-09-26: an external agent rebuilds the world's assets from the prompt in re4-assets-private/world-agent-20260926/, wd integrates), bg route bugs
   (lane-bugs: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough; relaunched 2026-09-26). By return
   (user, 2026-09-26): gc, ob and vl park after their current batches, wd idles; sk, cl and bg carry on. Per change: one
   cost arm and one STRICT gate, no series. The main session lands every patch via warp/tree7 (knob-off
   identity, carry-over), keeps the docs current. (The coarse HUD's "88" was the light coarse floor behind the translucent gauge;
   the coarse world's ground, 6f4c91c, fixes it.) An external, user-launched
-  agent builds and reduces the first level's cast models (private `cast-20260925/`); no in-session agent
+  agent builds and reduces the first level's cast models (private `cast-20260925/`; integration COARSE_GANADO_CAST 08d2216),
+  and a second one will rebuild the r101 world's assets (prompt `re4-assets-private/world-agent-20260926/`, 2026-09-26); no in-session agent
   builds models. Lane map and owners: the plan doc, "Current order and status".
 - Characters (2026-09-25): the reduced models (3,989-triangle Leon, 874-triangle Ganado) draw through the
   actors30 character code. Version C measured (r101 square, ACT_CAP=0, frames 1000-1119; every figure

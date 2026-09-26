@@ -58,6 +58,10 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   matrices with FTRV (coarse_skin_sh4.S; =2 runs the C path too and logs COARSE_SKIN_CHK).
   `ACTOR_SWAP=1` (benchmark, COARSE=0) draws the same meshes through the source renderer; `COARSE_FREEZE_AT=N`
   (diagnostic) stops in frame N's actor pass for matched captures.
+- The cast Ganados (08d2216; default off; render-only): `COARSE_GANADO_CAST=1` (needs COARSE_GANADO=1) with
+  `COARSE_ACTOR_ASSET_DIR=<private cast bundle>` (ganado_cast_runtime.h, made by the cl lane's private
+  tools/cast_bundle.py from the external cast packs) and `EXTRA_TEXDIRS=<bundle>/tex`. =2 logs "GCAST". Use a
+  fresh OBJDIR per setting: both sources build coarse_ganado.o.
 - The skeleton kernels (ddea9bf; room-independent; not in LH yet): the coarse-square arms add
   `GAME_PWC_KERNEL=3 GAME_PMC_KERNEL=1 GAME_HERMITE_FAST=1`. PWC_KERNEL needs `GAME_SKEL_FTRV=1` (=1 the
   Ganados' pass, exact; =3 every model's pass, last-bit FP policy, decisions identical); PMC_KERNEL needs
