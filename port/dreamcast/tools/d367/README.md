@@ -69,14 +69,16 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   `tools/game30/trig_lean_exhaustive.sh` runs TRIG_LEAN's host test over all 2^32 inputs.
 - The object scans (0862e7c; exact, room-independent; not in LH yet): the coarse-square arms add `GAME_OB_SCAN=1`
   (its GetEmPtrFromList part needs `GAME_WORKAT_INLINE=1`). =2 check builds log "OBS" lines.
-- The object batch 2 (9f66533; exact; not in LH yet): the coarse-square arms add `GAME_OB_MAT=1 GAME_OB_PATH=1`
+- The object batches 2 and 3 (9f66533, 97874b5; exact; not in LH yet): the coarse-square arms add `GAME_OB_MAT=1 GAME_OB_PATH=1
+  GAME_OB_NEAR=1 GAME_OB_DECODE=1`
   (independent of each other and of GAME_OB_SCAN). =2 check builds log "OBM" / "OBP" lines.
 - Collision batch 7 (ca229cf; exact; not in LH yet): the coarse-square arms add `GAME_LINE_LEAF2=1 GAME_LINE_WALK_PF=1
   GAME_LINE_TAIL=1 GAME_SCEAT_LIST=1` (LEAF2 / TAIL need GAME_LINE_LEAF=1, WALK_PF needs GAME_LINE_WALK=1); the
   landed order file places the new kernels. =2 check builds log "LK2" / "LWP" / "LTL" / "SAL" lines.
 - The coarse world (6f4c91c; render-only; default off): `COARSE_WORLD=15` (bits: 1 house shells, 2 ground, 4 sky,
   8 trees; needs COARSE=1, bit 8 needs TREE_IMPOSTOR=1). It includes the generated private coarse_world.h
-  (never committed: copy it into port/dreamcast/game for the build, untracked) and needs the world textures
+  (never committed: copy it into port/dreamcast/game for the build, untracked; the current one is v10,
+  coarse_world_v10.h sha256 65f8529ed1ce55d348d50c679cdd696ae7e212298b0c7fb7a50623640e318c85, and nothing in the build checks it) and needs the world textures
   staged with `EXTRA_TEXDIRS`.
 - The effect pools' scans and moves (1d3dc4d; exact, room-independent; not in LH yet): the coarse-square arms add
   `GAME_FX_SCAN=1 GAME_FX_MOVE=1` (FX_SCAN needs `GAME_ESP_OWNER=1`; its EfmDelete list path needs

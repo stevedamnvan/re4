@@ -241,10 +241,11 @@ Status, uncapped, same stack, hw ms:
   remaining optimization that can be parallelized").** One agent per non-overlapping lane (arm prefix,
   tree under /root/probe/d367-agents): cl characters (coarse-actors-4k/stack-tree: meshes fitted to the
   character code losslessly, a cheaper adapter, then integrating new cast models), vl vertex loop
-  (lane-vloop/tree: ACTOR_VTX_KERNEL; rev 1b landed 42afaa1, rev 2 7726caa, rev 3 d938501), gc collision (lane-gcol/tree: sphere walk, em-em rows; stack landed 7caa2f7, batch 7 ca229cf), fx effects
-  (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree; GAME_OB_SCAN landed 0862e7c, GAME_OB_MAT + GAME_OB_PATH 9f66533), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
-  gameplay-reader map; landed ee7d080), wd world (lane-world/tree: textured coarse world <= ~3 ms; landed 6f4c91c, R +0.68), bg route bugs
-  (lane-bugs: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough; paused). Per change: one
+  (lane-vloop/tree: ACTOR_VTX_KERNEL; rev 1b landed 42afaa1, rev 2 7726caa, rev 3 d938501), gc collision (lane-gcol/tree: sphere walk, em-em rows; stack landed 7caa2f7, batch 7 ca229cf, area lists rev 2 ff32da9; parks after batch 9), fx effects
+  (lane-gfx/tree: Esp / Efm, exact; landed 1d3dc4d), ob enemy / object bookkeeping (lane-gfx/tree; GAME_OB_SCAN landed 0862e7c, GAME_OB_MAT + GAME_OB_PATH 9f66533, GAME_OB_NEAR + GAME_OB_DECODE 97874b5; parked), sk skeleton / motion / cloth / maths (lane-gskel/tree: exact, plus the
+  gameplay-reader map; landed ee7d080), wd world (lane-world/tree: textured coarse world <= ~3 ms; landed 6f4c91c, R +0.68; v10 ground tones 05e402a), bg route bugs
+  (lane-bugs: memory load / unload, freezes, the r100 -> r101 -> r103 playthrough; relaunched 2026-09-26). By return
+  (user, 2026-09-26): gc, ob and vl park after their current batches, wd idles; sk, cl and bg carry on. Per change: one
   cost arm and one STRICT gate, no series. The main session lands every patch via warp/tree7 (knob-off
   identity, carry-over), keeps the docs current. (The coarse HUD's "88" was the light coarse floor behind the translucent gauge;
   the coarse world's ground, 6f4c91c, fixes it.) An external, user-launched
@@ -275,7 +276,7 @@ Status, uncapped, same stack, hw ms:
 Details and the ledger are in [D367_SQUARE_PERF_PLAN.md](D367_SQUARE_PERF_PLAN.md).
 
 Parallel tracks (off the frame path; needed for the console gate):
-- r101/r103 bring-up (frontier W4, W9 packages) and the route bugs: the bg lane (lane-bugs; paused);
+- r101/r103 bring-up (frontier W4, W9 packages) and the route bugs: the bg lane (lane-bugs; relaunched 2026-09-26);
 - audio;
 - cutscenes;
 - inventory/retry (W11);
