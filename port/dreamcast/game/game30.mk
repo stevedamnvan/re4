@@ -730,6 +730,32 @@ GAME_ACOS_LEAN ?= 0
 ifneq ($(GAME_ACOS_LEAN),0)
 $(OBJDIR)/fdlibm/ef_acos.o $(OBJDIR)/fdlibm/ef_asin.o: KOS_CFLAGS += -fno-math-errno
 endif
+# GAME_VEC_NORM_INLINE=1 (exact): PSVECNormalize inline (C_VECNormalize's body) in the cloth unit, the
+#                 orientation builders and C_MTXRotAxisRad (include/vec.h, sdk mtx.c). =2: each call
+#                 compared with C_VECNormalize ("VNRM").
+GAME_VEC_NORM_INLINE ?= 0
+ifneq ($(GAME_VEC_NORM_INLINE),0)
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_VEC_NORM_INLINE inlines the contract-off normalize body: needs GAME_FP_CONTRACT=off)
+endif
+$(OBJDIR)/src/game/pendulum.o $(OBJDIR)/src/game/math_sub.o: GAME_CPPFLAGS += -DRE4DC_VEC_NORM_INLINE=$(GAME_VEC_NORM_INLINE)
+$(OBJDIR)/sdk/mtx.o: SDK_CFLAGS += -DRE4DC_VEC_NORM_INLINE=$(GAME_VEC_NORM_INLINE)
+$(OBJDIR)/platform/mtx.o: PLATFORM_CPPFLAGS += -DRE4DC_VEC_NORM_INLINE=$(GAME_VEC_NORM_INLINE)
+endif
+# GAME_MTXINV_SCHED=1 (exact; with GAME_SH4_MATH=1 and GAME_FP_CONTRACT=off): PSMTXInverse's hand-written
+#                 body (platform/mtx_sh4.S) list-scheduled: the same instructions on the same operands as
+#                 the RE4DC_FP_CONTRACT_OFF body, in dual-issue order (tools/game30/mtx_inverse_sched.py;
+#                 proof tools/game30/prove_mtxinv_sched.sh: fpsym2 --strict vs the old body).
+GAME_MTXINV_SCHED ?= 0
+ifneq ($(GAME_MTXINV_SCHED),0)
+ifneq ($(GAME_FP_CONTRACT),off)
+$(error GAME_MTXINV_SCHED schedules the contract-off PSMTXInverse body: needs GAME_FP_CONTRACT=off)
+endif
+ifneq ($(GAME_SH4_MATH),1)
+$(error GAME_MTXINV_SCHED schedules platform/mtx_sh4.S's body: needs GAME_SH4_MATH=1)
+endif
+$(OBJDIR)/platform/mtx_sh4.o: KOS_CFLAGS += -DRE4DC_MTXINV_SCHED=1
+endif
 # ---- end lane gskel ----
 # GAME_COL_PREFETCH=1: the scenery collision walks (block chains, block polygon lists) prefetch the next
 #                    block and the next polygon's record, vertex and normal. Loads only: same answers.

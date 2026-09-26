@@ -5,6 +5,24 @@
 /* GAME_SINCOS (design-logic P6): sinf + cosf of one angle, bit-identical (game30_trig.c) */
 void re4dc_sincosf(float x, float *s, float *c);
 #endif
+#if defined(RE4DC_VEC_NORM_INLINE) && RE4DC_VEC_NORM_INLINE
+/* GAME_VEC_NORM_INLINE (lane gskel; exact): C_MTXRotAxisRad's C_VECNormalize inline, the body of
+   vec.c's (same operations, same order; fsqrt as that unit emits it). =2: compared with the call. */
+#if RE4DC_VEC_NORM_INLINE == 2
+void re4dc_vnorm_check(const Vec* src, const Vec* unit);
+#endif
+static inline __attribute__((always_inline)) void re4dc_vec_normalize_sdk(const Vec* src, Vec* unit) {
+    f32 mag = (src->z * src->z) + ((src->x * src->x) + (src->y * src->y));
+    __asm__("fsqrt\t%0" : "+f"(mag));
+    mag = 1.0f / mag;
+    unit->x = src->x * mag;
+    unit->y = src->y * mag;
+    unit->z = src->z * mag;
+#if RE4DC_VEC_NORM_INLINE == 2
+    re4dc_vnorm_check(src, unit);
+#endif
+}
+#endif
 
 static f32 Unit01[2] = {
     0.0f,
@@ -787,7 +805,11 @@ void C_MTXRotAxisRad(Mtx m, const Vec* axis, f32 rad) {
     c = cosf(rad);
 #endif
     t = 1 - c;
+#if defined(RE4DC_VEC_NORM_INLINE) && RE4DC_VEC_NORM_INLINE
+    re4dc_vec_normalize_sdk(axis, &vN);
+#else
     C_VECNormalize(axis, &vN);
+#endif
     x = vN.x;
     y = vN.y;
     z = vN.z;

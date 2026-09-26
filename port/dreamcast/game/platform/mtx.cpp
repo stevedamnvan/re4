@@ -39,6 +39,22 @@ void C_VECCrossProduct(const Vec* a, const Vec* b, Vec* axb);
 f32 C_VECSquareDistance(const Vec* a, const Vec* b);
 f32 C_VECDistance(const Vec* a, const Vec* b);
 
+#if defined(RE4DC_VEC_NORM_INLINE) && RE4DC_VEC_NORM_INLINE == 2
+// GAME_VEC_NORM_INLINE=2 (include/vec.h, sdk mtx.c): every inline normalize compared with C_VECNormalize.
+void re4dc_log(const char* fmt, ...);
+static u32 vnrmCalls, vnrmBad;
+void re4dc_vnorm_check(const Vec* src, const Vec* unit)
+{
+    Vec ref;
+    C_VECNormalize(src, &ref);
+    vnrmCalls++;
+    vnrmBad += __builtin_memcmp(&ref, unit, sizeof(Vec)) != 0;
+    if ((vnrmCalls & 0xFFF) == 0) {
+        re4dc_log("VNRM calls=%u mismatch=%u\n", vnrmCalls, vnrmBad);
+    }
+}
+#endif
+
 // GAME_PS_ALIAS (game30.mk): platform/ps_alias.ld binds the PS* names to the C_* bodies at
 // link time instead (same arithmetic, one call frame less per call).
 #if !RE4DC_PS_ALIAS

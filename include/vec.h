@@ -125,6 +125,37 @@ static inline f32 re4dc_vec_sqdist(const Vec* a, const Vec* b)
 #define PSVECCrossProduct(a, b, d) re4dc_vec_cross((a), (b), (d))
 #define PSVECSquareDistance(a, b) re4dc_vec_sqdist((a), (b))
 #endif
+#if defined(RE4DC_VEC_NORM_INLINE) && RE4DC_VEC_NORM_INLINE && defined(__sh__)
+// GAME_VEC_NORM_INLINE (game30.mk, lane gskel; exact): PSVECNormalize inline in the units that call it
+// most (cloth, the orientation builders). The body of C_VECNormalize (platform/sdk/gen/vec.c) with the
+// same operations in the same order: the magnitude sum, fsqrt as that unit emits it (no errno guard
+// there), 1 / root, the three products; each component is read after the previous store, as there
+// (src and unit may be the same vector).
+//   =2 (check build): each call is also made to C_VECNormalize on a copy of the input and the words are
+//       compared (platform/mtx.cpp, "VNRM" log line).
+#if RE4DC_VEC_NORM_INLINE == 2
+#ifdef __cplusplus
+extern "C"
+#endif
+void re4dc_vnorm_check(const Vec* src, const Vec* unit);
+#endif
+static inline __attribute__((always_inline)) void re4dc_vec_normalize(const Vec* src, Vec* unit)
+{
+#if RE4DC_VEC_NORM_INLINE == 2
+    const Vec in = *src;
+#endif
+    f32 mag = (src->z * src->z) + ((src->x * src->x) + (src->y * src->y));
+    __asm__("fsqrt\t%0" : "+f"(mag));
+    mag = 1.0f / mag;
+    unit->x = src->x * mag;
+    unit->y = src->y * mag;
+    unit->z = src->z * mag;
+#if RE4DC_VEC_NORM_INLINE == 2
+    re4dc_vnorm_check(&in, unit);
+#endif
+}
+#define PSVECNormalize(s, d) re4dc_vec_normalize((s), (d))
+#endif
 
 #endif
 
