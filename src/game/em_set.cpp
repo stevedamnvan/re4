@@ -289,6 +289,35 @@ cEm* EmSetEvent(EmListData* d)
     return em;
 }
 
+#if defined(RE4DC_OB_SCAN) && RE4DC_OB_SCAN && defined(RE4DC_WORKAT_INLINE) && RE4DC_WORKAT_INLINE
+#define OB_EM 1
+// GAME_OB_SCAN: an enemy passes the live test only while it is on EmMgr's alive list (create links
+// it after construct; destroy unlinks it before marking 0x200), so the list is searched instead of
+// every slot. With one match that is the answer (the source returns its first match in slot order);
+// with none, none; with two or more, or a frozen / pushed pool, the caller runs the source loop.
+#if RE4DC_OB_SCAN == 2
+extern "C" unsigned long re4dc_ob_chk[12];   // dmg.cpp
+#endif
+static inline int obEmFind(int no, cEm** res)
+{
+    cEm* hit = 0;
+    cEm* p;
+
+    if (re4dc_frozen_pools || EmMgr.pArrayPush != 0 || EmMgr.pArray == 0) {
+        return 0;
+    }
+    for (p = EmMgr.pAlive; p != 0; p = (cEm*) p->pNext) {
+        if ((p->be_flag & 0x201) == 1 && p->emset_no == (u8) no) {
+            if (hit != 0) {
+                return 0;
+            }
+            hit = p;
+        }
+    }
+    *res = hit;
+    return 1;
+}
+#endif
 // The live enemy created from list entry `no`; NULL when none (or no == 0xFF).
 cEm* GetEmPtrFromList(int no)
 {
@@ -297,6 +326,34 @@ cEm* GetEmPtrFromList(int no)
     if (no == 0xFF) {
         return 0;
     }
+#if defined(OB_EM)
+    {
+        cEm* r = 0;
+        int ok = obEmFind(no, &r);
+#if RE4DC_OB_SCAN == 2
+        cEm* src = 0;
+        re4dc_ob_chk[5]++;
+        for (i = 0; i < EmMgr.nArray; i++) {
+            cEm* em = emSetWork(i);
+            if (!em) continue;
+            if ((em->be_flag & 0x201) == 1 && em->emset_no == (u8) no) {
+                src = em;
+                break;
+            }
+        }
+        if (!ok) {
+            re4dc_ob_chk[7]++;
+        } else if (r != src) {
+            re4dc_ob_chk[6]++;
+        }
+        return src;
+#else
+        if (ok) {
+            return r;
+        }
+#endif
+    }
+#endif
     for (i = 0; i < EmMgr.nArray; i++) {
         cEm* em = emSetWork(i);
 #if !defined(__PPC__)

@@ -39,11 +39,71 @@ int cDmgMgr::construct(cDmg* p, u32 id)
     return construct(p, (int) id);
 }
 
+#if defined(RE4DC_OB_SCAN) && RE4DC_OB_SCAN
+#if RE4DC_OB_SCAN == 2
+// GAME_OB_SCAN (game30.mk): =2 check counters for the three scan cuts (dmg.cpp, em_set.cpp,
+// id_sys.cpp), logged here ("OBS"). None at =1, so the cost build's data layout does not move.
+extern "C" {
+unsigned long re4dc_ob_chk[12];
+}
+extern "C" void re4dc_log(const char* fmt, ...);
+#endif
+// dieCheck is a no-op unless a work carries 0x200 / 0x400: 0x400 is freed on the next call, 0x200
+// becomes 0x600 on the next and is freed on the one after. So once two calls have run with no
+// destroy in between, the remaining calls of this pass change nothing and are skipped.
+static inline u32 obDmgPending(cDmgMgr* m)
+{
+    u32 i;
+
+    for (i = 0; i < m->nArray; i++) {
+        if (((cDmg*) ((u8*) m->pArray + m->size * i))->be_flag & 0x600) {
+            return 2;
+        }
+    }
+    return 0;
+}
+#endif
 // Per-frame: counts every live volume's lifetime down and destroys it at 0.
 void cDmgMgr::move()
 {
     u32 i;
 
+#if defined(RE4DC_OB_SCAN) && RE4DC_OB_SCAN
+    u32 need = obDmgPending(this);   // dieCheck calls that can still change a work
+
+    for (i = 0; i < nArray; i++) {
+        cDmg* p = (cDmg*) ((u8*) pArray + size * i);
+#if RE4DC_OB_SCAN == 2
+        // the source call runs; a skip must be a no-op
+        if (need == 0 && obDmgPending(this)) {
+            re4dc_ob_chk[1]++;
+        }
+        dieCheck();
+#else
+        if (need != 0) {
+            dieCheck();
+        }
+#endif
+        if (need != 0) {
+            need--;
+        }
+        if ((p->be_flag & 0x201) == 1) {
+            if (--p->m_Time == 0) {
+                destroy(p);
+                need = 2;
+            }
+        }
+    }
+#if RE4DC_OB_SCAN == 2
+    if (++re4dc_ob_chk[0] % 512 == 1) {
+        re4dc_log("OBS dmgmove=%lu skip_mis=%lu hit=%lu hit_mis=%lu hit_src=%lu emlist=%lu em_mis=%lu em_src=%lu "
+                  "idsys=%lu id_mis=%lu id_over=%lu id_rest_max=%lu\n",
+                  re4dc_ob_chk[0], re4dc_ob_chk[1], re4dc_ob_chk[2], re4dc_ob_chk[3], re4dc_ob_chk[4],
+                  re4dc_ob_chk[5], re4dc_ob_chk[6], re4dc_ob_chk[7], re4dc_ob_chk[8], re4dc_ob_chk[9],
+                  re4dc_ob_chk[10], re4dc_ob_chk[11]);
+    }
+#endif
+#else
     for (i = 0; i < nArray; i++) {
         cDmg* p = (cDmg*) ((u8*) pArray + size * i);
         dieCheck();
@@ -53,6 +113,7 @@ void cDmgMgr::move()
             }
         }
     }
+#endif
 }
 
 // Registers a cylinder volume (centre, radius, half height) of `kind` for `time` frames; 1 when
@@ -98,10 +159,89 @@ extern "C" unsigned re4dc_dt_note(unsigned kind, unsigned a, unsigned b);
 #else
 #define DT_DMG(r) (r)
 #endif
+#if defined(RE4DC_OB_SCAN) && RE4DC_OB_SCAN
+// GAME_OB_SCAN: a work passes the live test only while it is on the alive list (create links it
+// right after construct sets be_flag 1; destroy unlinks it before marking 0x200; nothing else in
+// the game writes a cDmg's be_flag), so the live works come from the list, in slot (= address)
+// order, and are tested exactly as the source loop would test them. Returns 0 when the list holds
+// something unexpected (outside the array, more than 32 live): the caller runs the source loop.
+static inline int obDmgFast(cDmgMgr* m, Vec* pos, Vec* out, u32* hit, int* kind)
+{
+    cDmg* v[32];
+    cDmg* p;
+    u32 n = 0;
+    u32 k;
+    u8* lo = (u8*) m->pArray;
+    u8* hi = lo + m->size * m->nArray;
+
+    if (m->pArrayPush != 0) {
+        return 0;
+    }
+    for (p = m->pAlive; p != 0; p = (cDmg*) p->pNext) {
+        if ((u8*) p < lo || (u8*) p >= hi) {
+            return 0;
+        }
+        if ((p->be_flag & 0x201) == 1) {
+            if (n == 32) {
+                return 0;
+            }
+            k = n++;
+            while (k > 0 && v[k - 1] > p) {
+                v[k] = v[k - 1];
+                k--;
+            }
+            v[k] = p;
+        }
+    }
+    for (k = 0; k < n; k++) {
+        if (v[k]->hitCheck(pos, out)) {
+            *hit = (u32) ((u8*) v[k] - lo) / m->size;
+            *kind = v[k]->kind;
+            return 1;
+        }
+    }
+    *hit = m->nArray;
+    *kind = 0;
+    return 1;
+}
+#endif
 int cDmgMgr::hitCheck(Vec* pos, Vec* out)
 {
     u32 i;
 
+#if defined(RE4DC_OB_SCAN) && RE4DC_OB_SCAN
+#if RE4DC_OB_SCAN == 2
+    // the fast answer (into a copy of *out) beside the source loop, which runs live
+    Vec tmp;
+    u32 fi = 0;
+    int fk = 0;
+    int fast = obDmgFast(this, pos, out ? &tmp : (Vec*) 0, &fi, &fk);
+    int src = 0;
+    re4dc_ob_chk[2]++;
+    for (i = 0; i < nArray; i++) {
+        cDmg* p = (cDmg*) ((u8*) pArray + size * i);
+        if ((p->be_flag & 0x201) == 1) {
+            if (p->hitCheck(pos, out)) {
+                src = p->kind;
+                break;
+            }
+        }
+    }
+    if (!fast) {
+        re4dc_ob_chk[4]++;
+    } else if (fi != i || fk != src || (src != 0 && out != 0 && (tmp.x != out->x || tmp.y != out->y || tmp.z != out->z))) {
+        re4dc_ob_chk[3]++;
+    }
+    return DT_DMG(src);
+#else
+    {
+        int fk;
+        if (obDmgFast(this, pos, out, &i, &fk)) {
+            return DT_DMG(fk);
+        }
+    }
+#endif
+#endif
     for (i = 0; i < nArray; i++) {
         cDmg* p = (cDmg*) ((u8*) pArray + size * i);
         if ((p->be_flag & 0x201) == 1) {

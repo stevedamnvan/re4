@@ -564,6 +564,9 @@ void IDSystem::stop()
     }
 }
 
+#if defined(RE4DC_OB_SCAN) && RE4DC_OB_SCAN == 2
+extern "C" unsigned long re4dc_ob_chk[12];   // dmg.cpp (GAME_OB_SCAN check counters)
+#endif
 // Per-frame (unless Stop_flg 0x40): rebuilds the screen matrix from the camera fov, then for each
 // tree level runs the five movers on every moving unit (position/path, size curve, colour curve,
 // rotation, texture animation).
@@ -583,6 +586,100 @@ void IDSystem::move()
     m_scrn_mat[1][3] = v.y;
     m_scrn_mat[2][3] = v.z;
 
+#if defined(RE4DC_OB_SCAN) && RE4DC_OB_SCAN
+    // GAME_OB_SCAN: the movers change no unit's be_flag bits 0 / 2 or levelNo (idSysMove04 only
+    // clears bit 3 of its own unit), nor m_levelMax, and nothing else runs in this loop, so every
+    // level pass selects units the first pass already saw. Pass 0 runs as in the source and lists
+    // the deeper units it steps over (slot order, on the stack: no static data, so the image's data
+    // layout does not move); passes 1..m_levelMax walk that list instead of every slot. More than
+    // OB_ID_REST deeper units: those passes run as in the source.
+    if (m_levelMax >= 0 && m_maxId <= 0x10000) {
+#define OB_ID_REST 64
+        u16 rest[OB_ID_REST];
+        int nr = 0;
+        int over = 0;
+        int k;
+        IdUnit* u = pUnit;
+#if RE4DC_OB_SCAN == 2
+        // the fast passes record the units they would move; then the source passes run the movers
+        // and each unit they move must be the next one recorded
+        static u16 seq[1024];
+        int ns = 0;
+#define OB_ID_MOVE(w) do { if (ns < 1024) { seq[ns] = (u16) ((w) - pUnit); } ns++; } while (0)
+#else
+#define OB_ID_MOVE(w) do { idSysMove00(w); idSysMove01(w); idSysMove02(w); idSysMove03(w); idSysMove04(w); } while (0)
+#endif
+        for (i = 0; i < m_maxId; i++, u++) {
+            u32 f = u->be_flag;
+            if (f == 0xFF || (f & 0x5) != 0x5) {
+                continue;
+            }
+            if (u->levelNo == 0) {
+                OB_ID_MOVE(u);
+            } else if ((s32) u->levelNo <= m_levelMax) {
+                if (nr < OB_ID_REST) {
+                    rest[nr++] = (u16) i;
+                } else {
+                    over = 1;
+                }
+            }
+        }
+        for (lv = 1; lv <= m_levelMax; lv++) {
+            if (over) {
+                u = pUnit;
+                for (i = 0; i < m_maxId; i++, u++) {
+                    if (u->be_flag == 0xFF || !(u->be_flag & 0x1)) {
+                        continue;
+                    }
+                    if ((u->be_flag & 0x4) && lv == u->levelNo) {
+                        OB_ID_MOVE(u);
+                    }
+                }
+            } else {
+                for (k = 0; k < nr; k++) {
+                    u = &pUnit[rest[k]];
+                    if (u->levelNo == lv) {
+                        OB_ID_MOVE(u);
+                    }
+                }
+            }
+        }
+#undef OB_ID_MOVE
+#if RE4DC_OB_SCAN == 2
+        re4dc_ob_chk[8]++;
+        if (over) {
+            re4dc_ob_chk[10]++;
+        }
+        if ((unsigned long) nr > re4dc_ob_chk[11]) {
+            re4dc_ob_chk[11] = nr;
+        }
+        k = 0;
+        for (lv = 0; lv <= m_levelMax; lv++) {
+            IdUnit* w = pUnit;
+            for (i = 0; i < m_maxId; i++, w++) {
+                if (w->be_flag == 0xFF || !(w->be_flag & 0x1)) {
+                    continue;
+                }
+                if ((w->be_flag & 0x4) && lv == w->levelNo) {
+                    if (k >= ns || k >= 1024 || seq[k] != i) {
+                        re4dc_ob_chk[9]++;
+                    }
+                    k++;
+                    idSysMove00(w);
+                    idSysMove01(w);
+                    idSysMove02(w);
+                    idSysMove03(w);
+                    idSysMove04(w);
+                }
+            }
+        }
+        if (k != ns) {
+            re4dc_ob_chk[9]++;
+        }
+#endif
+        return;
+    }
+#endif
     for (lv = 0; lv <= m_levelMax; lv++) {
         IdUnit* u = pUnit;
         for (i = 0; i < m_maxId; i++, u++) {

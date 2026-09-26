@@ -319,6 +319,20 @@ ifneq ($(GAME_FX_MOVE),0)
 GAME_CPPFLAGS += -DRE4DC_FX_MOVE=$(GAME_FX_MOVE)
 PLATFORM_CPPFLAGS += -DRE4DC_FX_MOVE=$(GAME_FX_MOVE)
 endif
+# GAME_OB_SCAN=1 (30 fps rethink, lane ob; exact): per-tick bookkeeping scans. cDmgMgr::hitCheck tests
+#                the live damage volumes from the alive list in slot order instead of all 20 slots, and
+#                cDmgMgr::move skips the dieCheck calls that can no longer change a work (dmg.cpp);
+#                GetEmPtrFromList searches EmMgr's alive list (one match = the answer, else the source
+#                loop; em_set.cpp); IDSystem::move runs level pass 0 as the source and lists the deeper
+#                units it steps over, so passes 1..m_levelMax walk that list instead of every slot
+#                (id_sys.cpp). No static data at =1 (the image's data layout does not move). =2: the
+#                source runs live beside each fast answer and every difference is counted ("OBS" lines).
+GAME_OB_SCAN ?= 0
+ifneq ($(GAME_OB_SCAN),0)
+$(OBJDIR)/src/game/dmg.o: GAME_CPPFLAGS += -DRE4DC_OB_SCAN=$(GAME_OB_SCAN)
+$(OBJDIR)/src/game/em_set.o: GAME_CPPFLAGS += -DRE4DC_OB_SCAN=$(GAME_OB_SCAN)
+$(OBJDIR)/src/game/id_sys.o: GAME_CPPFLAGS += -DRE4DC_OB_SCAN=$(GAME_OB_SCAN)
+endif
 # GAME_ROTVEC_MEMO=1 (square plan: collision body positions; exact): RotVector (sub2.cpp) keeps yaw-only
 #                    results in 256 one-line entries keyed by the input bits (RVM_BITS=n: 2^n entries);
 #                    cAtariInfo::getPos repeats it for every candidate body on each EmAtCheck call.
