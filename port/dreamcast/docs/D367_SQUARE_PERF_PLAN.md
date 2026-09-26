@@ -443,6 +443,23 @@ Ganados costs more.
 Paced to full speed = (1000 - 30 x 30.66) / R images a second. On the landed stack's G (sq100, 26.34) the
 same R would pace to (1000 - 30 x 26.34) / R: vl13 14.0 fps, vl17 15.8 fps, B 30 fps (an estimate: R was measured on the
 older G base, never on one build with sq100's stack).
+**Version C on the landed stack, both views (2026-09-26 evening; sq105-sq107, tree12 = land26 62ed89a, sq104's
+flags + cl54's character recipe; hw model, uncalibrated, ACT_CAP=0; twins differ only in PACE_FORCE=A vs PACE_MODE=off):**
+- Standard window (1000-1119, wall-facing, 0-1 Ganado): G_std **24.84** (sq105), +0.275 over sq104 from the character
+  data's cache placement alone (same instructions; I-miss +0.17, D-miss +0.12). R there is 11.77 on the lane stack
+  (cl54 W 43.01 - its twin cl63 G 31.24; the earlier 12.35 used a non-twin), ~21.6 fps paced.
+- Kite fight (warp r101-bell-fight --ang 1.2 + f1-kite.pad, 800:919, 6 Ganados from t 833): G_fight **29.30** (sq106),
+  W 41.07 (sq107), **R_fight 11.77** over the window (render-only rows 10.59: characters 7.08, world 2.21, HUD 0.44,
+  other 0.88), ~13.9 at the 6-Ganado frames. 30 fps allows R 4.03 there: ~10 fps paced at full speed (~8.7 at the
+  peak), 81% speed drawn every tick. "G closed" holds only in the wall-facing view.
+- G_fight - G_std = +4.45: motion / skeleton +2.05 (MotionHokan, hermiteFast, C_QUATMtx 288 calls/tick, pwc_ftrv_run),
+  effects +0.82 (cEsp::CommonMove, cEsp1a::move), collision +0.68 (line walks, poly-sphere), motion loads +0.37 (one
+  net_crc32le call of ~34.8 ms in a single tick: a hitch longer than a frame), audio +0.21, other +0.44.
+- The cl lane's levers #1 / #5 (landed c6edb6f, default off): COARSE_PREGATE R -1.57 standard (twins cl64 / cl65), ~0 or a
+  small loss in the kite (the gate culls almost nothing with six Ganados in view); CHAR_DATA_BLOCK G -0.27, R -0.38
+  standard (twins cl69 / cl70). The fight needs the bigger levers (vertex path cost, characters in crowds, the fight's
+  G): a make-room plan is being prepared (/root/probe/d367-agents/make-room-20260926/).
+
 On sq104's G (24.57, everything landed through 4f81bbd; G closed) the same estimate gives (1000 - 30 x 24.57) / R:
 vl26 20.7 fps, B 30 fps (capped). 30 fps needs R <= 8.76 (no margin) or <= 5.43 (the 3.33 margin): vl26 is 3.94
 over without margin; the rest is the characters' meshes (the external cast refit).
@@ -1634,3 +1651,8 @@ Append one row per measured arm: date, arm, change, hw ms (2L+R), logic trace ve
 | 09-26 | gc24 | gc17 + LEAF2 rev 2 + WALK_PF rev 2 (on the area lists rev 2) | 28.36 (-0.05 vs gc17, which lacks the area lists' ~-0.05; own rows -0.096, hitCheck2 +0.065 layout) | - | gc23 | ~0 in total: not landed, parked |
 | 09-26 | cl45 | vl17 + COARSE_GANADO_CAST=1 (cast v3 Ganados), version C | W 44.338 (+0.39 vs vl17; character rows -0.22, the rest layout / G2) | - | cl46 (=2) STRICT vs tr56 / tr42, dtcmp identical, GCAST 0 | integration kept (default off) |
 | 09-26 | land26 | COARSE_GANADO_CAST landed (08d2216; the lane's patch as is) | - | - | knob-off identity (default, canonical); cl45 carry-over 450 / 460 objects identical (native_actor_fast.o: rev 5 landed vs rev 3; the rest tree5-only) | landed, default off |
+| 09-26 | sq105 | version C on the landed stack (tree12 = land26), never drawn, standard window | G_std 24.84 (+0.275 vs sq104: layout) | - | (replay: 404 / 419 gameplay call counts equal, the rest wall-timed Snd_*) | measurement |
+| 09-26 | sq106 / sq107 | the same, kite fight 800:919: never drawn / drawn every tick | G_fight 29.30 / W 41.07 -> R 11.77 (~13.9 peak) | - | (replay equal to cl61 / cl62) | measurement: ~10 fps paced in the fight |
+| 09-26 | cl63-cl66 | COARSE_PREGATE=1 on version C (lane stack; twins) | standard W 43.01 -> 40.94, R 11.77 -> 10.20 (-1.57); kite W -0.32 (R unmeasured, likely a small loss) | - | cl67 STRICT vs tr56 / tr42, dtcmp identical; =2 cl68 / cl68-f1k 0 violations; frozen frames 0 px | kept |
+| 09-26 | cl69 / cl70 | CHAR_DATA_BLOCK=1 on version C (lane stack; twins) | standard G 31.24 -> 30.97 (-0.27), W -0.65, R -0.38 | - | cl71 STRICT vs tr56 / tr42, dtcmp identical; layout proof (1,134 data symbols at their no-character addresses) | kept |
+| 09-26 | land27 | COARSE_PREGATE + CHAR_DATA_BLOCK landed (c6edb6f; mode flip dropped, $(error) without COARSE=1) | - | - | knob-off identity (default, canonical); carry-over coarse_ganado.o / coarse_actor.o equal the lane's | landed, default off |

@@ -249,7 +249,7 @@ Status, uncapped, same stack, hw ms:
   cost arm and one STRICT gate, no series. The main session lands every patch via warp/tree7 (knob-off
   identity, carry-over), keeps the docs current. (The coarse HUD's "88" was the light coarse floor behind the translucent gauge;
   the coarse world's ground, 6f4c91c, fixes it.) An external, user-launched
-  agent builds and reduces the first level's cast models (private `cast-20260925/`; integration COARSE_GANADO_CAST 08d2216),
+  agent builds and reduces the first level's cast models (private `cast-20260925/`; integration COARSE_GANADO_CAST 08d2216; R levers COARSE_PREGATE / CHAR_DATA_BLOCK c6edb6f),
   and a second one will rebuild the r101 world's assets (prompt `re4-assets-private/world-agent-20260926/`, 2026-09-26); no in-session agent
   builds models. Lane map and owners: the plan doc, "Current order and status".
 - Characters (2026-09-25): the reduced models (3,989-triangle Leon, 874-triangle Ganado) draw through the
@@ -309,6 +309,18 @@ checks each event's evd (route movie, or prepared + qualified evd), and reports 
 is never generated. For the r100 after-state crows (171,328 B short in Original): Standard with QUALITY_ASSETS=1 fits
 (packages -282,560 B, 111,232 spare); for Original the cheapest option is a new em21 motion-stream contract
 (<= 294,240 B). r101's enemy heap-4 room is measured (3,048,704 B, fits 1,595,136 spare); r103's waits for W8b.
+
+User decisions 2026-09-26 (evening): (1) "We can't compromise on the environments so we really need to deal with it":
+the r101 environment's look is the goal (as original as possible, not a "VR arena"), and the budget is made to fit it
+(renderer vertex paths, characters, the fight's gameplay, VRAM / heap reclaims), not the other way round; the external
+world agent prices what the look needs ("needs room") instead of cutting to the caps. (2) "We should work backwards from
+the original world": start from the GameCube render set as is (all parts, source textures, source light), price it, and
+reduce step by step (invisible reductions first, then near-identical, then visible). (3) The user doubts the original
+world was ever fully drawn on the port: the port's "source renderer" captures used the Standard LOD package, so the
+reference is an offline render of the GameCube render set; an audit and measurement are running
+(/root/probe/d367-agents/original-world-20260926/). Measured the same day (version C, landed stack): G_std 24.84,
+G_fight 29.30, R_fight 11.77 (~10 fps paced in the 6-Ganado kite fight), so 30 fps in the heavy fight is out of reach
+with this image; the heavy-fight choices come with the make-room plan.
 
 User decisions 2026-09-24 (later): (1) **r103: go.** Implement design-r103 PLAN (W8b room-archive compaction, W8c
 textures + the post-bell radio stream, W8d census, W8e bell -> door -> r103; the r103 -> r106 exit fades to the title

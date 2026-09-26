@@ -62,6 +62,11 @@ EXTRA_MAKE="$LH $M1 $PERF OBJDIR=/path/obj-<name>"
   `COARSE_ACTOR_ASSET_DIR=<private cast bundle>` (ganado_cast_runtime.h, made by the cl lane's private
   tools/cast_bundle.py from the external cast packs) and `EXTRA_TEXDIRS=<bundle>/tex`. =2 logs "GCAST". Use a
   fresh OBJDIR per setting: both sources build coarse_ganado.o.
+- The cl lane's R levers (c6edb6f; default off): `COARSE_PREGATE=1` (needs COARSE=1 and COARSE_GANADO_CAST; render only; a
+  conservative per-chunk, per-bone bound skips cast Ganado chunks wholly outside a screen edge or far before their
+  skin work; =2 is a check build that counts violations, which must be 0) and `CHAR_DATA_BLOCK=1` (needs
+  COARSE_LEON=1; link only: the character adapters' data as one 16 KiB-padded block after .data, so game data keeps
+  its addresses and cache sets; toggling it does not force a relink: use a fresh OBJDIR and delete the ELF first).
 - The skeleton kernels (ddea9bf; room-independent; not in LH yet): the coarse-square arms add
   `GAME_PWC_KERNEL=3 GAME_PMC_KERNEL=1 GAME_HERMITE_FAST=1`. PWC_KERNEL needs `GAME_SKEL_FTRV=1` (=1 the
   Ganados' pass, exact; =3 every model's pass, last-bit FP policy, decisions identical); PMC_KERNEL needs
